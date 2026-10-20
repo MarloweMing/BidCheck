@@ -1,0 +1,10 @@
+.source-structure{margin-top:24px;border-top:1px solid #e1e8f1;padding-top:16px;min-width:0;overflow-wrap:anywhere}
+.source-structure h3{font-size:16px;margin:16px 0 8px}
+.structure-table-scroll{max-width:100%;max-height:480px;overflow:auto;border:1px solid #e1e8f1;border-radius:7px;margin:12px 0}
+.structure-table{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed}
+.structure-table th,.structure-table td{text-align:left;vertical-align:top;padding:10px;border-bottom:1px solid #e1e8f1;white-space:pre-wrap;overflow-wrap:anywhere}
+.structure-table th{background:#f3f7fc;position:sticky;top:0}
+.structure-table th:nth-child(2){width:38%}
+.structure-box{padding:10px 12px;margin:8px 0;background:#f5f8fc;border:1px solid #e1e8f1;border-radius:6px;white-space:pre-wrap;overflow-wrap:anywhere}
+#rendered-image-holder{margin-top:12px;max-height:780px;overflow:auto;background:#edf1f5}
+@media(max-width:480px){.structure-table{font-size:11px}.structure-table th,.structure-table td{padding:7px 4px}.source-structure .preview-controls{align-items:stretch}.source-structure .button{white-space:normal}}

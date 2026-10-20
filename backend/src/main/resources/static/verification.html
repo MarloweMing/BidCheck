@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#14233d">
+  <meta name="description" content="BidCheck 自动核验：逐条件查看业务结论、证据与资料缺口，补充资料后继续核验。">
+  <title>自动核验 · BidCheck</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/verification.css">
+  <link rel="stylesheet" href="/document-structure.css">
+  <script type="module" src="/verification.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳转到核验工作区</a>
+  <div class="workspace">
+    <aside class="sidebar" aria-label="工作台导航">
+      <a class="brand" href="/"><span class="brand-icon" aria-hidden="true">B</span><span>BidCheck<small>招投标文件质检</small></span></a>
+      <div class="nav-label">WORKSPACE</div>
+      <nav><a href="/">项目工作台</a><a class="active" href="/verification.html" aria-current="page">自动核验</a></nav>
+      <div class="sidebar-note">条件逐项核验<br>证据与结论一起保留</div>
+    </aside>
+    <div class="content">
+      <header class="topbar"><a href="/">项目工作台</a><span aria-hidden="true">/</span><span>自动核验</span><span class="topbar-tag">证据可追溯</span></header>
+      <main id="main" tabindex="-1">
+        <div class="page-heading"><div><span class="eyebrow">AUTOMATED VERIFICATION</span><h1>自动核验工作台</h1><p>逐个条件看依据，区分业务判断与处理状态，补齐资料后继续核验。</p></div><button id="create-run" class="button primary" disabled>新建核验</button></div>
+        <section class="project-bar" aria-label="项目与运行选择">
+          <label>当前项目<select id="project-select" disabled><option>正在加载项目…</option></select></label>
+          <label>核验记录<select id="run-select" disabled><option>请先选择项目</option></select></label>
+          <button id="refresh" class="button secondary" disabled>刷新</button>
+        </section>
+        <div id="capabilities" class="subtle-box" hidden></div>
+        <div id="page-error" class="notice danger" role="alert" hidden></div>
+        <div id="activity" aria-live="polite"></div>
+        <div id="run-overview"></div>
+        <nav id="verification-views" class="view-switch" aria-label="核验内容视图" hidden><button type="button" data-action="show-results" aria-pressed="true">核验结果</button><button type="button" data-action="show-facts" aria-pressed="false">事实与关系</button></nav>
+        <section id="facts-workbench" aria-label="本次核验的事实与关系" hidden></section>
+        <div id="workbench"><div class="empty"><span class="spinner"></span><p>正在连接工作台…</p></div></div>
+        <div id="history"></div>
+        <p class="footer-note">处理结束与业务已判定分别统计。资料、时点或核验能力不具备时，保留明确缺口。</p>
+      </main>
+    </div>
+  </div>
+  <dialog id="dialog" aria-labelledby="dialog-title"></dialog>
+  <div id="notifications" class="notifications" aria-live="polite"></div>
+  <noscript>请启用 JavaScript 使用自动核验工作台。</noscript>
+</body>
+</html>

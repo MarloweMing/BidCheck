@@ -1,0 +1,140 @@
+name: bidcheck
+
+# 独立中间件；不挂载、不引用虚拟机上的现有服务及其数据。
+# .env 只保存在部署机器上，所有密码必填且应分别生成。
+services:
+  mysql:
+    image: mysql:8.0.36
+    pull_policy: missing
+    container_name: bidcheck-mysql
+    restart: unless-stopped
+    stop_grace_period: 60s
+    mem_limit: 2560m
+    memswap_limit: 2560m
+    cpus: "1.0"
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_DATABASE: bidcheck
+      MYSQL_USER: ${BIDCHECK_MYSQL_USER:?Set BIDCHECK_MYSQL_USER in .env}
+      MYSQL_PASSWORD: ${BIDCHECK_MYSQL_PASSWORD:?Set BIDCHECK_MYSQL_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+      - --innodb-buffer-pool-size=536870912
+      - --innodb-redo-log-capacity=134217728
+      - --max-connections=60
+      - --max-allowed-packet=67108864
+      - --binlog-expire-logs-seconds=604800
+    ports:
+      - "${BIDCHECK_BIND_IP:?Set BIDCHECK_BIND_IP in .env}:13306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - bidcheck
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          MYSQL_PWD="$${MYSQL_PASSWORD}" mysql --protocol=TCP
+          --host=127.0.0.1 --user="$${MYSQL_USER}"
+          --database="$${MYSQL_DATABASE}" --connect-timeout=5
+          --batch --skip-column-names --execute='SELECT 1' > /dev/null
+      interval: 20s
+      timeout: 8s
+      retries: 8
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    pull_policy: missing
+    container_name: bidcheck-rabbitmq
+    hostname: bidcheck-rabbitmq
+    restart: unless-stopped
+    stop_grace_period: 60s
+    mem_limit: 768m
+    memswap_limit: 768m
+    cpus: "1.0"
+    environment:
+      TZ: Asia/Shanghai
+      RABBITMQ_DEFAULT_USER: ${BIDCHECK_RABBIT_USER:?Set BIDCHECK_RABBIT_USER in .env}
+      RABBITMQ_DEFAULT_PASS: ${BIDCHECK_RABBIT_PASSWORD:?Set BIDCHECK_RABBIT_PASSWORD in .env}
+      RABBITMQ_DEFAULT_VHOST: ${BIDCHECK_RABBIT_VHOST:-/bidcheck}
+      RABBITMQ_CTL_ERL_ARGS: "+S 1:1 +A 1"
+      # 绝对阈值避免旧内核/cgroup环境按整台虚拟机内存计算告警线。
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: >-
+        +S 2:2 -rabbit vm_memory_high_watermark {absolute,402653184}
+        disk_free_limit 1073741824
+    ports:
+      - "${BIDCHECK_BIND_IP:?Set BIDCHECK_BIND_IP in .env}:15673:5672"
+      - "${BIDCHECK_BIND_IP:?Set BIDCHECK_BIND_IP in .env}:15683:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - bidcheck
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - rabbitmq-diagnostics -q check_running && rabbitmq-diagnostics -q check_local_alarms
+      interval: 30s
+      timeout: 30s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  minio:
+    # 按当前虚拟机已有镜像运行，禁止因latest标签而自动拉取/切换版本。
+    image: minio/minio:latest
+    pull_policy: never
+    container_name: bidcheck-minio
+    restart: unless-stopped
+    stop_grace_period: 30s
+    mem_limit: 1024m
+    memswap_limit: 1024m
+    cpus: "1.0"
+    environment:
+      TZ: Asia/Shanghai
+      MINIO_ROOT_USER: ${BIDCHECK_MINIO_ROOT_USER:?Set BIDCHECK_MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${BIDCHECK_MINIO_ROOT_PASSWORD:?Set BIDCHECK_MINIO_ROOT_PASSWORD in .env}
+    command: [server, /data, --address, ":9000", --console-address, ":9001"]
+    ports:
+      - "${BIDCHECK_BIND_IP:?Set BIDCHECK_BIND_IP in .env}:19000:9000"
+      - "${BIDCHECK_BIND_IP:?Set BIDCHECK_BIND_IP in .env}:19001:9001"
+    volumes:
+      - minio-data:/data
+    networks:
+      - bidcheck
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, "5", http://127.0.0.1:9000/minio/health/cluster]
+      interval: 20s
+      timeout: 8s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  bidcheck:
+    name: bidcheck-net
+    driver: bridge
+
+volumes:
+  mysql-data:
+    name: bidcheck-mysql-data
+  rabbitmq-data:
+    name: bidcheck-rabbitmq-data
+  minio-data:
+    name: bidcheck-minio-data

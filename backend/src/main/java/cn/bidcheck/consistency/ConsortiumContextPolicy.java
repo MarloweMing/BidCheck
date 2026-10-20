@@ -1,0 +1,72 @@
+package cn.bidcheck.consistency;
+
+import cn.bidcheck.domain.Domain.*;
+import cn.bidcheck.semantic.SourceRelations;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import java.util.regex.*;
+
+/** Exact, explicitly declared membership in the current project's agreement; never fuzzy entity merging. */
+final class ConsortiumContextPolicy {
+    private ConsortiumContextPolicy() { }
+    record Declaration(Set<String> members,List<Evidence> sources) { }
+
+    static Declaration bind(Document document,DocumentContextIndex contextIndex,List<Map<String,Object>> occurrences) {
+        Set<String> members=new LinkedHashSet<>();List<Evidence> sources=new ArrayList<>();
+        List<SourceRelations.Link> relationships=SourceRelations.discover(document);
+        List<Evidence> projectSources=relationships.stream().filter(link->link.type().equals("PROJECT_CONTEXT")).map(SourceRelations.Link::evidence).toList();
+        if(projectSources.isEmpty())return new Declaration(Set.of(),List.of());
+        for(SourceRelations.Link link:relationships) {
+            if(!link.type().equals("CONSORTIUM_MEMBERSHIP_AND_DUTIES")||!Boolean.TRUE.equals(link.attributes().get("projectMatchedToCover")))continue;
+            Evidence source=link.evidence();Page page=document.pages().stream().filter(p->p.number()==source.page()&&Objects.equals(p.locationType(),source.locationType())).findFirst().orElse(null);
+            if(page==null||page.text()==null)continue;
+            int title=page.text().indexOf("联合体协议书");if(title<0)continue;
+            int line=1+(int)page.text().substring(0,title).chars().filter(c->c=='\n').count();
+            if(!contextIndex.at(page,line).scope().equals("CURRENT_PROJECT"))continue;
+            Set<String> declared=new LinkedHashSet<>();
+            for(String text:source.quote().split("\\R")) {
+                int marker=text.indexOf("[所有成员单位名称]");
+                if(marker<0)marker=text.indexOf("［所有成员单位名称］");
+                if(marker<0||!text.substring(marker).contains("自愿组成"))continue;
+                for(String token:text.substring(0,marker).split("[、,，]")){String name=normal(token);if(company(name))declared.add(name);}
+            }
+            Matcher labelled=Pattern.compile("(?:联合体牵头人|联合体牵头方|牵头单位|联合体成员(?:单位)?|成员单位)\\s*[:：]\\s*([^\\r\\n;；，、]{2,100})").matcher(source.quote());
+            while(labelled.find()){String name=normal(labelled.group(1));if(company(name))declared.add(name);}
+            if(declared.size()<2)continue;
+            // Different eligible declarations cannot be unioned into a larger invented membership set.
+            if(!members.isEmpty()&&!members.equals(declared))return new Declaration(Set.of(),List.of());
+            members.addAll(declared);sources.add(source);
+        }
+        if(members.size()<2)return new Declaration(Set.of(),List.of());
+        sources.addAll(projectSources);
+        for(Map<String,Object> occurrence:occurrences) {
+            if(!"companyName".equals(occurrence.get("field"))||!"CURRENT_PROJECT".equals(occurrence.get("scope")))continue;
+            String name=Objects.toString(occurrence.get("value"),"");if(!members.contains(name))continue;
+            occurrence.put("subject","BIDDER_MEMBER:"+name);
+            occurrence.put("subjectAssignment",Map.of("status","DECLARED_CONSORTIUM_MEMBER","memberName",name,"projectMatched",true,"identityVerified",false,"evidences",List.copyOf(sources)));
+            List<Evidence> refs=new ArrayList<>(sources);
+            if(occurrence.get("contextEvidences") instanceof List<?> previous)for(Object ref:previous)if(ref instanceof Evidence evidence)refs.add(evidence);
+            refs=refs.stream().distinct().toList();int referenceLimit=Objects.toString(occurrence.get("contextQuote"),"").isBlank()?15:14;
+            if(refs.size()>referenceLimit)occurrence.put("comparability","INCOMPLETE");
+            occurrence.put("contextEvidences",refs.stream().limit(referenceLimit).toList());
+            occurrence.put("scopeReason","当前项目联合体协议明确列出该成员，按成员完整名称分别比较；未核验签章或法律身份");
+        }
+        return new Declaration(Set.copyOf(members),List.copyOf(sources));
+    }
+
+    static List<Map<String,Object>> nonMemberGroups(Declaration declaration,List<Map<String,Object>> occurrences) {
+        if(declaration.members().isEmpty())return List.of();
+        List<Map<String,Object>> unmatched=occurrences.stream().filter(o->"companyName".equals(o.get("field"))&&"CURRENT_PROJECT".equals(o.get("scope"))&&"BIDDER".equals(o.get("subject")))
+                .filter(o->company(Objects.toString(o.get("value"),""))&&!declaration.members().contains(o.get("value"))).toList();
+        if(unmatched.isEmpty())return List.of();
+        List<Evidence> evidence=new ArrayList<>(declaration.sources());for(Map<String,Object> item:unmatched)if(item.get("evidence") instanceof Evidence e)evidence.add(e);
+        Map<String,Object> group=new LinkedHashMap<>();
+        group.put("id","consortium-"+UUID.nameUUIDFromBytes((declaration.sources().stream().map(Evidence::documentId).distinct().toList().toString()+declaration.members().stream().sorted().toList()+unmatched.stream().map(o->o.get("id")).toList()).getBytes(StandardCharsets.UTF_8)));
+        group.put("field","companyName");group.put("title","投标企业名称与联合体成员声明存在疑似差异");group.put("subject","BIDDER");group.put("scope","CURRENT_PROJECT");group.put("lot","UNRESOLVED");group.put("basis","");group.put("status","SUSPECTED");
+        group.put("reason","本次投标位置出现未在当前项目联合体协议成员清单中精确匹配的企业名称，需复核名称更正、角色或协议版本；未将其他企业自动解释为联合体成员。");
+        group.put("occurrenceIds",unmatched.stream().map(o->o.get("id")).toList());group.put("evidences",evidence.stream().distinct().toList());group.put("values",unmatched.stream().map(o->o.get("value")).distinct().toList());
+        group.put("declaredMembers",declaration.members().stream().sorted().toList());return List.of(group);
+    }
+    private static boolean company(String name){return name.matches("[\\p{IsHan}A-Z0-9()·]{1,100}(?:公司|集团)")&&!name.contains("联合体")&&!name.matches(".*(?:所有成员|单位名称|填写|示例|XX).*");}
+    private static String normal(String value){return value.strip().replace('（','(').replace('）',')').replaceAll("[\\s\\u3000]","").toUpperCase(Locale.ROOT);}
+}

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.bidcheck.persistence.RecordMapper">
+  <resultMap id="record" type="cn.bidcheck.persistence.Stored">
+    <id property="id" column="id"/><result property="kind" column="kind"/>
+    <result property="projectId" column="project_id"/><result property="parentId" column="parent_id"/>
+    <result property="body" column="body" javaType="java.lang.String"/><result property="createdAt" column="created_at"/>
+  </resultMap>
+  <resultMap id="task" type="cn.bidcheck.persistence.TaskRow">
+    <id property="id" column="id"/><result property="projectId" column="project_id"/>
+    <result property="taskType" column="task_type"/><result property="inputJson" column="input_json" javaType="java.lang.String"/>
+    <result property="status" column="status"/><result property="stage" column="stage"/>
+    <result property="progress" column="progress"/><result property="attempt" column="attempt"/><result property="error" column="error"/>
+    <result property="createdAt" column="created_at"/><result property="updatedAt" column="updated_at"/>
+    <result property="leaseOwner" column="lease_owner"/><result property="leaseUntil" column="lease_until"/>
+  </resultMap>
+  <resultMap id="evidenceOperationLease" type="cn.bidcheck.persistence.EvidenceOperationLeaseRow">
+    <id property="operationKey" column="operation_key"/><result property="projectId" column="project_id"/>
+    <result property="owner" column="owner"/><result property="leaseUntil" column="lease_until"/>
+    <result property="acquiredAt" column="acquired_at"/>
+  </resultMap>
+  <insert id="save" databaseId="h2">MERGE INTO qc_record(id,kind,project_id,parent_id,body,created_at) KEY(id) VALUES(#{id},#{kind},#{projectId},#{parentId},#{body},#{createdAt})</insert>
+  <insert id="save" databaseId="mysql">INSERT INTO qc_record(id,kind,project_id,parent_id,body,created_at) VALUES(#{id},#{kind},#{projectId},#{parentId},#{body},#{createdAt}) ON DUPLICATE KEY UPDATE kind=VALUES(kind),project_id=VALUES(project_id),parent_id=VALUES(parent_id),body=VALUES(body)</insert>
+  <insert id="insertRecord">INSERT INTO qc_record(id,kind,project_id,parent_id,body,created_at) VALUES(#{id},#{kind},#{projectId},#{parentId},#{body},#{createdAt})</insert>
+  <insert id="insertRecords">INSERT INTO qc_record(id,kind,project_id,parent_id,body,created_at) VALUES <foreach collection="records" item="record" separator=",">(#{record.id},#{record.kind},#{record.projectId},#{record.parentId},#{record.body},#{record.createdAt})</foreach></insert>
+  <select id="get" resultMap="record">SELECT * FROM qc_record WHERE id=#{id}</select>
+  <select id="getForUpdate" resultMap="record">SELECT * FROM qc_record WHERE id=#{id} FOR UPDATE</select>
+  <select id="list" resultMap="record">SELECT * FROM qc_record WHERE kind=#{kind}<if test="projectId != null"> AND project_id=#{projectId}</if><if test="parentId != null"> AND parent_id=#{parentId}</if> ORDER BY created_at,id</select>
+  <select id="count" resultType="long">SELECT COUNT(*) FROM qc_record WHERE kind=#{kind}<if test="projectId != null"> AND project_id=#{projectId}</if><if test="parentId != null"> AND parent_id=#{parentId}</if></select>
+  <select id="latest" resultMap="record">SELECT * FROM qc_record WHERE kind=#{kind}<if test="projectId != null"> AND project_id=#{projectId}</if><if test="parentId != null"> AND parent_id=#{parentId}</if> ORDER BY created_at DESC,id DESC LIMIT 1</select>
+  <delete id="deleteChildren">DELETE FROM qc_record WHERE kind=#{kind} AND parent_id=#{parentId}</delete>
+  <insert id="insertTask">INSERT INTO qc_task(id,project_id,task_type,input_json,status,stage,progress,attempt,error,created_at,updated_at) VALUES(#{id},#{projectId},#{taskType},#{inputJson},#{status},#{stage},#{progress},#{attempt},#{error},#{createdAt},#{updatedAt})</insert>
+  <select id="task" resultMap="task">SELECT * FROM qc_task WHERE id=#{id}</select>
+  <select id="lockTask" resultMap="task">SELECT * FROM qc_task WHERE id=#{id} FOR UPDATE</select>
+  <select id="pendingTasks" resultMap="task">SELECT * FROM qc_task WHERE status='PENDING' ORDER BY created_at,id LIMIT 8</select>
+  <select id="projectTasks" resultMap="task">SELECT * FROM qc_task WHERE project_id=#{projectId} ORDER BY created_at DESC,id DESC LIMIT 100</select>
+  <update id="claimTask"><bind name="claimNow" value="@java.lang.System@currentTimeMillis()"/>UPDATE qc_task SET status='RUNNING',attempt=attempt+1,updated_at=#{now},lease_owner=#{owner},lease_until=#{leaseUntil} WHERE id=#{id} AND status='PENDING' AND attempt &lt; 3 AND #{leaseUntil} &gt; #{claimNow}</update>
+  <update id="updateTask"><bind name="leaseNow" value="@java.lang.System@currentTimeMillis()"/>UPDATE qc_task SET status=#{status},stage=#{stage},progress=#{progress},error=#{error},updated_at=#{updatedAt}<if test="status == 'PENDING'">,lease_owner=NULL,lease_until=NULL</if> WHERE id=#{id}<if test="leaseOwner != null"> AND lease_owner=#{leaseOwner} AND status='RUNNING' AND lease_until &gt;= #{leaseNow}</if></update>
+  <update id="recoverTasks">UPDATE qc_task SET status='PENDING',stage='任务租约过期，等待恢复',progress=0,lease_owner=NULL,lease_until=NULL,updated_at=#{now} WHERE status='RUNNING' AND (lease_until IS NULL OR lease_until &lt; #{expiredBefore})</update>
+  <update id="renewLease"><bind name="renewNow" value="@java.lang.System@currentTimeMillis()"/>UPDATE qc_task SET lease_until=#{leaseUntil} WHERE id=#{id} AND status='RUNNING' AND lease_owner=#{owner} AND lease_until &gt;= #{renewNow} AND #{leaseUntil} &gt; #{renewNow}</update>
+  <update id="releaseClaim">UPDATE qc_task SET status='PENDING',stage='等待执行资源',attempt=CASE WHEN attempt &gt; 0 THEN attempt-1 ELSE 0 END,lease_owner=NULL,lease_until=NULL,updated_at=#{now} WHERE id=#{id} AND status='RUNNING' AND lease_owner=#{owner}</update>
+  <update id="clearLease">UPDATE qc_task SET lease_owner=NULL,lease_until=NULL WHERE id=#{id} AND lease_owner=#{owner} AND status &lt;&gt; 'RUNNING'</update>
+  <update id="failExhaustedTask">UPDATE qc_task SET status='FAILED',stage='已达到最大尝试次数',error='任务已尝试3次，请检查输入或配置后重新发起',lease_owner=NULL,lease_until=NULL,updated_at=#{now} WHERE id=#{id} AND status='PENDING' AND attempt &gt;= 3</update>
+  <update id="retryTask">UPDATE qc_task SET status='PENDING',stage='等待重试',error=NULL,progress=0,lease_owner=NULL,lease_until=NULL,updated_at=#{now} WHERE id=#{id} AND status='FAILED' AND attempt &lt; 3</update>
+  <insert id="tryInsertEvidenceOperationLease" databaseId="h2">INSERT INTO qc_evidence_operation_lease(operation_key,project_id,owner,lease_until,acquired_at) SELECT #{operationKey},#{projectId},#{owner},#{leaseUntil},#{acquiredAt} WHERE NOT EXISTS (SELECT 1 FROM qc_evidence_operation_lease WHERE operation_key=#{operationKey})</insert>
+  <insert id="tryInsertEvidenceOperationLease" databaseId="mysql">INSERT INTO qc_evidence_operation_lease(operation_key,project_id,owner,lease_until,acquired_at) SELECT #{operationKey},#{projectId},#{owner},#{leaseUntil},#{acquiredAt} FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM qc_evidence_operation_lease WHERE operation_key=#{operationKey})</insert>
+  <select id="evidenceOperationLease" resultMap="evidenceOperationLease">SELECT operation_key,project_id,owner,lease_until,acquired_at FROM qc_evidence_operation_lease WHERE operation_key=#{operationKey}</select>
+  <update id="takeOverEvidenceOperationLease">UPDATE qc_evidence_operation_lease SET owner=#{owner},lease_until=#{leaseUntil},acquired_at=#{now} WHERE operation_key=#{operationKey} AND project_id=#{projectId} AND lease_until &lt;= #{now}</update>
+  <update id="renewEvidenceOperationLease">UPDATE qc_evidence_operation_lease SET lease_until=#{leaseUntil} WHERE operation_key=#{operationKey} AND project_id=#{projectId} AND owner=#{owner} AND lease_until &gt; #{now} AND #{leaseUntil} &gt; #{now}</update>
+  <delete id="releaseEvidenceOperationLease">DELETE FROM qc_evidence_operation_lease WHERE operation_key=#{operationKey} AND project_id=#{projectId} AND owner=#{owner}</delete>
+</mapper>

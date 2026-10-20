@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#14233d" />
+    <meta name="description" content="BidCheck 标书检查工作台：提取招标要求、核验投标文件、逐项复核证据并导出报告。" />
+    <title>BidCheck · 标书检查工作台</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳转到工作区</a>
+    <div id="app"><div class="initial-loading" role="status"><span class="spinner"></span>正在连接 BidCheck 工作台…</div></div>
+    <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="false"></div>
+    <dialog id="modal" aria-labelledby="modal-title"></dialog>
+    <noscript>请启用浏览器 JavaScript 以使用标书检查工作台。</noscript>
+  </body>
+</html>

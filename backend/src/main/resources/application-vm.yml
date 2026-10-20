@@ -1,0 +1,46 @@
+# Single-VM integration profile. This is not a high-availability deployment.
+# Credentials must come from the environment; no production secrets belong in this file.
+spring:
+  datasource:
+    url: ${BIDCHECK_MYSQL_URL:jdbc:mysql://127.0.0.1:3306/bidcheck?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai}
+    username: ${BIDCHECK_MYSQL_USER:bidcheck}
+    password: ${BIDCHECK_MYSQL_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 8
+      connection-timeout: 5000
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema-mysql.sql
+  rabbitmq:
+    host: ${BIDCHECK_RABBIT_HOST:127.0.0.1}
+    port: ${BIDCHECK_RABBIT_PORT:5672}
+    username: ${BIDCHECK_RABBIT_USER:bidcheck}
+    password: ${BIDCHECK_RABBIT_PASSWORD}
+    virtual-host: ${BIDCHECK_RABBIT_VHOST:/bidcheck}
+    connection-timeout: 2s
+    requested-heartbeat: 15s
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    listener:
+      simple:
+        acknowledge-mode: manual
+        concurrency: 1
+        max-concurrency: 1
+        prefetch: 2
+        missing-queues-fatal: false
+        default-requeue-rejected: false
+bidcheck:
+  queue:
+    enabled: ${BIDCHECK_RABBIT_ENABLED:true}
+    name: bidcheck.task.ready.v1
+    exchange: bidcheck.tasks.v1
+    routing-key: ready
+    confirm-timeout-ms: 2000
+    database-fallback-delay-ms: 2000
+  tasks:
+    lease-ms: 120000
+    heartbeat-ms: 10000

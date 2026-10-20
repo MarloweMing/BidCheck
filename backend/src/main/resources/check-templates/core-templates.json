@@ -1,0 +1,288 @@
+[
+  {
+    "id": "MATERIAL_PRESENT",
+    "version": "1.0",
+    "title": "指定材料正文",
+    "evaluatorId": "material-present",
+    "proofStandard": "MATERIAL_SUBMISSION",
+    "parameters": {
+      "materialType": {"type": "string", "required": true},
+      "requireBody": {"type": "boolean", "required": false, "defaultValue": true}
+    },
+    "fixedSubchecks": ["material"]
+  },
+  {
+    "id": "COMMITMENT_WITH_SEAL",
+    "version": "1.0",
+    "title": "承诺书及盖章",
+    "evaluatorId": "commitment-with-seal",
+    "proofStandard": "WRITTEN_COMMITMENT",
+    "parameters": {
+      "materialType": {"type": "string", "required": true},
+      "requiredCommitmentPoints": {"type": "string-array", "required": true},
+      "issuerRole": {"type": "string", "required": true},
+      "sealLocation": {"type": "string", "required": true}
+    },
+    "fixedSubchecks": ["body", "points", "issuer", "seal"]
+  },
+  {
+    "id": "MATERIAL_ALTERNATIVE",
+    "version": "1.0",
+    "title": "替代证明材料",
+    "evaluatorId": "material-alternative",
+    "proofStandard": "MATERIAL_SUBMISSION",
+    "parameters": {
+      "alternatives": {"type": "string-array", "required": true},
+      "atLeast": {"type": "integer", "required": false, "defaultValue": 1},
+      "requireBody": {"type": "boolean", "required": false, "defaultValue": true}
+    },
+    "fixedSubchecks": ["alternative"]
+  },
+  {
+    "id": "CERTIFICATE_VALIDITY",
+    "version": "1.0",
+    "title": "证书有效期",
+    "evaluatorId": "certificate-validity",
+    "proofStandard": "FACTUAL_CONDITION",
+    "parameters": {
+      "certificateType": {"type": "string", "required": true},
+      "comparisonDate": {"type": "date", "required": true},
+      "inclusive": {"type": "boolean", "required": false, "defaultValue": true}
+    },
+    "fixedSubchecks": ["validity"]
+  },
+  {
+    "id": "PRICE_COMPARE",
+    "version": "1.0",
+    "title": "报价比较",
+    "evaluatorId": "price-compare",
+    "proofStandard": "FACTUAL_CONDITION",
+    "parameters": {
+      "field": {"type": "string", "required": true},
+      "operator": {"type": "string", "required": true, "allowedValues": ["=", "!=", "<=", "<", ">=", ">"]},
+      "expected": {"type": "decimal", "required": true},
+      "currency": {"type": "string", "required": false, "defaultValue": "CNY"},
+      "unit": {"type": "string", "required": false, "defaultValue": "元"},
+      "taxBasis": {"type": "string", "required": false},
+      "lot": {"type": "string", "required": false},
+      "priceLayer": {"type": "string", "required": false},
+      "tolerance": {"type": "decimal", "required": false, "defaultValue": "0"}
+    },
+    "fixedSubchecks": ["price"]
+  },
+  {
+    "id": "PERSONNEL_ROSTER",
+    "version": "1.0",
+    "title": "岗位人员名单",
+    "evaluatorId": "personnel-roster",
+    "proofStandard": "FACTUAL_CONDITION",
+    "parameters": {
+      "role": {"type": "string", "required": true},
+      "minCount": {"type": "integer", "required": false, "defaultValue": 1},
+      "maxCount": {"type": "integer", "required": false},
+      "allowConcurrent": {"type": "boolean", "required": false, "defaultValue": true},
+      "disallowedRoles": {"type": "string-array", "required": false},
+      "consortiumRole": {"type": "string", "required": false},
+      "employerKey": {"type": "string", "required": false}
+    },
+    "fixedSubchecks": ["minimum", "maximum", "concurrency"]
+  },
+  {
+    "id": "SECTION_CHECKLIST",
+    "version": "1.0",
+    "title": "章节组成清单",
+    "evaluatorId": "section-checklist",
+    "proofStandard": "MATERIAL_SUBMISSION",
+    "parameters": {
+      "requiredItems": {"type": "string-array", "required": true},
+      "requireBody": {"type": "boolean", "required": false, "defaultValue": true}
+    },
+    "fixedSubchecks": ["items"]
+  },
+  {
+    "id": "ENTITY_FIELD_MATCH",
+    "version": "1.0",
+    "title": "同一对象字段一致性",
+    "evaluatorId": "entity-field-match",
+    "proofStandard": "OBSERVED_CONSISTENCY",
+    "parameters": {
+      "role": {"type": "string", "required": true},
+      "leftField": {"type": "string", "required": true},
+      "rightField": {"type": "string", "required": true},
+      "certificateType": {"type": "string", "required": false},
+      "caseSensitive": {"type": "boolean", "required": false, "defaultValue": false}
+    },
+    "fixedSubchecks": ["subject-set", "field-values", "comparison"]
+  },
+  {
+    "id": "PERSONNEL_CREDENTIAL",
+    "version": "1.0",
+    "title": "人员证书与单位关系",
+    "evaluatorId": "personnel-credential",
+    "proofStandard": "FACTUAL_CONDITION",
+    "parameters": {
+      "role": {"type": "string", "required": true},
+      "certificateType": {"type": "string", "required": true},
+      "requiredLevel": {"type": "string", "required": false},
+      "levelAttribute": {"type": "string", "required": false, "defaultValue": "certificateLevel"},
+      "employerKey": {"type": "string", "required": false},
+      "requireEmployerMatch": {"type": "boolean", "required": false, "defaultValue": true},
+      "registeredEmployerAttribute": {"type": "string", "required": false, "defaultValue": "registeredEmployer"},
+      "comparisonDate": {"type": "date", "required": false},
+      "inclusive": {"type": "boolean", "required": false, "defaultValue": true}
+    },
+    "fixedSubchecks": ["appointment", "certificate", "level", "employer", "validity"]
+  },
+  {
+    "id": "CONSORTIUM_RESPONSIBILITY",
+    "version": "1.0",
+    "title": "联合体成员与责任分工",
+    "evaluatorId": "consortium-responsibility",
+    "proofStandard": "FACTUAL_CONDITION",
+    "parameters": {
+      "materialType": {"type": "string", "required": false, "defaultValue": "联合体协议书"},
+      "requiredMemberRoles": {"type": "string-array", "required": true},
+      "requiredResponsibilities": {"type": "string-array", "required": true},
+      "leadRole": {"type": "string", "required": true},
+      "minMembers": {"type": "integer", "required": false, "defaultValue": 2},
+      "memberPrefix": {"type": "string", "required": false, "defaultValue": "成员:"}
+    },
+    "fixedSubchecks": ["agreement", "members", "roles", "responsibilities", "lead"]
+  },
+  {
+    "id": "PRICE_RECONCILE",
+    "version": "1.0",
+    "title": "报价合计勾稽",
+    "evaluatorId": "price-reconcile",
+    "proofStandard": "FACTUAL_CONDITION",
+    "parameters": {
+      "totalField": {"type": "string", "required": true},
+      "componentFields": {"type": "string-array", "required": true},
+      "currency": {"type": "string", "required": false, "defaultValue": "CNY"},
+      "unit": {"type": "string", "required": false, "defaultValue": "元"},
+      "taxBasis": {"type": "string", "required": false},
+      "lot": {"type": "string", "required": false},
+      "priceLayer": {"type": "string", "required": false},
+      "totalPriceLayer": {"type": "string", "required": false},
+      "calculation": {"type": "string", "required": false, "defaultValue": "TOTAL_EQUALS_COMPONENT_SUM", "allowedValues": ["TOTAL_EQUALS_COMPONENT_SUM", "AMOUNT_REPRESENTATIONS_EQUAL"]},
+      "tolerance": {"type": "decimal", "required": false, "defaultValue": "0"}
+    },
+    "fixedSubchecks": ["fields", "reconcile"]
+  },
+  {
+    "id": "DURATION_COMPARE",
+    "version": "1.0",
+    "title": "期限口径比较",
+    "evaluatorId": "duration-compare",
+    "proofStandard": "FACTUAL_CONDITION",
+    "parameters": {
+      "field": {"type": "string", "required": true},
+      "operator": {"type": "string", "required": true, "allowedValues": ["=", "!=", "<=", "<", ">=", ">"]},
+      "expected": {"type": "decimal", "required": true},
+      "unit": {"type": "string", "required": false, "defaultValue": "日"},
+      "startEvent": {"type": "string", "required": false},
+      "calendarBasis": {"type": "string", "required": false},
+      "lot": {"type": "string", "required": false},
+      "tolerance": {"type": "decimal", "required": false, "defaultValue": "0"}
+    },
+    "fixedSubchecks": ["duration"]
+  },
+  {
+    "id": "CROSS_DOCUMENT_CONSISTENCY",
+    "version": "1.0",
+    "title": "跨文档字段一致性",
+    "evaluatorId": "cross-document-consistency",
+    "proofStandard": "OBSERVED_CONSISTENCY",
+    "parameters": {
+      "field": {"type": "string", "required": true},
+      "minimumOccurrences": {"type": "integer", "required": false, "defaultValue": 2},
+      "caseSensitive": {"type": "boolean", "required": false, "defaultValue": false}
+    },
+    "fixedSubchecks": ["coverage", "comparison"]
+  },
+  {
+    "id": "FORM_FIELD_COMPLETENESS",
+    "version": "1.0",
+    "title": "表单必填字段完整性",
+    "evaluatorId": "form-field-completeness",
+    "proofStandard": "FACTUAL_CONDITION",
+    "parameters": {
+      "formType": {"type": "string", "required": true},
+      "requiredFields": {"type": "string-array", "required": true},
+      "expectedSubject": {"type": "string", "required": false}
+    },
+    "fixedSubchecks": ["fields"]
+  },
+  {
+    "id": "DATE_RELATION",
+    "version": "1.0",
+    "title": "日期角色关系",
+    "evaluatorId": "date-relation",
+    "proofStandard": "FACTUAL_CONDITION",
+    "parameters": {
+      "leftRole": {"type": "string", "required": true},
+      "rightRole": {"type": "string", "required": true},
+      "operator": {"type": "string", "required": true, "allowedValues": ["=", "!=", "<=", "<", ">=", ">"]},
+      "maxDifferenceDays": {"type": "integer", "required": false},
+      "relationKey": {"type": "string", "required": false}
+    },
+    "fixedSubchecks": ["relation"]
+  },
+  {
+    "id": "TEXT_ANOMALY",
+    "version": "1.0",
+    "title": "文字异常候选",
+    "evaluatorId": "text-anomaly",
+    "proofStandard": "QUALITY_ADVISORY",
+    "parameters": {
+      "textScope": {"type": "string", "required": true},
+      "anomalyTypes": {"type": "string-array", "required": false, "defaultValue": ["TYPO", "TRUNCATED", "OCR_SUSPECT"]},
+      "typoDictionary": {"type": "string-array", "required": false}
+    },
+    "fixedSubchecks": ["anomalies"]
+  },
+  {
+    "id": "OBJECTIVE_SCORING",
+    "version": "1.0",
+    "title": "已识别客观分值汇总",
+    "evaluatorId": "objective-scoring",
+    "proofStandard": "FACTUAL_CONDITION",
+    "parameters": {
+      "criterion": {"type": "string", "required": true},
+      "aggregation": {"type": "string", "required": false, "allowedValues": ["SUM", "HIGHEST"], "defaultValue": "HIGHEST"},
+      "maxScore": {"type": "decimal", "required": true},
+      "scoreUnit": {"type": "string", "required": false, "defaultValue": "分"},
+      "deduplicateBySubject": {"type": "boolean", "required": false, "defaultValue": true}
+    },
+    "fixedSubchecks": ["score"]
+  },
+  {
+    "id": "QUALITY_ADVISORY",
+    "version": "1.0",
+    "title": "方案质量建议",
+    "evaluatorId": "quality-advisory",
+    "proofStandard": "QUALITY_ADVISORY",
+    "parameters": {
+      "materialType": {"type": "string", "required": true},
+      "dimensions": {"type": "string-array", "required": true},
+      "highestTierDescription": {"type": "string", "required": false}
+    },
+    "fixedSubchecks": ["dimensions"]
+  },
+  {
+    "id": "EXTERNAL_CHECK",
+    "version": "1.0",
+    "title": "外部数据核验",
+    "evaluatorId": "external-check",
+    "proofStandard": "FACTUAL_CONDITION",
+    "parameters": {
+      "source": {"type": "string", "required": true},
+      "queryObject": {"type": "string", "required": true},
+      "requiredFields": {"type": "string-array", "required": true},
+      "asOfDate": {"type": "date", "required": true},
+      "adapterId": {"type": "string", "required": true},
+      "evaluationStage": {"type": "string", "required": true, "allowedValues": ["BID_OPENING", "TENDER_DEADLINE", "EVALUATION"]}
+    },
+    "fixedSubchecks": ["external-record"]
+  }
+]

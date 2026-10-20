@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.bidcheck.persistence.FactMapper">
+ <resultMap id="Entity" type="cn.bidcheck.persistence.FactRows$Entity">
+  <result property="id" column="id" javaType="java.lang.String"/>
+  <result property="entityId" column="entity_id" javaType="java.lang.String"/>
+  <result property="projectId" column="project_id" javaType="java.lang.String"/>
+  <result property="engineKey" column="engine_key" javaType="java.lang.String"/>
+  <result property="engineIdentity" column="engine_identity" javaType="java.lang.String"/>
+  <result property="entityType" column="entity_type" javaType="java.lang.String"/>
+  <result property="identityStrength" column="identity_strength" javaType="java.lang.String"/>
+  <result property="displayName" column="display_name" javaType="java.lang.String"/>
+  <result property="identifiersJson" column="identifiers_json" javaType="java.lang.String"/>
+  <result property="claimsJson" column="claims_json" javaType="java.lang.String"/>
+  <result property="auditJson" column="audit_json" javaType="java.lang.String"/>
+  <result property="contentHash" column="content_hash" javaType="java.lang.String"/>
+ </resultMap>
+ <select id="getEntity" resultMap="Entity">SELECT * FROM qc_entity WHERE id=#{id}</select>
+ <insert id="insertEntity">INSERT INTO qc_entity(id,entity_id,project_id,engine_key,engine_identity,entity_type,identity_strength,display_name,identifiers_json,claims_json,audit_json,content_hash) VALUES(#{id},#{entityId},#{projectId},#{engineKey},#{engineIdentity},#{entityType},#{identityStrength},#{displayName},#{identifiersJson},#{claimsJson},#{auditJson},#{contentHash})</insert>
+ <resultMap id="Occurrence" type="cn.bidcheck.persistence.FactRows$Occurrence">
+  <result property="id" column="id" javaType="java.lang.String"/>
+  <result property="projectId" column="project_id" javaType="java.lang.String"/>
+  <result property="engineKey" column="engine_key" javaType="java.lang.String"/>
+  <result property="engineIdentity" column="engine_identity" javaType="java.lang.String"/>
+  <result property="entityKey" column="entity_key" javaType="java.lang.String"/>
+  <result property="kind" column="kind" javaType="java.lang.String"/>
+  <result property="subject" column="subject_text" javaType="java.lang.String"/>
+  <result property="field" column="field_name" javaType="java.lang.String"/>
+  <result property="fieldHash" column="field_hash" javaType="java.lang.String"/>
+  <result property="rawValue" column="raw_value" javaType="java.lang.String"/>
+  <result property="value" column="normalized_value" javaType="java.lang.String"/>
+  <result property="unit" column="unit" javaType="java.lang.String"/>
+  <result property="basis" column="basis" javaType="java.lang.String"/>
+  <result property="scope" column="scope_type" javaType="java.lang.String"/>
+  <result property="modelFactId" column="model_fact_id" javaType="java.lang.String"/>
+  <result property="attributesJson" column="attributes_json" javaType="java.lang.String"/>
+  <result property="entityAuditJson" column="entity_audit_json" javaType="java.lang.String"/>
+  <result property="layoutIdentity" column="layout_identity" javaType="java.lang.String"/>
+  <result property="createdAt" column="created_at" javaType="java.lang.String"/>
+  <result property="ledgerVersion" column="ledger_version" javaType="java.lang.String"/>
+  <result property="documentId" column="document_id" javaType="java.lang.String"/>
+  <result property="documentVersion" column="document_version"/>
+  <result property="documentHash" column="document_hash" javaType="java.lang.String"/>
+  <result property="contentHash" column="content_hash" javaType="java.lang.String"/>
+  <result property="sourceDomain" column="source_domain" javaType="java.lang.String"/>
+  <result property="extractionMethod" column="extraction_method" javaType="java.lang.String"/>
+ </resultMap>
+ <select id="getOccurrence" resultMap="Occurrence">SELECT * FROM qc_fact_occurrence WHERE id=#{id}</select>
+ <select id="existingOccurrenceIds" resultType="java.lang.String">SELECT id FROM qc_fact_occurrence WHERE id IN <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach></select>
+ <select id="getEntities" resultMap="Entity">SELECT * FROM qc_entity WHERE id IN <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach></select>
+ <insert id="insertOccurrence">INSERT INTO qc_fact_occurrence(id,project_id,engine_key,engine_identity,entity_key,kind,subject_text,field_name,field_hash,raw_value,normalized_value,unit,basis,scope_type,model_fact_id,attributes_json,entity_audit_json,layout_identity,created_at,ledger_version,document_id,document_version,document_hash,content_hash,source_domain,extraction_method) VALUES(#{id},#{projectId},#{engineKey},#{engineIdentity},#{entityKey},#{kind},#{subject},#{field},#{fieldHash},#{rawValue},#{value},#{unit},#{basis},#{scope},#{modelFactId},#{attributesJson},#{entityAuditJson},#{layoutIdentity},#{createdAt},#{ledgerVersion},#{documentId},#{documentVersion},#{documentHash},#{contentHash},#{sourceDomain},#{extractionMethod})</insert>
+ <resultMap id="Evidence" type="cn.bidcheck.persistence.FactRows$Evidence">
+  <result property="id" column="id" javaType="java.lang.String"/>
+  <result property="projectId" column="project_id" javaType="java.lang.String"/>
+  <result property="engineKey" column="engine_key" javaType="java.lang.String"/>
+  <result property="documentId" column="document_id" javaType="java.lang.String"/>
+  <result property="documentName" column="document_name" javaType="java.lang.String"/>
+  <result property="documentHash" column="document_hash" javaType="java.lang.String"/>
+  <result property="documentVersion" column="document_version"/>
+  <result property="parserFingerprint" column="parser_fingerprint" javaType="java.lang.String"/>
+  <result property="sourceFingerprint" column="source_fingerprint" javaType="java.lang.String"/>
+  <result property="locationType" column="location_type" javaType="java.lang.String"/>
+  <result property="locationNumber" column="location_number"/>
+  <result property="quote" column="quote_text" javaType="java.lang.String"/>
+  <result property="anchor" column="anchor_text" javaType="java.lang.String"/>
+  <result property="confidence" column="confidence"/>
+  <result property="contentHash" column="content_hash" javaType="java.lang.String"/>
+ </resultMap>
+ <select id="getEvidence" resultMap="Evidence">SELECT * FROM qc_evidence WHERE id=#{id}</select>
+ <select id="getEvidences" resultMap="Evidence">SELECT * FROM qc_evidence WHERE id IN <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach></select>
+ <insert id="insertEvidence">INSERT INTO qc_evidence(id,project_id,engine_key,document_id,document_name,document_hash,document_version,parser_fingerprint,source_fingerprint,location_type,location_number,quote_text,anchor_text,confidence,content_hash) VALUES(#{id},#{projectId},#{engineKey},#{documentId},#{documentName},#{documentHash},#{documentVersion},#{parserFingerprint},#{sourceFingerprint},#{locationType},#{locationNumber},#{quote},#{anchor},#{confidence},#{contentHash})</insert>
+ <resultMap id="Link" type="cn.bidcheck.persistence.FactRows$Link">
+  <result property="id" column="id" javaType="java.lang.String"/>
+  <result property="occurrenceId" column="occurrence_id" javaType="java.lang.String"/>
+  <result property="projectId" column="project_id" javaType="java.lang.String"/>
+  <result property="engineKey" column="engine_key" javaType="java.lang.String"/>
+  <result property="subjectEntityKey" column="subject_entity_key" javaType="java.lang.String"/>
+  <result property="kind" column="kind" javaType="java.lang.String"/>
+  <result property="predicate" column="predicate" javaType="java.lang.String"/>
+  <result property="predicateHash" column="predicate_hash" javaType="java.lang.String"/>
+  <result property="object" column="object_text" javaType="java.lang.String"/>
+  <result property="scope" column="scope_type" javaType="java.lang.String"/>
+  <result property="resolution" column="resolution" javaType="java.lang.String"/>
+  <result property="attributesJson" column="attributes_json" javaType="java.lang.String"/>
+ </resultMap>
+ <select id="getLink" resultMap="Link">SELECT * FROM qc_entity_link WHERE id=#{id}</select>
+ <insert id="insertLink">INSERT INTO qc_entity_link(id,occurrence_id,project_id,engine_key,subject_entity_key,kind,predicate,predicate_hash,object_text,scope_type,resolution,attributes_json) VALUES(#{id},#{occurrenceId},#{projectId},#{engineKey},#{subjectEntityKey},#{kind},#{predicate},#{predicateHash},#{object},#{scope},#{resolution},#{attributesJson})</insert>
+ <resultMap id="Source" type="cn.bidcheck.persistence.FactRows$Source">
+  <result property="id" column="id" javaType="java.lang.String"/>
+  <result property="projectId" column="project_id" javaType="java.lang.String"/>
+  <result property="engineKey" column="engine_key" javaType="java.lang.String"/>
+  <result property="documentId" column="document_id" javaType="java.lang.String"/>
+  <result property="documentName" column="document_name" javaType="java.lang.String"/>
+  <result property="documentHash" column="document_hash" javaType="java.lang.String"/>
+  <result property="documentVersion" column="document_version"/>
+  <result property="parserFingerprint" column="parser_fingerprint" javaType="java.lang.String"/>
+  <result property="sourceFingerprint" column="source_fingerprint" javaType="java.lang.String"/>
+  <result property="locationType" column="location_type" javaType="java.lang.String"/>
+  <result property="locationNumber" column="location_number"/>
+  <result property="quote" column="quote_text" javaType="java.lang.String"/>
+  <result property="anchor" column="anchor_text" javaType="java.lang.String"/>
+  <result property="confidence" column="confidence"/>
+  <result property="contentHash" column="content_hash" javaType="java.lang.String"/>
+  <result property="sourceId" column="local_source_id"/><result property="sourceOrder" column="source_order"/>
+ </resultMap>
+ <select id="sources" resultMap="Source">SELECT e.*, f.source_id AS local_source_id, f.source_order FROM qc_fact_evidence f JOIN qc_evidence e ON e.id=f.evidence_id WHERE f.occurrence_id=#{id} ORDER BY f.source_order</select>
+ <insert id="attach">INSERT INTO qc_fact_evidence(occurrence_id,evidence_id,source_id,source_order) VALUES(#{occurrenceId},#{evidenceId},#{sourceId},#{sourceOrder})</insert>
+ <insert id="attachBatch">INSERT INTO qc_fact_evidence(occurrence_id,evidence_id,source_id,source_order) VALUES <foreach collection="rows" item="row" separator=",">(#{row.occurrenceId},#{row.evidenceId},#{row.sourceId},#{row.sourceOrder})</foreach></insert>
+<select id="nativeIds" resultType="java.lang.String">SELECT id FROM qc_fact_occurrence WHERE project_id=#{project} AND engine_key=#{engine} AND document_id=#{document} AND document_version=#{version} AND document_hash=#{hash} AND source_domain='NATIVE_FACT' ORDER BY created_at,id</select>
+<resultMap id="NativeFact" type="cn.bidcheck.persistence.FactRows$NativeFact">
+ <result property="occurrenceId" column="occurrence_id"/><result property="attributesJson" column="attributes_json"/>
+ <result property="field" column="field_name"/><result property="rawValue" column="raw_value"/><result property="value" column="normalized_value"/>
+ <result property="projectId" column="project_id"/>
+ <result property="documentId" column="document_id"/><result property="documentName" column="document_name"/>
+ <result property="documentHash" column="document_hash"/><result property="documentVersion" column="document_version"/>
+ <result property="parserFingerprint" column="parser_fingerprint"/><result property="sourceFingerprint" column="source_fingerprint"/>
+ <result property="locationNumber" column="location_number"/><result property="locationType" column="location_type"/>
+ <result property="quote" column="quote_text"/><result property="anchor" column="anchor_text"/><result property="confidence" column="confidence"/>
+ <result property="sourceId" column="local_source_id"/><result property="sourceOrder" column="source_order"/>
+</resultMap>
+<select id="nativeFacts" resultMap="NativeFact">
+ SELECT o.id AS occurrence_id,o.attributes_json,o.field_name,o.raw_value,o.normalized_value,
+        e.project_id,e.document_id,e.document_name,e.document_hash,e.document_version,e.parser_fingerprint,e.source_fingerprint,
+        e.location_number,e.location_type,e.quote_text,e.anchor_text,e.confidence,
+        fe.source_id AS local_source_id,fe.source_order
+ FROM qc_fact_occurrence o
+ JOIN qc_fact_evidence fe ON fe.occurrence_id=o.id
+ JOIN qc_evidence e ON e.id=fe.evidence_id
+ WHERE o.project_id=#{project} AND o.engine_key=#{engine} AND o.document_id=#{document}
+   AND o.document_version=#{version} AND o.document_hash=#{hash} AND o.source_domain='NATIVE_FACT'
+ ORDER BY o.created_at,o.id,fe.source_order
+</select>
+<resultMap id="LegacyStored" type="cn.bidcheck.persistence.Stored"><result property="id" column="id"/><result property="kind" column="kind"/><result property="projectId" column="project_id"/><result property="parentId" column="parent_id"/><result property="createdAt" column="created_at"/><result property="body" column="body"/></resultMap>
+<select id="legacyRows" resultMap="LegacyStored">SELECT id,kind,project_id,parent_id,created_at,body FROM qc_record WHERE kind='fact_occurrence' AND project_id=#{project} AND (created_at &gt; #{afterCreatedAt} OR (created_at=#{afterCreatedAt} AND id &gt; #{afterId})) ORDER BY created_at,id LIMIT #{limit}</select>
+</mapper>

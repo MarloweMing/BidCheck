@@ -1,0 +1,137 @@
+server:
+  address: ${BIDCHECK_ADDRESS:127.0.0.1}
+  port: ${BIDCHECK_PORT:8787}
+  shutdown: graceful
+  tomcat:
+    threads:
+      max: 32
+      min-spare: 4
+    max-connections: 128
+    accept-count: 64
+    connection-timeout: 15s
+    keep-alive-timeout: 15s
+  error:
+    include-message: never
+spring:
+  datasource:
+    url: jdbc:h2:file:${BIDCHECK_DATA:./data}/bidcheck;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password: ${BIDCHECK_DB_PASSWORD:}
+  sql:
+    init:
+      mode: always
+  servlet:
+    multipart:
+      max-file-size: 1024MB
+      max-request-size: 1025MB
+      file-size-threshold: 0B
+  jackson:
+    default-property-inclusion: non_null
+mybatis:
+  mapper-locations: classpath:mappers/*.xml
+bidcheck:
+  data: ${BIDCHECK_DATA:./data}
+  check-mode: ${BIDCHECK_CHECK_MODE:RULES_RETRIEVAL}
+  # Affects newly created runs only. Each run freezes its route and evaluator identity.
+  template-route-enabled: ${BIDCHECK_TEMPLATE_ROUTE_ENABLED:true}
+  check-concurrency: ${BIDCHECK_CHECK_CONCURRENCY:3}
+  processing:
+    automatic-visual-enabled: ${BIDCHECK_PROCESSING_AUTOMATIC_VISUAL_ENABLED:false}
+    max-visual-calls: ${BIDCHECK_PROCESSING_MAX_VISUAL_CALLS:128}
+    full-visual-hard-limit: ${BIDCHECK_PROCESSING_FULL_VISUAL_HARD_LIMIT:2048}
+  consistency:
+    model:
+      max-calls: ${BIDCHECK_CONSISTENCY_MAX_CALLS:-1}
+      max-batch-characters: ${BIDCHECK_CONSISTENCY_MAX_BATCH_CHARACTERS:8000}
+      concurrency: ${BIDCHECK_CONSISTENCY_CONCURRENCY:3}
+      max-retries: ${BIDCHECK_CONSISTENCY_MAX_RETRIES:1}
+      max-split-depth: ${BIDCHECK_CONSISTENCY_MAX_SPLIT_DEPTH:2}
+      timeout-seconds: ${BIDCHECK_CONSISTENCY_TIMEOUT_SECONDS:120}
+  word:
+    enabled: ${BIDCHECK_WORD_ENABLED:true}
+    license-path: ${BIDCHECK_WORD_LICENSE_PATH:}
+  verification:
+    max-visual-calls: ${BIDCHECK_VERIFICATION_MAX_VISUAL_CALLS:12}
+    max-model-calls: ${BIDCHECK_VERIFICATION_MAX_MODEL_CALLS:-1}
+    input-poll-ms: 2000
+  visual:
+    enabled: ${BIDCHECK_VISUAL_ENABLED:false}
+    url: ${BIDCHECK_VISUAL_URL:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions}
+    key: ${BIDCHECK_VISUAL_KEY:${BIDCHECK_MODEL_KEY:}}
+    model: ${BIDCHECK_VISUAL_MODEL:qwen3-vl-plus}
+    max-concurrency: ${BIDCHECK_VISUAL_MAX_CONCURRENCY:6}
+    window-concurrency: ${BIDCHECK_VISUAL_WINDOW_CONCURRENCY:4}
+    max-pending: ${BIDCHECK_VISUAL_MAX_PENDING:16}
+    max-window-pixels: ${BIDCHECK_VISUAL_MAX_WINDOW_PIXELS:8000000}
+    max-window-bytes: ${BIDCHECK_VISUAL_MAX_WINDOW_BYTES:8388608}
+    structured-timeout-seconds: ${BIDCHECK_VISUAL_STRUCTURED_TIMEOUT_SECONDS:120}
+    compact-structured-output-enabled: ${BIDCHECK_VISUAL_COMPACT_STRUCTURED_OUTPUT_ENABLED:false}
+    source-span-output-enabled: ${BIDCHECK_VISUAL_SOURCE_SPAN_OUTPUT_ENABLED:false}
+  storage:
+    type: ${BIDCHECK_STORAGE_TYPE:local}
+    endpoint: ${BIDCHECK_STORAGE_ENDPOINT:}
+    access-key: ${BIDCHECK_STORAGE_ACCESS_KEY:}
+    secret-key: ${BIDCHECK_STORAGE_SECRET_KEY:}
+    bucket: ${BIDCHECK_STORAGE_BUCKET:bidcheck}
+  semantic:
+    url: ${BIDCHECK_MODEL_URL:}
+    key: ${BIDCHECK_MODEL_KEY:}
+    model: ${BIDCHECK_MODEL:}
+    extraction-model: ${BIDCHECK_EXTRACTION_MODEL:${BIDCHECK_MODEL:}}
+    extraction-url: ${BIDCHECK_EXTRACTION_URL:${BIDCHECK_MODEL_URL:}}
+  retrieval:
+    enabled: ${BIDCHECK_RETRIEVAL_ENABLED:false}
+    embedding-url: ${BIDCHECK_EMBEDDING_URL:https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding}
+    rerank-url: ${BIDCHECK_RERANK_URL:https://dashscope.aliyuncs.com/compatible-api/v1/reranks}
+    key: ${BIDCHECK_RETRIEVAL_KEY:${BIDCHECK_MODEL_KEY:}}
+    embedding-model: ${BIDCHECK_EMBEDDING_MODEL:text-embedding-v4}
+    rerank-model: ${BIDCHECK_RERANK_MODEL:qwen3-rerank}
+    dimensions: ${BIDCHECK_EMBEDDING_DIMENSIONS:1024}
+    embedding-concurrency: ${BIDCHECK_EMBEDDING_CONCURRENCY:4}
+    preparation-timeout-seconds: ${BIDCHECK_RETRIEVAL_PREPARATION_TIMEOUT_SECONDS:600}
+    request-timeout-seconds: ${BIDCHECK_RETRIEVAL_REQUEST_TIMEOUT_SECONDS:30}
+    cache-dir: ${BIDCHECK_RETRIEVAL_CACHE:${bidcheck.data}/retrieval}
+  ocr:
+    pdf:
+      enabled: ${BIDCHECK_PDF_OCR_ENABLED:false}
+      url: ${BIDCHECK_PDF_OCR_URL:https://dashscope.aliyuncs.com/compatible-mode/v1/responses}
+      policy-url: ${BIDCHECK_PDF_OCR_POLICY_URL:https://dashscope.aliyuncs.com/api/v1/uploads}
+      key: ${BIDCHECK_PDF_OCR_KEY:${BIDCHECK_OCR_KEY:${BIDCHECK_MODEL_KEY:}}}
+      model: ${BIDCHECK_PDF_OCR_MODEL:qwen3.5-ocr}
+      timeout-seconds: ${BIDCHECK_PDF_OCR_TIMEOUT_SECONDS:300}
+      batch-pages: ${BIDCHECK_PDF_OCR_BATCH_PAGES:10}
+      concurrency: ${BIDCHECK_PDF_OCR_CONCURRENCY:5}
+      max-pages: ${BIDCHECK_PDF_OCR_MAX_PAGES:1000}
+      memory-bytes: ${BIDCHECK_PDF_OCR_MEMORY_BYTES:67108864}
+      max-batch-bytes: ${BIDCHECK_PDF_OCR_MAX_BATCH_BYTES:16777216}
+    layout:
+      enabled: ${BIDCHECK_OCR_LAYOUT_ENABLED:false}
+      engine: ${BIDCHECK_OCR_LAYOUT_ENGINE:native-grid}
+      python: ${BIDCHECK_OCR_LAYOUT_PYTHON:}
+      worker: ${BIDCHECK_OCR_LAYOUT_WORKER:scripts/structured_ocr/worker.py}
+      url: ${BIDCHECK_OCR_LAYOUT_URL:https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation}
+      key: ${BIDCHECK_OCR_LAYOUT_KEY:${BIDCHECK_VISUAL_KEY:${BIDCHECK_MODEL_KEY:}}}
+      model: ${BIDCHECK_OCR_LAYOUT_MODEL:${BIDCHECK_VISUAL_MODEL:qwen3-vl-plus}}
+      concurrency: ${BIDCHECK_OCR_LAYOUT_CONCURRENCY:4}
+      timeout-seconds: ${BIDCHECK_OCR_LAYOUT_TIMEOUT_SECONDS:45}
+    max-images: ${BIDCHECK_OCR_MAX_IMAGES:100}
+    concurrency: ${BIDCHECK_OCR_CONCURRENCY:4}
+    batch:
+      enabled: ${BIDCHECK_OCR_BATCH_ENABLED:true}
+      max-pages: ${BIDCHECK_OCR_BATCH_MAX_PAGES:8}
+      max-wait-ms: ${BIDCHECK_OCR_BATCH_MAX_WAIT_MS:300}
+      max-bytes: ${BIDCHECK_OCR_BATCH_MAX_BYTES:16777216}
+      max-pixels: ${BIDCHECK_OCR_BATCH_MAX_PIXELS:16000000}
+      max-estimated-tokens: ${BIDCHECK_OCR_BATCH_MAX_TOKENS:20000}
+    requests-per-minute: ${BIDCHECK_OCR_REQUESTS_PER_MINUTE:0}
+    request-burst: ${BIDCHECK_OCR_REQUEST_BURST:8}
+    circuit-failures: ${BIDCHECK_OCR_CIRCUIT_FAILURES:5}
+    circuit-open-ms: ${BIDCHECK_OCR_CIRCUIT_OPEN_MS:15000}
+    queue-capacity: ${BIDCHECK_OCR_QUEUE_CAPACITY:16}
+    retry-attempts: ${BIDCHECK_OCR_RETRY_ATTEMPTS:3}
+    retry-base-ms: ${BIDCHECK_OCR_RETRY_BASE_MS:100}
+    retry-max-delay-ms: ${BIDCHECK_OCR_RETRY_MAX_DELAY_MS:2000}
+    enabled: ${BIDCHECK_OCR_ENABLED:false}
+    url: ${BIDCHECK_OCR_URL:https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation}
+    key: ${BIDCHECK_OCR_KEY:${BIDCHECK_MODEL_KEY:}}
+    model: ${BIDCHECK_OCR_MODEL:qwen-vl-ocr-2025-11-20}

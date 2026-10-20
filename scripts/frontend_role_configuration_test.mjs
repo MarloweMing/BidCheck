@@ -1,0 +1,22 @@
+import fs from 'node:fs/promises';
+import vm from 'node:vm';
+import assert from 'node:assert/strict';
+const source=await fs.readFile('backend/src/main/resources/static/app.js','utf8');
+const element={addEventListener(){}};let networkCalls=0;
+const context=vm.createContext({console,Map,Set,window:{},document:{getElementById(){return element},addEventListener(){}},fetch(){networkCalls++;throw Error('Network forbidden')}});
+vm.runInContext(source.replace(/init\(\);\s*$/,'')+'\nglobalThis.qa={businessPresentation,findingDimensions,findingProofScope};',context);
+const q=context.qa;
+const condition=()=>({conditionRole:'REQUIREMENT',predicate:'PERSON_COUNT',status:'PASS',evaluated:true,evidences:[{page:22,quote:'拟在本合同任职：质量员'}],gaps:[],proof:{proofScope:'ROLE_CONFIGURATION_ONLY',provenDistinctPeople:0,provenExistenceLowerBound:1}});
+const finding=()=>({id:'f',checkpoint:{id:'c',title:'岗位配置',category:'资格检查'},evaluation:{status:'PASS',reason:'本次岗位已有明确任职人员',evidences:[{page:22,quote:'拟在本合同任职：质量员'}]},assessment:{atomicCheck:{complete:true,gaps:[],conditions:[condition()]}}});
+const checks=[];
+function check(name,run){try{run();checks.push({name,passed:true})}catch(error){checks.push({name,passed:false,error:String(error)})}}
+check('Single-person existence has limited presentation',()=>{const f=finding();assert.equal(q.findingProofScope(f).state,'ROLE_CONFIGURATION_ONLY');assert.equal(q.businessPresentation(f).label,'岗位配置已确认');assert.equal(q.findingDimensions(f).conclusion.label,'岗位配置已确认');assert.ok(q.businessPresentation(f).nextStep.includes('不代表人数上限'));});
+check('All required roles must be resolved',()=>{const f=finding();f.assessment.atomicCheck.conditions.push({...condition(),status:'UNDETERMINED'});assert.equal(q.findingProofScope(f).state,'UNSPECIFIED')});
+check('Incomplete atomic workflow cannot gain a scope label',()=>{for(const modify of [a=>a.complete=false,a=>a.gaps=[{code:'PERSON_SET_INCOMPLETE'}]]){const f=finding();modify(f.assessment.atomicCheck);assert.equal(q.findingProofScope(f).state,'UNSPECIFIED')}});
+check('Failed or unevaluated conditions cannot gain a scope label',()=>{for(const modify of [c=>c.evaluated=false,c=>c.evidences=[],c=>c.gaps=[{code:'SOURCE_INVALID'}],c=>c.proof={}]){const f=finding();modify(f.assessment.atomicCheck.conditions[0]);assert.equal(q.findingProofScope(f).state,'UNSPECIFIED')}});
+check('Mixed certificate proof must not be described as just staffing',()=>{const f=finding();f.assessment.atomicCheck.conditions.push({...condition(),predicate:'CERTIFICATE',proof:{verified:true}});assert.notEqual(q.findingProofScope(f).state,'ROLE_CONFIGURATION_ONLY')});
+check('Exact count or other proof scope cannot use configuration label',()=>{const f=finding();f.assessment.atomicCheck.conditions[0].proof.proofScope='EXACT_COUNT';assert.equal(q.findingProofScope(f).state,'UNSPECIFIED')});
+check('Unresolved final result cannot acquire a pass label',()=>{const f=finding();f.evaluation.status='UNDETERMINED';assert.equal(q.findingProofScope(f).state,'UNSPECIFIED')});
+check('No network or business writes',()=>assert.equal(networkCalls,0));
+const result={status:checks.every(c=>c.passed)?'PASSED':'FAILED',passed:checks.filter(c=>c.passed).length,failed:checks.filter(c=>!c.passed).length,networkCalls,checks};
+const out=process.argv[2];if(out){await fs.mkdir(out,{recursive:true});await fs.writeFile(out+'/role-configuration-tests.json',JSON.stringify(result,null,2),{flag:'wx'});}console.log(JSON.stringify(result));if(result.failed)process.exitCode=1;

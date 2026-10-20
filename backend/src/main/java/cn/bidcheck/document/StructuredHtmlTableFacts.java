@@ -1,0 +1,208 @@
+package cn.bidcheck.document;
+
+import cn.bidcheck.domain.Domain.*;
+import java.util.*;
+import java.util.regex.*;
+
+/**
+ * A deliberately small parser for the explicit social-insurance grid returned by PDF OCR.
+ * It validates the supplied structure, not its visual accuracy or the authenticity of a payment.
+ * It never upgrades OCR HTML to native geometry, a person identity, or continuous-month evidence.
+ */
+public final class StructuredHtmlTableFacts {
+    public static final String VERSION = "structured-html-insurance-1";
+    public static final String SCHEMA = "SOCIAL_INSURANCE_TABLE_V1";
+    public static final int MAX_TABLE_CHARACTERS = 10_000;
+    private static final int COLUMNS = 7, MAX_ROWS = 200, MAX_CELLS = 1000;
+    private static final Pattern TABLE_HINT = Pattern.compile("(?is)<table\\b");
+    private static final Pattern TABLE_OPEN = Pattern.compile("(?is)<table\\b[^<>]*>");
+    private static final Pattern TABLE_CLOSE = Pattern.compile("(?is)</table\\s*>");
+    private static final Pattern TAG = Pattern.compile("(?is)<(/?)([a-z][a-z0-9]*)([^<>]*)>");
+    private static final Pattern ATTRIBUTE = Pattern.compile("\\s+([A-Za-z_:][-A-Za-z0-9_:]*)(?:\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s\"'=<>`]+)))?");
+    private static final List<String> FIELDS = List.of("insuranceSequence", "insuredPersonName", "socialSecurityNumber",
+            "insuranceType", "contributionStart", "contributionEnd", "paidMonths");
+    private StructuredHtmlTableFacts() { }
+
+    public record Result(boolean complete, String schema, List<Fact> facts, List<String> issues) {
+        public Result { facts = List.copyOf(facts); issues = List.copyOf(issues); }
+    }
+
+    public static Result analyze(Document document, Page page) {
+        if (page != null && page.text() != null && !TABLE_HINT.matcher(page.text()).find())
+            return new Result(false, "", List.of(), List.of());
+        if (document == null || page == null || page.text() == null || document.pages() == null
+                || document.pages().stream().noneMatch(p -> p.number() == page.number() && Objects.equals(p.locationType(), page.locationType())
+                && Objects.equals(p.text(), page.text()))) return rejected("HTML_TABLE_SOURCE_INVALID");
+        if (page.warning() != null && (page.warning().contains("[OCR未完成]") || page.warning().contains("[OCR_DEFERRED]")))
+            return rejected("HTML_TABLE_SOURCE_INCOMPLETE");
+        if (page.text().length() > 50_000) return rejected("HTML_TABLE_LIMIT");
+        try {
+            Matcher open = TABLE_OPEN.matcher(page.text()), close = TABLE_CLOSE.matcher(page.text());
+            if (!open.find()) return rejected("HTML_TABLE_NOT_PRESENT");
+            int start = open.start();
+            if (open.find() || !close.find()) return rejected("HTML_TABLE_INCOMPLETE");
+            int end = close.end();
+            if (close.find() || end <= start) return rejected("HTML_TABLE_INCOMPLETE");
+            String html = page.text().substring(start, end);
+            if (html.length() > MAX_TABLE_CHARACTERS) return rejected("HTML_TABLE_LIMIT");
+            List<List<Cell>> rows = parse(html);
+            Cell[][] grid = grid(rows);
+            int headerRows = headers(grid);
+            if (rows.size() <= headerRows) return rejected("HTML_TABLE_NO_DATA");
+            List<Fact> facts = new ArrayList<>(); LinkedHashSet<String> issues = new LinkedHashSet<>();
+            for (int r = headerRows; r < grid.length; r++) {
+                Cell sequence = grid[r][0], name = grid[r][1], number = grid[r][2];
+                if (sequence.row != name.row || name.row != number.row || sequence.rowSpan != name.rowSpan
+                        || name.rowSpan != number.rowSpan || sequence.row < headerRows)
+                    throw invalid("HTML_TABLE_IDENTITY_SPAN_MISMATCH");
+                for (int c = 0; c < COLUMNS; c++) {
+                    Cell cell = grid[r][c];
+                    if (cell.columnSpan != 1 || c >= 3 && (cell.row != r || cell.rowSpan != 1))
+                        throw invalid("HTML_TABLE_DATA_SPAN_UNSUPPORTED");
+                }
+                boolean anonymous = sequence.value.isBlank() && name.value.isBlank() && number.value.isBlank();
+                if (anonymous) issues.add("存在身份信息为空的缴费记录，未关联到任何人员，需人工核对。");
+                else if (sequence.value.isBlank() || name.value.isBlank() || number.value.isBlank())
+                    throw invalid("HTML_TABLE_PARTIAL_IDENTITY");
+                if (!anonymous && !sequence.value.matches("[0-9]{1,5}")) throw invalid("HTML_TABLE_SEQUENCE_UNSUPPORTED");
+                // Labels constrain the interpretation. Dates and counts remain exactly what the source
+                // states; they are not expanded into months, attributed to a role, or treated as a total.
+                if (grid[r][3].value.isBlank() || grid[r][6].value.isBlank()) throw invalid("HTML_TABLE_REQUIRED_VALUE_MISSING");
+                if (!grid[r][6].value.matches("[0-9]{1,4}")) throw invalid("HTML_TABLE_MONTH_VALUE_UNSUPPORTED");
+                for (Cell cell : rows.get(r)) {
+                    if (cell.value.isBlank()) continue;
+                    if (cell.value.length() > 200 || cell.raw.length() > 500) throw invalid("HTML_TABLE_VALUE_LIMIT");
+                    // One occurrence for each physical source cell. Rowspan inheritance is validated
+                    // by the grid above, but must never multiply a name into several extracted facts.
+                    String rowKey = document.id() + ":v" + document.version() + ":" + document.sha256() + ":" + page.locationType()
+                            + ":p" + page.number() + ":table" + start + ":identity" + (sequence.row + 1) + ":row" + (r + 1);
+                    String anchor = "html-table:" + start + ":r" + (cell.row + 1) + ":c" + (cell.column + 1)
+                            + ":chars:" + (start + cell.start) + "-" + (start + cell.end);
+                    Evidence evidence = new Evidence(document.id(), document.name(), page.number(), page.locationType(), html, anchor,
+                            page.parser() != null && page.parser().contains("OCR") ? 0d : 1d);
+                    facts.add(new Fact("INSURANCE_RECORD", rowKey, FIELDS.get(cell.column), cell.raw, cell.value, evidence));
+                }
+            }
+            if (facts.isEmpty()) return rejected("HTML_TABLE_NO_DATA");
+            return new Result(true, SCHEMA, facts, new ArrayList<>(issues));
+        } catch (Invalid invalid) { return rejected(invalid.getMessage()); }
+    }
+
+    private static List<List<Cell>> parse(String html) {
+        List<List<Cell>> rows = new ArrayList<>(); Deque<String> stack = new ArrayDeque<>();
+        Matcher tags = TAG.matcher(html); int at = 0, cells = 0; Cell pending = null;
+        while (tags.find()) {
+            String between = html.substring(at, tags.start());
+            if (pending == null && !between.isBlank() || between.contains("<") || between.contains(">")) throw invalid("HTML_TABLE_INCOMPLETE");
+            String tag = tags.group(2).toLowerCase(Locale.ROOT), tail = tags.group(3);
+            boolean closing = !tags.group(1).isEmpty();
+            if (tag.equals("br") && !closing && pending != null && tail.matches("\\s*/?\\s*")) { at = tags.end(); continue; }
+            if (!Set.of("table", "thead", "tbody", "tfoot", "tr", "td", "th").contains(tag)) throw invalid("HTML_TABLE_TAG_UNSUPPORTED");
+            if (closing) {
+                if (!tail.isBlank() || stack.isEmpty() || !stack.pop().equals(tag)) throw invalid("HTML_TABLE_INCOMPLETE");
+                if (tag.equals("td") || tag.equals("th")) {
+                    if (pending == null) throw invalid("HTML_TABLE_INCOMPLETE");
+                    pending.end = tags.start(); pending.raw = html.substring(pending.start, pending.end).strip();
+                    pending.value = visible(pending.raw); rows.get(rows.size() - 1).add(pending); pending = null;
+                }
+                if (tag.equals("tr") && rows.get(rows.size() - 1).isEmpty()) throw invalid("HTML_TABLE_EMPTY_ROW");
+            } else {
+                Map<String, String> attributes = attributes(tail);
+                String parent = stack.peek();
+                switch (tag) {
+                    case "table" -> { if (parent != null || !rows.isEmpty()) throw invalid("HTML_TABLE_NESTED"); }
+                    case "thead", "tbody", "tfoot" -> { if (!"table".equals(parent)) throw invalid("HTML_TABLE_INCOMPLETE"); }
+                    case "tr" -> {
+                        if (!Set.of("table", "thead", "tbody", "tfoot").contains(Objects.toString(parent, ""))) throw invalid("HTML_TABLE_INCOMPLETE");
+                        if (rows.size() >= MAX_ROWS) throw invalid("HTML_TABLE_LIMIT"); rows.add(new ArrayList<>());
+                    }
+                    case "td", "th" -> {
+                        if (!"tr".equals(parent) || pending != null) throw invalid("HTML_TABLE_INCOMPLETE");
+                        if (++cells > MAX_CELLS) throw invalid("HTML_TABLE_LIMIT");
+                        pending = new Cell(rows.size() - 1, span(attributes, "rowspan", MAX_ROWS), span(attributes, "colspan", COLUMNS), tags.end());
+                    }
+                }
+                if (!Set.of("td", "th").contains(tag) && (attributes.containsKey("rowspan") || attributes.containsKey("colspan"))) throw invalid("HTML_TABLE_ATTRIBUTE_INVALID");
+                stack.push(tag);
+            }
+            at = tags.end();
+        }
+        if (!stack.isEmpty() || pending != null || !html.substring(at).isBlank() || rows.isEmpty()) throw invalid("HTML_TABLE_INCOMPLETE");
+        return rows;
+    }
+
+    private static Map<String, String> attributes(String text) {
+        Map<String, String> result = new HashMap<>(); Matcher matcher = ATTRIBUTE.matcher(text); int at = 0;
+        while (matcher.find()) {
+            if (matcher.start() != at) throw invalid("HTML_TABLE_ATTRIBUTE_INVALID");
+            String key = matcher.group(1).toLowerCase(Locale.ROOT);
+            String value = Objects.toString(matcher.group(2), Objects.toString(matcher.group(3), Objects.toString(matcher.group(4), "")));
+            if (result.putIfAbsent(key, value) != null) throw invalid("HTML_TABLE_ATTRIBUTE_INVALID");
+            at = matcher.end();
+        }
+        if (!text.substring(at).isBlank()) throw invalid("HTML_TABLE_ATTRIBUTE_INVALID");
+        return result;
+    }
+
+    private static int span(Map<String, String> attributes, String name, int limit) {
+        String value = attributes.getOrDefault(name, "1");
+        if (!value.matches("[1-9][0-9]{0,2}")) throw invalid("HTML_TABLE_SPAN_INVALID");
+        int size = Integer.parseInt(value); if (size > limit) throw invalid("HTML_TABLE_SPAN_INVALID"); return size;
+    }
+
+    private static Cell[][] grid(List<List<Cell>> rows) {
+        Cell[][] grid = new Cell[rows.size()][COLUMNS];
+        for (int row = 0; row < rows.size(); row++) {
+            int column = 0;
+            for (Cell cell : rows.get(row)) {
+                while (column < COLUMNS && grid[row][column] != null) column++;
+                if (column + cell.columnSpan > COLUMNS || row + cell.rowSpan > rows.size()) throw invalid("HTML_TABLE_SPAN_OUTSIDE");
+                cell.column = column;
+                for (int r = row; r < row + cell.rowSpan; r++) for (int c = column; c < column + cell.columnSpan; c++) {
+                    if (grid[r][c] != null) throw invalid("HTML_TABLE_SPAN_COLLISION"); grid[r][c] = cell;
+                }
+                column += cell.columnSpan;
+            }
+            if (Arrays.stream(grid[row]).anyMatch(Objects::isNull)) throw invalid("HTML_TABLE_COLUMN_COUNT");
+        }
+        return grid;
+    }
+
+    private static int headers(Cell[][] grid) {
+        List<String> one = List.of("序号", "姓名", "社会保障号码", "险种", "起始年月", "截止年月", "本单位实际缴费月数");
+        boolean single = true;
+        for (int c = 0; c < COLUMNS; c++) single &= grid[0][c].value.equals(one.get(c)) && grid[0][c].rowSpan == 1 && grid[0][c].columnSpan == 1;
+        if (single) return 1;
+        if (grid.length < 3) throw invalid("HTML_TABLE_UNSUPPORTED_SCHEMA");
+        for (int c : new int[]{0, 1, 2, 3, 6}) {
+            Cell cell = grid[0][c];
+            if (!cell.value.equals(one.get(c)) || cell.rowSpan != 2 || cell.columnSpan != 1 || grid[1][c] != cell)
+                throw invalid("HTML_TABLE_UNSUPPORTED_SCHEMA");
+        }
+        Cell group = grid[0][4];
+        if (group != grid[0][5] || group.rowSpan != 1 || group.columnSpan != 2 || !group.value.equals("缴费情况"))
+            throw invalid("HTML_TABLE_UNSUPPORTED_SCHEMA");
+        for (int c = 4; c <= 5; c++) {
+            Cell child = grid[1][c];
+            if (child.row != 1 || child.rowSpan != 1 || child.columnSpan != 1 || !child.value.equals(one.get(c)))
+                throw invalid("HTML_TABLE_UNSUPPORTED_SCHEMA");
+        }
+        return 2;
+    }
+
+    private static String visible(String raw) {
+        String value = raw.replaceAll("(?i)<br\\s*/?>", " ");
+        if (value.indexOf('<') >= 0 || value.indexOf('>') >= 0 || value.indexOf('\0') >= 0) throw invalid("HTML_TABLE_CELL_MARKUP_UNSUPPORTED");
+        // Decode only bounded, explicitly supported text escapes. Nothing is executed or fetched.
+        value = value.replace("&nbsp;", " ").replace("&#160;", " ").replace("&lt;", "<").replace("&gt;", ">")
+                .replace("&quot;", "\"").replace("&#39;", "'").replace("&apos;", "'").replace("&amp;", "&");
+        return value.replaceAll("[\\s\\p{Z}]+", " ").strip();
+    }
+    private static Result rejected(String issue) { return new Result(false, SCHEMA, List.of(), List.of(issue)); }
+    private static Invalid invalid(String issue) { return new Invalid(issue); }
+    private static final class Invalid extends RuntimeException { Invalid(String issue) { super(issue); } }
+    private static final class Cell {
+        final int row, rowSpan, columnSpan, start; int column, end; String raw = "", value = "";
+        Cell(int row, int rowSpan, int columnSpan, int start) { this.row = row; this.rowSpan = rowSpan; this.columnSpan = columnSpan; this.start = start; }
+    }
+}
