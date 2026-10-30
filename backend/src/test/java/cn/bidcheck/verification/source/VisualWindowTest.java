@@ -341,8 +341,11 @@ class VisualWindowTest {
         for(int i=0;i<6;i++){Document d=version("cancel-"+i,1);docs.add(d);requests.add(requested(d,6));}
         CountDownLatch finished=new CountDownLatch(1);AtomicReference<Throwable> failure=new AtomicReference<>();
         Thread caller=new Thread(()->{try{h.collect(docs,requests);}catch(Throwable e){failure.set(e);}finally{finished.countDown();}},"visual-cancel-test");caller.start();
-        long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(4);while(calls.get()==0&&System.nanoTime()<deadline)Thread.sleep(10);
-        assertTrue(calls.get()>0);caller.interrupt();assertTrue(finished.await(4,TimeUnit.SECONDS));assertInstanceOf(CancellationException.class,failure.get());
+        // Both allowed workers may already have crossed the HTTP boundary. Wait until
+        // they are observable so a late arrival from the second in-flight request is
+        // not mistaken for newly scheduled work after cancellation.
+        long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(4);while(calls.get()<2&&System.nanoTime()<deadline)Thread.sleep(10);
+        assertEquals(2,calls.get());caller.interrupt();assertTrue(finished.await(4,TimeUnit.SECONDS));assertInstanceOf(CancellationException.class,failure.get());
         int stopped=calls.get();Thread.sleep(150);assertEquals(stopped,calls.get());assertTrue(stopped<=2);
     }
     @Test void validatedFullPageGeometryActuallyReducesSubmittedRegion()throws Exception {

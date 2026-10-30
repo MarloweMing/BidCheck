@@ -32,6 +32,13 @@ class SemanticOnDemandTest {
         var summary=(Map<?,?>)OnDemandSummary.summarize(Map.of("checkMode","RULES_RETRIEVAL","onDemandAttemptsReserved",0,"onDemandAttemptBudget",24),List.of(finding),1).get("onDemandModel");
         assertEquals(1,summary.get("unknownCheckpoints"));assertEquals(0,summary.get("evidenceInsufficientCheckpoints"));
     }
+    @Test void deterministicFullTextDelegationIsCountedAsModelNotNeededInsteadOfUnknown(){
+        Checkpoint check=new Checkpoint("full-text","错别字检查","全文信息检查","MEDIUM","FULL_TEXT_REVIEW","typos","REVIEW","检查疑似错别字","",true,true,true,null);
+        Finding finding=new Finding("f","run",check,new Evaluation("PASS","程序扫描完成","",List.of(),1,"DETERMINISTIC/FULL_TEXT_REVIEW"),
+            Map.of("agentDelegation",Map.of("executor","DETERMINISTIC_FULL_TEXT_REVIEW","modelCalls",0)));
+        Map<?,?> summary=(Map<?,?>)OnDemandSummary.summarize(Map.of("checkMode","RULES_RETRIEVAL"),List.of(finding),1).get("onDemandModel");
+        assertEquals(1,summary.get("modelNotNeededCheckpoints"));assertEquals(0,summary.get("unknownCheckpoints"));assertEquals(0,summary.get("modelRequestedCheckpoints"));
+    }
     @Test void fixedPacketNeverReplacesRequiredSidesAndRepairSharesBudget(){
         Document source=doc("设备配置与技术方案：处理器参数采用四核配置。\n设备配置与技术方案：处理器参数采用八核配置。");
         List<Evidence> packet=Arrays.stream(source.pages().get(0).text().split("\\n")).map(q->new Evidence("d","bid.txt",1,"PAGE",q,"p1",1)).toList();

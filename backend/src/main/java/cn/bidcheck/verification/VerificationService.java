@@ -36,6 +36,7 @@ import static cn.bidcheck.service.BidService.*;
 /** Immutable manifests and findings; the existing durable task queue owns execution leases. */
 @Service
 public class VerificationService {
+    private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(VerificationService.class);
     public static final String VERSION="automation-1.7-person-credential-information";
     private static final Set<String> STAGES=Set.of("PRE_SUBMISSION","POST_SUBMISSION","EVALUATION");
     private static final Set<String> EXTERNAL_KINDS=Set.of("REGISTRATION","CREDIT","BLACKLIST","RESTRICTED_SUPPLIER","SUBMISSION","PAYMENT","BIDDER_ROSTER","PRIOR_SERVICE","OTHER");
@@ -77,7 +78,7 @@ public class VerificationService {
             "externalMode",externalAdapter.enabledTypes().isEmpty()?"SOURCE_RECORD_IMPORT":"CONFIGURED_CONNECTORS","externalConfigured",!externalAdapter.enabledTypes().isEmpty(),"externalLiveConnected",false,"externalTypes",externalAdapter.enabledTypes(),
             "factLayerVersion",factLedger.identity(),"wordRendering",layouts.wordConfiguration(),"capabilities",List.of("资料集合与不可变修订","逐条件核验及证明路径","跨检查项事实复用","实体身份与事实冲突","结构化表格与跨页证明","Word渲染页面映射","定向补证","原图局部核验","来源记录导入","补资料自动续跑"));
     }
-    public String checkSourceIdentity(){return hash(VERSION+"|CHECK|"+visualEnabled+"|"+visuals.identity()+"|"+layouts.identity()+"|"+factLedger.identity());}
+    public String checkSourceIdentity(){return hash(VERSION+"|CHECK|"+visualEnabled+"|"+visuals.identity()+"|"+layouts.identity()+"|"+factLedger.identity()+"|EXTERNAL|"+externalAdapter.identity());}
     public List<Map<String,Object>> list(String project) { store.require("project",project);return store.maps("verification_run",project,null); }
     public Map<String,Object> start(String project,Map<String,Object> body) {
         return tx.execute(s->{store.lock("project",project);return startLocked(project,body,null);});
@@ -374,10 +375,11 @@ public class VerificationService {
             normalized.put("checkpointId",cp.id());normalized.put("title",cp.title());normalized.put("checkpoint",cp);
             normalized.put("visualObservations",observations);normalized.put("externalObservations",externalObservations);normalized.put("createdAt",now());
             normalized.put("automationDiagnostics",diagnostics);
+            normalized.put("externalQueryDiagnostics",diagnostics.stream().filter(d->text(d,"code").startsWith("EXTERNAL_")).toList());
             if(!Boolean.TRUE.equals(normalized.get("complete"))&&!diagnostics.isEmpty()) {
-                List<Map<String,Object>> gaps=new ArrayList<>(maps(normalized.get("gaps")));gaps.addAll(diagnostics);normalized.put("gaps",gaps);
+                List<Map<String,Object>> gaps=new ArrayList<>(maps(normalized.get("gaps")));gaps.addAll(diagnostics.stream().filter(d->!Set.of("EXTERNAL_RECORD_RECEIVED","EXTERNAL_RECORD_NOT_FOUND","EXTERNAL_RECORD_INCONCLUSIVE").contains(text(d,"code"))).toList());normalized.put("gaps",gaps);
                 if(diagnostics.stream().anyMatch(d->text(d,"code").contains("BUDGET_EXHAUSTED"))) normalized.put("workflowState","BUDGET_EXHAUSTED");
-                else if(diagnostics.stream().anyMatch(d->text(d,"code").contains("ENGINE_FAILURE")||text(d,"code").equals("VISUAL_NOT_CONFIGURED"))) normalized.put("workflowState","ENGINE_FAILURE");
+                else if(diagnostics.stream().anyMatch(d->ExternalCheckState.systemFailure(text(d,"code"))||text(d,"code").contains("ENGINE_FAILURE")||text(d,"code").equals("VISUAL_NOT_CONFIGURED"))) normalized.put("workflowState","ENGINE_FAILURE");
             }
             if(!STATUSES.contains(text(normalized,"businessDecision"))) throw new IllegalStateException("核验引擎返回了无效结论");
             if("UNDETERMINED".equals(normalized.get("businessDecision"))) normalized.put("complete",false);
@@ -492,8 +494,8 @@ public class VerificationService {
         return collectVisual(task,runId,cp,result,documents,diagnostics,true,permit);
     }
     private void visualWrite(TaskRow task,String runId,boolean checkRun,Runnable action){
-        if(!checkRun){fenced(task,action);return;}
-        tx.executeWithoutResult(s->{
+        if(!checkRun){DbTransactionRetry.executeWithoutResult(tx,"VERIFY_VISUAL_PUBLISH",Map.of("taskId",task.id,"runId",runId),s->{fence(task);action.run();});return;}
+        DbTransactionRetry.executeWithoutResult(tx,"CHECK_VISUAL_PUBLISH",Map.of("taskId",task.id,"runId",runId),s->{
             fence(task);TaskRow current=store.mapper().task(task.id);Map<String,Object> run=store.map(store.lock("run",runId).body);
             if(current.attempt!=task.attempt||!task.projectId.equals(text(run,"projectId"))||!task.id.equals(text(run,"taskId"))||!"RUNNING".equals(text(run,"status")))throw new TaskLeaseLostException(task.id);
             action.run();fence(task);
@@ -687,8 +689,22 @@ public class VerificationService {
         for(Map<String,Object> request:maps(result.get("externalRequests"))) {
             String type=text(request,"type"),subject=text(request,"subject"),stage=text(request,"evaluationStage"),date=text(request,"referenceDate");
             if(stage.isBlank())stage=text(run,"evaluationStage");if(date.isBlank())date=text(run,"referenceDate");
-            if(subject.isBlank()||subject.length()>200||!externalAdapter.enabledTypes().contains(type)||stage.isBlank()||date.isBlank()) continue;
+            if("WAIT_STAGE".equals(text(result,"workflowState"))||!text(run,"evaluationStage").isBlank()&&!stage.isBlank()
+                    &&!sameExternalStage(stage,text(run,"evaluationStage"))){
+                externalDiagnostic(diagnostics,request,"EXTERNAL_WAIT_STAGE","条款指定的核验阶段尚未到达，未执行外部查询。",false,"STAGE_CHANGED","");continue;
+            }
+            if(subject.isBlank()||subject.length()>200||type.isBlank()||stage.isBlank()||date.isBlank()){
+                externalDiagnostic(diagnostics,request,"EXTERNAL_QUERY_SCOPE_INCOMPLETE","外部请求缺少有效主体、来源类型、阶段或日期，系统尚未执行查询。",false,"QUERY_SCOPE_CHANGED","");continue;
+            }
+            if(!externalAdapter.enabledTypes().contains(type)){
+                String code="CONFIGURATION_INVALID".equals(externalAdapter.identity())?"EXTERNAL_CONFIGURATION_INVALID":"EXTERNAL_CONNECTOR_NOT_CONFIGURED";
+                externalDiagnostic(diagnostics,request,code,"条款指定的数据来源未正确接入，系统没有执行查询；不表示来源无记录。",false,"CONNECTOR_CONFIGURATION_CHANGED","");continue;
+            }
             Map<String,Object> query=fields("type",type,"subject",subject,"evaluationStage",stage,"referenceDate",date);
+            // Scope participates in the durable operation key and must be confirmed by
+            // the provider; a previous same-subject lookup is not an all-fields receipt.
+            for(String key:List.of("requiredProvider","requirementScopeFingerprint","requiredConditionFields"))
+                if(request.containsKey(key))query.put(key,request.get(key));
             Map<String,Object> descriptor=EvidenceOperationRepository.descriptor(task.projectId,"EXTERNAL_SOURCE_QUERY",List.of(),List.of(),query,"",externalAdapter.identity(),"TRUSTED_CONNECTOR_RECORD","external-source-query-1");
             String operationKey=EvidenceOperationRepository.key(descriptor),id=stableId("external-query:"+operationKey);
             try(EvidenceOperationRepository.Lease ignored=evidenceOperations.coordinate(task.projectId,operationKey)) {
@@ -696,24 +712,46 @@ public class VerificationService {
                 // lease. Concurrent runs therefore make one connector call and all followers consume
                 // the validated record written by its owner.
                 Map<String,Object> response=evidenceOperations.completed(task.projectId,operationKey).orElse(null);Stored cached=store.mapper().get(id);
-                if(response!=null){/* durable operation hit */}
-                else if(cached!=null&&"verification_query".equals(cached.kind)&&task.projectId.equals(cached.projectId)) response=store.map(cached.body);
-                else {
+                if(response==null&&cached!=null&&"verification_query".equals(cached.kind)&&task.projectId.equals(cached.projectId)) {
+                    Map<String,Object> candidate=store.map(cached.body);
+                    // Persist failures for diagnosis, but never freeze them as successful evidence.
+                    // Once the connector recovers, the same business scope must be queried again.
+                    if("TRUSTED_CONNECTOR".equals(map(candidate.get("record")).get("provenanceStatus")))response=candidate;
+                }
+                boolean reused=response!=null;
+                if(response==null) {
                     Boolean reserved;if(checkRun){reserved=checkPermit.getAsBoolean();if(Boolean.TRUE.equals(reserved))visualWrite(task,runId,true,()->{Map<String,Object> current=store.getMap("run",runId);current.put("externalCallCount",number(current.get("externalCallCount"),0)+1);store.save("run",runId,task.projectId,text(current,"documentId"),current);});}
-                    else reserved=tx.execute(s->{fence(task);Map<String,Object> current=store.getMap("verification_run",runId);int used=number(current.get("externalCallCount"),0);if(used>=24) return false;
+                    else reserved=tx.execute(s->{fence(task);Map<String,Object> current=store.getMap("verification_run",runId);int used=number(current.get("externalCallCount"),0);
                         current.put("externalCallCount",used+1);store.save("verification_run",runId,task.projectId,text(current,"parentRunId"),current);return true;});
-                    if(!Boolean.TRUE.equals(reserved)) {diagnostics.add(diagnostic("EXTERNAL_BUDGET_EXHAUSTED","本轮外部查询次数已到上限，剩余查询未执行","新建修订继续核验","BUDGET_CHANGED"));break;}
+                    if(!Boolean.TRUE.equals(reserved)) {externalDiagnostic(diagnostics,request,"EXTERNAL_QUERY_NOT_EXECUTED","运行许可已失效，查询尚未执行。",false,"RUN_RESUMED","");break;}
                     response=externalAdapter.query(query);Map<String,Object> evidenceResult=new LinkedHashMap<>(response);Map<String,Object> saved=new LinkedHashMap<>(response);saved.put("runId",runId);saved.put("query",query);
                     Map<String,Object> record=map(response.get("record"));visualWrite(task,runId,checkRun,()->{store.save("verification_query",id,task.projectId,runId,saved);
                         if("TRUSTED_CONNECTOR".equals(record.get("provenanceStatus")))evidenceOperations.publishCompleted(task.projectId,operationKey,descriptor,evidenceResult);
                     });
                 }
                 Map<String,Object> record=map(response.get("record"));
-                if("TRUSTED_CONNECTOR".equals(record.get("provenanceStatus"))) records.add(record);
-                else if("ERROR".equals(response.get("status"))) diagnostics.add(diagnostic("EXTERNAL_ENGINE_FAILURE","外部来源服务未返回可用记录，不表示查询无记录","恢复对应来源连接器","SERVICE_AVAILABLE"));
-            }catch(java.io.InterruptedIOException interrupted){Thread.currentThread().interrupt();diagnostics.add(diagnostic("EXTERNAL_SINGLE_FLIGHT_INTERRUPTED","等待相同外部证据查询时已中断，未重复调用来源服务","继续运行后重试","SERVICE_AVAILABLE"));break;}
+                if("TRUSTED_CONNECTOR".equals(record.get("provenanceStatus"))){
+                    records.add(record);String sourceStatus=text(map(record.get("result")),"status");
+                    String code=switch(sourceStatus){case "NOT_FOUND"->"EXTERNAL_RECORD_NOT_FOUND";case "INCONCLUSIVE"->"EXTERNAL_RECORD_INCONCLUSIVE";default->"EXTERNAL_RECORD_RECEIVED";};
+                    externalDiagnostic(diagnostics,request,code,reused?"已复用同主体、同阶段和同范围的可信来源记录，仍需按业务条件重新计算。":"已取得指定来源记录，仍需按主体、范围和业务条件重新计算。",!reused&&!Boolean.FALSE.equals(response.get("queryExecuted")),"EXTERNAL_RECORD_CHANGED","");
+                    diagnostics.get(diagnostics.size()-1).put("recordReused",reused);
+                }else {
+                    String providerCode=text(response,"errorCode");
+                    String code=Set.of("EXTERNAL_CONNECTOR_NOT_CONFIGURED","EXTERNAL_CONFIGURATION_INVALID","EXTERNAL_REQUEST_INVALID").contains(providerCode)?providerCode:"EXTERNAL_ENGINE_FAILURE";
+                    externalDiagnostic(diagnostics,request,code,"外部查询未取得通过来源校验的记录，不能解释为查无记录。",Boolean.TRUE.equals(response.get("queryExecuted")),"SERVICE_AVAILABLE",providerCode);
+                }
+            }catch(java.io.InterruptedIOException interrupted){Thread.currentThread().interrupt();externalDiagnostic(diagnostics,request,"EXTERNAL_SINGLE_FLIGHT_INTERRUPTED","等待相同外部证据查询时已中断，未重复调用来源服务。",false,"SERVICE_AVAILABLE","");break;}
         }
         return records;
+    }
+    private static boolean sameExternalStage(String left,String right){return canonicalExternalStage(left).equals(canonicalExternalStage(right));}
+    private static String canonicalExternalStage(String stage){return switch(stage){case "EVALUATION"->"BID_EVALUATION";case "PRE_SUBMISSION"->"BID_SUBMISSION";default->stage;};}
+    private static void externalDiagnostic(List<Map<String,Object>> diagnostics,Map<String,Object> request,String code,String description,boolean executed,String trigger,String providerCode){
+        Map<String,Object> value=diagnostic(code,description,"系统按指定来源及查询范围处理；不要求补交投标材料。",trigger);
+        value.put("queryExecuted",executed);value.put("businessComplete",false);value.put("owner","EXTERNAL_WAIT_STAGE".equals(code)?"EXTERNAL":"SYSTEM");
+        for(String key:List.of("obligationId","type","evaluationStage","referenceDate","requiredProvider","requirementScopeFingerprint"))value.put(key,text(request,key));
+        if(!providerCode.isBlank())value.put("providerErrorCode",providerCode);diagnostics.add(value);
+        LOG.info("external_query_outcome type={} obligation={} code={} executed={} providerCode={} scope={}",text(request,"type"),text(request,"obligationId"),code,executed,providerCode,text(request,"requirementScopeFingerprint"));
     }
     private static Map<String,Object> diagnostic(String code,String description,String requiredInput,String resumeTrigger) {return fields("code",code,"description",description,"requiredInput",requiredInput,"resumeTrigger",resumeTrigger);}
     private static String aggregateWorkflow(List<Map<String,Object>> results) {

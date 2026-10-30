@@ -9,6 +9,8 @@ public interface RecordMapper {
     int insertRecord(Stored record);
     void insertRecords(@Param("records") List<Stored> records);
     Stored get(@Param("id") String id);
+    List<Stored> getMany(@Param("ids") List<String> ids);
+    List<Stored> listParents(@Param("kind") String kind,@Param("projectId") String projectId,@Param("parentIds") List<String> parentIds);
     Stored getForUpdate(@Param("id") String id);
     List<Stored> list(@Param("kind") String kind, @Param("projectId") String projectId, @Param("parentId") String parentId);
     long count(@Param("kind") String kind, @Param("projectId") String projectId, @Param("parentId") String parentId);

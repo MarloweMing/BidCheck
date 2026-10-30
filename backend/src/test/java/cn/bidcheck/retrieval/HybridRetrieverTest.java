@@ -98,6 +98,7 @@ class HybridRetrieverTest {
         HybridRetriever disabled=new HybridRetriever(false,"","","","text-embedding-v4","qwen3-rerank",temporary.resolve("disabled").toString(),64);
         var result=disabled.search(doc,"安全生产许可证 A-001",16);
         assertEquals("BM25_DISABLED",result.mode());assertEquals(1,result.hits().get(0).page());
+        assertEquals(false,result.diagnostics().get("vectorSearchExecuted"));assertEquals(0,result.diagnostics().get("denseCandidateCount"));
         assertEquals(0,embeddings.get());assertEquals(0,reranks.get());assertFalse(Files.exists(temporary.resolve("disabled")));
         assertEquals(1d,result.hits().get(0).confidence());
     }
@@ -107,6 +108,7 @@ class HybridRetrieverTest {
         for(int i=1;i<=36;i++)pages.add(new Page(i,i==35?"紫藤登记\n完全不含查询词的合成证明。":"安全资格证明\n普通合成条目 "+i,"PAGE",i==35?"PDFBOX_OCR":"PDFBOX_NATIVE",""));
         var result=retriever().search(document("p","d",1,"s",pages),"安全资格",16);
         assertEquals("HYBRID_RERANKED",result.mode());assertEquals(16,result.hits().size());assertEquals(35,result.hits().get(0).page());
+        assertEquals(true,result.diagnostics().get("vectorSearchExecuted"));assertEquals(30,result.diagnostics().get("denseCandidateCount"));
         assertEquals(0d,result.hits().get(0).confidence());assertTrue(result.hits().get(0).quote().startsWith("紫藤登记"));
         assertEquals(5,embeddings.get());assertEquals(1,reranks.get());assertEquals(true,result.diagnostics().get("denseCoverageComplete"));
         assertTrue(((Number)result.diagnostics().get("fusedCandidates")).intValue()>30);
@@ -115,7 +117,7 @@ class HybridRetrieverTest {
 
     @Test void persistedVectorsAndQueryCacheSurviveANewRetrieverInstance()throws Exception {
         Document doc=document("营业执照\n合成单位登记证明");HybridRetriever first=retriever();
-        assertEquals("INDEX_READY",first.warmup(doc).mode());assertEquals(1,embeddings.get());assertEquals(0,reranks.get());
+        var warmup=first.warmup(doc);assertEquals("INDEX_READY",warmup.mode());assertEquals(false,warmup.diagnostics().get("vectorSearchExecuted"));assertEquals(1,embeddings.get());assertEquals(0,reranks.get());
         assertEquals("HYBRID_RERANKED",first.search(doc,"营业执照",16).mode());assertEquals(2,embeddings.get());
         var cached=retriever().search(doc,"营业执照",16);
         assertEquals("HYBRID_RERANKED",cached.mode());assertEquals(2,embeddings.get());assertEquals(2,((Number)cached.diagnostics().get("cacheHits")).intValue());

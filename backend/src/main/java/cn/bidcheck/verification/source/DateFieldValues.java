@@ -7,9 +7,9 @@ import java.util.regex.*;
 /** Reads a labelled date cell/phrase, stopping before another field or certificate.
  * Dates merely occurring elsewhere on the same page are never substitute field values. */
 public final class DateFieldValues {
-    public static final String VERSION="date-field-boundary-2-printed-signing-date";
+    public static final String VERSION="date-field-boundary-3-certificate-validity-date";
     private static final Pattern DATE=Pattern.compile("(?<![0-9])(\\d{4})\\s*(?:年|[-./])\\s*(\\d{1,2})\\s*(?:月|[-./])\\s*(\\d{1,2})\\s*日?(?![0-9])");
-    private static final Pattern NEXT_FIELD=Pattern.compile("注册有效期|使用有效期|证书有效期|资格有效期|有效截止日期|有效期限|有效期(?:至)?|发证机关|签发机关|批准机关|发证日期|签发日期|批准日期|颁发日期|注册日期|打印日期|出生日期|更新日期|证书编号|电子证书编号|注册编号|证件号码|企业名称|单位名称|持证人|姓名|备注|[。；;]");
+    private static final Pattern NEXT_FIELD=Pattern.compile("注册有效期|使用有效期|证书有效日期|证书有效期|资格有效期|有效截止日期|有效期限|有效期(?:至)?|发证机关|签发机关|批准机关|发证日期|签发日期|批准日期|颁发日期|初次认证日期|注册日期|打印日期|出生日期|更新日期|证书编号|电子证书编号|注册编号|证件号码|企业名称|单位名称|持证人|姓名|备注|[。；;]");
     private DateFieldValues(){}
 
     /** A printed signing/footer date is a document field, never proof of an actual signature.

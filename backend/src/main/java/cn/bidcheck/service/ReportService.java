@@ -78,9 +78,9 @@ public class ReportService {
                 Map<String,Object> presentation=findingPresentation(ocrContext,f);
                 Evidence source=tenderSource(c.source(),tenderId,tenderIds);
                 List<Evidence> tender=new ArrayList<>();if(source!=null) tender.add(source);tender.addAll(additionalTender(e,source,tenderId,tenderIds));
-                Map<String,Object> assessment=map(f.assessment());
+                Map<String,Object> assessment=map(f.assessment()),business=BusinessResultPresentation.describe(e,assessment);
                 Map<String,Object> group=consistencyGroups.getOrDefault(f.id(),Map.of());
-                List<String> row=List.of(c.title(),safe(c.category()),safe(c.severity()),label(e.status()),label(BidService.text(r,"status")),presented(presentation,"reason",e.reason()),atomicText(BusinessResultPresentation.describe(e,assessment),"nextStep"),joinedEvidence(tender),joinedEvidence(bidEvidence(e,bidId)),BidService.text(r,"reviewer"),BidService.text(r,"note"),parsingScope(ocrContext,presentation),originalExplanation(presentation,e),originalReviewText(f,presentation),evaluationText(assessment.get("rawEvaluation")),evaluationText(assessment.get("preOcrEvaluation")),adjustmentText(assessment),assessment.isEmpty()?"":retrievalText(map(assessment.get("retrieval"))),assessmentState(f),consistencyScope(consistency)+(Boolean.TRUE.equals(onDemand.get("attemptsUnlimited"))?"；模型调用次数不限":""),BidService.text(assessment,"consistencyGroupId"),consistencyCategories.getOrDefault(BidService.text(group,"categoryId"),""),relationLabel(BidService.text(group,"relationType")),comparisonContext(map(group.get("comparisonContext"))),service.store.encode(structuredCoverageSnapshots(ocrContext)),group.isEmpty()?"":targetedReviewText(map(group.get("targetedReview"))),group.isEmpty()?"":service.store.encode(groupOccurrences(group,consistencyOccurrences).stream().map(o->BidService.fields("occurrenceId",o.get("id"),"contextAssignment",o.get("contextAssignment"),"tableAssociation",o.get("tableAssociation"))).toList()),atomicWorkflowLabel(map(assessment.get("atomicCheck"))),atomicCheckText(map(assessment.get("atomicCheck"))),atomicText(BusinessResultPresentation.describe(e,assessment),"label"),atomicText(BusinessResultPresentation.describe(e,assessment),"owner"),Boolean.TRUE.equals(BusinessResultPresentation.describe(e,assessment).get("userActionRequired"))?"是":"否",atomicText(BusinessResultPresentation.describe(e,assessment),"nextStep"),completenessText(map(map(assessment.get("coverage")).get("completeness"))),dimensionLabel(f,"execution"),dimensionLabel(f,"evidence"),dimensionLabel(f,"conclusion"),BidService.text(run,"parentRunId"),BidService.text(map(assessment.get("resolutionJob")),"stopReason"),inheritedReviewText(maps(payload.get("inheritedReviews")),BidService.text(map(assessment.get("inheritedFrom")),"findingId")),safe(e.suggestion()));
+                List<String> row=List.of(c.title(),safe(c.category()),safe(c.severity()),label(e.status()),label(BidService.text(r,"status")),analysisReason(e,presentation,business),atomicText(business,"nextStep"),joinedEvidence(tender),joinedEvidence(bidEvidence(e,bidId)),BidService.text(r,"reviewer"),BidService.text(r,"note"),parsingScope(ocrContext,presentation),originalExplanation(presentation,e),originalReviewText(f,presentation),evaluationText(assessment.get("rawEvaluation")),evaluationText(assessment.get("preOcrEvaluation")),adjustmentText(assessment),assessment.isEmpty()?"":retrievalText(map(assessment.get("retrieval"))),assessmentState(f),consistencyScope(consistency)+(Boolean.TRUE.equals(onDemand.get("attemptsUnlimited"))?"；模型调用次数不限":""),BidService.text(assessment,"consistencyGroupId"),consistencyCategories.getOrDefault(BidService.text(group,"categoryId"),""),relationLabel(BidService.text(group,"relationType")),comparisonContext(map(group.get("comparisonContext"))),service.store.encode(structuredCoverageSnapshots(ocrContext)),group.isEmpty()?"":targetedReviewText(map(group.get("targetedReview"))),group.isEmpty()?"":service.store.encode(groupOccurrences(group,consistencyOccurrences).stream().map(o->BidService.fields("occurrenceId",o.get("id"),"contextAssignment",o.get("contextAssignment"),"tableAssociation",o.get("tableAssociation"))).toList()),atomicWorkflowLabel(map(assessment.get("atomicCheck"))),atomicCheckText(map(assessment.get("atomicCheck"))),atomicText(business,"label"),atomicText(business,"owner"),Boolean.TRUE.equals(business.get("userActionRequired"))?"是":"否",atomicText(business,"nextStep"),completenessText(map(map(assessment.get("coverage")).get("completeness"))),dimensionLabel(f,"execution"),dimensionLabel(f,"evidence"),dimensionLabel(f,"conclusion"),BidService.text(run,"parentRunId"),BidService.text(map(assessment.get("resolutionJob")),"stopReason"),inheritedReviewText(maps(payload.get("inheritedReviews")),BidService.text(map(assessment.get("inheritedFrom")),"findingId")),safe(e.suggestion()));
                 List<String> traceable=new ArrayList<>(row.size()+5);traceable.add(projectId);traceable.add(runId);
                 if(!publishedVersion.isEmpty()){traceable.add("V"+publishedVersion.get("revision"));traceable.add(BidService.text(publishedVersion,"publishedBy"));traceable.add(BidService.text(publishedVersion,"publicationNote"));}
                 traceable.addAll(row);row=traceable;
@@ -91,13 +91,13 @@ public class ReportService {
         StringBuilder b=new StringBuilder("<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>BidCheck 标书检查报告</title><style>body{font:16px/1.7 system-ui,sans-serif;color:#172b4d;max-width:1080px;margin:44px auto;padding:0 24px}h1{font-size:30px}h2{font-size:20px;margin-top:0}.meta{color:#607089}article{border:1px solid #dce3ed;border-radius:10px;padding:22px;margin:24px 0;break-inside:avoid}blockquote{white-space:pre-wrap;margin:12px 0;padding:14px;background:#f4f7fb;border-left:3px solid #316bff}.FAIL{color:#bc2f35}.WARNING{color:#b76512}.PASS{color:#14745b}.UNDETERMINED{color:#7b678e}small{color:#607089}.ocr-context{border:1px solid #dce3ed;padding:18px;border-radius:8px}.ocr-context p,.ocr-context li,.original-explanation blockquote{overflow-wrap:anywhere}.ocr-context ul,.original-explanation blockquote{max-height:280px;overflow:auto}summary{cursor:pointer}@media print{body{margin:0;max-width:none}article{border-color:#bbb}}</style><h1>标书检查报告</h1>");
         b.append("<p>").append(html(BidService.text(project,"name"))).append("</p><p class=meta>项目ID：").append(html(projectId)).append("<br>检查批次ID：").append(html(runId)).append("<br>文件：").append(html(document.name())).append(" · 版本 ").append(document.version()).append("<br>生成时间：").append(html(BidService.now())).append("<br>规则版本：").append(html(BidService.text(run,"ruleVersion"))).append("<br>文件 SHA-256：").append(html(document.sha256()));
         if(!publishedVersion.isEmpty())b.append("<br>结果版本：V").append(html(Objects.toString(publishedVersion.get("revision"),""))).append(" · 发布人：").append(html(BidService.text(publishedVersion,"publishedBy"))).append(" · 发布说明：").append(html(BidService.text(publishedVersion,"publicationNote")));
-        b.append("</p>");
+        b.append("<br>检查方式：").append(CheckReviewMode.agent(run)?"Agent 主审（试运行）":"标准检查").append("；全文一致性沿用规则与混合检索。</p>");
         b.append("<p>").append(html(scope)).append("人工复核记录单独保留，不覆盖自动结论。</p>");
         b.append(resolutionSummaryHtml(map(payload.get("resolutionSummary")),run,results));
         if(!maps(payload.get("inheritedReviews")).isEmpty())b.append("<details><summary>前版复核记录（未自动套用）</summary><p>原批次人工记录仅供对照，当前批次结论和待办独立保留。</p><blockquote>").append(html(inheritedReviewText(maps(payload.get("inheritedReviews")),null))).append("</blockquote></details>");
         appendOcrContext(b,ocrContext);
         if("RULES_RETRIEVAL".equals(run.get("checkMode"))) {
-            b.append("<section class=ocr-context><h2>规则与按需核验范围</h2><p>本地规则遍历可读全文；混合检索补充相关原文。仅复杂疑点使用模型，检索候选和模型次数均不代表全文语义覆盖。</p><p>模型 HTTP 尝试：")
+            b.append(CheckReviewMode.agent(run)?"<section class=ocr-context><h2>Agent 主审范围</h2><p>已确认的招标事项由 Agent 组织审查，引用和计算由程序校验；全文一致性沿用规则与混合检索。检索候选和模型次数均不代表审查准确率。</p><p>模型 HTTP 尝试：":"<section class=ocr-context><h2>规则与按需核验范围</h2><p>本地规则遍历可读全文；混合检索补充相关原文。仅复杂疑点使用模型，检索候选和模型次数均不代表全文语义覆盖。</p><p>模型 HTTP 尝试：")
                 .append(html(Objects.toString(onDemand.get("httpAttempts"),"未知"))).append("；有效输出：")
                 .append(html(Objects.toString(onDemand.get("validOutputs"),"未知"))).append("；经保护调整：")
                 .append(html(Objects.toString(onDemand.get("guardedOutputs"),"未知")));
@@ -109,10 +109,14 @@ public class ReportService {
                 b.append("<details><summary>条件核验处理记录</summary><p>条件核验模型尝试 ").append(reviewCount(onDemand,"structuredModelAttempts"))
                     .append(" 次；处理完成 ").append(reviewCount(onDemand,"structuredModelCompleted")).append(" 次；失败 ").append(reviewCount(onDemand,"structuredModelFailed"))
                     .append(" 次；状态未知 ").append(reviewCount(onDemand,"structuredModelUnknown")).append(" 次。</p><p>此项按条件核验的处理记录单独统计，不代表实际发送次数或业务通过数。</p></details>");
+            if(onDemand.get("agentInvestigations") instanceof Number count&&count.longValue()>0)
+                b.append("<details><summary>自动查证处理记录</summary><p>自动查证 ").append(reviewCount(onDemand,"agentInvestigations"))
+                    .append(" 项；模型授权请求 ").append(reviewCount(onDemand,"agentModelCalls")).append(" 次；服务未完成 ")
+                    .append(reviewCount(onDemand,"agentFailedInvestigations")).append(" 项。授权请求不计作 HTTP 成功或业务通过。</p></details>");
             b.append("</section>");
             if(onDemand.containsKey("consistencyModelRequestedGroups"))b.append("<p>模型请求：招标检查 ").append(reviewCount(onDemand,"modelRequestedCheckpoints"))
-                .append(" 项＋一致性复核 ").append(reviewCount(onDemand,"consistencyModelRequestedGroups")).append(" 组，合计实发 ").append(reviewCount(onDemand,"httpAttempts"))
-                .append(" 次；发送情况未知 ").append(reviewCount(onDemand,"consistencyUnknownRequestGroups")).append(" 组。</p>");
+                .append(" 项＋一致性复核 ").append(reviewCount(onDemand,"consistencyModelRequestedGroups")).append(" 组，已记录 HTTP 尝试 ").append(reviewCount(onDemand,"httpAttempts"))
+                .append(" 次；自动查证模型授权 ").append(reviewCount(onDemand,"agentModelCalls")).append(" 次；发送情况未知 ").append(reviewCount(onDemand,"consistencyUnknownRequestGroups")).append(" 组。</p>");
         }
         Map<String,Object> personCoverage=map(map(consistency.get("coverage")).get("personCredentials"));
         if(personCoverage.isEmpty()&&map(consistency.get("coverage")).containsKey("personCredentialVersion")) personCoverage=map(consistency.get("coverage"));
@@ -178,7 +182,7 @@ public class ReportService {
             Evaluation e=f.evaluation(); Checkpoint c=f.checkpoint();
             Map<String,Object> presentation=findingPresentation(ocrContext,f);
             Map<String,Object> business=BusinessResultPresentation.describe(e,f.assessment());
-            b.append("<article id=\"finding-").append(html(f.id())).append("\"><h2>").append(html(c.title())).append("</h2><strong class=\"").append(html(e.status())).append("\">业务结论（自动）：").append(html(atomicText(business,"label"))).append("</strong><p class=analysis-reason>").append(html(presented(presentation,"reason",e.reason()))).append("</p><p>下一步：").append(html(atomicText(business,"nextStep"))).append("</p>");
+            b.append("<article id=\"finding-").append(html(f.id())).append("\"><h2>").append(html(c.title())).append("</h2><strong class=\"").append(html(e.status())).append("\">业务结论（自动）：").append(html(atomicText(business,"label"))).append("</strong><p class=analysis-reason>").append(html(analysisReason(e,presentation,business))).append("</p><p>下一步：").append(html(atomicText(business,"nextStep"))).append("</p>");
             b.append(resolutionDimensionsHtml(f));
             b.append("<p>条款风险等级：").append(switch(safe(c.severity())){case "HIGH"->"高";case "MEDIUM"->"中";case "LOW"->"低";default->"未设置";}).append("</p>");
             Map<String,Object> consistencyGroup=consistencyGroups.getOrDefault(f.id(),Map.of());
@@ -613,10 +617,22 @@ public class ReportService {
         value.put("suggestion",same?String.join("；",atomicNextSteps(check).stream().limit(2).toList()):FocusedCheckEvaluator.readable(presented(value,"suggestion",finding.evaluation().suggestion()),names));return value;
     }
     private static String presented(Map<String,Object> value,String key,String fallback) { return value.get(key) instanceof String text?text:safe(fallback); }
+    /** New business diagnostics win; copied raw prose must not undo frozen OCR-scope clarification. */
+    static String analysisReason(Evaluation evaluation,Map<String,Object> presentation,Map<String,Object> business){
+        String raw=safe(evaluation.reason()),current=presented(business,"reason",raw);
+        return !current.isBlank()&&!current.equals(raw)?current:presented(presentation,"reason",raw);
+    }
     static String originalReviewHtml(Finding finding,Map<String,Object> presentation) {
+        TrustedVisualReview.Result observed=TrustedVisualReview.inspect(map(finding.assessment()));
+        if(observed.reviewed()){
+            Map<String,Object> business=BusinessResultPresentation.describe(finding.evaluation(),finding.assessment());
+            String message=observed.negative()?"指定原图已检查，未观察到要求签章；请对照原图确认签署风险。本项不自动否决投标。":"指定原图已检查，但签章无法辨清。";
+            if(!Boolean.TRUE.equals(business.get("userActionRequired")))message+=" 其他系统处理缺口尚未解决，当前不转交人工核对。";
+            return "<section class=ocr-review-note><h3>原图核验记录</h3><p>"+html(message)+"</p><ul>"+observed.observations().stream().map(o->"<li>第 "+html(Objects.toString(o.get("location"),""))+" 页 · "+html(Objects.toString(o.get("type"),"").equals("SEAL")?"盖章位置":"签字位置")+"："+("NOT_OBSERVED".equals(o.get("outcome"))?"未观察到":"无法辨清")+"</li>").distinct().collect(java.util.stream.Collectors.joining())+"</ul></section>";
+        }
         String note=originalReviewText(finding,presentation);if(note.isBlank())return "";
         Map<String,Object> business=BusinessResultPresentation.describe(finding.evaluation(),finding.assessment());
-        boolean sourceOnly=Set.of("SYSTEM_INCOMPLETE","EVIDENCE_PENDING").contains(business.get("state"))&&!Boolean.TRUE.equals(business.get("userActionRequired"));
+        boolean sourceOnly=Set.of("SYSTEM_INCOMPLETE","EVIDENCE_PENDING","WAIT_EXTERNAL").contains(business.get("state"))&&!Boolean.TRUE.equals(business.get("userActionRequired"));
         if(sourceOnly)return "<details class=recognition-source-record><summary>识别来源记录</summary><p>保留本项使用的识别来源与处理说明，不计入人工核对待办。</p><details><summary>原始识别说明与位置</summary><blockquote>"+html(note)+"</blockquote></details></details>";
         return "<section class=ocr-review-note><h3>原图复核提示</h3><blockquote>"+html(note)+"</blockquote></section>";
     }

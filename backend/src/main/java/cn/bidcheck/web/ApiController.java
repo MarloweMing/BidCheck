@@ -33,6 +33,8 @@ public class ApiController {
     private VerificationModelClient verificationModels;
     private VisualVerificationService visualModels;
     @Autowired(required=false)
+    private cn.bidcheck.verification.agent.AgentInvestigator evidenceInvestigator;
+    @Autowired(required=false)
     private EvidenceGraphReadService evidenceGraphReads;
     @Autowired(required=false)
     private CheckSpecificationStoreService checkSpecifications;
@@ -59,6 +61,8 @@ public class ApiController {
         "pdfOcrEnabled",service.pdfOcrEnabled(),"pdfOcrModel",service.pdfOcrModel(),"pdfOcrBatchPages",service.pdfOcrBatchPages(),"pdfOcrConcurrency",service.pdfOcrConcurrency(),"pdfOcrMaxPages",service.pdfOcrMaxPages(),
         "pageRoutingEnabled",true,"contextWindowPages",3,"contextOverlapPages",1,"incrementalChecksEnabled",true,"processingFactStorage","RELATIONAL_PAGE_FACTS",
         "verificationEnabled",verificationModels!=null&&verificationModels.enabled(),"semanticExtractionModel",verificationModels==null?"":verificationModels.extractionModelName(),
+        "agentInvestigationEnabled",evidenceInvestigator!=null&&evidenceInvestigator.enabled(),"agentInvestigationDomains",List.of("PERSONNEL","SIGNING_AUTHORITY"),
+        "agentReviewEnabled",service.agentReviewAvailable(),"defaultReviewMode","FIXED_WORKFLOW","reviewModes",List.of("FIXED_WORKFLOW","AGENT_LED"),
         "semanticVerificationModel",verificationModels==null?"":verificationModels.primaryModelName(),"semanticRoutingPolicy",verificationModels==null?"":verificationModels.routingPolicy(),
         "automaticVisualProcessingEnabled",service.automaticVisualProcessingEnabled(),"documentProcessingMode",service.documentProcessingMode(),
         "visualEnabled",visualModels!=null&&visualModels.enabled(),"visualModel",visualModels==null?"":visualModels.modelName(),
@@ -97,7 +101,7 @@ public class ApiController {
     @PostMapping("/projects/{projectId}/check-sets/{setId}/confirm") public Object confirmCheckSet(@PathVariable String projectId,@PathVariable String setId,@RequestBody Map<String,Object> body) { return specifications().confirmCheckSet(projectId,setId,body); }
     @PostMapping("/projects/{id}/runs") public Object run(@PathVariable String id,@RequestBody Map<String,Object> body) {
         Integer manifest=body.get("manifestRevision") instanceof Number number?number.intValue():null;
-        return service.startRun(id,BidService.text(body,"documentId"),Boolean.TRUE.equals(body.get("force")),BidService.text(body,"checkSetId"),manifest,BidService.text(body,"idempotencyKey"));
+        return service.startRun(id,BidService.text(body,"documentId"),Boolean.TRUE.equals(body.get("force")),BidService.text(body,"checkSetId"),manifest,BidService.text(body,"idempotencyKey"),BidService.text(body,"reviewMode"));
     }
     @GetMapping("/runs/{id}") public Object run(@PathVariable String id,@RequestParam(defaultValue="true") boolean includeContent) { return service.run(id,includeContent); }
     @GetMapping("/runs/{id}/evidence-graph") public Object evidenceGraph(@PathVariable String id,

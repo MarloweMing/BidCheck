@@ -8,12 +8,15 @@ final class RecoveryTargets {
     private RecoveryTargets() {}
     static boolean active(Map<String,Object> context){return !str(context,"recoveryStrategy").isBlank()||Set.of("TARGETED","RECOMPUTE_ONLY","REPAIR_REQUIREMENT").contains(str(context,"recoveryMode"));}
     static List<Rule> select(List<Rule> roots,List<Rule> executable,Map<String,Object> context){
-        if(!active(context)||RecoveryReplay.localOnly(context))return executable;
+        if(!active(context))return executable;
         // Old persisted resume contexts predate target ids. Their existing unresolved-rule logic
         // remains valid; an explicitly supplied empty/unknown target set must never widen scope.
         if(!context.containsKey("recoveryTargetObligationIds"))return executable;
         Set<String> requested=new HashSet<>(ProofVerifier.strings(context.get("recoveryTargetObligationIds"))),selected=new HashSet<>();
         for(Rule root:roots)visit(root,requested,selected,false);
+        // A scoring business condition owns several typed reads. Select only the reads
+        // regenerated from that exact verified formula, never arbitrary metadata links.
+        SourceScoringRules.readParents(roots,executable).forEach((read,parent)->{if(selected.contains(parent))selected.add(read);});
         List<Rule> targets=executable.stream().filter(r->selected.contains(r.id())).toList();
         Set<String> subjects=new HashSet<>();for(Rule target:targets){add(subjects,target.subject());add(subjects,str(target.parameters(),"employer"));}
         // Role and employer links are prerequisites. A second unrelated material/certificate/price

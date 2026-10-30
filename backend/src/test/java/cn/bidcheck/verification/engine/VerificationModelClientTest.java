@@ -192,7 +192,7 @@ class VerificationModelClientTest {
                 "{\"facts\":[{\"kind\":\"FIELD\",\"field\":\"name\",\"sourceIds\":[\"S1\"],\"conclusion\":\"PASS\"}]}",
                 "{\"facts\":[{\"kind\":\"FIELD\",\"field\":\"name\",\"sourceIds\":\"S1\"}]}")){
                 content.set(invalid);var failure=assertThrows(VerificationModelClient.ModelRequestException.class,()->client.request("EXTRACT",fieldInput()));
-                assertEquals("OUTPUT_SCHEMA_INVALID",failure.code());assertTrue(failure.splittable());
+                assertEquals("OUTPUT_SCHEMA_INVALID",failure.code());assertFalse(failure.splittable());assertFalse(failure.schemaIssue().isBlank());
             }
         });
     }
@@ -257,9 +257,80 @@ class VerificationModelClientTest {
             for(JsonNode payload:invalid){
                 content.set(json.writeValueAsString(payload));
                 var failure=assertThrows(VerificationModelClient.ModelRequestException.class,()->client.request("EXTRACT",Map.of()));
-                assertEquals("OUTPUT_SCHEMA_INVALID",failure.code(),payload.toString());assertTrue(failure.splittable());
+                assertEquals("OUTPUT_SCHEMA_INVALID",failure.code(),payload.toString());assertFalse(failure.splittable());
             }
         });
+    }
+
+    @Test void schemaMismatchGetsOneGroundedFormatRetryInsteadOfSplittingEverySource()throws Exception {
+        ObjectMapper json=new ObjectMapper();List<JsonNode> requests=new CopyOnWriteArrayList<>();
+        withServer(exchange->{
+            requests.add(json.readTree(exchange.getRequestBody()));ObjectNode fact=json.valueToTree(strictFact());
+            if(requests.size()==1)fact.put("value",80); // A valid JSON number is not this schema's original-text string.
+            writeResponse(exchange,200,compatibleReply(json,"stop",json.writeValueAsString(envelope(json,fact))));
+        },url->{
+            var session=new RunSession(new VerificationModelClient(url+"chat/completions","private-key","model",Duration.ofSeconds(2)),Map.of("unlimitedModelCalls",true),"sensitive-project-name");
+            var sources=List.of(Map.of("id","S1","quote","报价80元"),Map.of("id","S2","quote","另页信息"));
+            JsonNode response=session.model("EXTRACT",Map.of("sources",sources));assertEquals("80",response.path("facts").path(0).path("value").textValue());
+            assertEquals(2,session.modelCalls);var failures=(List<?>)session.diagnostics().get("failures");assertEquals(1,failures.size());var failure=(Map<?,?>)failures.get(0);
+            assertEquals("STRING_REQUIRED",failure.get("schemaIssue"));assertEquals("/facts/0/value",failure.get("schemaPath"));assertEquals(false,failure.get("splitPlanned"));assertEquals(true,failure.get("retryPlanned"));assertEquals(true,failure.get("recoveredByRetry"));
+            assertEquals(Map.of("OUTPUT_SCHEMA_INVALID",1L),session.diagnostics().get("failuresByCode"));
+            assertEquals(Map.of("STRING_REQUIRED",1L),session.diagnostics().get("failuresBySchemaIssue"));
+        });
+        assertEquals(2,requests.size());assertEquals(requests.get(0).path("messages").path(1),requests.get(1).path("messages").path(1),"Retry must retain identical sources/rules");
+        String initial=requests.get(0).path("messages").path(0).path("content").asText(),retry=requests.get(1).path("messages").path(0).path("content").asText();
+        assertTrue(initial.contains("NUMBER的value也必须是原文数字字符串"));assertTrue(initial.contains("attributes必须为{}"));assertTrue(initial.contains("\"additionalProperties\":false"));
+        assertTrue(retry.contains("STRING_REQUIRED"));assertTrue(retry.contains("/facts/0/value"));assertFalse(retry.contains("private-key"));assertFalse(retry.contains("sensitive-project-name"));
+    }
+
+    @Test void repeatedSchemaMismatchStopsAfterOneFeedbackRetryAndDoesNotCreateReadCompletion()throws Exception {
+        ObjectMapper json=new ObjectMapper();AtomicInteger calls=new AtomicInteger();
+        withServer(exchange->{calls.incrementAndGet();ObjectNode fact=json.valueToTree(strictFact());fact.remove("attributes");writeResponse(exchange,200,compatibleReply(json,"stop",json.writeValueAsString(envelope(json,fact))));},url->{
+            var session=new RunSession(new VerificationModelClient(url+"chat/completions","key","model",Duration.ofSeconds(2)),Map.of("unlimitedModelCalls",true),"");
+            var failure=assertThrows(VerificationModelClient.ModelRequestException.class,()->session.model("EXTRACT",Map.of("sources",List.of(Map.of("id","S1"),Map.of("id","S2")))));
+            assertEquals("REQUIRED_FIELD_MISSING",failure.schemaIssue());assertEquals("/facts/0/attributes",failure.schemaPath());assertFalse(failure.splittable());
+            assertEquals(2,calls.get());assertTrue(session.steps.stream().noneMatch(step->"COMPLETED".equals(step.get("status"))));
+        });
+    }
+
+    @Test void unknownProviderKeyNeverLeaksThroughDiagnosticPathOrTriggersFeedbackForVerdicts()throws Exception {
+        ObjectMapper json=new ObjectMapper();AtomicInteger calls=new AtomicInteger();String secret="private-document-name-and-key";
+        withServer(exchange->{calls.incrementAndGet();ObjectNode fact=json.valueToTree(strictFact());fact.withObject("attributes").put(secret,"private-value");writeResponse(exchange,200,compatibleReply(json,"stop",json.writeValueAsString(envelope(json,fact))));},url->{
+            var failure=assertThrows(VerificationModelClient.ModelRequestException.class,()->new VerificationModelClient(url+"chat/completions","key","model",Duration.ofSeconds(2)).request("EXTRACT",Map.of()));
+            assertEquals("UNKNOWN_FIELD",failure.schemaIssue());assertEquals("/facts/0/attributes/@unknown",failure.schemaPath());
+            assertFalse(json.valueToTree(RunSession.failure(failure)).toString().contains(secret));assertFalse(failure.toString().contains("private-value"));
+        });
+        withServer(exchange->{calls.incrementAndGet();writeResponse(exchange,200,compatibleReply(json,"stop","{\"facts\":[],\"decision\":\"PASS\"}"));},url->{
+            int before=calls.get();var session=new RunSession(new VerificationModelClient(url+"chat/completions","key","model",Duration.ofSeconds(2)),Map.of("unlimitedModelCalls",true),"");
+            var failure=assertThrows(VerificationModelClient.ModelRequestException.class,()->session.model("EXTRACT",Map.of()));
+            assertEquals("DECISION_CONTENT_FORBIDDEN",failure.schemaIssue());assertFalse(failure.retryable());assertEquals(before+1,calls.get());
+        });
+    }
+
+    @Test void generatedSchemaUsesExactAttributeAllowListsAndExplicitEmptyObjects(){
+        ObjectMapper json=new ObjectMapper();JsonNode schema=json.valueToTree(VerificationModelClient.responseSchema(false,Map.of()));
+        JsonNode fact=schema.path("properties").path("facts").path("items");assertFalse(fact.path("additionalProperties").asBoolean());
+        assertEquals("string",fact.path("properties").path("value").path("type").asText());assertTrue(fact.path("required").toString().contains("attributes"));
+        for(JsonNode variant:fact.path("allOf"))if("MATERIAL".equals(variant.path("if").path("properties").path("kind").path("const").asText())){
+            JsonNode attrs=variant.path("then").path("properties").path("attributes");assertEquals("object",attrs.path("type").asText());assertEquals(0,attrs.path("properties").size());assertFalse(attrs.path("additionalProperties").asBoolean());
+        }
+    }
+
+    @Test void operationalLogCorrelatesRealRunCheckpointAndAttemptWithoutDocumentPayload()throws Exception {
+        var logger=(ch.qos.logback.classic.Logger)org.slf4j.LoggerFactory.getLogger(VerificationModelClient.class);
+        var capture=new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();capture.start();logger.addAppender(capture);
+        ObjectMapper json=new ObjectMapper();String runId="75ef8785-5aba-46ff-8d7c-612fbb41f377",checkpointId="d4d64e8d-a80d-3677-ae2a-3f6eb6124fac";
+        try{
+            withServer(exchange->writeResponse(exchange,200,compatibleReply(json,"stop","{\"facts\":[]}")),url->{
+                var session=new RunSession(new VerificationModelClient(url+"chat/completions","never-log-key","model",Duration.ofSeconds(2)),Map.of("sourceRunId",runId,"checkpointId",checkpointId),"never-log-project-name");
+                session.model("EXTRACT",Map.of("sources",List.of(Map.of("id","S1","quote","never-log-document-content"))));
+                String log=capture.list.get(capture.list.size()-1).getFormattedMessage();
+                assertTrue(log.contains("sourceRunId="+runId));assertTrue(log.contains("checkpointId="+checkpointId));assertTrue(log.contains("requestId="+session.activeAttempt));
+                assertTrue(log.contains("stepId="+session.steps.get(0).get("id")));assertTrue(log.contains("systemChars="));assertTrue(log.contains("requestChars="));
+                for(String forbidden:List.of("never-log-key","never-log-project-name","never-log-document-content"))assertFalse(log.contains(forbidden));
+                assertNull(org.slf4j.MDC.get("verification.requestId"));
+            });
+        }finally{logger.detachAppender(capture);capture.stop();}
     }
 
     private static Map<String,Object> strictFact(){return new LinkedHashMap<>(Map.of(
@@ -373,7 +444,7 @@ class VerificationModelClientTest {
             assertEquals("REQUEST_TIMEOUT",failure.code()); assertTrue(failure.retryable()); assertTrue(failure.splittable());
             assertTrue(client.request("EXTRACT",fieldInput()).path("facts").isArray());
             var different=new VerificationModelClient(url,"key","primary","extract",url,Duration.ofMillis(100),Duration.ofSeconds(1));
-            assertNotEquals(client.identity(),different.identity());
+            assertEquals(client.identity(),different.identity(),"A deadline change does not invalidate successfully extracted fields");
         });
     }
 
@@ -385,7 +456,7 @@ class VerificationModelClientTest {
                 var client=new VerificationModelClient(url+"chat/completions","key","model",Duration.ofSeconds(2));
                 var failure=assertThrows(VerificationModelClient.ModelRequestException.class,() -> client.request("EXTRACT",fieldInput()));
                 assertEquals(reason.equals("length")?"OUTPUT_INCOMPLETE":"OUTPUT_JSON_INVALID",failure.code());
-                assertEquals(200,failure.httpStatus()); assertTrue(failure.retryable()); assertTrue(failure.splittable()); assertNull(failure.getCause());
+                assertEquals(200,failure.httpStatus()); assertTrue(failure.retryable()); assertEquals(reason.equals("length"),failure.splittable()); assertNull(failure.getCause());
             });
         }
     }

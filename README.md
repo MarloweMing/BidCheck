@@ -21,7 +21,7 @@ BidCheck 是一个本机单用户工作台，覆盖“上传招标文件 → 确
 
 - Java 17 或更新版本。
 - Maven（仓库不包含 Maven Wrapper）。
-- 可选：Python，仅用于本地结构化 OCR。
+- 可选：Python，用于本地结构化 OCR 和受控证据查证 Worker。
 - 可选：Docker 与 Compose v2，仅用于部署 MySQL、RabbitMQ 和 MinIO。
 - 可选：有效的 Aspose.Words 许可证。未配置许可时仍保留原生解析路径，试用截断内容不会作为业务证据。
 
@@ -39,7 +39,7 @@ java -Xmx768m -jar backend/target/bidcheck-0.1.0.jar
 
 默认监听 `127.0.0.1:8787`，数据保存在 `./data`，使用文件型 H2。浏览器访问 <http://127.0.0.1:8787/>，健康检查为 <http://127.0.0.1:8787/api/health>。
 
-Windows 也可以在完成打包后运行 `./Start-BidCheck.ps1`，或双击 `启动BidCheck.cmd`。脚本从 `JAVA_HOME` 或 `PATH` 查找 Java；`-NoBrowser` 不自动打开浏览器，`-LocalOnly` 仅跳过脚本此前保存的 DPAPI 运行配置。
+Windows 也可以在完成打包后运行 `./Start-BidCheck.ps1`，或双击 `启动BidCheck.cmd`。脚本从 `JAVA_HOME` 或 `PATH` 查找 Java；`-NoBrowser` 不自动打开浏览器，`-LocalOnly` 会跳过脚本此前保存的 DPAPI 运行配置，并且不自动启用 Agent Worker。
 
 ## 核心配置
 
@@ -57,6 +57,14 @@ Windows 也可以在完成打包后运行 `./Start-BidCheck.ps1`，或双击 `�
 | `BIDCHECK_OCR_ENABLED` | `false` | 是否启用单页 OCR |
 | `BIDCHECK_PDF_OCR_ENABLED` | `false` | 是否启用 PDF OCR 通道 |
 | `BIDCHECK_WORD_LICENSE_PATH` | 空 | Aspose.Words 许可证路径 |
+| `BIDCHECK_AGENT_ENABLED` | `false` | 是否启用受控证据查证 Worker |
+| `BIDCHECK_AGENT_PYTHON` | 空 | Worker 使用的 Python 解释器；Windows 启动脚本可自动发现隔离环境 |
+| `BIDCHECK_AGENT_WORKER` | `agent-worker/worker.py` | Worker 脚本路径 |
+| `BIDCHECK_AGENT_BASE_URL` | 继承模型地址 | Agent SDK 使用的兼容 API 地址 |
+| `BIDCHECK_AGENT_API_KEY` | 继承模型密钥 | Agent SDK 使用的密钥 |
+| `BIDCHECK_AGENT_MODEL` | 继承模型名称 | Agent SDK 使用的模型名称 |
+| `BIDCHECK_AGENT_TIMEOUT_SECONDS` | `600` | 单次查证的 Java 进程保护超时 |
+| `BIDCHECK_AGENT_CONCURRENCY` | `2` | 同时执行的查证任务上限 |
 
 语义模型地址、密钥和名称全部配置后才会启用相应检查。完整变量及默认值见 `backend/src/main/resources/application.yml`。
 
@@ -75,6 +83,31 @@ $env:BIDCHECK_OCR_LAYOUT_PYTHON = 'C:/path/to/isolated/python.exe'
 ```
 
 `BIDCHECK_OCR_KEY` 也可以由已配置的 `BIDCHECK_MODEL_KEY` 继承；URL 和模型未覆盖时使用 `application.yml` 默认值。普通 OCR 客户端、远端位置 OCR 和本地网格解析都可用时，`native-grid` 才能提供完整结构证据。结构化 OCR 是补充能力，不替代原文保存和人工复核。
+
+## 可选受控证据查证 Worker
+
+Agent Worker 用 OpenAI Agents SDK 在本机编排工具调用，并可连接阿里云 DashScope 等 OpenAI 兼容模型接口。它不依赖 OpenAI 托管 Agent 或追踪服务；Java 后端仍负责工具白名单、输入校验、状态核对和最终业务结论。
+
+建议为 Worker 创建独立环境并先运行测试：
+
+```powershell
+python -m venv .local/agent-venv
+./.local/agent-venv/Scripts/python.exe -m pip install -r agent-worker/requirements.lock
+./.local/agent-venv/Scripts/python.exe agent-worker/run_tests.py
+```
+
+启用时通过环境变量提供兼容接口配置：
+
+```powershell
+$env:BIDCHECK_AGENT_ENABLED = 'true'
+$env:BIDCHECK_AGENT_PYTHON = './.local/agent-venv/Scripts/python.exe'
+$env:BIDCHECK_AGENT_WORKER = './agent-worker/worker.py'
+$env:BIDCHECK_AGENT_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+$env:BIDCHECK_AGENT_API_KEY = '通过安全方式注入，不要写入仓库'
+$env:BIDCHECK_AGENT_MODEL = '你的模型名称'
+```
+
+Windows 启动脚本检测到上述隔离环境和 Worker 时会自动配置路径；使用 `-LocalOnly` 可保持该能力关闭。协议、边界和排错说明见 [`agent-worker/README.md`](agent-worker/README.md)。
 
 ## 数据库 SQL
 
@@ -132,6 +165,7 @@ docker compose --env-file .env -f compose.yml ps
 - `backend/src/main/resources/static/`：浏览器工作台。
 - `backend/src/main/resources/schema*.sql`：H2 与 MySQL 建表 SQL。
 - `backend/src/test/`：不含真实材料的可公开测试。
+- `agent-worker/`：受控证据查证 Worker、协议样例和 Python 单元测试。
 - `deploy/`：Compose 清单、变量示例和部署说明。
 - `scripts/`：索引、迁移、前端验证和可选兼容性工具。
 

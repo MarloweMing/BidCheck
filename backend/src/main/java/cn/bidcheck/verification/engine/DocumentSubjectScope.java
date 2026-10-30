@@ -24,7 +24,7 @@ final class DocumentSubjectScope {
     private final Map<String,PageScope> pages=new HashMap<>();
 
     DocumentSubjectScope(Document document) {
-        String current=coverProject(document),state="",anchor="",named="";int age=0;Map<Integer,Set<String>> appointments=appointmentNavigation(document);
+        String current=coverProject(document),state="",anchor="",named="";int age=0,previousPage=-1;Map<Integer,Set<String>> appointments=appointmentNavigation(document);
         for(Page page:document.pages()){
             String text=Objects.toString(page.text(),"");String prefix=beforeHistory(text);
             String explicit=outerProject(prefix);boolean foreign=!explicit.isBlank()&&!current.isBlank()&&!sameProject(current,explicit);
@@ -36,6 +36,13 @@ final class DocumentSubjectScope {
                 state="CURRENT_BID_SECTION";named=current;anchor=page.locationType()+":"+page.number()+":cover-navigation-section-form-printed-page";age=0;
             }else if(historyHeading(text)){
                 state="HISTORICAL_DOCUMENT";named="";anchor=page.locationType()+":"+page.number()+":history-heading";age=0;
+            }else if(state.equals("CURRENT_BID_SECTION")&&page.number()==previousPage+1&&proofAttachmentStart(page,text)){
+                // The numbered, navigation-backed current appointment owns its explicit proof
+                // attachment. A copied history form or the words 本项目 alone cannot open this scope.
+                state="CURRENT_BID_ATTACHMENT";anchor=anchor+":proof-attachment:"+page.number();age=0;
+            }else if(state.equals("CURRENT_BID_ATTACHMENT")&&(page.number()!=previousPage+1||!physicalPageMarker(page,text))){
+                // Do not carry an attachment through an unlocated or reordered page.
+                state="UNRESOLVED_DOCUMENT";age=0;
             }else if(Set.of("OTHER_PROJECT","HISTORICAL_DOCUMENT","UNRESOLVED_DOCUMENT").contains(state)){
                 // Retain the fact that scope has changed, but stop asserting a particular project after two pages.
                 // A stale context is unresolved, not silently restored to the outer bid document.
@@ -45,6 +52,7 @@ final class DocumentSubjectScope {
             }
             String status=state.isBlank()?(current.isBlank()?"UNSPECIFIED":"CURRENT_DOCUMENT"):state;
             pages.put(key(page),new PageScope(status,named.isBlank()?current:named,anchor,appointmentRanges(text)));
+            previousPage=page.number();
         }
     }
     Context context(Page page,int start,int end){
@@ -53,6 +61,15 @@ final class DocumentSubjectScope {
         return new Context(scope.status(),scope.project(),scope.anchor(),blocks);
     }
     private static String key(Page p){return p.locationType()+":"+p.number();}
+    private static boolean proofAttachmentStart(Page page,String text){
+        return physicalPageMarker(page,text)&&text.stripLeading().matches("(?s)^[（(]2[）)]证明文件扫描件(?:\\s|$).*");
+    }
+    private static boolean physicalPageMarker(Page page,String text){
+        if(!"PAGE".equals(page.locationType()))return false;
+        List<String> lines=text.lines().map(String::strip).filter(s->!s.isBlank()).toList();
+        String number=Integer.toString(page.number());
+        return !lines.isEmpty()&&(lines.get(lines.size()-1).equals(number)||lines.stream().limit(3).anyMatch(number::equals));
+    }
     private static Map<Integer,Set<String>> appointmentNavigation(Document document){
         Map<Integer,Set<String>> out=new HashMap<>();Pattern entry=Pattern.compile("(?m)^[\\t ]*\\d+[.、]\\s*(项目负责人|施工部分负责人|设计部分负责人|施工企业主要负责人|专职安全员)\\s*[.．…·]{3,}\\s*(\\d+)\\s*$");
         for(Page page:document.pages().stream().limit(10).toList()){
@@ -69,7 +86,8 @@ final class DocumentSubjectScope {
         if(lines.isEmpty()||!lines.get(lines.size()-1).equals(Integer.toString(page.number())))return false;
         String prefix=beforeHistory(text);for(String role:navigation.getOrDefault(page.number(),Set.of()))
             if(prefix.substring(0,Math.min(180,prefix.length())).matches("(?s).*(?:^|\\n)\\d+[.、]"+Pattern.quote(role)+"\\s*\\n.*")
-                &&prefix.matches("(?s).*附表[^\\n]{0,15}"+Pattern.quote(role)+"情况表.*")&&prefix.matches("(?s).*拟在本合同任职\\s*"+Pattern.quote(role)+".*"))return true;
+                &&prefix.matches("(?s).*附表[^\\n]{0,15}"+Pattern.quote(role)+"情况表.*")&&(prefix.matches("(?s).*拟在本合同任职\\s*"+Pattern.quote(role)+".*")
+                    ||role.equals("施工企业主要负责人")&&prefix.matches("(?s).*拟在本合同任职\\s*/(?:\\s|$).*")))return true;
         return false;
     }
     private static String beforeHistory(String text){Matcher m=HISTORY.matcher(text);return m.find()?text.substring(0,m.start()):text;}
@@ -110,6 +128,14 @@ final class DocumentSubjectScope {
         if(source.historical()&&!Set.of("CURRENT_PROJECT","CURRENT_BID_SECTION").contains(source.scopeContext().status()))return false;
         String role=DomainBindings.sourceRole(fact),person=fact.kind().equals("PERSON_ROLE")?fact.value():DomainBindings.roleTarget(fact,role);
         if(role.isBlank()||person.isBlank())return false;
+        // An enterprise principal is not appointed to a construction post. Its explicitly named
+        // current-bid form can legitimately use '/' in the project-appointment cell. Only the
+        // navigation+numbered form+printed page boundary established above admits this exception.
+        if(role.equals("施工企业主要负责人")&&source.scopeContext().status().equals("CURRENT_BID_SECTION")&&source.scopeContext().anchor().endsWith(":cover-navigation-section-form-printed-page")){
+            for(String block:localBlocks(source))if(block.matches("(?s).*附表[^\\n]{0,15}施工企业主要负责人情况表.*")&&block.matches("(?s).*拟在本合同任职\\s*/(?:\\s|$).*")){
+                Set<String> named=new LinkedHashSet<>();Matcher names=NAME.matcher(block);while(names.find())named.add(names.group(1));if(named.equals(Set.of(person)))return true;
+            }
+        }
         for(String block:localBlocks(source))if(boundAppointment(block,role,person,fact.field()))return true;
         return false;
     }

@@ -14,7 +14,7 @@ public final class EntityIdentity {
         if(kind.equals("CONTRACT"))name=text(attrs,"contractName").isBlank()?name:text(attrs,"contractName");
         List<Map<String,Object>> identifiers=new ArrayList<>();String strong="";
         for(Map<String,Object> source:sources){String quote=text(evidence(source.get("evidence")),"quote"),id=text(source,"id");
-            if(type.equals("PERSON")){Matcher m=Pattern.compile("(?:身份证(?:号码|号)?|公民身份号码)[：:\\s]*([0-9]{17}[0-9Xx])(?![0-9])").matcher(quote);while(m.find())if(directlyBound(quote,name,m.start())){String normalized=m.group(1).toUpperCase(Locale.ROOT);strong="PERSON:CN_ID_SHA256:"+hash(normalized);identifiers.add(of("field","CN_ID","value",normalized,"sourceIds",List.of(id)));}}
+            if(type.equals("PERSON")){boolean personalCertificate=quote.matches("(?s).*(?:注册证书|安全生产考核合格证书).*" );Matcher m=Pattern.compile("(身份证(?:号码|号)?|公民身份号码|证件号码)[：:\\s]*([0-9]{17}[0-9Xx])(?![0-9A-Za-z])").matcher(quote);while(m.find())if((!m.group(1).equals("证件号码")||personalCertificate)&&directlyBound(quote,name,m.start())){String normalized=m.group(2).toUpperCase(Locale.ROOT);strong="PERSON:CN_ID_SHA256:"+hash(normalized);identifiers.add(of("field","CN_ID","value",normalized,"sourceIds",List.of(id),"sourceStart",m.start(2),"sourceEnd",m.end(2)));}}
             if(type.equals("COMPANY")){Matcher m=Pattern.compile("(?:统一社会信用代码|社会信用代码)[：:\\s]*([0-9A-Z]{18})(?![0-9A-Z])").matcher(quote);while(m.find())if(directlyBound(quote,name,m.start())){strong="COMPANY:CREDIT_CODE:"+m.group(1);identifiers.add(of("field","CREDIT_CODE","value",m.group(1),"sourceIds",List.of(id)));}}
             if(type.equals("VEHICLE")){
                 // A nearby VIN alone is insufficient: require one bounded vehicle record and a genuine 17-character VIN.
@@ -75,7 +75,12 @@ public final class EntityIdentity {
     private static boolean directlyBound(String quote,String name,int labelAt){
         if(name.isBlank())return false;int nameAt=quote.lastIndexOf(name,labelAt);if(nameAt<0||nameAt+name.length()>labelAt||labelAt-nameAt>120)return false;
         String between=quote.substring(nameAt+name.length(),labelAt);
-        // A single name followed by its ID label may use a comma/table separator; never cross a sentence, line, or another name/field.
+        // A single explicitly labelled name line immediately followed by one ID line is a bounded
+        // record. Never cross a blank line, another field/person, sentence, or a portrait narrative.
+        if(between.matches("[\\t ]*\\r?\\n[\\t ]*")){
+            int lineStart=quote.lastIndexOf('\n',Math.max(0,nameAt-1))+1;
+            return quote.substring(lineStart,nameAt).matches("[\\t ]*(?:姓\\s*名|持证人)[\\t ]*[:：][\\t ]*");
+        }
         return !between.matches("(?s).*[\\r\\n；;。].*")&&between.replaceAll("[\\s，,:：|｜（）()]+","").isEmpty();
     }
     private static boolean sameStatement(String quote,String a,String b){if(a.isBlank()||b.isBlank())return false;return Arrays.stream(quote.split("[\\r\\n；;。]")).anyMatch(line->line.length()<=320&&line.contains(a)&&line.contains(b));}

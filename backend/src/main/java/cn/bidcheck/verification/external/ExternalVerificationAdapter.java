@@ -19,7 +19,7 @@ import org.springframework.stereotype.Service;
 /** Fixed administrator-configured endpoints only. No request URL, redirects or implicit business verdicts. */
 @Service
 public class ExternalVerificationAdapter {
-    private static final String VERSION="external-authority-contract-2";
+    private static final String VERSION="external-authority-contract-4-explicit-execution";
     private static final int MAX_BODY=128*1024;
     private static final Semaphore CAPACITY=new Semaphore(2,true);
     private final SortedMap<String,Connector> connectors=new TreeMap<>();
@@ -55,31 +55,35 @@ public class ExternalVerificationAdapter {
     }
     public String identity(){if(connectors.isEmpty())return configInvalid?"CONFIGURATION_INVALID":"DISABLED";StringBuilder b=new StringBuilder(VERSION);for(Connector c:connectors.values())b.append('\n').append(c.type).append('\n').append(c.url).append('\n').append(c.issuer).append('\n').append(c.source);return hash(b.toString().getBytes(StandardCharsets.UTF_8));}
     public Map<String,Object> query(Map<String,Object> request){
-        interrupted();boolean acquired=false;CompletableFuture<HttpResponse<byte[]>> pending=null;LimitedBody body=new LimitedBody();
+        interrupted();boolean acquired=false,queryExecuted=false;CompletableFuture<HttpResponse<byte[]>> pending=null;LimitedBody body=new LimitedBody();
         try{
-            if(request==null||!Set.of("type","subject","evaluationStage","referenceDate").containsAll(request.keySet()))return failure("ERROR","EXTERNAL_REQUEST_INVALID");
+            if(request==null||!Set.of("type","subject","evaluationStage","referenceDate","requiredProvider","requirementScopeFingerprint","requiredConditionFields").containsAll(request.keySet()))return failure("ERROR","EXTERNAL_REQUEST_INVALID");
             String type=requestText(request,"type",64),subject=requestText(request,"subject",200),stage=requestText(request,"evaluationStage",64),date=requestText(request,"referenceDate",10);
             if(!type.matches("[A-Z][A-Z0-9_]{0,63}")||!stage.matches("[A-Z][A-Z0-9_]{0,63}")||!date.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}"))return failure("ERROR","EXTERNAL_REQUEST_INVALID");LocalDate.parse(date);
             Connector connector=connectors.get(type);if(connector==null)return failure("UNAVAILABLE",configInvalid?"EXTERNAL_CONFIGURATION_INVALID":"EXTERNAL_CONNECTOR_NOT_CONFIGURED");
+            Map<String,Object> scope=requestScope(request,connector);
             if(!CAPACITY.tryAcquire(Math.min(10_000,timeout.toMillis()),TimeUnit.MILLISECONDS))return failure("ERROR","EXTERNAL_CAPACITY_TIMEOUT");acquired=true;interrupted();
             Map<String,Object> payload=map("type",type,"subject",subject,"evaluationStage",stage,"referenceDate",date);
+            payload.putAll(scope);
             HttpRequest.Builder builder=HttpRequest.newBuilder(connector.url).timeout(timeout).header("Content-Type","application/json");if(!connector.key.isBlank())builder.header("Authorization","Bearer "+connector.key);
-            pending=client.sendAsync(builder.POST(HttpRequest.BodyPublishers.ofByteArray(json.writeValueAsBytes(payload))).build(),ignored->body);
+            HttpRequest query=builder.POST(HttpRequest.BodyPublishers.ofByteArray(json.writeValueAsBytes(payload))).build();queryExecuted=true;
+            pending=client.sendAsync(query,ignored->body);
             HttpResponse<byte[]> response=pending.get(timeout.toNanos(),TimeUnit.NANOSECONDS);interrupted();
-            if(response.statusCode()!=200)return failure("ERROR","EXTERNAL_HTTP_"+response.statusCode());
+            if(response.statusCode()!=200)return failure("ERROR","EXTERNAL_HTTP_"+response.statusCode(),queryExecuted);
             JsonNode snapshot=json.readTree(response.body());Map<String,Object> result=validate(snapshot,type,subject,stage,date);
             Map<String,Object> record=map("id",UUID.randomUUID().toString(),"type",type,"subject",subject,"source",connector.source,"issuer",connector.issuer,"queriedAt",Instant.now().toString(),"effectiveAt",date,"evaluationStage",stage,
                 "coverage",snapshot.get("coverage").textValue(),"coverageComplete",snapshot.get("coverageComplete").booleanValue(),"rawSnapshotHash",hash(response.body()),"result",result,"provenanceStatus","TRUSTED_CONNECTOR","rawSnapshot",new String(response.body(),StandardCharsets.UTF_8));
-            return map("status","COMPLETED","record",record,"identity",identity(),"connectionStatus","CONFIGURED_ENDPOINT_RESPONDED","limitations",List.of("TRUSTED_CONNECTOR表示来自服务端配置的固定连接器并通过主体、阶段、时点和结构校验，不代表全部外部事实或业务义务均已满足。","NOT_FOUND仅表示所声明来源与覆盖范围未命中，不自动等于投标符合；历史时点不得被当前查询替代。"));
+            record.putAll(verifiedScope(scope,snapshot,result));
+            return map("status","COMPLETED","record",record,"queryExecuted",true,"identity",identity(),"connectionStatus","CONFIGURED_ENDPOINT_RESPONDED","limitations",List.of("TRUSTED_CONNECTOR表示来自服务端配置的固定连接器并通过主体、阶段、时点和结构校验，不代表全部外部事实或业务义务均已满足。","NOT_FOUND仅表示所声明来源与覆盖范围未命中，不自动等于投标符合；历史时点不得被当前查询替代。"));
         }catch(InterruptedException e){Thread.currentThread().interrupt();throw new CancellationException("外部核验已中断");}
         catch(CancellationException e){throw e;}
-        catch(TimeoutException e){return failure("ERROR","EXTERNAL_TIMEOUT");}
-        catch(ExecutionException e){return failure("ERROR",e.getCause() instanceof HttpTimeoutException?"EXTERNAL_TIMEOUT":"EXTERNAL_TRANSPORT_OR_SIZE_FAILURE");}
-        catch(Exception e){String message=e instanceof IOException?e.getMessage():null;return failure("ERROR",message!=null&&message.matches("EXTERNAL_[A-Z0-9_]{1,70}")?message:"EXTERNAL_RESPONSE_OR_REQUEST_INVALID");}
+        catch(TimeoutException e){return failure("ERROR","EXTERNAL_TIMEOUT",queryExecuted);}
+        catch(ExecutionException e){return failure("ERROR",e.getCause() instanceof HttpTimeoutException?"EXTERNAL_TIMEOUT":"EXTERNAL_TRANSPORT_OR_SIZE_FAILURE",queryExecuted);}
+        catch(Exception e){String message=e instanceof IOException?e.getMessage():null;return failure("ERROR",message!=null&&message.matches("EXTERNAL_[A-Z0-9_]{1,70}")?message:"EXTERNAL_RESPONSE_OR_REQUEST_INVALID",queryExecuted);}
         finally{if(pending!=null&&!pending.isDone())pending.cancel(true);body.cancel();if(acquired)CAPACITY.release();}
     }
     private Map<String,Object> validate(JsonNode s,String type,String subject,String stage,String date)throws IOException{
-        keys(s,Set.of("type","subject","evaluationStage","effectiveAt","coverage","coverageComplete","result"));
+        keys(s,Set.of("type","subject","evaluationStage","effectiveAt","coverage","coverageComplete","result","requirementScopeFingerprint","coveredConditionFields"));
         if(!s.isObject()||!type.equals(text(s,"type",64))||!subject.equals(text(s,"subject",200)))throw new IOException("EXTERNAL_SUBJECT_OR_TYPE_MISMATCH");
         if(!stage.equals(text(s,"evaluationStage",64)))throw new IOException("EXTERNAL_STAGE_MISMATCH");
         if(!date.equals(text(s,"effectiveAt",10)))throw new IOException("EXTERNAL_EFFECTIVE_DATE_MISMATCH");
@@ -100,7 +104,48 @@ public class ExternalVerificationAdapter {
         if(status.equals("NOT_FOUND")&&(!s.get("coverageComplete").booleanValue()||!facts.isEmpty()))throw new IOException("EXTERNAL_NEGATIVE_COVERAGE_INCOMPLETE");
         return map("status",status,"facts",facts,"summary",summary);
     }
-    private Map<String,Object> failure(String status,String code){return map("status",status,"errorCode",code,"record",null,"identity",identity(),"connectionStatus",connectors.isEmpty()?"NOT_CONFIGURED":"NOT_VERIFIED_BY_THIS_CALL","limitations",List.of("外部核验未完成，不得把服务失败、缺配置或时点不匹配解释为未命中或业务符合。"));}
+    private Map<String,Object> requestScope(Map<String,Object> request,Connector connector)throws IOException{
+        Set<String> names=Set.of("requiredProvider","requirementScopeFingerprint","requiredConditionFields");
+        if(names.stream().noneMatch(request::containsKey))return Map.of();
+        if(!request.keySet().containsAll(names))throw new IOException("EXTERNAL_SCOPE_REQUEST_INVALID");
+        String provider=requestText(request,"requiredProvider",500),fingerprint=requestText(request,"requirementScopeFingerprint",64);
+        if(!fingerprint.matches("[a-f0-9]{64}")||provider.isBlank())throw new IOException("EXTERNAL_SCOPE_REQUEST_INVALID");
+        List<String> fields=scopeFields(json.valueToTree(request.get("requiredConditionFields")));
+        if(fields.isEmpty()||!providerMatches(provider,connector.source))throw new IOException("EXTERNAL_PROVIDER_OR_FIELDS_MISMATCH");
+        return map("requiredProvider",provider,"requirementScopeFingerprint",fingerprint,"requiredConditionFields",fields);
+    }
+    /** Coverage comes from the signed/configured provider response, never the request echo alone. */
+    private Map<String,Object> verifiedScope(Map<String,Object> requested,JsonNode response,Map<String,Object> result)throws IOException{
+        if(requested.isEmpty())return Map.of();
+        String fingerprint=text(response,"requirementScopeFingerprint",64);
+        if(!requested.get("requirementScopeFingerprint").equals(fingerprint))throw new IOException("EXTERNAL_SCOPE_RESPONSE_MISMATCH");
+        List<String> covered=scopeFields(response.get("coveredConditionFields"));
+        @SuppressWarnings("unchecked") List<String> required=(List<String>)requested.get("requiredConditionFields");
+        if("VERIFIED".equals(result.get("status"))){
+            Set<String> actual=new HashSet<>();for(Object value:(List<?>)result.get("facts"))if(value instanceof Map<?,?> fact)actual.add(Objects.toString(fact.get("field"),""));
+            if(!covered.containsAll(required)||!actual.containsAll(covered))throw new IOException("EXTERNAL_SCOPE_FIELDS_UNPROVEN");
+        }
+        String provider=Objects.toString(requested.get("requiredProvider"),"");
+        return map("requirementScopeFingerprint",fingerprint,"coveredConditionFields",covered,"providerKind",provider,"scopeVerified",true);
+    }
+    private static List<String> scopeFields(JsonNode value)throws IOException{
+        if(value==null||!value.isArray()||value.size()>32)throw new IOException("EXTERNAL_SCOPE_FIELDS_INVALID");
+        List<String> fields=new ArrayList<>();for(JsonNode field:value){
+            if(!field.isTextual()||!field.textValue().matches("[A-Za-z][A-Za-z0-9_.]{0,99}")||fields.contains(field.textValue()))throw new IOException("EXTERNAL_SCOPE_FIELDS_INVALID");
+            fields.add(field.textValue());
+        }return List.copyOf(fields);
+    }
+    private static boolean providerMatches(String requested,String configured){
+        if(requested.equals(configured))return true;
+        if(!requested.contains("."))return false;
+        try{String expected=URI.create(requested.contains("://")?requested:"https://"+requested).getHost();
+            String actual=URI.create(configured.contains("://")?configured:"https://"+configured).getHost();
+            if(expected==null||actual==null)return false;expected=expected.toLowerCase(Locale.ROOT).replaceFirst("^www[.]","");actual=actual.toLowerCase(Locale.ROOT);
+            return actual.equals(expected)||actual.endsWith("."+expected);
+        }catch(RuntimeException invalid){return false;}
+    }
+    private Map<String,Object> failure(String status,String code){return failure(status,code,false);}
+    private Map<String,Object> failure(String status,String code,boolean executed){return map("status",status,"errorCode",code,"record",null,"queryExecuted",executed,"identity",identity(),"connectionStatus",connectors.isEmpty()?"NOT_CONFIGURED":executed?"QUERY_FAILED":"NOT_EXECUTED","limitations",List.of("外部核验未完成，不得把服务失败、缺配置或时点不匹配解释为未命中或业务符合。"));}
     private static String text(JsonNode n,String k,int max)throws IOException{JsonNode v=n.get(k);if(v==null||!v.isTextual()||v.textValue().length()>max)throw new IOException("EXTERNAL_SCHEMA_INVALID");return v.textValue();}
     private static void keys(JsonNode node,Set<String> allowed)throws IOException{if(!node.isObject())throw new IOException("EXTERNAL_SCHEMA_INVALID");for(Iterator<String> it=node.fieldNames();it.hasNext();)if(!allowed.contains(it.next()))throw new IOException("EXTERNAL_SCHEMA_INVALID");}
     private static boolean quoteContainsValue(String quote,String raw,JsonNode value){

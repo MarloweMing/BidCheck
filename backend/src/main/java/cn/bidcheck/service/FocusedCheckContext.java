@@ -22,6 +22,7 @@ import static cn.bidcheck.service.BidService.*;
 /** Ordinary CHECK adapter context. All worker writes are fenced independently of task progress. */
 @Service
 public final class FocusedCheckContext {
+    private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(FocusedCheckContext.class);
     public static final String VERSION="focused-context-3-prior-graph-candidates";
     private final Store store;private final FactLedgerService ledger;private final EvidenceLayoutService layouts;private final EvidenceOperationRepository evidenceOperations;
     private final TransactionTemplate tx;
@@ -48,13 +49,16 @@ public final class FocusedCheckContext {
             Map<String,Object> run=store.map(store.lock("run",runId).body);
             if(!taskId.equals(run.get("taskId"))||!"RUNNING".equals(run.get("status")))throw new TaskLeaseLostException(taskId);
         };
-        Consumer<Runnable> write=action->tx.executeWithoutResult(s->{fence.run();action.run();fence.run();});
+        Consumer<Runnable> write=action->DbTransactionRetry.executeWithoutResult(tx,"ATOMIC_EVIDENCE_PUBLISH",Map.of("taskId",taskId,"runId",runId),s->{fence.run();action.run();fence.run();});
         Map<String,Object> base=new LinkedHashMap<>();
+        String reviewMode=CheckReviewMode.of(store.getMap("run",runId));base.put("reviewMode",reviewMode);
         base.put("focusedCheck",true);base.put("unlimitedModelCalls",true);base.put("modelAttemptPermit",permit);
         base.put("allowModelRuleCompilation",false);
         base.put("sourceRunId",runId);base.put("evaluationStage","BID_SUBMISSION");base.put("documentSetComplete",false);
         base.put("tenderDocuments",tender==null?List.of():List.of(tender));
         base.put("requirementProjectId",project);
+        base.put("requirementDependencyEngineIdentity",engineIdentity);
+        base.put("_requirementDependencySnapshot",(Supplier<Map<String,Object>>)(()->requirementDependencySnapshot(project,runId,bid,tender,engineIdentity)));
         base.put("requirementArtifactLookup",(Function<Map<String,Object>,Map<String,Object>>)request->{
             if(!validRequirementArtifactScope(request,project,tender))return Map.of();
             String id=stableId("requirement-artifact:"+project+":"+text(request,"artifactId"));
@@ -99,10 +103,20 @@ public final class FocusedCheckContext {
             run.put("atomicReferenceDates",dates);run.put("atomicFactIdentity",factIdentity);store.save("run",runId,project,bid.id(),run);});
         return cp->{
             Map<String,Object> context=new LinkedHashMap<>(base);String parent=stableId(runId+":atomic-steps:"+cp.id());
+            if(cn.bidcheck.verification.engine.SourceRequirementInventory.aggregateCheckpoint(cp)){
+                Map<String,Object> dependency=requirementDependencySnapshot(project,runId,bid,tender,engineIdentity);
+                context.put("_requirementDependencySnapshot",(Supplier<Map<String,Object>>)(()->dependency));
+                context.put("currentRequirementFindings",dependency.getOrDefault("findings",List.of()));
+                context.put("requirementDependencyInputsVerified",dependency.getOrDefault("verified",false));
+                context.put("requirementDependencyRevision",dependency.getOrDefault("revision",""));
+            }
+            context.put("ordinaryRecoveryObservedRevision",OrdinaryRecoveryDependencies.currentRevision(store,project,runId));
+            String factRevision=ledger.lookupRevision(manifest);
+            if(!factRevision.isBlank())context.put("sharedFactRevision",factRevision);
             List<Map<String,Object>> prior=new ArrayList<>();String previousRun=text(store.getMap("run",runId),"parentRunId");
             if(!previousRun.isBlank()){
                 Map<String,Object> previous=store.getMap("run",previousRun);
-                if(project.equals(text(previous,"projectId"))&&bid.id().equals(text(previous,"documentId")))
+                if(project.equals(text(previous,"projectId"))&&bid.id().equals(text(previous,"documentId"))&&reviewMode.equals(CheckReviewMode.of(previous)))
                     for(Map<String,Object> step:store.maps("check_atomic_step",project,stableId(previousRun+":atomic-steps:"+cp.id()))){Map<String,Object> inherited=new LinkedHashMap<>(step);inherited.put("paidInPriorRevision",true);prior.add(inherited);}
             }
             prior.addAll(store.maps("check_atomic_step",project,parent));context.put("priorSteps",prior);
@@ -120,12 +134,15 @@ public final class FocusedCheckContext {
                 write.accept(()->store.savePrepared(prepared));
             });
             context.put("sharedFactPublisher",(Consumer<Map<String,Object>>)batch->{
+                long started=System.nanoTime();
                 // Split persistence, never truncate facts. A partial batch must not claim full extraction coverage.
                 List<Map<String,Object>> batches=publicationBatches(batch);
                 var prepared=batches.stream().map(part->ledger.prepareBatch(manifest,runId,cp.id(),part)).toList();
+                long preparedAt=System.nanoTime();
                 for(int part=0;part<prepared.size();part++){
                     var value=prepared.get(part);int index=part;
                     write.accept(()->{store.lock("project",project);Map<String,Object> receipt=ledger.publishPrepared(value);
+                        OrdinaryRecoveryDependencies.publishChanges(store,project,runId,cp.id(),receipt);
                         store.save("check_atomic_publication",stableId(parent+":"+text(batch,"operationIdentity")+":"+index),project,parent,
                             fields("runId",runId,"checkpointId",cp.id(),"part",index,"parts",prepared.size(),"batchDigest",value.digest(),"receipt",receipt));});
                 }
@@ -135,6 +152,7 @@ public final class FocusedCheckContext {
                 if(complete&&batch.get("evidenceOperationDescriptor") instanceof Map<?,?>){Map<String,Object> descriptor=CheckResolution.map(batch.get("evidenceOperationDescriptor"));String key=text(batch,"evidenceOperationKey");
                     write.accept(()->evidenceOperations.publishCompleted(project,key,descriptor,fields("facts",batch.getOrDefault("facts",List.of()),"sources",batch.getOrDefault("sources",List.of()),"fieldCoverage",coverage)));
                 }
+                LOG.info("bidcheck.fact_publish_fenced runId={} checkpointId={} origin={} parts={} prepareMs={} transactionMs={} durationMs={}",runId,cp.id(),text(batch,"origin"),prepared.size(),(preparedAt-started)/1_000_000,(System.nanoTime()-preparedAt)/1_000_000,(System.nanoTime()-started)/1_000_000);
             });
             return context;
         };
@@ -224,6 +242,21 @@ public final class FocusedCheckContext {
             if(matches.size()==1)result.put(event.getKey(),matches.values().iterator().next());
         }
         return result;
+    }
+    private Map<String,Object> requirementDependencySnapshot(String project,String runId,Document bid,Document tender,String engineIdentity){
+        Map<String,Object> currentRun=store.getMap("run",runId);
+        boolean frozen=project.equals(text(currentRun,"projectId"))&&bid.id().equals(text(currentRun,"documentId"))
+                &&tender!=null&&tender.id().equals(text(currentRun,"tenderDocumentId"))
+                &&bid.version()==number(currentRun.get("documentVersion"),-1)&&engineIdentity.equals(text(currentRun,"atomicCheckVersion"));
+        List<Checkpoint> snapshot=store.list("snapshot",project,runId,Checkpoint.class);
+        Map<String,Checkpoint> frozenCheckpoints=new LinkedHashMap<>();snapshot.forEach(c->frozenCheckpoints.put(c.id(),c));
+        List<Map<String,Object>> identities=tender==null?List.of():List.of(fields("id",bid.id(),"version",bid.version(),"sha256",bid.sha256()),fields("id",tender.id(),"version",tender.version(),"sha256",tender.sha256()));
+        List<Finding> findings=frozen?store.list("finding",project,runId,Finding.class).stream()
+                .filter(f->runId.equals(f.runId())&&f.checkpoint().equals(frozenCheckpoints.get(f.checkpoint().id())))
+                .filter(f->new HashSet<>(maps(CheckResolution.atomic(f).get("documentIdentities"))).equals(new HashSet<>(identities)))
+                .toList():List.of();
+        String revision=hash(store.encode(findings.stream().map(f->fields("checkpointId",f.checkpoint().id(),"evaluation",f.evaluation(),"gaps",CheckResolution.atomic(f).getOrDefault("gaps",List.of()),"complete",CheckResolution.atomic(f).get("complete"))).toList()));
+        return fields("sourceRunId",runId,"projectId",project,"documentIdentities",identities,"engineIdentity",engineIdentity,"verified",frozen,"findings",findings,"checkpoints",snapshot,"revision",revision);
     }
     private static List<Map<String,Object>> maps(Object raw){if(!(raw instanceof List<?> list))return List.of();return list.stream().filter(Map.class::isInstance).map(v->stringMap((Map<?,?>)v)).toList();}
     private static int number(Object raw,int fallback){

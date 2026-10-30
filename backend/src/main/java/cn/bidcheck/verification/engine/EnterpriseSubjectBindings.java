@@ -68,7 +68,7 @@ final class EnterpriseSubjectBindings {
         return bindings(source).stream().anyMatch(b->b.role().equals(selector(role))&&b.company().equals(company));
     }
     static List<Fact> extract(List<Rule> rules,List<Source> sources){
-        Set<String> requested=new LinkedHashSet<>();for(Rule rule:rules){if(!rule.predicate().equals("VISUAL")&&companyRole(rule.subject()))requested.add(rule.subject());String employer=str(rule.parameters(),"employer");if(companyRole(employer))requested.add(employer);}
+        Set<String> requested=new LinkedHashSet<>();for(Rule rule:rules){if(!rule.predicate().equals("VISUAL")&&companyRole(rule.subject()))requested.add(rule.subject());String employer=str(rule.parameters(),"employer");if(companyRole(employer))requested.add(employer);if(Boolean.TRUE.equals(rule.parameters().get("templateFormAudit")))requested.add("投标人");}
         if(requested.isEmpty())return List.of();Map<Source,List<Binding>> observed=new LinkedHashMap<>();for(Source source:sources){List<Binding> rows=bindings(source);if(!rows.isEmpty())observed.put(source,rows);}
         Set<Set<String>> memberships=new HashSet<>();observed.values().forEach(rows->rows.stream().filter(b->!b.members().isEmpty()).forEach(b->memberships.add(new LinkedHashSet<>(b.members()))));
         Set<String> direct=new LinkedHashSet<>();observed.values().forEach(rows->rows.stream().filter(b->bidder(b.role())&&b.members().isEmpty()).map(Binding::company).forEach(direct::add));

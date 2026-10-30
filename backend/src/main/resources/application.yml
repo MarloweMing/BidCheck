@@ -27,6 +27,14 @@ spring:
       file-size-threshold: 0B
   jackson:
     default-property-inclusion: non_null
+logging:
+  file:
+    name: ${BIDCHECK_LOG_FILE:${BIDCHECK_DATA:./data}/logs/bidcheck.log}
+  logback:
+    rollingpolicy:
+      max-file-size: 20MB
+      max-history: 14
+      total-size-cap: 500MB
 mybatis:
   mapper-locations: classpath:mappers/*.xml
 bidcheck:
@@ -79,6 +87,15 @@ bidcheck:
     model: ${BIDCHECK_MODEL:}
     extraction-model: ${BIDCHECK_EXTRACTION_MODEL:${BIDCHECK_MODEL:}}
     extraction-url: ${BIDCHECK_EXTRACTION_URL:${BIDCHECK_MODEL_URL:}}
+  agent:
+    enabled: ${BIDCHECK_AGENT_ENABLED:false}
+    python: ${BIDCHECK_AGENT_PYTHON:}
+    worker: ${BIDCHECK_AGENT_WORKER:agent-worker/worker.py}
+    base-url: ${BIDCHECK_AGENT_BASE_URL:${BIDCHECK_EXTRACTION_URL:${BIDCHECK_MODEL_URL:}}}
+    api-key: ${BIDCHECK_AGENT_API_KEY:${BIDCHECK_MODEL_KEY:}}
+    model: ${BIDCHECK_AGENT_MODEL:${BIDCHECK_EXTRACTION_MODEL:${BIDCHECK_MODEL:}}}
+    run-timeout-seconds: ${BIDCHECK_AGENT_TIMEOUT_SECONDS:600}
+    max-concurrency: ${BIDCHECK_AGENT_CONCURRENCY:2}
   retrieval:
     enabled: ${BIDCHECK_RETRIEVAL_ENABLED:false}
     embedding-url: ${BIDCHECK_EMBEDDING_URL:https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding}

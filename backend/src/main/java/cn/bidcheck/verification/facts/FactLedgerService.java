@@ -14,6 +14,7 @@ import static cn.bidcheck.verification.facts.LedgerValues.*;
 /** Immutable fact occurrences plus run/checkpoint dependencies. Caller owns the fenced project transaction. */
 @Service
 public final class FactLedgerService {
+    private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(FactLedgerService.class);
     private static final String VERSION="fact-ledger-4-field-observations";
     private static final Set<String> KINDS=Set.of("MATERIAL","DECLARATION","SECTION","PERSON_ROLE","CERTIFICATE","DATE_RANGE","MONTHS","RELATION","NUMBER","CONTRACT","QUALITY","FIELD","PERSON","COMPANY");
     private final Store store;
@@ -120,7 +121,9 @@ public final class FactLedgerService {
         Map<String,Object> validated=fact(map(value.get("fact")),refs);if(!canonical(validated).equals(canonical(value.get("fact")))||strings(validated.get("sourceIds")).size()!=refs.size())throw new IllegalArgumentException("LEGACY_FACT_SHAPE_INVALID");
         List<Map<String,Object>> sources=strings(validated.get("sourceIds")).stream().map(refs::get).toList();
         Map<String,Object> semantic=new LinkedHashMap<>(validated);semantic.remove("id");semantic.put("sourceIds",sources.stream().map(s->text(s,"sourceFingerprint")).sorted().toList());
-        if(!row.id.equals(dbKey("occurrence",canonical(List.of(project,engine,semantic)))))throw new IllegalArgumentException("LEGACY_OCCURRENCE_ID_INVALID");
+        String legacyId=dbKey("occurrence",canonical(List.of(project,engine,semantic)));
+        String semanticId=dbKey("occurrence",canonical(List.of(project,engine,SemanticFactIdentity.value(semantic))));
+        if(!row.id.equals(legacyId)&&!row.id.equals(semanticId))throw new IllegalArgumentException("LEGACY_OCCURRENCE_ID_INVALID");
         if(!maps(map(map(validated.get("attributes")).get("structureProof")).get("records")).isEmpty())throw new IllegalArgumentException("LEGACY_STRUCTURE_REVALIDATION_REQUIRED");
         Map<String,Object> derived=EntityIdentity.resolve(validated,sources,List.of());
         if(!canonical(derived).equals(canonical(value.get("entity"))))throw new IllegalArgumentException("LEGACY_ENTITY_UNVERIFIED");
@@ -132,8 +135,24 @@ public final class FactLedgerService {
     /** Prepared values have no public constructor and never expose their mutable internal records. */
     public static final class PreparedManifest {
         private final Scope scope;
+        // Run-scoped, bounded immutable payload caches. Index membership is always queried again:
+        // a miss is never retained and newly committed observations remain visible after single-flight.
+        private final Map<String,Map<String,Object>> batches=payloadCache(512,16_000_000),occurrences=payloadCache(2048,8_000_000);
+        private final Map<String,Set<String>> sourceHints=boundedCache(20000);
+        private final java.util.concurrent.locks.ReentrantLock sourceHintsLock=new java.util.concurrent.locks.ReentrantLock();
         private PreparedManifest(Scope scope){this.scope=scope;}
         public String identity(){return scope.manifestIdentity;}
+    }
+    private static <V> Map<String,V> boundedCache(int size){return Collections.synchronizedMap(new LinkedHashMap<String,V>(32,.75f,true){@Override protected boolean removeEldestEntry(Map.Entry<String,V> entry){return size()>size;}});}
+    private static Map<String,Map<String,Object>> payloadCache(int capacity,int maxChars){
+        return Collections.synchronizedMap(new LinkedHashMap<String,Map<String,Object>>(32,.75f,true){
+            private final Map<String,Integer> weights=new HashMap<>();private long chars;
+            @Override public Map<String,Object> put(String key,Map<String,Object> value){
+                int weight=canonical(value).length();if(weight>maxChars)return null;
+                Map<String,Object> previous=super.put(key,value);chars+=weight-weights.getOrDefault(key,0);weights.put(key,weight);
+                Iterator<Map.Entry<String,Map<String,Object>>> rows=entrySet().iterator();while((size()>capacity||chars>maxChars)&&rows.hasNext()){String removed=rows.next().getKey();chars-=weights.remove(removed);rows.remove();}return previous;
+            }
+        });
     }
     public static final class PreparedBatch {
         private final FactLedgerService owner;private final Scope scope;
@@ -170,7 +189,7 @@ public final class FactLedgerService {
             if(!maps(structure.get("records")).isEmpty())attrs.put("structureProof",structure);fact.put("attributes",attrs);
             String originalId=text(input,"id");if(!originalId.isBlank())originalFactIds.add(originalId);
             Map<String,Object> semantic=new LinkedHashMap<>(fact);semantic.remove("id");semantic.put("sourceIds",refs.stream().map(ref->text(ref,"sourceFingerprint")).sorted().toList());
-            String occurrenceId=dbKey("occurrence",canonical(List.of(scope.project,scope.engine,semantic)));
+            String occurrenceId=dbKey("occurrence",canonical(List.of(scope.project,scope.engine,SemanticFactIdentity.value(semantic))));
             entries.add(of("occurrenceId",occurrenceId,"fact",fact,"sources",refs,"entity",entity,"originalFactId",originalId));
         }catch(IllegalArgumentException failure){rejected.add(of("index",index,"code",failure.getMessage()));}}
         Map<String,Object> coverage=coverage(batch.get("extractionCoverage"),sources.keySet(),originalFactIds,rejected,entries.size());
@@ -182,15 +201,18 @@ public final class FactLedgerService {
     /** Only bounded relational persistence remains inside the caller's fenced transaction. */
     public Map<String,Object> publishPrepared(PreparedBatch prepared){
         if(prepared==null||prepared.owner!=this)throw new IllegalArgumentException("FACT_PREPARATION_OWNER_INVALID");
+        long started=System.nanoTime();
         interrupted();Scope scope=prepared.scope;String runId=prepared.runId,checkpointId=prepared.checkpointId,operation=prepared.operation,engineVersion=prepared.engineVersion;
         if(!read("fact_snapshot",snapshotId(scope,runId)).isEmpty())throw new IllegalStateException("FACT_RUN_SNAPSHOT_FROZEN");
         Map<String,Object> batch=prepared.batch,coverage=prepared.coverage;Map<String,Map<String,Object>> sources=prepared.sources;
         List<Map<String,Object>> rejected=new ArrayList<>(prepared.rejected),accepted=new ArrayList<>();int reused=0,index=0;
-        Set<String> existing=core.existingIds(prepared.entries.stream().map(entry->text(entry,"occurrenceId")).toList());
+        List<String> occurrenceIds=prepared.entries.stream().map(entry->text(entry,"occurrenceId")).distinct().toList();
+        Map<String,Map<String,Object>> existingValues=core.getAll(occurrenceIds);Set<String> existing=existingValues.keySet();
+        Map<String,Map<String,Object>> legacy=store.mapsByIds("fact_occurrence",scope.project,occurrenceIds.stream().filter(id->!existing.contains(id)).toList());
         Map<String,Map<String,Object>> pending=new LinkedHashMap<>();
         for(Map<String,Object> entry:prepared.entries){interrupted();index++;try{
             String occurrenceId=text(entry,"occurrenceId");Map<String,Object> fact=map(entry.get("fact"));List<Map<String,Object>> refs=maps(entry.get("sources"));
-            Map<String,Object> old=pending.containsKey(occurrenceId)?pending.get(occurrenceId):existing.contains(occurrenceId)?read("fact_occurrence",occurrenceId):readRecord("fact_occurrence",occurrenceId);
+            Map<String,Object> old=pending.containsKey(occurrenceId)?pending.get(occurrenceId):existingValues.getOrDefault(occurrenceId,legacy.getOrDefault(occurrenceId,Map.of()));
             if(old.isEmpty())pending.put(occurrenceId,of("id",occurrenceId,"occurrenceId",occurrenceId,"projectId",scope.project,"engineIdentity",scope.engine,"fact",fact,"sources",refs,"entity",entry.get("entity"),"layoutIdentity",text(batch,"layoutIdentity"),"createdAt",Instant.now().toString(),"ledgerVersion",VERSION));
             else {
                 if(!scope.project.equals(text(old,"projectId"))||!scope.engine.equals(text(old,"engineIdentity"))||maps(old.get("sources")).isEmpty()||maps(old.get("sources")).stream().anyMatch(ref->!validSource(scope,ref)))throw new IllegalArgumentException("FACT_EXISTING_SCOPE_INVALID");
@@ -203,21 +225,32 @@ public final class FactLedgerService {
         List<Map<String,Object>> fieldCoverage=FieldCoverage.validate(batch.get("fieldCoverage"),sources,accepted);
         boolean persisted=!accepted.isEmpty()||!fieldCoverage.isEmpty();
         String batchId=dbKey("fact-batch",canonical(List.of(scope.project,scope.engine,operation,engineVersion,accepted,sources,coverage,fieldCoverage)));
+        boolean adoption=Set.of("REUSED","REUSED_OBSERVATION").contains(text(batch,"origin"));
+        Map<String,Object> storedBatch=of("id",batchId,"projectId",scope.project,"engineIdentity",scope.engine,"engineVersion",engineVersion,"observationPolicy",text(batch,"observationPolicy"),"operationIdentity",operation,"entries",accepted,"sources",new ArrayList<>(sources.values()),"extractionCoverage",coverage,"fieldCoverage",fieldCoverage,"layoutCells",maps(batch.get("layoutCells")),"layoutIdentity",text(batch,"layoutIdentity"),"origin",text(batch,"origin"));
         if(persisted&&read("fact_batch",batchId).isEmpty()){
-            Map<String,Object> stored=of("id",batchId,"projectId",scope.project,"engineIdentity",scope.engine,"engineVersion",engineVersion,"observationPolicy",text(batch,"observationPolicy"),"operationIdentity",operation,"entries",accepted,"sources",new ArrayList<>(sources.values()),"extractionCoverage",coverage,"fieldCoverage",fieldCoverage,"layoutCells",maps(batch.get("layoutCells")),"layoutIdentity",text(batch,"layoutIdentity"));
+            Map<String,Object> stored=storedBatch;
             store.save("fact_batch",batchId,scope.project,engineParent(scope),stored);
-            for(String docId:sources.values().stream().map(ref->text(map(ref.get("evidence")),"documentId")).distinct().toList()){String parent=documentParent(scope,scope.documents.get(docId));String key=dbKey("fact-index",parent+batchId);store.save("fact_index",key,scope.project,parent,of("id",key,"batchId",batchId));}
+            if(!adoption&&(!accepted.isEmpty()||fieldCoverage.stream().anyMatch(FieldCoverage::completeRead)))for(String docId:sources.values().stream().map(ref->text(map(ref.get("evidence")),"documentId")).distinct().toList()){String parent=documentParent(scope,scope.documents.get(docId));String key=dbKey("fact-index",parent+batchId);store.save("fact_index",key,scope.project,parent,of("id",key,"batchId",batchId,"sourceIds",new ArrayList<>(sources.keySet()),"sourceIndexVersion",1));}
         }
-        List<String> usages=new ArrayList<>();
+        CanonicalFactLookup.Publication lookupPublication=persisted&&!adoption?new CanonicalFactLookup(store).index(scope,storedBatch,accepted,fieldCoverage):new CanonicalFactLookup.Publication(0,List.of());
+        int lookupWrites=lookupPublication.writes();
+        // Migration is bounded and shares the publisher's transaction/fence. BUILDING/BLOCKED
+        // readers retain the legacy path; no half-migrated index can claim evidence absence.
+        Map<String,Object> migration=persisted?migrateLookupIndex(scope,50):Map.of();
+        List<String> usages=new ArrayList<>();List<Stored> usageRows=new ArrayList<>();
+        List<String> usageKeys=accepted.stream().map(entry->dbKey("fact-use",canonical(List.of(scope.project,scope.engine,runId,checkpointId,batchId,text(entry,"occurrenceId"))))).toList();
+        Set<String> existingUses=store.mapsByIds("fact_usage",scope.project,usageKeys).keySet();Set<String> newUses=new HashSet<>();
         for(Map<String,Object> entry:accepted){String occurrence=text(entry,"occurrenceId"),usageId=dbKey("fact-use",canonical(List.of(scope.project,scope.engine,runId,checkpointId,batchId,occurrence)));
-            if(read("fact_usage",usageId).isEmpty()){Map<String,Object> use=of("id",usageId,"usageId",usageId,"projectId",scope.project,"runId",runId,"checkpointId",checkpointId,"engineIdentity",scope.engine,"batchId",batchId,"occurrenceId",occurrence,"operationIdentity",operation,"manifestIdentity",scope.manifestIdentity);store.save("fact_usage",usageId,scope.project,runId,use);store.save("fact_origin",dbKey("fact-origin",usageId),scope.project,occurrence,use);}usages.add(usageId);}
+            if(!existingUses.contains(usageId)&&newUses.add(usageId)){Map<String,Object> use=of("id",usageId,"usageId",usageId,"projectId",scope.project,"runId",runId,"checkpointId",checkpointId,"engineIdentity",scope.engine,"batchId",batchId,"occurrenceId",occurrence,"operationIdentity",operation,"manifestIdentity",scope.manifestIdentity);usageRows.add(store.newRow("fact_usage",usageId,scope.project,runId,use));usageRows.add(store.newRow("fact_origin",dbKey("fact-origin",usageId),scope.project,occurrence,use));}usages.add(usageId);}
+        store.insertRows(usageRows);
         List<String> coverageUsageIds=new ArrayList<>();if(!fieldCoverage.isEmpty()){
             String coverageUse=dbKey("field-use",canonical(List.of(scope.project,scope.engine,runId,checkpointId,batchId)));
             if(read("fact_coverage_usage",coverageUse).isEmpty())store.save("fact_coverage_usage",coverageUse,scope.project,runId,
                 of("id",coverageUse,"projectId",scope.project,"runId",runId,"checkpointId",checkpointId,"engineIdentity",scope.engine,"manifestIdentity",scope.manifestIdentity,"batchId",batchId));
             coverageUsageIds.add(coverageUse);
         }
-        return of("accepted",accepted.size(),"reused",reused,"rejected",rejected,"batchId",persisted?batchId:"","occurrenceIds",accepted.stream().map(e->e.get("occurrenceId")).distinct().toList(),"usageIds",usages,"coverageUsageIds",coverageUsageIds,"coveragePublished",!coverage.isEmpty()||!fieldCoverage.isEmpty(),"fieldCoverage",fieldCoverage);
+        LOG.info("bidcheck.fact_publish runId={} checkpointId={} batchId={} durationMs={} accepted={} reused={} inserted={} usageRows={} fieldObservations={} adoptionAuditOnly={} canonicalLookupWrites={} migrationProcessed={}",runId,checkpointId,batchId,(System.nanoTime()-started)/1_000_000,accepted.size(),reused,pending.size(),usageRows.size(),fieldCoverage.size(),adoption,lookupWrites,migration.getOrDefault("processed",0));
+        return of("accepted",accepted.size(),"reused",reused,"rejected",rejected,"batchId",persisted?batchId:"","occurrenceIds",accepted.stream().map(e->e.get("occurrenceId")).distinct().toList(),"usageIds",usages,"coverageUsageIds",coverageUsageIds,"coveragePublished",!coverage.isEmpty()||!fieldCoverage.isEmpty(),"fieldCoverage",fieldCoverage,"changedEvidence",lookupPublication.changedEvidence());
     }
     public static final class PreparedSnapshot {
         private final FactLedgerService owner;private final Scope scope;private final String runId,dependenciesDigest,coverageDigest,previousBody;
@@ -268,36 +301,245 @@ public final class FactLedgerService {
     }
     /** Caller owns one immutable document manifest for a run; all per-source checks below remain. */
     public List<Map<String,Object>> lookup(PreparedManifest manifest,Map<String,Object> request){
-        Scope scope=Objects.requireNonNull(manifest).scope;Map<String,Object> req=request==null?Map.of():request;int limit=integer(req.get("limit"),100);if(limit<1||limit>2000)throw new IllegalArgumentException("FACT_LOOKUP_LIMIT");
+        long started=System.nanoTime();Scope scope=Objects.requireNonNull(manifest).scope;Map<String,Object> req=request==null?Map.of():request;int limit=integer(req.get("limit"),100);if(limit<1||limit>2000)throw new IllegalArgumentException("FACT_LOOKUP_LIMIT");
         Set<String> requestedDocs=new HashSet<>(strings(req.get("documentIds"))),requestedSources=new HashSet<>(strings(req.get("sourceIds"))),kinds=new HashSet<>(strings(req.get("factKinds"))),observationKeys=new HashSet<>(strings(req.get("observationKeys")));
         if(!scope.documents.keySet().containsAll(requestedDocs))throw new IllegalArgumentException("FACT_LOOKUP_OUTSIDE_MANIFEST");
-        Set<String> batchIds=new LinkedHashSet<>();for(Document doc:scope.documents.values()){if(!requestedDocs.isEmpty()&&!requestedDocs.contains(doc.id()))continue;for(Map<String,Object> row:store.maps("fact_index",scope.project,documentParent(scope,doc)))batchIds.add(text(row,"batchId"));}
-        List<Map<String,Object>> out=new ArrayList<>(),coverageOnly=new ArrayList<>();
-        for(String batchId:batchIds){interrupted();Map<String,Object> batch=read("fact_batch",batchId);if(!scope.engine.equals(text(batch,"engineIdentity"))||!scope.project.equals(text(batch,"projectId")))continue;
-            List<Map<String,Object>> allSources=maps(batch.get("sources"));boolean allValid=allSources.stream().allMatch(s->validSource(scope,s));List<Map<String,Object>> entries=maps(batch.get("entries"));List<Map<String,Object>> eligible=new ArrayList<>();
-            for(Map<String,Object> batchEntry:entries){
-                // materializeEntry always derives returned sourceIds from these alias IDs.
-                // Exclude only cases that the existing post-hydration filter necessarily rejects.
-                List<String> aliasIds=maps(batchEntry.get("sources")).stream().map(s->text(s,"id")).toList();
-                if(aliasIds.isEmpty()||!requestedSources.isEmpty()&&!requestedSources.containsAll(aliasIds))continue;
-                Map<String,Object> entry=materializeEntry(scope,batchEntry);if(entry.isEmpty())continue;Map<String,Object> f=map(entry.get("fact"));List<Map<String,Object>> refs=maps(entry.get("sources"));if(refs.isEmpty()||refs.stream().anyMatch(s->!validSource(scope,s)))continue;if(!kinds.isEmpty()&&!kinds.contains(text(f,"kind")))continue;
-                if(!requestedSources.isEmpty()&&!requestedSources.containsAll(strings(f.get("sourceIds"))))continue;
-                if(!requestedDocs.isEmpty()&&refs.stream().anyMatch(s->!requestedDocs.contains(text(map(s.get("evidence")),"documentId"))))continue;eligible.add(entry);}
-            boolean complete=allValid&&eligible.size()==entries.size()&&out.size()+eligible.size()<=limit&&(!requestedSources.isEmpty()?requestedSources.containsAll(allSources.stream().map(s->text(s,"id")).toList()):true);
-            Set<String> returnedIds=eligible.stream().limit(limit-out.size()).map(entry->text(map(entry.get("fact")),"id")).collect(java.util.stream.Collectors.toSet());
-            List<Map<String,Object>> fields=Boolean.TRUE.equals(req.get("includeFieldCoverage"))?maps(batch.get("fieldCoverage")).stream().filter(row->{
-                List<String> refs=strings(row.get("sourceIds"));return (observationKeys.isEmpty()||observationKeys.contains(text(row,"observationKey")))&&(requestedSources.isEmpty()||requestedSources.containsAll(refs))
-                    &&allSources.stream().filter(s->refs.contains(text(s,"id"))).count()==refs.size()
-                    &&allSources.stream().filter(s->refs.contains(text(s,"id"))).allMatch(s->validSource(scope,s))
-                    &&returnedIds.containsAll(strings(row.get("factIds")));}).toList():List.of();
-            for(Map<String,Object> entry:eligible){if(out.size()>=limit)break;String occurrence=text(entry,"occurrenceId");Map<String,Object> value=of("occurrenceId",occurrence,"fact",entry.get("fact"),"sources",entry.get("sources"),"engineVersion",batch.get("engineVersion"),"operationIdentity",batch.get("operationIdentity"),"batchId",batchId,"batchFactCount",entries.size(),"coverageComplete",complete,
-                    "origins",store.maps("fact_origin",scope.project,occurrence).stream().filter(o->scope.engine.equals(text(o,"engineIdentity"))).map(o->of("runId",o.get("runId"),"checkpointId",o.get("checkpointId"),"usageId",o.get("usageId"))).toList());
+        // Invalid explicit contracts are caller errors, not an old-index compatibility case.
+        // In particular, a compile-only repair has no field target and must not enumerate every
+        // historical extraction batch looking for a substitute identity.
+        if("CANONICAL_SOURCE".equals(text(req,"lookupMode"))&&Boolean.TRUE.equals(req.get("includeFieldCoverage"))
+            &&(observationKeys.isEmpty()||text(req,"modelIdentity").isBlank())){
+            LOG.warn("bidcheck.fact_lookup_rejected runId={} checkpointId={} phase={} reason=FIELD_LOOKUP_IDENTITY_REQUIRED legacyFallback=false",safeLogId(req.get("runId")),safeLogId(req.get("checkpointId")),safeLogId(req.get("lookupPhase")));
+            throw new IllegalArgumentException("FIELD_LOOKUP_IDENTITY_REQUIRED");
+        }
+        if("CANONICAL_SOURCE".equals(text(req,"lookupMode"))&&!requestedSources.isEmpty()&&!kinds.isEmpty()){
+            CanonicalFactLookup canonicalIndex=new CanonicalFactLookup(store);
+            if(canonicalIndex.ready(scope,requestedDocs.isEmpty()?scope.documents.keySet():requestedDocs)){
+                long readinessNanos=System.nanoTime()-started;
+                try{return lookupCanonical(manifest,req,limit,readinessNanos);}catch(CanonicalLookupInvalid invalid){
+                    LOG.warn("bidcheck.fact_lookup_fallback runId={} checkpointId={} reason={}",safeLogId(req.get("runId")),safeLogId(req.get("checkpointId")),invalid.getMessage());
+                }
+            }else LOG.info("bidcheck.fact_lookup_fallback runId={} checkpointId={} reason=CANONICAL_INDEX_NOT_READY",safeLogId(req.get("runId")),safeLogId(req.get("checkpointId")));
+        }
+        Map<String,Map<String,Object>> index=new LinkedHashMap<>();for(Document doc:scope.documents.values()){if(!requestedDocs.isEmpty()&&!requestedDocs.contains(doc.id()))continue;for(Map<String,Object> row:store.maps("fact_index",scope.project,documentParent(scope,doc)))index.putIfAbsent(text(row,"batchId"),row);}
+        SourceSelection selection=selectBatches(manifest,index,requestedSources);int loaded=selection.loaded();List<String> batchIds=selection.ids();
+        Map<String,Map<String,Object>> batches=new LinkedHashMap<>();List<String> missing=new ArrayList<>();int cacheHits=0;
+        for(String id:batchIds){Map<String,Object> cached=manifest.batches.get(id);if(cached==null)missing.add(id);else{batches.put(id,cached);cacheHits++;}}
+        Map<String,Map<String,Object>> fetched=store.mapsByIds("fact_batch",scope.project,missing);loaded+=fetched.size();fetched.forEach((id,batch)->{rememberBatch(manifest,id,batch);batches.put(id,batch);});
+        Set<String> occurrenceIds=new LinkedHashSet<>();for(Map<String,Object> batch:batches.values())for(Map<String,Object> entry:maps(batch.get("entries"))){List<String> aliases=maps(entry.get("sources")).stream().map(s->text(s,"id")).toList();if(!aliases.isEmpty()&&(requestedSources.isEmpty()||requestedSources.containsAll(aliases)))occurrenceIds.add(text(entry,"occurrenceId"));}
+        Map<String,Map<String,Object>> occurrences=new HashMap<>();List<String> missingOccurrences=new ArrayList<>();
+        for(String id:occurrenceIds){Map<String,Object> cached=manifest.occurrences.get(id);if(cached==null)missingOccurrences.add(id);else occurrences.put(id,cached);}
+        Map<String,Map<String,Object>> loadedOccurrences=core.getAll(missingOccurrences);
+        List<String> legacyIds=missingOccurrences.stream().filter(id->!loadedOccurrences.containsKey(id)).toList();loadedOccurrences.putAll(store.mapsByIds("fact_occurrence",scope.project,legacyIds));
+        loadedOccurrences.forEach((id,value)->{manifest.occurrences.put(id,value);occurrences.put(id,value);});
+        // Origins are mutable append-only usage records. Always refresh them, including after a
+        // durable lease wait; immutable occurrence caching must not hide another checkpoint's use.
+        Map<String,List<Map<String,Object>>> eligibleByBatch=new HashMap<>();
+        for(var batchValue:batches.entrySet()){Map<String,Object> batch=batchValue.getValue();if(!scope.engine.equals(text(batch,"engineIdentity"))||!scope.project.equals(text(batch,"projectId")))continue;List<Map<String,Object>> eligible=new ArrayList<>();
+            for(Map<String,Object> batchEntry:maps(batch.get("entries"))){List<String> aliases=maps(batchEntry.get("sources")).stream().map(s->text(s,"id")).toList();if(aliases.isEmpty()||!requestedSources.isEmpty()&&!requestedSources.containsAll(aliases))continue;
+                Map<String,Object> entry=materializeEntry(scope,batchEntry,occurrences.getOrDefault(text(batchEntry,"occurrenceId"),Map.of()));if(entry.isEmpty())continue;
+                Map<String,Object> fact=map(entry.get("fact"));List<Map<String,Object>> refs=maps(entry.get("sources"));if(refs.isEmpty()||refs.stream().anyMatch(s->!validSource(scope,s))||!kinds.isEmpty()&&!kinds.contains(text(fact,"kind")))continue;
+                if(!requestedSources.isEmpty()&&!requestedSources.containsAll(strings(fact.get("sourceIds"))))continue;
+                if(!requestedDocs.isEmpty()&&refs.stream().anyMatch(s->!requestedDocs.contains(text(map(s.get("evidence")),"documentId"))))continue;
+                eligible.add(entry);
+            }eligibleByBatch.put(batchValue.getKey(),eligible);
+        }
+        // The cap counts immutable occurrences, not the number of extraction/adoption batches
+        // which mention them. Keep one source-validated representative for each occurrence.
+        Map<String,Map<String,Object>> selectedEntries=new LinkedHashMap<>();
+        for(String batchId:batchIds)for(Map<String,Object> entry:eligibleByBatch.getOrDefault(batchId,List.of())){
+            String id=text(entry,"occurrenceId");if(selectedEntries.size()<limit)selectedEntries.putIfAbsent(id,entry);
+        }
+        Map<String,List<Map<String,Object>>> origins=store.mapsByParents("fact_origin",scope.project,selectedEntries.keySet());
+        int fieldLimit=integer(req.get("fieldCoverageLimit"),limit);if(fieldLimit<1||fieldLimit>2000)throw new IllegalArgumentException("FIELD_COVERAGE_LOOKUP_LIMIT");
+        List<Map<String,Object>> out=new ArrayList<>();Map<String,Map<String,Object>> completedFields=new LinkedHashMap<>(),pendingFields=new LinkedHashMap<>();Set<String> allCompleteFieldKeys=new HashSet<>();
+        for(String batchId:batchIds){interrupted();Map<String,Object> batch=batches.getOrDefault(batchId,Map.of());if(!scope.engine.equals(text(batch,"engineIdentity"))||!scope.project.equals(text(batch,"projectId")))continue;
+            List<Map<String,Object>> allSources=maps(batch.get("sources"));boolean allValid=allSources.stream().allMatch(s->validSource(scope,s));List<Map<String,Object>> entries=maps(batch.get("entries"));List<Map<String,Object>> eligible=eligibleByBatch.getOrDefault(batchId,List.of());
+            List<Map<String,Object>> represented=eligible.stream().filter(entry->selectedEntries.get(text(entry,"occurrenceId"))==entry).toList();
+            boolean complete=allValid&&represented.size()==entries.size()&&(!requestedSources.isEmpty()?requestedSources.containsAll(allSources.stream().map(s->text(s,"id")).toList()):true);
+            if(Boolean.TRUE.equals(req.get("includeFieldCoverage"))){Map<String,String> occurrencesByFact=new HashMap<>();for(Map<String,Object> entry:eligible)occurrencesByFact.put(text(map(entry.get("fact")),"id"),text(entry,"occurrenceId"));
+                for(Map<String,Object> row:maps(batch.get("fieldCoverage"))){List<String> refs=strings(row.get("sourceIds")),factIds=strings(row.get("factIds"));
+                    if((!observationKeys.isEmpty()&&!observationKeys.contains(text(row,"observationKey")))||(!requestedSources.isEmpty()&&!requestedSources.containsAll(refs))
+                        ||allSources.stream().filter(s->refs.contains(text(s,"id"))).count()!=refs.size()||allSources.stream().filter(s->refs.contains(text(s,"id"))).anyMatch(s->!validSource(scope,s)))continue;
+                    List<String> dependencies=factIds.stream().map(occurrencesByFact::get).toList();
+                    // A receipt may refer to another batch's model IDs. Resolve only through
+                    // validated occurrence identities, with exact current source aliases.
+                    if(dependencies.stream().anyMatch(id->id==null||!selectedEntries.containsKey(id)||!refs.containsAll(strings(map(selectedEntries.get(id).get("fact")).get("sourceIds")))))continue;
+                    Map<String,Object> receipt=copy(row);receipt.put("factIds",dependencies);
+                    Map<String,Object> record=of("recordType","FIELD_COVERAGE","engineVersion",batch.get("engineVersion"),"observationPolicy",text(batch,"observationPolicy"),"operationIdentity",batch.get("operationIdentity"),"batchId",batchId,"fieldCoverage",List.of(receipt),"fieldCoverageSources",allSources);
+                    if(!dependencies.isEmpty())record.put("factReferenceType","OCCURRENCE_ID");
+                    Map<String,Object> key=new LinkedHashMap<>(receipt);for(String provenance:List.of("reusedFromBatchId","reusedObservation","observedInCurrentRun"))key.remove(provenance);
+                    Map<String,Map<String,Object>> bucket=FieldCoverage.completeRead(receipt)?completedFields:pendingFields;
+                    if(FieldCoverage.completeRead(receipt))allCompleteFieldKeys.add(canonical(key));
+                    if(bucket.size()<fieldLimit)bucket.putIfAbsent(canonical(key),copy(record));
+                }
+            }
+            for(Map<String,Object> entry:represented){String occurrence=text(entry,"occurrenceId");Map<String,Object> value=of("occurrenceId",occurrence,"fact",entry.get("fact"),"sources",entry.get("sources"),"engineVersion",batch.get("engineVersion"),"operationIdentity",batch.get("operationIdentity"),"batchId",batchId,"batchFactCount",entries.size(),"coverageComplete",complete,
+                    "origins",origins.getOrDefault(occurrence,List.of()).stream().filter(o->scope.engine.equals(text(o,"engineIdentity"))).map(o->of("runId",o.get("runId"),"checkpointId",o.get("checkpointId"),"usageId",o.get("usageId"))).toList());
                 putIdentity(value,EntityIdentity.resolve(map(entry.get("fact")),maps(entry.get("sources")),maps(batch.get("layoutCells"))));
-                value.put("observationPolicy",text(batch,"observationPolicy"));if(!fields.isEmpty()){value.put("fieldCoverage",fields);value.put("fieldCoverageSources",allSources);}
+                value.put("observationPolicy",text(batch,"observationPolicy"));
                 if(complete&&!map(batch.get("extractionCoverage")).isEmpty()){value.put("extractionCoverage",batch.get("extractionCoverage"));value.put("coverageSources",allSources);}out.add(copy(value));}
-            if(eligible.isEmpty()&&!fields.isEmpty()&&coverageOnly.size()<limit)coverageOnly.add(copy(of("recordType","FIELD_COVERAGE","engineVersion",batch.get("engineVersion"),"observationPolicy",text(batch,"observationPolicy"),"operationIdentity",batch.get("operationIdentity"),"batchId",batchId,"fieldCoverage",fields,"fieldCoverageSources",allSources)));
-            if(out.size()>=limit)break;
-        }out.addAll(coverageOnly.stream().limit(Math.max(0,limit-out.size())).toList());return out;
+        }
+        int uniqueFacts=out.size();out.addAll(completedFields.values());out.addAll(pendingFields.values().stream().limit(fieldLimit-completedFields.size()).toList());
+        boolean factTruncated=eligibleByBatch.values().stream().flatMap(Collection::stream).map(entry->text(entry,"occurrenceId")).distinct().count()>selectedEntries.size();
+        annotateLookupLimits(out,req,factTruncated,allCompleteFieldKeys.size()>fieldLimit);
+        LOG.info("bidcheck.fact_lookup runId={} checkpointId={} phase={} durationMs={} indexRows={} selectedBatches={} batchLoads={} batchCacheHits={} occurrenceLoads={} originParents={} returned={} uniqueFacts={} fieldReceipts={} sourceHintWaitMs={} sourceHintLoads={}",safeLogId(req.get("runId")),safeLogId(req.get("checkpointId")),safeLogId(req.get("lookupPhase")),(System.nanoTime()-started)/1_000_000,index.size(),batchIds.size(),loaded,cacheHits,loadedOccurrences.size(),selectedEntries.size(),out.size(),uniqueFacts,out.size()-uniqueFacts,selection.waitMs(),selection.loaded());
+        return out;
+    }
+    /** Maintenance entry point; caller must own the same fenced project transaction as publication. */
+    public Map<String,Object> migrateLookupIndex(PreparedManifest manifest,int maximum){return migrateLookupIndex(manifest.scope,maximum);}
+    /** Empty means that no trustworthy complete revision is available yet. Never cache this read. */
+    public String lookupRevision(PreparedManifest manifest){
+        Scope scope=manifest.scope;CanonicalFactLookup index=new CanonicalFactLookup(store);
+        if(!index.ready(scope,scope.documents.keySet()))return "";
+        List<String> ids=scope.documentParents.values().stream().map(CanonicalFactLookup::revisionId).sorted().toList();
+        Map<String,Map<String,Object>> rows=store.mapsByIds("fact_lookup_revision",scope.project,ids);
+        List<String> revisions=new ArrayList<>();for(String id:ids){Map<String,Object> row=rows.getOrDefault(id,Map.of());
+            if(!row.isEmpty()&&(!scope.project.equals(text(row,"projectId"))||!CanonicalFactLookup.VERSION.equals(text(row,"version"))))return "";
+            revisions.add(id+":"+text(row,"digest"));
+        }
+        return hash(canonical(List.of(CanonicalFactLookup.VERSION,scope.manifestIdentity,revisions)));
+    }
+    private Map<String,Object> migrateLookupIndex(Scope scope,int maximum){
+        Map<String,Object> result=new CanonicalFactLookup(store).migrate(scope,maximum,batch->{
+            if(!scope.project.equals(text(batch,"projectId"))||!scope.engine.equals(text(batch,"engineIdentity")))throw new IllegalArgumentException("LOOKUP_LEGACY_SCOPE_INVALID");
+            List<Map<String,Object>> sources=maps(batch.get("sources"));
+            if(sources.isEmpty()||sources.stream().anyMatch(s->!validSource(scope,s)))throw new IllegalArgumentException("LOOKUP_LEGACY_SOURCE_INVALID");
+            List<Map<String,Object>> verified=new ArrayList<>();List<String> requested=maps(batch.get("entries")).stream().map(e->text(e,"occurrenceId")).distinct().toList();
+            Map<String,Map<String,Object>> occurrences=core.getAll(requested);occurrences.putAll(store.mapsByIds("fact_occurrence",scope.project,requested.stream().filter(id->!occurrences.containsKey(id)).toList()));
+            for(Map<String,Object> entry:maps(batch.get("entries"))){Map<String,Object> value=materializeEntry(scope,entry,occurrences.getOrDefault(text(entry,"occurrenceId"),Map.of()));
+                if(value.isEmpty())throw new IllegalArgumentException("LOOKUP_LEGACY_OCCURRENCE_INVALID");
+                Map<String,Map<String,Object>> refs=new LinkedHashMap<>();for(Map<String,Object> source:maps(value.get("sources")))refs.put(text(source,"id"),source);
+                Map<String,Object> proof=fact(map(value.get("fact")),refs);
+                if(!canonical(proof).equals(canonical(value.get("fact"))))throw new IllegalArgumentException("LOOKUP_LEGACY_FACT_INVALID");
+                value.put("originalFactId",text(entry,"originalFactId"));verified.add(value);
+            }
+            return verified;
+        });
+        if(integer(result.get("processed"),0)>0||maps(result.get("documents")).stream().anyMatch(row->"BLOCKED".equals(row.get("status"))))
+            LOG.info("bidcheck.fact_lookup_migration projectId={} processed={} indexWrites={} documents={}",safeLogId(scope.project),result.get("processed"),result.get("writes"),result.get("documents"));
+        return result;
+    }
+    private static final class CanonicalLookupInvalid extends RuntimeException {CanonicalLookupInvalid(String message){super(message);}}
+    /** Queries only current source/type/observation buckets, then hydrates canonical occurrences.
+     * There is deliberately no document-wide batch enumeration and no cached negative lookup. */
+    private List<Map<String,Object>> lookupCanonical(PreparedManifest manifest,Map<String,Object> request,int limit,long readinessNanos){
+        long started=System.nanoTime();Scope scope=manifest.scope;int fieldLimit=integer(request.get("fieldCoverageLimit"),limit);
+        if(fieldLimit<1||fieldLimit>2000)throw new IllegalArgumentException("FIELD_COVERAGE_LOOKUP_LIMIT");
+        Set<String> selected=new LinkedHashSet<>(strings(request.get("sourceIds"))),docs=new LinkedHashSet<>(strings(request.get("documentIds")));
+        if(docs.isEmpty())docs.addAll(scope.documents.keySet());Set<String> kinds=new LinkedHashSet<>(strings(request.get("factKinds")));
+        List<String> observations=strings(request.get("observationKeys"));String model=text(request,"modelIdentity");
+        boolean includeFields=Boolean.TRUE.equals(request.get("includeFieldCoverage"));
+        if(includeFields&&(observations.isEmpty()||model.isBlank()))throw new IllegalArgumentException("FIELD_LOOKUP_IDENTITY_REQUIRED");
+        Map<String,Map<String,Object>> current=new LinkedHashMap<>();
+        for(Map<String,Object> row:maps(request.get("sources"))){Map<String,Object> source;
+            try{source=source(scope,row);}catch(IllegalArgumentException invalid){throw new CanonicalLookupInvalid("REQUEST_SOURCE_INVALID");}
+            String id=text(source,"id");if(!selected.contains(id)||current.putIfAbsent(id,source)!=null)throw new CanonicalLookupInvalid("REQUEST_SOURCE_ALIAS_INVALID");
+        }
+        if(!current.keySet().equals(selected))throw new CanonicalLookupInvalid("REQUEST_SOURCE_SET_INCOMPLETE");
+        Set<String> factBuckets=new LinkedHashSet<>(),fieldBuckets=new LinkedHashSet<>();
+        for(String doc:docs)for(String id:selected){Map<String,Object> source=current.get(id);
+            if(source!=null&&!doc.equals(text(evidence(source.get("evidence")),"documentId")))continue;
+            String token=source==null?"A:"+id:"F:"+text(source,"sourceFingerprint"),parent=scope.documentParents.get(doc);
+            for(String kind:kinds)factBuckets.add(CanonicalFactLookup.bucket(parent,token,kind,"",""));
+            if(includeFields)for(String observation:observations)fieldBuckets.add(CanonicalFactLookup.bucket(parent,token,"FIELD",observation,model));
+        }
+        Map<String,Map<String,Object>> refs=new LinkedHashMap<>();
+        long sourceValidationDone=System.nanoTime();
+        readCanonicalRefs(scope,"fact_lookup_ref",factBuckets,refs);readCanonicalRefs(scope,"field_lookup_ref",fieldBuckets,refs);
+        long bucketLookupDone=System.nanoTime();
+        Map<String,Map<String,Object>> items=store.mapsByIds("fact_lookup_item",scope.project,refs.keySet());
+        for(var ref:refs.entrySet()){Map<String,Object> item=items.getOrDefault(ref.getKey(),Map.of());
+            if(!CanonicalFactLookup.validItem(item,scope)||!text(ref.getValue(),"itemDigest").equals(text(item,"digest")))throw new CanonicalLookupInvalid("LOOKUP_REFERENCE_CORRUPT");}
+        Set<String> dependencies=new LinkedHashSet<>();for(Map<String,Object> item:items.values())dependencies.addAll(strings(item.get("dependencyItemIds")));
+        dependencies.removeAll(items.keySet());Map<String,Map<String,Object>> dependencyItems=store.mapsByIds("fact_lookup_item",scope.project,dependencies);
+        for(String id:dependencies)if(!CanonicalFactLookup.validItem(dependencyItems.getOrDefault(id,Map.of()),scope))throw new CanonicalLookupInvalid("LOOKUP_DEPENDENCY_CORRUPT");
+        items.putAll(dependencyItems);
+        long itemLookupDone=System.nanoTime();
+        Set<String> ids=new LinkedHashSet<>();for(Map<String,Object> item:items.values())if(!text(item,"occurrenceId").isBlank())ids.add(text(item,"occurrenceId"));
+        Map<String,Map<String,Object>> occurrences=new LinkedHashMap<>();List<String> missing=new ArrayList<>();
+        for(String id:ids){Map<String,Object> cached=manifest.occurrences.get(id);if(cached==null)missing.add(id);else occurrences.put(id,cached);}
+        Map<String,Map<String,Object>> fetched=core.getAll(missing);fetched.putAll(store.mapsByIds("fact_occurrence",scope.project,missing.stream().filter(id->!fetched.containsKey(id)).toList()));
+        for(var entry:fetched.entrySet()){manifest.occurrences.put(entry.getKey(),entry.getValue());occurrences.put(entry.getKey(),entry.getValue());}
+        long occurrenceLookupDone=System.nanoTime();
+        Map<String,Map<String,Object>> accepted=new LinkedHashMap<>();Map<String,String> itemOccurrences=new HashMap<>();
+        for(Map<String,Object> item:items.values()){
+            String occurrence=text(item,"occurrenceId");if(occurrence.isBlank()||!kinds.contains(text(item,"factKind")))continue;
+            if(!occurrences.containsKey(occurrence))throw new CanonicalLookupInvalid("LOOKUP_OCCURRENCE_MISSING");
+            List<Map<String,Object>> sources=currentAliases(scope,maps(item.get("sources")),current,selected,docs);if(sources.isEmpty())continue;
+            Map<String,Object> entry=materializeEntry(scope,of("occurrenceId",occurrence,"sources",sources,"fact",of("id",text(item,"originalFactId"))),occurrences.get(occurrence));
+            if(entry.isEmpty())throw new CanonicalLookupInvalid("LOOKUP_OCCURRENCE_INVALID");
+            Map<String,Map<String,Object>> byAlias=new LinkedHashMap<>();sources.forEach(s->byAlias.put(text(s,"id"),s));
+            try{fact(map(entry.get("fact")),byAlias);}catch(IllegalArgumentException invalid){throw new CanonicalLookupInvalid("LOOKUP_FACT_UNGROUNDED");}
+            itemOccurrences.put(text(item,"id"),occurrence);if(accepted.size()>=limit&&!accepted.containsKey(occurrence))continue;
+            Map<String,Object> value=of("occurrenceId",occurrence,"fact",entry.get("fact"),"sources",sources,"engineVersion",item.get("engineVersion"),"observationPolicy",item.get("observationPolicy"),"operationIdentity",item.get("operationIdentity"),"batchId",item.get("batchId"),"batchFactCount",1,"coverageComplete",false,"lookupItemId",item.get("id"));
+            putIdentity(value,EntityIdentity.resolve(map(entry.get("fact")),sources,maps(item.get("layoutCells"))));accepted.putIfAbsent(occurrence,value);
+        }
+        boolean includeOrigins=Boolean.TRUE.equals(request.get("includeOrigins"));
+        Map<String,List<Map<String,Object>>> origins=includeOrigins?store.mapsByParents("fact_origin",scope.project,accepted.keySet()):Map.of();
+        for(var row:accepted.entrySet()){row.getValue().put("origins",origins.getOrDefault(row.getKey(),List.of()).stream().filter(o->scope.engine.equals(text(o,"engineIdentity"))).map(o->of("runId",o.get("runId"),"checkpointId",o.get("checkpointId"),"usageId",o.get("usageId"))).toList());row.getValue().put("originsIncluded",includeOrigins);}
+        Map<String,Map<String,Object>> receipts=new LinkedHashMap<>();int candidateReceipts=0;
+        for(Map<String,Object> item:items.values()){
+            Map<String,Object> receipt=map(item.get("fieldCoverage"));if(receipt.isEmpty())continue;
+            if(!FieldCoverage.completeRead(receipt)||!model.equals(text(receipt,"modelIdentity"))||!observations.contains(text(receipt,"observationKey")))throw new CanonicalLookupInvalid("LOOKUP_FIELD_CONTRACT_INVALID");
+            List<Map<String,Object>> sources=currentAliases(scope,maps(item.get("sources")),current,selected,docs);if(sources.isEmpty())continue;
+            List<String> facts=strings(item.get("dependencyItemIds")).stream().map(itemOccurrences::get).toList();
+            if(facts.stream().anyMatch(id->id==null||!accepted.containsKey(id)))continue;
+            Map<String,Map<String,Object>> byAlias=new LinkedHashMap<>();sources.forEach(s->byAlias.put(text(s,"id"),s));
+            Map<String,Object> checked=copy(receipt);checked.put("sourceIds",sources.stream().map(s->text(s,"id")).toList());checked.put("factIds",facts);
+            List<Map<String,Object>> validatedFacts=facts.stream().map(id->of("originalFactId",id,"fact",accepted.get(id).get("fact"))).toList();
+            if(FieldCoverage.validate(List.of(checked),byAlias,validatedFacts).size()!=1)throw new CanonicalLookupInvalid("LOOKUP_FIELD_DEPENDENCY_INVALID");
+            candidateReceipts++;if(receipts.size()>=fieldLimit)continue;
+            Map<String,Object> row=of("recordType","FIELD_COVERAGE","engineVersion",item.get("engineVersion"),"observationPolicy",item.get("observationPolicy"),"operationIdentity",item.get("operationIdentity"),"batchId",item.get("batchId"),"fieldCoverage",List.of(checked),"fieldCoverageSources",sources,"factReferenceType","OCCURRENCE_ID","lookupItemId",item.get("id"));
+            receipts.putIfAbsent(canonical(checked),row);
+        }
+        List<Map<String,Object>> result=new ArrayList<>(accepted.values());result.addAll(receipts.values());boolean factTruncated=itemOccurrences.values().stream().distinct().count()>accepted.size(),fieldTruncated=candidateReceipts>fieldLimit;
+        annotateLookupLimits(result,request,factTruncated,fieldTruncated);
+        LOG.info("bidcheck.fact_lookup runId={} checkpointId={} phase={} mode=CANONICAL_SOURCE durationMs={} readinessMs={} sourceValidationMs={} bucketLookupMs={} itemLookupMs={} occurrenceLookupMs={} validationAndAssemblyMs={} sourceBuckets={} candidateRefs={} uniqueItems={} occurrenceLoads={} occurrenceCacheHits={} batchLoads=0 uniqueFacts={} fieldReceipts={} factTruncated={} fieldTruncated={}",safeLogId(request.get("runId")),safeLogId(request.get("checkpointId")),safeLogId(request.get("lookupPhase")),(System.nanoTime()-started+readinessNanos)/1_000_000,readinessNanos/1_000_000,(sourceValidationDone-started)/1_000_000,(bucketLookupDone-sourceValidationDone)/1_000_000,(itemLookupDone-bucketLookupDone)/1_000_000,(occurrenceLookupDone-itemLookupDone)/1_000_000,(System.nanoTime()-occurrenceLookupDone)/1_000_000,factBuckets.size()+fieldBuckets.size(),refs.size(),items.size(),fetched.size(),ids.size()-missing.size(),accepted.size(),receipts.size(),factTruncated,fieldTruncated);
+        return result;
+    }
+    private static void annotateLookupLimits(List<Map<String,Object>> rows,Map<String,Object> request,boolean factTruncated,boolean fieldTruncated){
+        if(!factTruncated&&!fieldTruncated)return;
+        Map<String,Object> scope=of("phase",text(request,"lookupPhase"),"sourceIds",strings(request.get("sourceIds")),"factKinds",strings(request.get("factKinds")),"observationKeys",strings(request.get("observationKeys")),"reason","LOOKUP_RESULT_CAPACITY");
+        if(rows.isEmpty())rows.add(of("recordType","LOOKUP_METADATA"));
+        for(Map<String,Object> row:rows){row.put("lookupTruncated",true);row.put("factLookupTruncated",factTruncated);row.put("fieldLookupTruncated",fieldTruncated);row.put("lookupTruncation",scope);}
+    }
+    private void readCanonicalRefs(Scope scope,String kind,Collection<String> buckets,Map<String,Map<String,Object>> refs){
+        for(var bucket:store.mapsByParents(kind,scope.project,buckets).entrySet())for(Map<String,Object> row:bucket.getValue()){
+            if(!CanonicalFactLookup.VERSION.equals(text(row,"version"))||!scope.project.equals(text(row,"projectId"))||!bucket.getKey().equals(text(row,"bucket"))||text(row,"itemId").isBlank())throw new CanonicalLookupInvalid("LOOKUP_BUCKET_CORRUPT");
+            Map<String,Object> previous=refs.putIfAbsent(text(row,"itemId"),row);if(previous!=null&&!text(previous,"itemDigest").equals(text(row,"itemDigest")))throw new CanonicalLookupInvalid("LOOKUP_REFERENCE_CONFLICT");
+        }
+    }
+    private List<Map<String,Object>> currentAliases(Scope scope,List<Map<String,Object>> old,Map<String,Map<String,Object>> current,Set<String> selected,Set<String> docs){
+        if(old.isEmpty()||old.stream().anyMatch(s->!validSource(scope,s)))throw new CanonicalLookupInvalid("LOOKUP_SOURCE_INVALID");
+        List<Map<String,Object>> remapped=new ArrayList<>();Set<String> aliases=new HashSet<>();
+        for(Map<String,Object> source:old){if(!docs.contains(text(evidence(source.get("evidence")),"documentId")))return List.of();Map<String,Object> now=source;
+            if(!current.isEmpty()){now=current.values().stream().filter(s->text(s,"sourceFingerprint").equals(text(source,"sourceFingerprint"))).sorted(Comparator.comparing(s->text(s,"id").equals(text(source,"id"))?"":text(s,"id"))).findFirst().orElse(null);}
+            if(now==null||!selected.contains(text(now,"id"))||!aliases.add(text(now,"id")))return List.of();remapped.add(now);
+        }
+        return remapped;
+    }
+    private record SourceSelection(List<String> ids,int loaded,long waitMs) {}
+    private SourceSelection selectBatches(PreparedManifest manifest,Map<String,Map<String,Object>> index,Set<String> requestedSources){
+        long started=System.nanoTime();
+        // Only legacy source-hint initialization is serialized. Recheck after acquiring so cold
+        // checkpoint threads share the work; index membership above is refreshed on every lookup.
+        try{manifest.sourceHintsLock.lockInterruptibly();}catch(InterruptedException failure){Thread.currentThread().interrupt();throw new java.util.concurrent.CancellationException("事实来源索引初始化已中断");}
+        try{long waitMs=(System.nanoTime()-started)/1_000_000;interrupted();List<String> selected=new ArrayList<>(),ids=new ArrayList<>(index.keySet());int loaded=0;
+            for(int at=0;at<ids.size();at+=100){List<String> part=ids.subList(at,Math.min(ids.size(),at+100)),missing=new ArrayList<>();Map<String,Set<String>> hints=new HashMap<>();
+                for(String id:part){Set<String> hint=manifest.sourceHints.get(id);if(hint==null){Map<String,Object> row=index.get(id);if(integer(row.get("sourceIndexVersion"),0)==1&&row.get("sourceIds") instanceof List<?>){hint=new HashSet<>(strings(row.get("sourceIds")));manifest.sourceHints.put(id,hint);}else missing.add(id);}if(hint!=null)hints.put(id,hint);}
+                Map<String,Map<String,Object>> values=store.mapsByIds("fact_batch",manifest.scope.project,missing);loaded+=values.size();values.forEach((id,batch)->{rememberBatch(manifest,id,batch);hints.put(id,manifest.sourceHints.get(id));});
+                // Use this chunk's snapshot, rather than rereading the bounded cache after it
+                // may have evicted an earlier hint from an unusually large manifest.
+                for(String id:part)if(requestedSources.isEmpty()||!Collections.disjoint(requestedSources,hints.getOrDefault(id,Set.of())))selected.add(id);
+                interrupted();
+            }return new SourceSelection(List.copyOf(selected),loaded,waitMs);
+        }finally{manifest.sourceHintsLock.unlock();}
+    }
+    private static String safeLogId(Object value){String text=Objects.toString(value,"");return text.matches("[A-Za-z0-9_.:-]{1,100}")?text:"";}
+    private static void rememberBatch(PreparedManifest manifest,String id,Map<String,Object> batch){
+        Set<String> sources=new HashSet<>();maps(batch.get("sources")).forEach(s->sources.add(text(s,"id")));for(Map<String,Object> entry:maps(batch.get("entries")))maps(entry.get("sources")).forEach(s->sources.add(text(s,"id")));
+        manifest.sourceHints.put(id,sources);manifest.batches.put(id,batch);
     }
 
     public Map<String,Object> view(String projectId,String runId,String engineIdentity,List<Document> manifestBidDocs){Scope scope=new Scope(projectId,engineIdentity,manifestBidDocs);checkName(runId);Map<String,Object> frozen=read("fact_snapshot",snapshotId(scope,runId));return frozen.isEmpty()?assemble(scope,runId,false):copy(frozen);}
@@ -344,7 +586,10 @@ public final class FactLedgerService {
     private Map<String,Object> read(String kind,String id){if(kind.equals("fact_occurrence")){Map<String,Object> value=core.get(id);if(!value.isEmpty())return value;}return readRecord(kind,id);}
     private Map<String,Object> readRecord(String kind,String id){try{return store.getMap(kind,id);}catch(ResponseStatusException e){if(e.getStatusCode().value()==404)return Map.of();throw e;}}
     private Map<String,Object> materializeEntry(Scope scope,Map<String,Object> entry){
-        Map<String,Object> occurrence=read("fact_occurrence",text(entry,"occurrenceId"));if(occurrence.isEmpty()||!scope.project.equals(text(occurrence,"projectId"))||!scope.engine.equals(text(occurrence,"engineIdentity")))return Map.of();
+        return materializeEntry(scope,entry,read("fact_occurrence",text(entry,"occurrenceId")));
+    }
+    private Map<String,Object> materializeEntry(Scope scope,Map<String,Object> entry,Map<String,Object> occurrence){
+        if(occurrence.isEmpty()||!scope.project.equals(text(occurrence,"projectId"))||!scope.engine.equals(text(occurrence,"engineIdentity")))return Map.of();
         List<Map<String,Object>> aliases=maps(entry.get("sources")),originals=maps(occurrence.get("sources"));
         if(!aliases.stream().map(s->text(s,"sourceFingerprint")).sorted().toList().equals(originals.stream().map(s->text(s,"sourceFingerprint")).sorted().toList())||aliases.stream().map(s->text(s,"id")).distinct().count()!=aliases.size())return Map.of();
         Map<String,Map<String,Object>> stored=new HashMap<>();for(Map<String,Object> s:maps(occurrence.get("sources")))stored.put(text(s,"sourceFingerprint"),s);

@@ -4,29 +4,74 @@ import cn.bidcheck.domain.Domain.*;
 import com.fasterxml.jackson.databind.*;
 import java.io.*;
 import java.util.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import static cn.bidcheck.verification.engine.VerificationTypes.*;
 
 /** Compiles a closed expression tree, never executable model-generated code. */
 final class RequirementCompiler {
+    private static final Logger log=LoggerFactory.getLogger(RequirementCompiler.class);
     private static final Set<String> LOGICS=Set.of("ALL","ANY","CONDITIONAL","FOR_EACH");
     Plan compile(Checkpoint cp,RunSession session)throws IOException {
-        // Global review requires complete object/image coverage; model-selected excerpts cannot establish it.
+        long started=System.nanoTime();
+        try {
+            Plan plan=RequirementRepairExecution.versioned(compileInternal(cp,session));
+            if(RequirementRepairPolicy.recompile(session.context))plan=RequirementRepairExecution.publish(plan,session);
+            List<Rule> leaves=leaves(plan.rules());
+            Map<String,Long> predicates=new TreeMap<>();
+            leaves.forEach(rule->predicates.merge(rule.predicate(),1L,Long::sum));
+            Object mapped=plan.requirementScope().get("deterministicCompilation");
+            Map<?,?> coverage=mapped instanceof Map<?,?> map?map:Map.of();
+            Map<String,Long> reasonCounts=new TreeMap<>();
+            if(coverage.get("gaps") instanceof List<?> gaps)for(Object gap:gaps)
+                if(gap instanceof Map<?,?> row)for(String reason:Objects.toString(row.get("reasonCode"),"").split(";"))
+                    if(!reason.isBlank())reasonCounts.merge(reason,1L,Long::sum);
+            Map<String,Object> diagnostics=linked("version","compilation-diagnostics-1","stage","REQUIREMENT_COMPILATION",
+                    "checkpointId",cp.id(),"method",plan.method(),"sourceScope",plan.requirementScope().getOrDefault("status",""),
+                    "sourceHash",identity(Objects.toString(cp.source()==null?cp.expected():cp.source().quote(),"")),
+                    "leafCount",leaves.size(),"predicateCounts",predicates,"validationIssueCount",plan.issues().size(),
+                    "mappingGapReasons",reasonCounts,"durationMs",(System.nanoTime()-started)/1_000_000,
+                    "complete",!leaves.isEmpty()&&plan.issues().isEmpty()&&!predicates.containsKey("UNSUPPORTED"));
+            Object sourceContext=plan.requirementScope().get("sourceContext");
+            if(sourceContext instanceof Map<?,?> sc&&sc.get("identity") instanceof Map<?,?> identity&&identity.get("sourceRepair") instanceof Map<?,?> repair)diagnostics.put("sourceMapping",repair);
+            Map<String,Object> audit=new LinkedHashMap<>(session.compilationAudit);audit.put("compilerDiagnostics",diagnostics);session.compilationAudit=audit;
+            // No original text, party/person names, model payloads or credentials in operational logs.
+            log.info("bidcheck.stage=REQUIREMENT_COMPILATION runId={} sourceRunId={} scope={} checkpointId={} method={} sourceScope={} sourceMapping={} leaves={} unsupported={} issues={} gapReasons={} elapsedMs={}",
+                    safeLog(str(session.context,"runId")),safeLog(str(session.context,"sourceRunId")),safeLog(session.scope),safeLog(cp.id()),plan.method(),diagnostics.get("sourceScope"),mappingLog(diagnostics.get("sourceMapping")),leaves.size(),predicates.getOrDefault("UNSUPPORTED",0L),plan.issues().size(),reasonCounts,diagnostics.get("durationMs"));
+            return plan;
+        } catch(IOException|RuntimeException error){
+            log.warn("bidcheck.stage=REQUIREMENT_COMPILATION runId={} sourceRunId={} scope={} checkpointId={} failureClass={} elapsedMs={}",safeLog(str(session.context,"runId")),safeLog(str(session.context,"sourceRunId")),safeLog(session.scope),safeLog(cp.id()),error.getClass().getSimpleName(),(System.nanoTime()-started)/1_000_000);
+            throw error;
+        }
+    }
+    private static String safeLog(String value){String safe=Objects.toString(value,"");return safe.matches("[A-Za-z0-9_:.\\-]{1,100}")?safe:identity(safe);}
+    private static Map<String,Object> mappingLog(Object value){Map<String,Object> out=new LinkedHashMap<>();if(value instanceof Map<?,?> map)
+        for(String key:List.of("version","stage","status","reasonCode"))if(map.containsKey(key))out.put(key,safeLog(Objects.toString(map.get(key),"")));return out;}
+    private Plan compileInternal(Checkpoint cp,RunSession session)throws IOException {
+        String requirement=Objects.toString(cp.expected(),"");String original=str(session.context,"originalRequirement");
+        // Confirmed checkpoint metadata is the server-owned business intent.  In particular, a
+        // tender source quote may be a long project introduction, a one-line inventory entry or a
+        // reference-date clause.  It scopes evidence; it must not replace type/field/operator/
+        // expected and be reinterpreted as a different obligation in focused/Agent-led mode.
+        Plan typed=typedCheckpointPlan(cp,original,session.context);
+        if(typed!=null)return typed;
+        // Global review types without a closed program rule still require complete object/image
+        // coverage; model-selected excerpts cannot establish a full-document pass.
         if("FULL_TEXT_REVIEW".equals(cp.type())) {
             return new Plan("ALL",List.of(),"NATIVE",List.of("全文检查须保留完整覆盖与人工复核，不能将模型抽样结果视为全文通过"));
         }
-        String requirement=Objects.toString(cp.expected(),"");String original=str(session.context,"originalRequirement");
-        RequirementScope.Selection scope=RequirementScope.resolve(cp,original);
-        if(!scope.resolved())return new Plan("ALL",List.of(),"SCOPE_UNRESOLVED",List.of(scope.issue()),List.of(),scope.map());
+        RequirementSourceRepair.Resolution resolution=RequirementSourceRepair.resolve(cp,original,session.context);
+        RequirementScope.Selection scope=resolution.scope();RequirementSourceContext.Context sourceContext=resolution.context();
+        if(!scope.resolved()){Map<String,Object> metadata=new LinkedHashMap<>(scope.map());metadata.put("sourceContext",sourceContext.map());return new Plan("ALL",List.of(),"SCOPE_UNRESOLVED",List.of(scope.issue()),List.of(),metadata);}
         boolean focused=Boolean.TRUE.equals(session.context.get("focusedCheck"));
         Set<String> focusedDomains=focused?new LinkedHashSet<>(ProofVerifier.strings(session.context.get("atomicDomains"))):Set.of();
-        String predicate=switch(Objects.toString(cp.type(),"")){case "VALUE_COMPARE"->"NUMBER";case "ENTITY_FIELD_CONSISTENCY"->"SAME_FIELD";case "DATE_VALIDITY"->"VALIDITY";default->"";};
+        String predicate=switch(Objects.toString(cp.type(),"")){case "VALUE_COMPARE"->"NUMBER";default->"";};
         if(!predicate.isEmpty()&&!focused){Rule rule=new Rule("O1",cp.title(),predicate,"",Objects.toString(cp.field(),""),Objects.toString(cp.operator(),""),requirement,Objects.toString(cp.unit(),""),Map.of(),scope.obligation(),"",List.of());return new Plan("ALL",List.of(rule),"TYPED_RULE",List.of(),List.of(),scope.map());}
-        RequirementSourceContext.Context sourceContext=RequirementSourceContext.resolve(cp,original,session.context);
         RequirementReferences.Expansion expansion=RequirementReferences.expand(cp,scope.obligation(),sourceContext,session.context);
         sourceContext=expansion.context();
         // Local recovery revalidates the original tree and IDs; only a fresh compile may
         // introduce the closed source-derived price rule.
-        Rule sourcePrice=RecoveryReplay.localOnly(session.context)?null:TenderRequirementConstants.sourcePriceRule(cp,scope.obligation());
+        Rule sourcePrice=RecoveryReplay.localOnly(session.context)&&!RequirementRepairPolicy.recompile(session.context)?null:TenderRequirementConstants.sourcePriceRule(cp,scope.obligation());
         if(sourcePrice!=null&&RequirementReferences.issues(sourceContext).isEmpty()&&sourceContext.sources().stream().allMatch(s->"OBLIGATION".equals(s.get("kind")))){
             Rule verified=focused?focusedRule(sourcePrice,focusedDomains,new RequirementContextBindings(scope.obligation(),"ORIGINAL_REQUIREMENT")):sourcePrice;
             if(!"UNSUPPORTED".equals(verified.predicate())){
@@ -36,10 +81,11 @@ final class RequirementCompiler {
                 return sourcePlan;
             }
         }
-        if(RecoveryReplay.localOnly(session.context)){
+        if(RecoveryReplay.localOnly(session.context)&&!RequirementRepairPolicy.recompile(session.context)){
             JsonNode previous=RecoveryReplay.plan(session.context,session.json);
             if(previous==null)return new Plan("ALL",List.of(),"RECOVERY_PLAN_MISSING",List.of("补查缺少可重新验证的规则计划，未再次调用模型"));
-            Plan replay=compileResponse(cp,previous,original,focused,focusedDomains,sourceContext);
+            Plan parsed=compileResponse(cp,previous,original,focused,focusedDomains,sourceContext,scope);
+            Plan replay=new Plan(parsed.logic(),parsed.rules(),"LOCAL_REVALIDATION",parsed.issues(),parsed.policyNotes(),parsed.requirementScope());
             session.compilationAudit=CompilationRecovery.audit(replay,0,List.of(linked("state","LOCAL_REVALIDATION","networkCalls",0)));
             return replay;
         }
@@ -51,37 +97,15 @@ final class RequirementCompiler {
                     "policy","SERVER_OWNED_RULE")));
             return referenceTimePlan;
         }
-        DeterministicRequirementCompiler.Result deterministic=new DeterministicRequirementCompiler(session.json)
-                .compile(cp,groundedRequirement,sourceContext,session.context);
         // Rule authoring is server-owned. The model compiler is retained only as an explicit
         // compatibility/test path; absence of the flag must therefore mean disabled.
-        boolean modelRuleCompilationAllowed=Boolean.TRUE.equals(session.context.get("allowModelRuleCompilation"));
+        boolean modelRuleCompilationAllowed=!RequirementRepairPolicy.recompile(session.context)&&Boolean.TRUE.equals(session.context.get("allowModelRuleCompilation"));
+        if(!modelRuleCompilationAllowed)return deterministicPackage(cp,groundedRequirement,original,sourceContext,scope,focused,focusedDomains,session);
+        DeterministicRequirementCompiler.Result deterministic=new DeterministicRequirementCompiler(session.json)
+                .compile(cp,groundedRequirement,sourceContext,session.context);
         Plan deterministicPlan=deterministic.identify(
-                compileResponse(cp,deterministic.root(),original,focused,focusedDomains,sourceContext),
+                compileResponse(cp,deterministic.root(),original,focused,focusedDomains,sourceContext,scope),
                 deterministic.complete()?"DETERMINISTIC_TEMPLATE_COMPILED":"DETERMINISTIC_TEMPLATE_PARTIAL");
-        List<Map<String,Object>> deterministicDiagnostics=CompilationRecovery.diagnostics(deterministicPlan);
-        if(!modelRuleCompilationAllowed&&deterministic.complete()&&deterministicDiagnostics.isEmpty()){
-            session.compilationAudit=CompilationRecovery.audit(deterministicPlan,0,List.of(linked(
-                    "state","DETERMINISTIC_TEMPLATE_COMPILED","networkCalls",0,
-                    "compilerVersion",DeterministicRequirementCompiler.VERSION,
-                    "coverageDigest",deterministic.digest())));
-            return deterministicPlan;
-        }
-        // In production the model is an evidence extractor, never a rule author. Preserve every
-        // deterministic rule and turn uncovered source spans into explicit, source-bound pending
-        // nodes. This is materially different from silently dropping a clause or treating a model
-        // generated rule as executable policy.
-        if(!modelRuleCompilationAllowed){
-            Plan safe=deterministic.identify(
-                    compileResponse(cp,deterministic.rootWithUnsupportedGaps(),original,focused,focusedDomains,sourceContext),
-                    "DETERMINISTIC_TEMPLATE_PARTIAL");
-            session.compilationAudit=CompilationRecovery.audit(safe,0,List.of(linked(
-                    "state","MODEL_RULE_COMPILATION_DISABLED","networkCalls",0,
-                    "compilerVersion",DeterministicRequirementCompiler.VERSION,
-                    "coverageDigest",deterministic.digest(),"gapCount",deterministic.gaps().size(),
-                    "policy","MODEL_FACT_EXTRACTION_ONLY")));
-            return safe;
-        }
         if(!session.model.enabled()){
             if(!deterministic.rules().isEmpty())return deterministicPlan;
             Plan plan=fallback(cp);return new Plan(plan.logic(),plan.rules(),plan.method(),plan.issues(),plan.policyNotes(),scope.map());
@@ -106,7 +130,7 @@ final class RequirementCompiler {
         try {
         Map<String,Object> shared=artifact.lookup();
         JsonNode sharedRaw=shared.isEmpty()?null:session.json.valueToTree(shared.get("rawResponse"));
-        if(sharedRaw!=null){JsonNode merged=CompilationRecovery.normalize(sharedRaw);Plan cached=compileResponse(cp,merged,original,focused,focusedDomains,sourceContext);
+        if(sharedRaw!=null){JsonNode merged=CompilationRecovery.normalize(sharedRaw);Plan cached=compileResponse(cp,merged,original,focused,focusedDomains,sourceContext,scope);
             boolean delayed=shared.get("retryNotBeforeEpochMillis") instanceof Number n&&n.longValue()>artifact.now();
             if(!"REPAIR_RETRY_PENDING".equals(shared.get("state"))||delayed){
                 // A supposedly valid artifact must still pass the current server validator.
@@ -116,9 +140,9 @@ final class RequirementCompiler {
             }
         }
         JsonNode saved=session.prior("COMPILED_PLAN",session.fingerprint("COMPILED_PLAN",input));
-        if(saved!=null){JsonNode merged=CompilationRecovery.normalize(saved);Plan cached=compileResponse(cp,merged,original,focused,focusedDomains,sourceContext);if(CompilationRecovery.diagnostics(cached).isEmpty()){session.resumedSteps++;session.compilationAudit=CompilationRecovery.audit(cached,0,List.of(linked("state","REUSED_VALIDATED_PLAN")));artifact.publish(merged,cached,false,0);return artifact.identify(cached);}}
+        if(saved!=null){JsonNode merged=CompilationRecovery.normalize(saved);Plan cached=compileResponse(cp,merged,original,focused,focusedDomains,sourceContext,scope);if(CompilationRecovery.diagnostics(cached).isEmpty()){session.resumedSteps++;session.compilationAudit=CompilationRecovery.audit(cached,0,List.of(linked("state","REUSED_VALIDATED_PLAN")));artifact.publish(merged,cached,false,0);return artifact.identify(cached);}}
         JsonNode originalResponse=sharedRaw==null?session.model("COMPILE",input):sharedRaw,root=CompilationRecovery.normalize(originalResponse);
-        Plan plan=compileResponse(cp,root,original,focused,focusedDomains,sourceContext);
+        Plan plan=compileResponse(cp,root,original,focused,focusedDomains,sourceContext,scope);
         List<Map<String,Object>> diagnostics=CompilationRecovery.diagnostics(plan),history=new ArrayList<>();
         if(sharedRaw==null)session.completeCompilation(input,root,diagnostics);history.add(linked("stage",sharedRaw==null?"INITIAL_VALIDATION":"REUSED_FAILED_NODE_INPUT","diagnostics",diagnostics));
         int repairs=0;boolean repairFailed=false;
@@ -130,7 +154,7 @@ final class RequirementCompiler {
             repairs++;
             try{
                 JsonNode repairResponse=session.model("COMPILE",repair),amended=CompilationRecovery.normalize(repairResponse);
-                Plan candidate=compileResponse(cp,amended,original,focused,focusedDomains,sourceContext);
+                Plan candidate=compileResponse(cp,amended,original,focused,focusedDomains,sourceContext,scope);
                 List<String> preservation=CompilationRecovery.repairIssues(plan,candidate);
                 List<Map<String,Object>> checked=new ArrayList<>(CompilationRecovery.diagnostics(candidate));
                 preservation.forEach(issue->checked.add(linked("obligationId","","reasonCode","REPAIR_OBLIGATION_CHANGED","need",issue)));
@@ -145,6 +169,89 @@ final class RequirementCompiler {
         artifact.publish(root,plan,repairFailed,repairs);
         return artifact.identify(plan);
         } finally {if(artifact.enabled())artifact.lock.unlock();}
+    }
+    /** Closed plans for stable built-in checkpoint contracts.  No model authors these rules. */
+    private Plan typedCheckpointPlan(Checkpoint cp,String original,Map<String,Object> context){
+        if(!cp.confirmed()||!cp.enabled())return null;
+        String type=Objects.toString(cp.type(),""),field=Objects.toString(cp.field(),""),operator=Objects.toString(cp.operator(),""),expected=Objects.toString(cp.expected(),"");
+        String sourceQuote=cp.source()!=null?Objects.toString(cp.source().quote(),""):original;
+        Rule rule=null;Map<String,Object> parameters=new LinkedHashMap<>();
+        parameters.put("intentAuthority","CONFIRMED_CHECKPOINT_METADATA");parameters.put("intentType",type);
+        switch(type){
+            case "ENTITY_FIELD_CONSISTENCY" -> {
+                if(!Set.of("projectName","projectNumber","companyName","creditCode","personName","plateNumber").contains(field)||!Set.of("=","==","EQ").contains(operator))return null;
+                parameters.put("comparisonScope",expected.isBlank()?"CURRENT_PROJECT_OCCURRENCES":"CHECKPOINT_EXPECTED_VALUE");
+                rule=new Rule("TYPED-CONSISTENCY",cp.title(),"SAME_FIELD","",field,"=",expected,Objects.toString(cp.unit(),""),parameters,sourceQuote,"",List.of());
+            }
+            case "MATERIAL_EXISTENCE" -> {
+                if(expected.isBlank()||!operator.equalsIgnoreCase("EXISTS"))return null;
+                parameters.put("materialIdentity",expected);parameters.put("inventoryEntry",true);
+                rule=new Rule("TYPED-MATERIAL",cp.title(),"MATERIAL","",field.isBlank()?"material":field,"",expected,Objects.toString(cp.unit(),""),parameters,sourceQuote,"",List.of());
+            }
+            case "DATE_VALIDITY" -> {
+                if(!"certificateExpiry".equals(field)||!Set.of(">=",">").contains(operator)||!expected.matches("\\d{4}-\\d{2}-\\d{2}(?:[T ].*)?"))return null;
+                parameters.put("allApplicableCertificates",true);parameters.put("validityField","有效期");
+                parameters.put("referenceEvent",sourceQuote.contains("开标")&&!sourceQuote.matches("(?s).*(?:投标|递交|提交).{0,12}截止.*")?"OPENING_DATE":"BID_DEADLINE");
+                rule=new Rule("TYPED-CERTIFICATE-VALIDITY",cp.title(),"VALIDITY","",field,operator,expected,Objects.toString(cp.unit(),""),parameters,sourceQuote,"",List.of());
+            }
+            case "FULL_TEXT_REVIEW" -> rule=fullTextRule(cp,field,operator,expected,sourceQuote,parameters);
+            default -> { return null; }
+        }
+        if(rule==null)return null;
+        RequirementSourceContext.Context sourceContext=RequirementSourceContext.resolve(cp,original,context);
+        Map<String,Object> scope=linked("status","TYPED_CHECKPOINT_INTENT","sourceQuote",sourceQuote,"reviewedExpected",expected,
+                "contextOnly",true,"issue","","intent",linked("type",type,"field",field,"operator",operator,"expected",expected,"unit",Objects.toString(cp.unit(),"")),
+                "sourceContext",sourceContext.map());
+        return new Plan("ALL",List.of(withSourceContext(rule,sourceContext.map())),"TYPED_CHECKPOINT_COMPILED",List.of(),List.of(),scope);
+    }
+    private Rule fullTextRule(Checkpoint cp,String field,String operator,String expected,String sourceQuote,Map<String,Object> base){
+        if(!"REVIEW".equals(operator))return null;Map<String,Object> p=new LinkedHashMap<>(base);p.put("textScope","全文");
+        List<String> detectors=switch(field){
+            case "amountAccuracy"->List.of("ARITHMETIC_MISMATCH","COMPLEX_AMOUNT_RECONCILIATION");
+            case "missingFields"->List.of("MISSING_FIELD","WRONG_FIELD_VALUE");
+            case "signatureDate"->List.of("INVALID_SIGNING_DATE","UNFILLED_SIGNING_DATE");
+            case "signingAfterOpening"->List.of("SIGNING_AFTER_OPENING");
+            case "typos"->List.of("TYPO","OCR_SUSPECT","PROPER_NOUN_REVIEW");
+            default->List.of();
+        };
+        if(detectors.isEmpty())return null;p.put("anomalyTypes",detectors);
+        if("typos".equals(field))p.put("typoDictionary",List.of("投标文仵->投标文件","招标文仵->招标文件","授杈委托书->授权委托书","质保其->质保期","营叶执照->营业执照"));
+        return new Rule("TYPED-FULL-TEXT-"+field,cp.title(),"TEXT_ANOMALY","",field,"",expected,Objects.toString(cp.unit(),""),p,sourceQuote,"",List.of());
+    }
+    /** Frozen source-bound requirements are compiled once, then validated again on reuse.
+     * This artifact contains no bid evidence or conclusion; an unresolved node remains unresolved. */
+    private Plan deterministicPackage(Checkpoint cp,String requirement,String original,RequirementSourceContext.Context source,
+                                      RequirementScope.Selection scope,boolean focused,Set<String> domains,RunSession session)throws IOException {
+        Map<String,Object> input=linked("type",cp.type(),"field",cp.field(),"operator",cp.operator(),
+                "unit",cp.unit(),"expected",cp.expected(),"requirement",requirement,"sourceContext",source.map(),"scope",scope.map(),
+                "focused",focused,"domains",new TreeSet<>(domains),"externalAdapters",session.context.getOrDefault("externalAdapterBySource",Map.of()),
+                "requirementRevisions",RequirementRepairPolicy.versions());
+        RequirementArtifact artifact=new RequirementArtifact(session,input,source,true);
+        try{if(artifact.enabled())artifact.lock.lockInterruptibly();}catch(InterruptedException stopped){Thread.currentThread().interrupt();throw new InterruptedIOException("要求生成已中断");}
+        try{
+            Map<String,Object> saved=artifact.lookup();
+            if(!saved.isEmpty()){
+                Plan parsed=compileResponse(cp,session.json.valueToTree(saved.get("rawResponse")),original,focused,domains,source,scope);
+                Map<String,Object> metadata=new LinkedHashMap<>(parsed.requirementScope());metadata.put("deterministicCompilation",saved.getOrDefault("deterministicCompilation",Map.of()));
+                Plan reused=artifact.identify(new Plan(parsed.logic(),parsed.rules(),"DETERMINISTIC_PACKAGE_REUSED",parsed.issues(),parsed.policyNotes(),metadata));
+                if(!"VALIDATED".equals(saved.get("state"))||CompilationRecovery.diagnostics(reused).isEmpty()){
+                artifact.auditReuse(reused,saved);
+                session.record("REQUIREMENT_PACKAGE",Map.of("artifactId",artifact.request.get("artifactId")),linked("state","REUSED_REVALIDATED","businessConclusion",false));
+                return reused;
+                }
+                session.record("REQUIREMENT_PACKAGE",Map.of("artifactId",artifact.request.get("artifactId")),linked("state","INVALIDATED_REBUILD","businessConclusion",false));
+            }
+            var result=new DeterministicRequirementCompiler(session.json).compile(cp,requirement,source,session.context);
+            JsonNode raw=result.rootWithUnsupportedGaps();
+            Plan parsed=compileResponse(cp,raw,original,focused,domains,source,scope);
+            boolean complete=result.complete()&&CompilationRecovery.diagnostics(parsed).isEmpty();
+            Plan plan=artifact.identify(result.identify(parsed,complete?"DETERMINISTIC_TEMPLATE_COMPILED":"DETERMINISTIC_TEMPLATE_PARTIAL"));
+            session.compilationAudit=CompilationRecovery.audit(plan,0,List.of(linked("state",complete?"DETERMINISTIC_TEMPLATE_COMPILED":"MODEL_RULE_COMPILATION_DISABLED",
+                    "networkCalls",0,"compilerVersion",DeterministicRequirementCompiler.VERSION,"coverageDigest",result.digest(),"gapCount",result.gaps().size(),"policy","MODEL_FACT_EXTRACTION_ONLY")));
+            artifact.publish(raw,plan,false,0);
+            session.record("REQUIREMENT_PACKAGE",Map.of("artifactId",artifact.request.get("artifactId")),linked("state","CREATED","businessConclusion",false));
+            return plan;
+        }finally{if(artifact.enabled())artifact.lock.unlock();}
     }
     /**
      * A reference-time checkpoint is an input binding, not a business obligation. Compile only
@@ -166,14 +273,25 @@ final class RequirementCompiler {
     }
     /** Deterministic post-processing is also usable for offline replay of a saved compiler response. */
     Plan compileResponse(Checkpoint cp,JsonNode root,String original,boolean focused,Set<String> focusedDomains){
-        return compileResponse(cp,root,original,focused,focusedDomains,RequirementSourceContext.Context.empty(original));
+        return compileResponse(cp,root,original,focused,focusedDomains,RequirementSourceContext.Context.empty(original),RequirementScope.resolve(cp,original));
     }
-    private Plan compileResponse(Checkpoint cp,JsonNode root,String original,boolean focused,Set<String> focusedDomains,RequirementSourceContext.Context sourceContext){
+    /** Agent plans retain an independent coverage review. This validates a single
+     * deterministic primitive with the same source/identity/threshold binders, without
+     * pretending that this primitive alone covers the whole original paragraph. */
+    Rule agentCondition(JsonNode row,RequirementSourceContext.Context sourceContext,String requirement){
+        List<String> issues=new ArrayList<>();
+        RequirementContextBindings bindings=new RequirementContextBindings(sourceContext.bindingSource(),"ORIGINAL_REQUIREMENT",sourceContext.sources().size()>1);
+        Rule rule=parse(row,requirement,issues,new HashSet<>(),0,new int[]{0},bindings,List.of(),List.of(),Map.of());
+        if(rule==null)return null;
+        rule=referenceGrounding(rule,requirement,sourceContext,issues);
+        return withSourceContext(rule,sourceContext.map());
+    }
+    private Plan compileResponse(Checkpoint cp,JsonNode root,String original,boolean focused,Set<String> focusedDomains,RequirementSourceContext.Context sourceContext,RequirementScope.Selection scope){
         root=CompilationRecovery.normalize(root);String requirement=Objects.toString(cp.expected(),"");
-        RequirementScope.Selection scope=RequirementScope.resolve(cp,original);
         if(!scope.resolved())return new Plan("ALL",List.of(),"SCOPE_UNRESOLVED",List.of(scope.issue()),List.of(),scope.map());
         String groundedRequirement=RequirementReferences.requirementText(scope.obligation(),sourceContext);
-        RequirementContextBindings bindings=new RequirementContextBindings(original.isBlank()?requirement:sourceContext.bindingSource(),original.isBlank()?"REVIEWED_REQUIREMENT":"ORIGINAL_REQUIREMENT",sourceContext.sources().size()>1);
+        Rule confirmedNumeric=new DeterministicRequirementCompiler(new ObjectMapper()).confirmedDuration(cp,groundedRequirement);
+        RequirementContextBindings bindings=new RequirementContextBindings(original.isBlank()?requirement:sourceContext.bindingSource(),original.isBlank()?"REVIEWED_REQUIREMENT":"ORIGINAL_REQUIREMENT",sourceContext.sources().size()>1,confirmedNumeric);
         List<String> issues=new ArrayList<>(RequirementReferences.issues(sourceContext));String logic=root.path("logic").asText("ALL");if(!Set.of("ALL","ANY").contains(logic))issues.add("顶层组合不是 ALL 或 ANY");
         List<Rule> rules=new ArrayList<>();Set<String> ids=new HashSet<>();int[] count={0};
         List<Map<String,Object>> constants=TenderRequirementConstants.extract(groundedRequirement);
@@ -194,12 +312,12 @@ final class RequirementCompiler {
         List<Rule> children=rule.children().stream().map(c->referenceGrounding(c,obligation,context,issues)).toList();
         Rule current=new Rule(rule.id(),rule.description(),rule.predicate(),rule.subject(),rule.field(),rule.operator(),rule.expected(),rule.unit(),rule.parameters(),rule.sourceQuote(),rule.logic(),children);
         if(!rule.sourceQuote().isBlank()&&!RequirementReferences.sourceBound(rule.sourceQuote(),obligation,context))return rejected(current,"义务引用跨越原文来源边界，须逐来源保留证据",issues);
-        if(RequirementReferences.referenceOnly(current))return rejected(current,"条款引用须执行已展开正文的具体义务，不能当投标章节存在性核验",issues);
+        if(RequirementReferences.referenceOnly(current)&&!SourceRequirementInventory.validatedDependency(current,obligation,context))return rejected(current,"条款引用须执行已展开正文的具体义务，不能当投标章节存在性核验",issues);
         return current;
     }
     private Rule withSourceContext(Rule r,Map<String,Object> sourceContext){Map<String,Object> p=new LinkedHashMap<>(r.parameters());
         // The full original clause lives once on the plan; do not repeat it in every extraction rule.
-        List<?> inherited=sourceContext.get("sources") instanceof List<?> all?all.stream().filter(v->v instanceof Map<?,?> m&&!"OBLIGATION".equals(m.get("kind"))).toList():List.of();
+        List<?> inherited=sourceContext.get("sources") instanceof List<?> all?all.stream().filter(v->v instanceof Map<?,?> m&&!Set.of("OBLIGATION","REFERENCE_DEPENDENCY").contains(m.get("kind"))).toList():List.of();
         p.put("requirementSourceContext",linked("version",sourceContext.get("version"),"identity",sourceContext.get("identity"),"sources",inherited));
         return new Rule(r.id(),r.description(),r.predicate(),r.subject(),r.field(),r.operator(),r.expected(),r.unit(),p,r.sourceQuote(),r.logic(),r.children().stream().map(c->withSourceContext(c,sourceContext)).toList());}
     /** Source restrictions apply to every routed capability; routing hints never remove a supported obligation. */
@@ -277,8 +395,10 @@ final class RequirementCompiler {
         rule=RequirementPrimitiveSemantics.normalize(rule);
         String primitiveIssue=RequirementPrimitiveSemantics.issue(rule);
         if(primitiveIssue!=null)return rejected(rule,primitiveIssue,issues);
+        String scoringIssue=SourceScoringRules.issue(rule);
+        if(scoringIssue!=null)return rejected(rule,scoringIssue,issues);
         if(rule.predicate().equals("NUMBER")&&!ProofVerifier.numberPresent(quote,rule.expected())&&!PriceRequirementBinding.bound(rule,bindings.source()))return rejected(rule,"比较门槛缺少原条款依据",issues);
-        String binding=RequirementGrounding.issue(rule,bindings.source());return binding==null?rule:rejected(rule,binding,issues);
+        String binding=RequirementGrounding.issue(rule,bindings.source(),bindings.confirmedNumeric(rule));return binding==null?rule:rejected(rule,binding,issues);
     }
     private Rule rejected(JsonNode n,String id,String quote,List<Rule> children,String reason,List<String> issues){
         Map<String,Object> parameters=new LinkedHashMap<>();if(quote.isBlank())parameters.put("unverifiedSourceQuote",n.path("sourceQuote").asText());

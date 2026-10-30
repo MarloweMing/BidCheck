@@ -22,7 +22,7 @@ final class OnDemandModelBudget {
     boolean reserveConsistency() { return reserve(true); }
     private boolean reserve(boolean consistency) {
         if(Thread.currentThread().isInterrupted()) throw new CancellationException("Check interrupted");
-        return Boolean.TRUE.equals(tx.execute(ignored -> {
+        return Boolean.TRUE.equals(DbTransactionRetry.execute(tx,consistency?"CONSISTENCY_ATTEMPT_RESERVE":"ATOMIC_ATTEMPT_RESERVE",Map.of("taskId",taskId,"runId",runId),ignored -> {
             TaskRow current=store.mapper().lockTask(taskId);
             if(current==null||!"RUNNING".equals(current.status)||!project.equals(current.projectId)
                     ||!Objects.equals(owner,current.leaseOwner)||taskAttempt!=current.attempt

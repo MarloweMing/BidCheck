@@ -8,7 +8,7 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 
 /** Local, typed two-document comparison. Every field is read again from immutable original text. */
 final class CertificateSourceComparison {
-    static final String VERSION="certificate-source-comparison-1";
+    static final String VERSION="certificate-source-comparison-2-typed-query-rows";
     private static final String DATE="(?:19|20)[0-9]{2}[年./-][0-9]{1,2}[月./-][0-9]{1,2}日?";
     private static final Pattern CATEGORY=Pattern.compile("([一二壹贰]级注册建筑师|[一二壹贰]级注册建造师|注册监理工程师|注册造价工程师|安全生产考核合格证书)");
     private static final Pattern OWNER=Pattern.compile("(?:姓名[:：]?|持证人[:：])([\\p{IsHan}·]{2,12}?)(?=性别|年龄|身份证|证件|出生|注册|证书|聘用|执业|[|│]|$)");
@@ -51,27 +51,58 @@ final class CertificateSourceComparison {
         if(roles.isEmpty())return pending(rule,evaluator,"SUBJECT_RELATION_UNPROVEN","已发现同名证书候选，但尚无已核源的本次岗位任职，不能以同名材料替代当前人员",roles,candidates,Map.of());
         SubjectIdentity.Problem identity=evaluator.identities.issue(new Rule(rule.id(),rule.description(),"CERTIFICATE",rule.subject(),rule.field(),rule.operator(),rule.expected(),rule.unit(),rule.parameters(),rule.sourceQuote(),rule.logic(),List.of()),List.of());
         if(identity!=null)return pending(rule,evaluator,identity.code(),identity.reason(),roles,candidates,Map.of());
-        Set<String> categories=new LinkedHashSet<>();Matcher required=CATEGORY.matcher(clean(rule.sourceQuote()).replace('壹','一').replace('贰','二'));while(required.find())categories.add(canonicalCategory(required.group()));
-        if(categories.isEmpty())candidates.forEach(r->categories.add(r.category()));
-        if(categories.size()!=1)return pending(rule,evaluator,"REQUIREMENT_COMPARISON_TARGET_UNRESOLVED","本项涉及多种或尚未识别的证照，须明确本次逐字段比较的证照类型",roles,candidates,Map.of("candidateCategories",categories));
-        String category=categories.iterator().next();candidates=candidates.stream().filter(r->r.category().equals(category)).toList();
+        Set<String> categories=requiredCategories(rule,candidates,evaluator.context);
+        if(categories.isEmpty())return pending(rule,evaluator,"REQUIREMENT_COMPARISON_TARGET_UNRESOLVED","原条款要求的证照类型尚未与两端记录对应，不以另一类现有证照缩小检查范围",roles,candidates,Map.of());
+        List<Decision> compared=new ArrayList<>();for(String category:categories)compared.add(compareCategory(rule,name,category,candidates.stream().filter(r->r.category().equals(category)).toList(),roles,evaluator));
+        return compared.size()==1?compared.get(0):RuleEvaluator.combine(rule.id(),rule.description(),"ALL",compared);
+    }
+
+    private static Decision compareCategory(Rule rule,String name,String category,List<Record> candidates,List<Fact> roles,RuleEvaluator evaluator){
         List<Record> left=candidates.stream().filter(r->r.side().equals("CERTIFICATE")).toList(),right=candidates.stream().filter(r->r.side().equals("QUERY")).toList();
         if(left.size()!=1||right.size()!=1)return pending(rule,evaluator,"COMPARISON_SOURCE_REQUIRED","需要本人员同类证书与查询记录各一个明确版本；缺少一端或存在多版时不选择性比较",roles,candidates,linked("certificateRecords",left.size(),"queryRecords",right.size()));
         Record certificate=left.get(0),query=right.get(0);
         if(!certificate.issues().isEmpty()||!query.issues().isEmpty())return pending(rule,evaluator,"COMPARISON_FIELD_MAPPING_REQUIRED","同一记录内字段缺少明确边界或出现多个取值，不能取第一个值作比较",roles,candidates,Map.of());
+        Field selectedNumber=certificate.fields().get("CERTIFICATE_NUMBER");if(selectedNumber==null)selectedNumber=certificate.fields().get("REGISTRATION_NUMBER");
+        if(selectedNumber==null)return pending(rule,evaluator,"COMPARISON_RECORD_IDENTITY_UNPROVEN","证书一端没有明确类型的编号，不能只凭姓名关联查询记录",roles,candidates,Map.of());
+        Fact selected=new Fact("source-comparison:"+certificate.id(),"CERTIFICATE",name,"证书",selectedNumber.raw(),selectedNumber.value(),"","","UNRESOLVED",certificate.sources().stream().map(Source::id).toList(),Map.of("category",category,"number",selectedNumber.value(),"numberField",selectedNumber.label()));
+        Rule identityRule=new Rule(rule.id(),rule.description(),"CERTIFICATE",rule.subject(),rule.field(),rule.operator(),rule.expected(),rule.unit(),rule.parameters(),rule.sourceQuote(),"",List.of());
+        SubjectIdentity.Problem roleIdentity=evaluator.identities.issue(identityRule,List.of(selected));
+        if(roleIdentity!=null)return pending(rule,evaluator,roleIdentity.code(),roleIdentity.reason(),roles,candidates,Map.of("comparisonIdentityScope","CURRENT_ROLE_TO_SELECTED_CERTIFICATE"));
         String certNumber=certificate.value("CERTIFICATE_NUMBER"),queryNumber=query.value("CERTIFICATE_NUMBER");
         boolean typedNumber=!certNumber.isBlank()&&certNumber.equals(queryNumber);
+        boolean typedRegistration=!certificate.value("REGISTRATION_NUMBER").isBlank()&&certificate.value("REGISTRATION_NUMBER").equals(query.value("REGISTRATION_NUMBER"));
         boolean personId=!certificate.value("PERSON_ID").isBlank()&&certificate.value("PERSON_ID").equals(query.value("PERSON_ID"));
         if(!certificate.value("PERSON_ID").isBlank()&&!query.value("PERSON_ID").isBlank()&&!personId)return pending(rule,evaluator,"SUBJECT_IDENTITY_CONFLICT","同名证照与查询记录存在不同个人证件号码，不能合并为同一人",roles,candidates,Map.of());
-        if(!typedNumber&&!personId)return pending(rule,evaluator,"COMPARISON_RECORD_IDENTITY_UNPROVEN","同名同类证照尚未通过同类型证书编号或完整个人证件号建立对应关系；执业印章号不作为证书编号",roles,candidates,Map.of());
+        if(!typedNumber&&!typedRegistration&&!personId)return pending(rule,evaluator,"COMPARISON_RECORD_IDENTITY_UNPROVEN","同名同类证照尚未通过同类型证书编号、注册编号或完整个人证件号建立对应关系；执业印章号不作为证书编号",roles,candidates,Map.of());
         Set<String> requiredFields=requiredFields(rule);
+        boolean generic=clean(rule.sourceQuote()).matches(".*(?:查询截图|查询结果).*(?:信息|内容).*一致.*");
+        if(generic&&typedRegistration&&certNumber.isBlank()&&queryNumber.isBlank()){requiredFields.remove("CERTIFICATE_NUMBER");requiredFields.add("REGISTRATION_NUMBER");}
         if(clean(rule.sourceQuote()).matches(".*(?:查询截图|查询结果).*(?:信息|内容).*一致.*"))for(String field:List.of("PERSON_ID","GENDER","BIRTH_DATE","PROFESSION","VALIDITY_START"))if(certificate.fields().containsKey(field)&&query.fields().containsKey(field))requiredFields.add(field);
         List<Map<String,Object>> fieldResults=new ArrayList<>();boolean mismatch=false,missing=false;
         for(String field:requiredFields){Field a=certificate.fields().get(field),b=query.fields().get(field);String status=a==null||b==null?"UNDETERMINED":a.value().equals(b.value())?"PASS":"FAIL";missing|=status.equals("UNDETERMINED");mismatch|=status.equals("FAIL");fieldResults.add(linked("field",field,"status",status,"certificate",a==null?Map.of():a.audit(),"query",b==null?Map.of():b.audit()));}
-        Map<String,Object> proof=proof(rule,roles,candidates);proof.putAll(linked("subject",name,"category",category,"requiredFields",requiredFields,"fieldComparisons",fieldResults,"recordBinding",typedNumber?"CURRENT_APPOINTMENT_AND_NAME_CATEGORY_TYPED_CERTIFICATE_NUMBER":"CURRENT_APPOINTMENT_AND_NAME_CATEGORY_PERSON_ID","comparisonComplete",!missing,"proofScope","REFERENCED_CERTIFICATE_FIELDS","comparedRecordCount",2,"doesNotProveCurrentOnlineStatus",true));
+        Map<String,Object> proof=proof(rule,roles,candidates);proof.putAll(linked("subject",name,"category",category,"requiredFields",requiredFields,"fieldComparisons",fieldResults,"recordBinding",typedNumber?"CURRENT_APPOINTMENT_AND_NAME_CATEGORY_TYPED_CERTIFICATE_NUMBER":typedRegistration?"CURRENT_APPOINTMENT_AND_NAME_CATEGORY_TYPED_REGISTRATION_NUMBER":"CURRENT_APPOINTMENT_AND_NAME_CATEGORY_PERSON_ID","comparisonComplete",!missing,"proofScope","REFERENCED_CERTIFICATE_FIELDS","comparedRecordCount",2,"doesNotProveCurrentOnlineStatus",true,"identityBindings",evaluator.identities.bindings(List.of(selected))));
         List<Evidence> evidence=evidences(roles,candidates,evaluator);String status=mismatch?"FAIL":missing?"UNDETERMINED":"PASS";
         String reason=mismatch?"已绑定的同类证照与查询记录存在有原文的字段差异":missing?"已保留完成的字段比较；仍有必需字段缺失或不能对齐":"已按原文逐字段核对本人员的证照与查询记录，所要求字段一致";
         return new Decision(rule.id(),rule.description(),status,reason,evidence,missing?List.of(gap("COMPARISON_FIELD_MAPPING_REQUIRED",reason)):List.of(),proof);
+    }
+
+    private static Set<String> requiredCategories(Rule rule,List<Record> records,Map<String,Object> context){
+        String quote=rule.sourceQuote();Object bindings=rule.parameters().get("requirementBindings");
+        if(bindings instanceof Map<?,?> all&&all.get("subject") instanceof Map<?,?> subject){String full=Objects.toString(subject.get("sourceQuote"),"");if(full.contains(rule.sourceQuote())&&clean(full).contains(clean(rule.subject())))quote=full;}
+        String compiledRequirement=str(rule.parameters(),"certificateRequirementQuote"),originalRequirement=str(context,"originalRequirement");
+        if(!compiledRequirement.isBlank()&&compiledRequirement.contains(rule.sourceQuote())&&originalRequirement.contains(compiledRequirement))quote=compiledRequirement;
+        String original=clean(quote);Set<String> required=new LinkedHashSet<>();boolean scoped=false;
+        for(String family:List.of("建造师","建筑师","监理工程师","造价工程师"))if(original.contains(family)){
+            scoped=true;Set<String> found=new LinkedHashSet<>();records.stream().filter(r->r.category().contains(family)).forEach(r->found.add(r.category()));
+            if(found.size()!=1)return Set.of();required.addAll(found);
+        }
+        if(original.contains("安全生产考核合格证")){
+            scoped=true;Set<String> allowed=new LinkedHashSet<>();Matcher types=Pattern.compile("[（(]([AB]|C[123]?)(?:类|证)?[）)]").matcher(original);while(types.find())allowed.add("安全生产考核合格证书("+types.group(1)+")");
+            Set<String> found=new LinkedHashSet<>();records.stream().filter(r->r.category().startsWith("安全生产考核合格证书")).filter(r->allowed.isEmpty()||allowed.contains(r.category())).forEach(r->found.add(r.category()));
+            if(found.size()!=1)return Set.of();required.addAll(found);
+        }
+        if(!scoped){records.forEach(r->required.add(r.category()));if(required.size()!=1)return Set.of();}
+        return required;
     }
 
     static Set<String> requiredFields(Rule rule){
@@ -89,9 +120,9 @@ final class CertificateSourceComparison {
     }
 
     static List<Record> records(EvidenceCorpus corpus){
-        Map<String,List<Source>> pages=new LinkedHashMap<>();for(Source s:corpus.all)if(!s.index()&&!s.id().startsWith("V")&&!s.historical()&&!s.scopeContext().blocked())pages.computeIfAbsent(EvidenceCorpus.pageKey(s.evidence().documentId(),s.evidence().page(),s.evidence().locationType()),k->new ArrayList<>()).add(s);
+        Map<String,CertificateEvidenceRecords.ScopeResolver> resolvers=new HashMap<>();Map<String,List<Source>> pages=new LinkedHashMap<>();for(Source s:corpus.all)if(CertificateEvidenceRecords.usable(s,corpus,resolvers))pages.computeIfAbsent(EvidenceCorpus.pageKey(s.evidence().documentId(),s.evidence().page(),s.evidence().locationType()),k->new ArrayList<>()).add(s);
         List<Record> out=new ArrayList<>();for(var entry:pages.entrySet()){
-            var page=corpus.pages.get(entry.getKey());if(page==null)continue;Record record=read(entry.getValue(),Objects.toString(page.text(),""));if(record!=null)out.add(record);
+            var page=corpus.pages.get(entry.getKey());if(page==null)continue;String text=Objects.toString(page.text(),"");List<Record> typed=PersonnelCertificateRecords.read(entry.getValue(),text);if(!typed.isEmpty())out.addAll(typed);else{Record record=read(entry.getValue(),text);if(record!=null)out.add(record);}
         }
         // Identical duplicates retain all source locations. Different versions never collapse.
         Map<String,Record> unique=new LinkedHashMap<>();for(Record r:out){String key=r.side()+r.category()+r.owner()+r.fields().entrySet().stream().map(e->e.getKey()+":"+e.getValue().value()).toList();Record old=unique.get(key);if(old==null)unique.put(key,r);else{List<Source> sources=new ArrayList<>(old.sources());sources.addAll(r.sources());unique.put(key,new Record(old.id(),old.side(),old.category(),old.owner(),sources.stream().distinct().toList(),old.fields(),old.issues()));}}

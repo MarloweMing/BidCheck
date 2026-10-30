@@ -9,13 +9,13 @@ const state = {
   sourcePage: 1, sourceDoc: null, profileDoc: null, profileLoading: false, profileErrors: new Map(),
   documentCache: new Map(), documentLoads: new Map(), documentErrors: new Map(), visibleSourceId: null,
   selectedRunId: null, reviewDrafts: new Map(), disclosures: new Map(), confirmation: null, modalVersion: 0,
-  runDocumentId: null, selectedCheckpoint: null, checkpointGroup: 'ALL', projectDrafts: new Map(), uploadErrors: new Map(), tenderSelection: new Map(),
+  runDocumentId: null, newReviewMode: 'FIXED_WORKFLOW', rerunReviewMode: null, selectedCheckpoint: null, checkpointGroup: 'ALL', projectDrafts: new Map(), uploadErrors: new Map(), tenderSelection: new Map(),
   templateCatalog: [], checkpointSpecs: new Map(), checkpointSpecLoads: new Map(), checkpointSpecErrors: new Map(), templateSetConfirmation: null,
   incrementalCandidates: [], incrementalCandidateError: '', incrementalRecalculationContext: null,
   resultVersionView: 'source', resultVersionRunId: null,
 };
 const statuses = { PASS: '符合', FAIL: '高风险', WARNING: '有风险', UNDETERMINED: '待核实', NOT_APPLICABLE: '不适用' };
-const businessStates = { SATISFIED: '满足要求', RISK: '存在风险', SYSTEM_INCOMPLETE: '系统未完成', EVIDENCE_PENDING: '待补证据', USER_ACTION: '需你确认', UNDETERMINED: '未形成结论', NOT_APPLICABLE: '不适用' };
+const businessStates = { SATISFIED: '满足要求', RISK: '存在风险', SYSTEM_INCOMPLETE: '系统未完成', EVIDENCE_PENDING: '待补证据', WAIT_EXTERNAL: '待外部条件', USER_ACTION: '需你确认', UNDETERMINED: '未形成结论', NOT_APPLICABLE: '不适用' };
 const purposeLabels = { MANDATORY: '必备要求', SCORING: '评分优化', INFORMATIONAL: '信息提示' };
 const verificationModeLabels = { DOCUMENT: '文件核验', EXTERNAL: '外部核验', HUMAN_JUDGMENT: '需专业判断' };
 const templateParameterLabels = {
@@ -40,6 +40,8 @@ const severities = { HIGH: '高风险', MEDIUM: '中风险', LOW: '低风险' };
 const operatorLabel = value => ({ RESPONDS: '按要求响应', REVIEW: '逐项核对', EXISTS: '应包含', CONSISTENT: '前后一致', NOT_EXPIRED: '有效期覆盖', '>=': '不少于', '<=': '不超过', '=': '等于' }[value] || value || '');
 const unitLabel = value => ({ DAY: '天', MONTH: '月', YEAR: '年', HOUR: '小时', MINUTE: '分钟', CNY: '元', PERCENT: '%' }[value]) || (String(value || '').startsWith('YEAR:') ? `${String(value).slice(5)} 年` : value || '');
 const engineLabel = () => state.config.checkMode === 'RULES_RETRIEVAL' ? '规则扫描 · 按需核验' : state.config.semanticEnabled ? '规则 + 通义千问' : '本地规则引擎';
+const reviewModeLabel = mode => mode === 'AGENT_LED' ? 'Agent 主审（试运行）' : '标准检查';
+const renderReviewModeSelect = (value, id) => `<div class="review-mode-field"><label class="field-label" for="${id}">检查方式</label><select id="${id}" aria-label="检查方式"><option value="FIXED_WORKFLOW" ${value !== 'AGENT_LED' ? 'selected' : ''}>标准检查</option><option value="AGENT_LED" ${value === 'AGENT_LED' ? 'selected' : ''} ${!state.config.agentReviewEnabled ? 'disabled' : ''}>Agent 主审（试运行）${!state.config.agentReviewEnabled ? ' · 尚未启用' : ''}</option></select></div>`;
 const supportedExtensions = ['pdf', 'docx', 'txt', 'md', 'png', 'jpg', 'jpeg'];
 function uploadExtensions() {
   const configured = Array.isArray(state.config.formats) ? state.config.formats.map(value => String(value).replace(/^\./, '').toLowerCase()).filter(value => supportedExtensions.includes(value)) : [];
@@ -76,11 +78,13 @@ function onDemandModelAlerts() {
   const model = onDemandModelCoverage();
   if (!model) return [];
   return [countValue(model, 'failedAttempts') > 0 ? `${model.failedAttempts} 次疑点模型核验未完成` : '',
+    countValue(model, 'agentFailedInvestigations') > 0 ? `${model.agentFailedInvestigations} 项自动查证服务未完成` : '',
     countValue(model, 'budgetDeferredCheckpoints') > 0 ? `${model.budgetDeferredCheckpoints} 项疑点因本次记录的旧调用次数上限导致暂缓` : '',
     countValue(model, 'consistencyUnknownRequestGroups') > 0 ? `${model.consistencyUnknownRequestGroups} 组一致性复核的模型发送情况未知` : '',
     countValue(model, 'unknownCheckpoints') > 0 ? `${model.unknownCheckpoints} 项核验范围未完整记录` : ''].filter(Boolean);
 }
 function onDemandRequestCountText(model) {
+  if(countValue(model,'agentModelCalls')>0)return `招标检查 ${countValue(model,'modelRequestedCheckpoints')??'—'} 项请求核验 · 已记录 HTTP 尝试 ${countValue(model,'httpAttempts')??'—'} 次 · 自动查证模型授权 ${model.agentModelCalls} 次`;
   return model && Object.prototype.hasOwnProperty.call(model, 'consistencyModelRequestedGroups')
     ? `招标检查 ${(countValue(model, 'modelRequestedCheckpoints') ?? '—')} 项＋一致性复核 ${(countValue(model, 'consistencyModelRequestedGroups') ?? '—')} 组，合计实发 ${(countValue(model, 'httpAttempts') ?? '—')} 次`
     : `${(countValue(model, 'modelRequestedCheckpoints') ?? '—')} 项请求核验 · 实发 ${(countValue(model, 'httpAttempts') ?? '—')} 次`;
@@ -333,7 +337,7 @@ function renderRunPanel() {
   const documentId = state.runDocumentId || state.profileDoc || bids.at(-1)?.id;
   const selected = bids.find(d => d.id === documentId) || bids.at(-1);
   const previewed = selected && state.profiles.has(selected.id), ready = checksReady() && selected && previewed && !processing() && !isRunning();
-  return `<section class="panel run-panel ${selected ? 'prepared' : ''}"><div class="panel-header"><h2>${icon('play')}${textOnlyConfigured() ? '全文检查' : '开始检查'}</h2><span class="pill">${enabled} 项已启用</span></div><div class="panel-body"><label class="field-label" for="run-document">本次检查的投标版本</label><select id="run-document" ${!bids.length ? 'disabled' : ''}>${bids.length ? [...bids].reverse().map(d => `<option value="${e(d.id)}" ${d.id === selected?.id ? 'selected' : ''}>V${Number(d.version)} · ${e(d.name)}</option>`).join('') : '<option>请先上传投标文件</option>'}</select><p class="run-condition">${!checksReady() ? '请先确认当前招标文件的检查项。' : !selected ? '上传并预览投标文件核心信息后可开始检查。' : !previewed ? '正在准备核心信息预览，请核对提取结果后开始。' : processing() ? '请等待文件处理完成。' : `核对下方核心信息后，按 ${enabled} 项已确认要求检查此版本。`}</p><button class="button button-primary run-button" data-action="start-run" ${!ready || state.busy.has('run') ? 'disabled' : ''}>${state.busy.has('run') || isRunning() ? '<span class="spinner"></span>' : icon('shield', true)}${isRunning() ? '检查正在进行' : textOnlyConfigured() ? '开始全文检查' : '开始检查'}</button><div class="run-info">${rulesRetrievalConfigured() ? `${e(rulesRetrievalBoundary)}` : ''}${textOnlyConfigured() ? '检查识别后的全文、表格行列与原文位置；签章和图片比对仍需人工核对。' : ''}替换文件时上传新版本并重新开始检查；每次报告和复核记录独立留存。</div></div></section>`;
+  return `<section class="panel run-panel ${selected ? 'prepared' : ''}"><div class="panel-header"><h2>${icon('play')}${textOnlyConfigured() ? '全文检查' : '开始检查'}</h2><span class="pill">${enabled} 项已启用</span></div><div class="panel-body"><label class="field-label" for="run-document">本次检查的投标版本</label><select id="run-document" ${!bids.length ? 'disabled' : ''}>${bids.length ? [...bids].reverse().map(d => `<option value="${e(d.id)}" ${d.id === selected?.id ? 'selected' : ''}>V${Number(d.version)} · ${e(d.name)}</option>`).join('') : '<option>请先上传投标文件</option>'}</select>${renderReviewModeSelect(state.newReviewMode, 'new-review-mode')}<p class="run-condition">${!checksReady() ? '请先确认当前招标文件的检查项。' : !selected ? '上传并预览投标文件核心信息后可开始检查。' : !previewed ? '正在准备核心信息预览，请核对提取结果后开始。' : processing() ? '请等待文件处理完成。' : `核对下方核心信息后，按 ${enabled} 项已确认要求检查此版本。`}</p><button class="button button-primary run-button" data-action="start-run" ${!ready || state.busy.has('run') ? 'disabled' : ''}>${state.busy.has('run') || isRunning() ? '<span class="spinner"></span>' : icon('shield', true)}${isRunning() ? '检查正在进行' : textOnlyConfigured() ? '开始全文检查' : '开始检查'}</button><div class="run-info">${rulesRetrievalConfigured() ? `${e(rulesRetrievalBoundary)}` : ''}${textOnlyConfigured() ? '检查识别后的全文、表格行列与原文位置；签章和图片比对仍需人工核对。' : ''}替换文件时上传新版本并重新开始检查；每次报告和复核记录独立留存。</div></div></section>`;
 }
 function renderDocumentBox(role) {
   const list = docs().filter(d => d.role === role), uploading = state.busy.has(`upload-${role}`), issue = state.uploadErrors.get(`${projectId()}:${role}`), tasks = [...state.tasks.values()].filter(t => t.projectId === projectId() && (t.type === 'PARSE' || t.taskType === 'PARSE') && t.role === role && !['SUCCEEDED', 'COMPLETED', 'SUCCESS', 'DONE'].includes(t.status));
@@ -737,8 +741,8 @@ function templateBusinessPresentation(finding, projection) {
     proofScope: conclusion.proofScope || '', evidenceState: evidence.state || '', executionState: projection.execution?.state || '', projection,
   };
 }
-const currentBusinessResultVersion = 'business-result-3';
-const legacyBusinessResultVersions = new Set(['business-result-1','business-result-2']);
+const currentBusinessResultVersion = 'business-result-9-external-responsibility';
+const legacyBusinessResultVersions = new Set(['business-result-1','business-result-2','business-result-3','business-result-4-proof-scope','business-result-5-failure-origin']);
 function adaptLegacyBusinessPresentation(saved, computed, status) {
   const version = saved?.version;
   if (!legacyBusinessResultVersions.has(version) || saved.finalStatus !== status || !Object.hasOwn(businessStates, saved.state)) return computed;
@@ -773,47 +777,166 @@ function applyManualReviewPresentation(automatic, review) {
     automaticPresentation: automatic,
   };
 }
+function trustedVisualReview(finding) {
+  const assessment=assessmentOf(finding)||{},atomic=atomicCheckOf(finding)||{},observations=[];
+  const rows=value=>Array.isArray(value)?value:[],text=(value,key)=>String(value?.[key]||'');
+  const strings=value=>rows(value).filter(v=>typeof v==='string'&&v.trim());
+  const valid=(o,id,evidence)=>{
+    if(!id||o.obligationId!==id||o.sourceBindingVerified!==true||o.coverage!=='CURRENT_FULL_PAGE'||!['SEAL','SIGNATURE'].includes(o.type)||!['NOT_OBSERVED','UNREADABLE','PARTIAL'].includes(o.outcome)
+      ||!o.observationId||!o.documentId||!o.imageHash||!o.documentHash||!Number.isInteger(o.documentVersion)||o.documentVersion<1||!Number.isInteger(o.location)||o.location<1||!strings(o.subjects).length||!strings(o.requestedSourceIds).length)return false;
+    if(!rows(atomic.documentIdentities).some(d=>d.id===o.documentId&&d.version===o.documentVersion&&d.sha256===o.documentHash))return false;
+    const document=rows(state.run?.documents).find(d=>d.id===o.documentId);
+    if(document&&(document.version!==o.documentVersion||document.sha256!==o.documentHash))return false;
+    return rows(evidence).some(e=>e.documentId===o.documentId&&e.page===o.location&&e.locationType==='PAGE'&&e.anchor===`image:${o.imageHash}`&&text(e,'quote').trim());
+  };
+  const node=(c,id)=>{
+    if(['PASS','NOT_APPLICABLE'].includes(c.status))return true;
+    const p=c.proof||{};
+    if(p.decisionBasis==='VISUAL_OBSERVATION'){
+      if(!['NOT_OBSERVED','UNREADABLE_OR_PARTIAL_REVIEW'].includes(p.observationOutcome)||p.automaticRejection!==false||p.authenticityAssessed!==false||!rows(p.observations).length||!p.observations.every(o=>valid(o,id,c.evidences)))return false;
+      const negative=c.status==='FAIL'&&p.observationOutcome==='NOT_OBSERVED'&&strings(p.missingVisibleSubjects).length>0
+        &&p.missingVisibleSubjects.every(subject=>p.observations.some(o=>o.outcome==='NOT_OBSERVED'&&strings(o.subjects).includes(subject)));
+      observations.push(...p.observations.map(o=>({...o,negativeConclusion:negative&&o.outcome==='NOT_OBSERVED'&&strings(o.subjects).some(s=>strings(p.missingVisibleSubjects).includes(s))})));
+      return p.observationOutcome!=='NOT_OBSERVED'||negative;
+    }
+    if(p.signatureCoverage)return node(p.signatureCoverage,id);
+    if(!rows(p.children).length)return false;
+    return p.children.map(child=>node(child,id)).every(Boolean);
+  };
+  const conditions=rows(atomic.conditions);let only=conditions.length>0;
+  for(const c of conditions)if(!['PASS','NOT_APPLICABLE'].includes(c.status)&&(!(c.evaluated===true)||!node(c,c.id)))only=false;
+  const pending=rows(atomic.visualRequests).filter(r=>!strings(r.fields).length||!strings(r.sourceIds).length||r.locationType!=='PAGE'||!r.fields.every(field=>observations.some(o=>r.obligationId===o.obligationId&&r.documentId===o.documentId&&r.location===o.location&&r.task===`${o.type}_VISIBILITY`&&strings(o.subjects).includes(field)&&r.sourceIds.every(id=>strings(o.requestedSourceIds).includes(id)))));
+  const completeness=assessment.coverage?.completeness||{};
+  only=only&&observations.some(o=>['UNREADABLE','PARTIAL'].includes(o.outcome))&&rows(atomic.gaps).every(g=>g.code==='VISUAL_MARK_UNREADABLE')&&!rows(assessment.guards).length&&!rows(assessment.adjustments).length&&!rows(atomic.externalRequests).length&&!pending.length
+    &&!rows(atomic.fieldCoverage).some(r=>['UNREAD','FAILED'].includes(r.status))&&!['UNRESOLVED','VALIDATION_FAILED','REPAIR_RETRY_PENDING'].includes(atomic.compilationAudit?.state)
+    &&!['ENGINE_FAILURE','ERROR','PROCESSING_FAILED','WAIT_STAGE'].includes(atomic.workflowState)&&assessment.ocrReview?.incomplete!==true&&assessment.model?.decision!=='RULE_UNSUPPORTED'
+    &&assessment.model?.state!=='UNAVAILABLE'&&completeness.inventoryResolved!==false&&completeness.coreRequirementDeferred!==true
+    &&!(assessment.coverage?.semanticGap?.validated===true&&assessment.coverage.semanticGap.kind)&&!rows(completeness.itemResults).some(r=>r.status==='REQUIREMENT_UNRESOLVED');
+  return {reviewed:observations.length>0,unreadableOnly:only,negative:observations.some(o=>o.negativeConclusion===true),observations};
+}
+function unresolvedProcessingFailure(atomic) {
+  const model=atomic?.modelDiagnostics||{};
+  return Number(model.unresolvedFailures||0)>0||(model.failures||[]).some(f=>f.recoveredByRetry!==true&&f.transportRecovered!==true)
+    ||model.recoveredByRetry!==true&&model.transportRecovered!==true&&(model.retryable===true||['MODEL_TIMEOUT','MODEL_UNAVAILABLE','HTTP_429','HTTP_502','HTTP_503','HTTP_504','MODEL_TRANSPORT_ERROR','MODEL_RATE_LIMITED'].includes(model.errorCode||model.code))
+    ||['ENGINE_FAILURE','ERROR','PROCESSING_FAILED'].includes(atomic?.workflowState)||atomic?.compilationAudit?.state==='REPAIR_RETRY_PENDING'
+    ||atomic?.agentInvestigation?.status==='FAILED'||(atomic?.gaps||[]).some(gap=>gap.code==='AGENT_INVESTIGATION_FAILED');
+}
+function verifiedScoringReview(atomic) {
+  const reviewCodes=['QUALITY_GRADE_REVIEW_REQUIRED','SCORE_SOURCE_LIST_AMBIGUOUS'],gaps=atomic?.gaps||[];
+  return gaps.length>0&&gaps.every(g=>reviewCodes.includes(g.code))&&(atomic?.conditions||[]).some(c=>c.evaluated===true&&c.conditionRole==='REQUIREMENT'&&c.proof?.decisionBasis==='PROGRAM_STRUCTURAL_COVERAGE'&&c.proof.coverageComplete===true&&c.evidences?.length&&(c.gaps||[]).some(g=>reviewCodes.includes(g.code)));
+}
+function externalCheckState(finding) {
+  const a=assessmentOf(finding)||{},atomic=atomicCheckOf(finding)||{},job=resolutionJobOf(finding)||{};
+  const events=a.externalQueryDiagnostics?.length?a.externalQueryDiagnostics:job.diagnostics||[],requests=atomic.externalRequests||[];
+  const codes=new Set([...events,...(atomic.gaps||[])].map(r=>r.code));
+  const stages=[...new Set(requests.map(r=>r.evaluationStage).filter(Boolean))];
+  const requiredStage=stages.length===1?stages[0]:stages.length>1?'MULTIPLE':(atomic.conditions||[]).map(c=>c.proof?.requiredStage).find(Boolean)||'';
+  const stageLabel=({BID_EVALUATION:'评标阶段',EVALUATION:'评标阶段',BID_OPENING:'开标阶段',OPENING:'开标阶段',POST_SUBMISSION:'投标提交后阶段',BID_SUBMISSION:'投标提交阶段',PRE_SUBMISSION:'投标提交阶段',CONTRACT_PERFORMANCE:'履约阶段'})[requiredStage]||'条款指定阶段';
+  let value;
+  if(codes.has('EXTERNAL_CONFIGURATION_INVALID'))value=['CONFIGURATION_INVALID','外部连接配置有误','系统需修复指定来源的连接配置后重试；不要求补交投标材料。'];
+  else if(codes.has('EXTERNAL_CONNECTOR_NOT_CONFIGURED'))value=['NOT_CONFIGURED','外部来源未接入','系统需接入条款指定的数据来源，再按原主体、阶段和范围查询；不要求补交投标材料。'];
+  else if(codes.has('EXTERNAL_QUERY_SCOPE_INCOMPLETE')||codes.has('EXTERNAL_REQUEST_INVALID'))value=['SCOPE_INCOMPLETE','外部查询范围未解析完整','系统需补齐查询主体、来源、阶段或日期，再执行查询；当前不能据此认定缺材料。'];
+  else if(['EXTERNAL_ENGINE_FAILURE','EXTERNAL_CONNECTOR_FAILED','EXTERNAL_QUERY_NOT_EXECUTED','EXTERNAL_BUDGET_EXHAUSTED','EXTERNAL_SINGLE_FLIGHT_INTERRUPTED'].some(code=>codes.has(code)))value=['FAILED','外部查询未完成','系统需恢复指定外部查询；服务失败不表示来源无记录，也不表示投标不符合。'];
+  else if(codes.has('EXTERNAL_WAIT_STAGE')||codes.has('WAIT_STAGE')||atomic.workflowState==='WAIT_STAGE')value=['WAIT_STAGE',`待${stageLabel}核验`,`到${stageLabel}后，由招标人或评审方取得条款指定记录，再重新计算本项；当前不要求投标人补交材料。`,'EXTERNAL'];
+  else if(codes.has('EXTERNAL_OWNER_DATA_REQUIRED'))value=['WAIT_OWNER_DATA','待业主或平台数据','需由招标人或平台提供指定范围的可信记录，取得后重算；投标人承诺不能替代该记录。','EXTERNAL'];
+  else if(codes.has('EXTERNAL_RECORD_NOT_FOUND'))value=['NOT_FOUND','指定来源未查到记录','已完成指定来源查询，覆盖范围内未命中；需按本项规则处理该结果，不能直接判通过或材料缺失。','EXTERNAL'];
+  else if(codes.has('EXTERNAL_RECORD_INCONCLUSIVE'))value=['INCONCLUSIVE','外部记录不足以判断','来源已响应，但记录覆盖或内容不足；需补齐指定来源的数据后重算。','EXTERNAL'];
+  else if(codes.has('EXTERNAL_RECORD_RECEIVED'))value=['RECEIVED_UNRESOLVED','外部记录已取得，条件待核全','系统需关联已取得的来源记录并核全剩余条件；取得记录本身不代表符合要求。'];
+  else if(requests.length)value=['NOT_EXECUTED','外部查询尚未完成','系统需执行指定来源查询并保存结果；已生成请求不代表查询已经完成。'];
+  if(!value)return null;
+  return {state:value[0],label:value[1],nextStep:value[2],owner:value[3]||'SYSTEM',systemOwned:value[3]!=='EXTERNAL',requiredStage,stageLabel,diagnostics:events,userActionRequired:false,businessComplete:false,queryExecuted:events.some(e=>e.queryExecuted===true),requiredProviders:[...new Set(requests.map(r=>r.requiredProvider).filter(Boolean))],dataOwners:[...new Set(requests.map(r=>({PROCURER_RECORDS:'招标人',PROCURER_BLACKLIST:'招标人',PROCUREMENT_PARTICIPANT_RECORDS:'招标人',PROCUREMENT_PLATFORM:'采购平台',EVALUATION_RECORDS:'评审方'})[r.requiredProvider]||'指定外部来源'))]};
+}
+function renderExternalCheckDetails(finding) {
+  const value=businessPresentation(finding).externalState||externalCheckState(finding);if(!value)return '';
+  const sources=value.requiredProviders||[],events=value.diagnostics||[];
+  return `<details class="external-check-details"><summary>外部核验详情</summary><p>核验阶段：${e(value.stageLabel||'条款指定阶段')} · 数据责任方：${e((value.dataOwners||['指定外部来源']).join('、'))}</p>${sources.length?`<p>指定来源：${sources.map(e).join('、')}</p>`:''}${events.length?`<ul>${events.map(row=>`<li>${e(row.description||row.code)}${row.providerErrorCode?` <small>${e(row.providerErrorCode)}</small>`:''}</li>`).join('')}</ul>`:'<p>尚未保存已执行的来源查询记录。</p>'}<p class="preview-caption">阶段等待、来源未接入和查询无记录均不自动证明投标符合或不符合。</p></details>`;
+}
+function renderAgentInvestigationDetails(finding) {
+  const value=atomicCheckOf(finding)?.agentInvestigation;if(!value||typeof value!=='object')return '';
+  const number=key=>Number.isFinite(Number(value[key]))?Math.max(0,Math.trunc(Number(value[key]))):0,accepted=number('acceptedFactCount');
+  const failed=['FAILED','ERROR','UNAVAILABLE','TIMEOUT'].includes(value.status),active=value.status==='RUNNING';
+  const summary=value.targetCheckCompleted===true&&value.businessCheckCompleted!==true&&!failed?'本次补查目标已完成，其他条件仍待核验':accepted>0?`已补充 ${accepted} 条有效证据${failed?'，部分查证仍未完成':''}`:failed?'服务处理失败':active?'正在查证':['SKIPPED','DISABLED','NOT_REQUIRED'].includes(value.status)?'本项未启动查证':'未找到新证据';
+  return `<div class="agent-investigation-details"><p><strong>自动补查：${e(summary)}</strong></p><p class="preview-caption">${number('toolCalls')} 次工具调用 · ${number('modelCalls')} 次模型调用 · ${(number('elapsedMs')/1000).toFixed(1)} 秒${value.remainingGapCount!=null?` · 剩余 ${number('remainingGapCount')} 个条件缺口`:''}。查证结束不代表本项通过，最终结论由程序按证据重新计算。</p>${value.errorCode?`<p class="preview-caption">处理记录：${e(value.errorCode)}</p>`:''}</div>`;
+}
+function renderTargetProgressDetails(finding) {
+  const atomic=atomicCheckOf(finding)||{},agent=atomic.agentInvestigation||{},audit=atomic.compilationAudit||{},job=resolutionJobOf(finding)||{};
+  const rows=value=>Array.isArray(value)?value.filter(row=>row&&typeof row==='object'&&!Array.isArray(row)):[];
+  const ids=value=>Array.isArray(value)?value.filter(id=>typeof id==='string'&&id):[];
+  const diagnostics=value=>Array.isArray(value)?value.filter(row=>typeof row==='string'||row&&typeof row==='object'&&!Array.isArray(row)):[];
+  const ledger=rows(agent.targetProgressLedger),conditions=rows(atomic.conditions),all=diagnostics(audit.allCompileDiagnostics),blocking=diagnostics(audit.blockingDiagnosticsOnActiveProofPath);
+  const first=agent.firstFailureEventId||ledger.find(row=>row.firstFailureEventId)?.firstFailureEventId||'';
+  const closed=new Set(conditions.filter(row=>['PASS','FAIL','NOT_APPLICABLE'].includes(row.status)&&!(row.gaps||[]).length).map(row=>row.id));
+  if(agent.targetReceiptAuthority==='CURRENT_SERVER_PROOF')for(const id of ids(agent.completedTargetObligationIds))closed.add(id);
+  const pending=[...new Set([...conditions.filter(row=>row.status==='UNDETERMINED'&&(!row.conditionRole||row.conditionRole==='REQUIREMENT')).map(row=>row.id),...ids(agent.remainingTargetObligationIds),...ids(agent.exhaustedTargetObligationIds),...ids(agent.blockedTargetObligationIds),...ledger.filter(row=>row.state!=='PROVEN').map(row=>row.targetObligationId)])].filter(id=>id&&id!=='DOCUMENT_DISCOVERY'&&!closed.has(id));
+  const hasAudit=Array.isArray(audit.blockingDiagnosticsOnActiveProofPath);
+  if(!ledger.length&&!first&&!hasAudit&&!ids(agent.exhaustedTargetObligationIds).length)return '';
+  const title=id=>conditions.find(row=>row.id===id)?.title||`目标 ${id}`;
+  const states={UNVISITED:'尚未处理',READY:'待处理',RUNNING:'处理中',PROVEN:'已形成判断',NO_MORE_EVIDENCE:'当前路径已停止',WAIT_DEPENDENCY:'等待前置条件',FAILED:'执行失败',BLOCKED:'当前版本受阻'};
+  const external=externalCheckState(finding),unconfigured=external?.state==='NOT_CONFIGURED'||[job.errorCode,agent.errorCode,agent.code].includes('EXTERNAL_CONNECTOR_NOT_CONFIGURED');
+  const diagnosis=row=>typeof row==='string'?row:row.description||row.need||row.reason||row.reasonCode||row.code||'解析记录';
+  return `<details class="external-check-details target-progress-details"><summary>定位未完成原因${pending.length?` · ${pending.length} 个业务目标未闭合`:''}</summary>${unconfigured?'<p>外部来源尚未接入，需系统接入指定数据源；这不属于 Agent 调查失败，也不表示投标材料缺失。</p>':''}${first?`<p>首次失败事件：<code>${e(first)}</code></p>`:''}${pending.length?`<p><strong>业务尚未闭合的目标</strong></p><ul class="atomic-gap-list">${pending.map(id=>`<li>${e(title(id))}</li>`).join('')}</ul>`:'<p>当前诊断未列出尚未闭合的业务目标，整项结果以正式结论为准。</p>'}${ledger.length?`<details><summary>查看目标处理记录 · ${ledger.length} 条</summary><ul class="atomic-gap-list">${ledger.map(row=>`<li><strong>${e(row.targetObligationId==='DOCUMENT_DISCOVERY'?'文书导航':title(row.targetObligationId))}</strong> · ${e(states[row.state]||row.state||'待确认')}${row.rejectionCode?`<br>停止或拒绝原因：<code>${e(row.rejectionCode)}</code>`:''}${row.firstFailureEventId?`<br>首次事件：${e(row.firstFailureEventId)}`:''}${row.resumeTrigger?`<br>恢复条件：${e(row.resumeTrigger==='RELEVANT_RULE_OR_EVIDENCE_CHANGED'?'该目标的规则或相关证据发生变化':row.resumeTrigger)}`:''}</li>`).join('')}</ul></details><p class="preview-caption">“当前路径已停止”（NO_MORE_EVIDENCE）表示相同输入下暂停重复调查，不等于材料缺失；已停止的目标仍保留在业务未闭合清单中。</p>`:''}${hasAudit?`<p>当前判断路径上的解析阻断：${blocking.length} 项；全部解析记录：${all.length} 项。</p>${blocking.length?`<ul class="atomic-gap-list">${blocking.map(row=>`<li>${e(diagnosis(row))}</li>`).join('')}</ul>`:'<p class="preview-caption">其他备选分支的解析记录不作为当前判断路径的阻断。</p>'}`:''}</details>`;
+}
 function businessPresentation(finding, includeReview = false) {
   const assessment = assessmentOf(finding) || {}, atomic = atomicCheckOf(finding), ocr = assessment.ocrReview || {};
+  const visualReview=trustedVisualReview(finding);
+  const externalState=externalCheckState(finding);
   const status = finding.evaluation.status, saved = assessment.businessPresentation;
   const job=resolutionJobOf(finding),expectedExecution=job?.status==='SUCCEEDED'?'FINISHED':job?.status;
   const savedResolutionCurrent=!job||saved?.dimensions?.execution?.jobId===job.id&&saved?.dimensions?.execution?.state===expectedExecution;
   const stopped=['BLOCKED_NO_PROGRESS','FAILED'].includes(resolutionJobOf(finding)?.status);
-  const recoveryFailed=resolutionJobOf(finding)?.status==='FAILED',fieldIncomplete=(atomic?.fieldCoverage||[]).some(row=>['FAILED','UNREAD'].includes(row.status));
+  const recoveryFailed=resolutionJobOf(finding)?.status==='FAILED',fieldIncomplete=(atomic?.fieldCoverage||[]).some(row=>row.status==='UNREAD'||row.status==='FAILED'&&(row.errorCode||row.reason)!=='FIELD_VALIDATION_FAILED');
   const mappingGap=(atomic?.gaps||[]).find(gap=>atomicMappingPending(gap.code));
   const uniquePriceScope=(atomic?.gaps||[]).some(gap=>gap.code==='UNIQUE_PRICE_SCOPE_REQUIRED');
-  const currentSaved=saved?.version===currentBusinessResultVersion&&saved.finalStatus===status&&savedResolutionCurrent&&Object.hasOwn(businessStates,saved.state)
-    &&!(status==='UNDETERMINED'&&(recoveryFailed||fieldIncomplete||mappingGap||uniquePriceScope)&&saved.state!=='SYSTEM_INCOMPLETE')&&!(stopped&&status==='UNDETERMINED');
+  const currentSaved=!visualReview.reviewed&&saved?.version===currentBusinessResultVersion&&saved.finalStatus===status&&savedResolutionCurrent&&Object.hasOwn(businessStates,saved.state)
+    &&!(status==='UNDETERMINED'&&externalState&&saved?.externalState?.state!==externalState.state)
+    &&!(status==='UNDETERMINED'&&(recoveryFailed||fieldIncomplete||mappingGap||uniquePriceScope||unresolvedProcessingFailure(atomic))&&saved.state!=='SYSTEM_INCOMPLETE')&&!(stopped&&status==='UNDETERMINED');
   let automatic;
   if(currentSaved)automatic=saved;
   const projection = finalResultProjectionOf(finding);
-  if(!automatic&&projection)automatic=templateBusinessPresentation(finding, projection);
+  if(!automatic&&projection&&!visualReview.reviewed&&!(status==='UNDETERMINED'&&(externalState||unresolvedProcessingFailure(atomic))))automatic=templateBusinessPresentation(finding, projection);
   if(automatic)return includeReview?applyManualReviewPresentation(automatic,reviewOf(finding)):automatic;
   const codes = [...(assessment.adjustments || []), ...(assessment.guards || []), ...(atomic?.gaps || [])].map(item => item?.code || '');
   const gap=assessment.coverage?.semanticGap||{},gapKind=gap.validated===true?gap.kind:'';
   const completeness = assessment.coverage?.completeness || {}, resolvedInventory = codes.includes('REQUIREMENT_COMPLETENESS_UNPROVEN') && completeness.inventoryResolved === true && completeness.coreRequirementDeferred !== true;
   const finalMismatch = status === 'UNDETERMINED' && atomic?.workflowState === 'COMPLETED' && atomic.complete === true;
-  const processing = recoveryFailed || codes.includes('UNIQUE_PRICE_SCOPE_REQUIRED') || codes.some(atomicMappingPending) || ['SYSTEM_REQUIREMENT','SYSTEM_RETRIEVAL','SYSTEM_RELATION'].includes(gapKind) || fieldIncomplete || assessment.model?.decision==='RULE_UNSUPPORTED' || finalMismatch || (completeness.itemResults||[]).some(item=>item.status==='REQUIREMENT_UNRESOLVED') || ['PROCESSING_FAILED','REQUIREMENT_UNPARSED'].includes(atomic && atomicPresentation(atomic).state) || ['ENGINE_FAILURE','ERROR'].includes(atomic?.workflowState) || assessment.model?.state === 'UNAVAILABLE' || ocr.incomplete === true || codes.filter(code=>!resolvedInventory||code!=='REQUIREMENT_COMPLETENESS_UNPROVEN').some(code => /^MODEL_|^HTTP_|COMPILATION|^REQUIREMENT_|GROUNDING|UNGROUNDED$/.test(code) || ['CONTEXT_BUDGET_EXCEEDED','CHECKLIST_BATCH_REQUIRED','INPUT_INVALID','EVIDENCE_SCOPE_INCOMPLETE','OCR_COVERAGE_DEFERRED','OCR_SOURCE_DEFERRED','OUTPUT_SCHEMA_INVALID','OUTPUT_JSON_INVALID'].includes(code));
-  const external = gapKind==='EXTERNAL_INPUT' || (atomic?.externalRequests || []).length > 0 || atomic?.workflowState === 'WAIT_STAGE' || codes.some(code => ['EXTERNAL_RECORD_REQUIRED','EXTERNAL_VERIFICATION_REQUIRED','USER_INPUT_REQUIRED','REFERENCE_TIME_REQUIRED','APPLICABILITY_TIME_PENDING'].includes(code));
+  const processing = externalState?.systemOwned || recoveryFailed || codes.includes('EXTERNAL_CONNECTOR_FAILED') || projection&&templateBusinessState(projection.conclusion?.state,projection)==='SYSTEM_INCOMPLETE' || unresolvedProcessingFailure(atomic) || codes.includes('UNIQUE_PRICE_SCOPE_REQUIRED') || codes.some(atomicMappingPending) || ['SYSTEM_REQUIREMENT','SYSTEM_RETRIEVAL','SYSTEM_RELATION'].includes(gapKind) || fieldIncomplete || assessment.model?.decision==='RULE_UNSUPPORTED' || finalMismatch || (completeness.itemResults||[]).some(item=>item.status==='REQUIREMENT_UNRESOLVED') || ['PROCESSING_FAILED','REQUIREMENT_UNPARSED'].includes(atomic && atomicPresentation(atomic).state) || ['ENGINE_FAILURE','ERROR'].includes(atomic?.workflowState) || assessment.model?.state === 'UNAVAILABLE' || ocr.incomplete === true || codes.filter(code=>!resolvedInventory||code!=='REQUIREMENT_COMPLETENESS_UNPROVEN').some(code => /^MODEL_|^HTTP_|COMPILATION|^REQUIREMENT_|GROUNDING|UNGROUNDED$/.test(code) || ['CONTEXT_BUDGET_EXCEEDED','CHECKLIST_BATCH_REQUIRED','INPUT_INVALID','EVIDENCE_SCOPE_INCOMPLETE','OCR_COVERAGE_DEFERRED','OCR_SOURCE_DEFERRED','OUTPUT_SCHEMA_INVALID','OUTPUT_JSON_INVALID'].includes(code));
+  const scoringReview=verifiedScoringReview(atomic);
+  const external = scoringReview || gapKind==='EXTERNAL_INPUT' || (atomic?.externalRequests || []).length > 0 || atomic?.workflowState === 'WAIT_STAGE' || codes.some(code => ['EXTERNAL_RECORD_REQUIRED','EXTERNAL_VERIFICATION_REQUIRED','USER_INPUT_REQUIRED','REFERENCE_TIME_REQUIRED','APPLICABILITY_TIME_PENDING','MISSING_TENDER_ATTACHMENT','COST_APPLICABILITY_REQUIRED','CAPABILITY_CRITERIA_REQUIRED'].includes(code));
   const beforeVisual = (assessment.preOcrEvaluation || assessment.rawEvaluation)?.status;
-  const evidencePending = assessment.model?.decision==='EXTERNAL_INPUT_REQUIRED' || resolvedInventory || beforeVisual === 'UNDETERMINED' || ['RELATION_UNCONFIRMED','EVIDENCE_NOT_FOUND'].includes(atomic && atomicPresentation(atomic).state) || codes.some(code=>['EVIDENCE_MISSING','PERSONNEL_COVERAGE_INCOMPLETE','NO_CANDIDATE_EVIDENCE','EVIDENCE_NOT_FOUND'].includes(code));
+  const evidencePending = assessment.model?.decision==='EXTERNAL_INPUT_REQUIRED' || resolvedInventory || beforeVisual === 'UNDETERMINED' || codes.includes('VISUAL_MARK_UNREADABLE')&&!visualReview.unreadableOnly || ['RELATION_UNCONFIRMED','EVIDENCE_NOT_FOUND'].includes(atomic && atomicPresentation(atomic).state) || codes.some(code=>['EVIDENCE_MISSING','PERSONNEL_COVERAGE_INCOMPLETE','NO_CANDIDATE_EVIDENCE','EVIDENCE_NOT_FOUND'].includes(code));
   const visual = ocr.required === true;
-  const resultState = ({PASS:'SATISFIED',FAIL:'RISK',WARNING:'RISK',NOT_APPLICABLE:'NOT_APPLICABLE'})[status] || (processing ? 'SYSTEM_INCOMPLETE' : external ? 'USER_ACTION' : evidencePending ? 'EVIDENCE_PENDING' : visual ? 'USER_ACTION' : 'EVIDENCE_PENDING');
+  const resultState = ({PASS:'SATISFIED',FAIL:'RISK',WARNING:'RISK',NOT_APPLICABLE:'NOT_APPLICABLE'})[status] || (processing ? 'SYSTEM_INCOMPLETE' : externalState ? 'WAIT_EXTERNAL' : external || visualReview.unreadableOnly ? 'USER_ACTION' : evidencePending ? 'EVIDENCE_PENDING' : visual ? 'USER_ACTION' : 'EVIDENCE_PENDING');
   const userActionRequired = resultState === 'USER_ACTION' || resultState === 'RISK' || resultState === 'SATISFIED' && visual;
   let nextStep = ({SYSTEM_INCOMPLETE:'需继续处理条款、证据校验或失败请求；当前不要求补交材料，也不计入人工核对待办。',EVIDENCE_PENDING:'需继续检索并关联现有文件中的证据；只有确认具体缺口后才要求补充材料。',USER_ACTION:'按下方说明补充外部信息、确认核验时点或核对原图。',RISK:'对照所列原文确认风险，并记录复核结论。',SATISFIED:visual?'文字要求已得到支持；另有原图复核事项，请核对下方指定位置。':'本项已形成满足要求的结论，依据保留供追溯。',NOT_APPLICABLE:'本项不适用于当前条件，适用依据保留供追溯。'})[resultState];
   if(stopped&&['SYSTEM_INCOMPLETE','EVIDENCE_PENDING'].includes(resultState))nextStep='本轮自动补查已停止，需修复处理环节或补足检索条件后再启动；当前不据此要求补交材料。';
   if(resultState==='USER_ACTION'&&gapKind==='EXTERNAL_INPUT')nextStep='需取得招标条款要求的外部记录或现场核验结果；现有文件检索不能替代该记录。';
+  if(resultState==='USER_ACTION'&&scoringReview)nextStep=codes.includes('SCORE_SOURCE_LIST_AMBIGUOUS')?'招标清单含重复项目，已保留原文及逐项核对结果；需确认计分口径，不据此要求补交材料。':'客观内容范围已核对；请按所列评分分档评价针对性、可行性等主观要求。材料齐全不代表达到最高档。';
   if(resultState==='SYSTEM_INCOMPLETE'&&!stopped&&codes.includes('UNIQUE_PRICE_SCOPE_REQUIRED'))nextStep='系统尚未核全本项目的报价与备选方案范围；已识别报价一致仅作局部结果，当前不要求补交材料。';
+  if(resultState==='USER_ACTION'&&visualReview.unreadableOnly)nextStep='指定原图已检查，但签章无法辨清；请确认所列签署位置，或提供该页清晰图像。相同页面不再自动重复识别。';
+  if(resultState==='RISK'&&visualReview.negative)nextStep='指定原图已检查，未观察到要求签章；请对照所列位置确认签署风险。本项不自动作出否决投标结论。';
   const scope=resultState==='SATISFIED'?findingProofScope(finding):{};
   if(scope.state==='WRITTEN_RESPONSE')nextStep='已核对所引文件的书面响应；这不等于实际资格状态或外部查询结果已核实。';
   if(scope.state==='OBSERVED_OCCURRENCES')nextStep='已识别的同对象同口径记录未见差异；结论范围仅为所列出现记录。';
   if(scope.state==='ROLE_CONFIGURATION_ONLY')nextStep='已确认要求岗位有明确的本次任职人员；该结论不代表人数上限、兼任关系、人员资质或跨材料身份已核实。';
+  if(scope.state==='DURATION_UNDERTAKING_ONLY')nextStep='已确认按招标允许的格式作出本项目工期承诺；设计、施工及总工期仍按各自招标要求解释，未将“满足”转写成投标文件中的实填数字。';
+  if(scope.state==='QUALITY_UNDERTAKING_ONLY')nextStep='投标函实际填写的质量承诺满足招标要求；该结论仅核验书面响应，不证明实际履约质量。';
+  if(scope.state==='BID_VALIDITY_UNDERTAKING_ONLY')nextStep='已将投标函实填有效期与招标要求的天数比较；该结论仅核验有效期承诺，签章等独立要求另行核验。';
+  if(scope.state==='CONDITIONAL_MATERIAL_SUBMISSION_ONLY')nextStep='已核实本项目实际填写的材料正文和主体关系；签章及其他独立要求另行核验。';
   let reason=finalMismatch?'已完成的辅助条件不足以证明整项业务要求；最终结果仍未确定。':finding.evaluation.reason;
   if(resultState==='SYSTEM_INCOMPLETE'&&!finalMismatch&&!recoveryFailed&&atomicPresentation(atomic).state==='RELATION_UNCONFIRMED'&&mappingGap){
     if(typeof mappingGap.description==='string'&&mappingGap.description.trim())reason=mappingGap.description;
     if(!stopped)nextStep='系统需继续完成证据字段或人员单位对应；当前不要求补交材料，也不计入人工核对待办。';
   }
   automatic={state:resultState,label:scope.label||businessStates[resultState],finalStatus:status,userActionRequired,owner:['SYSTEM_INCOMPLETE','EVIDENCE_PENDING'].includes(resultState)?'SYSTEM':userActionRequired?'USER':'NONE',reason,nextStep};
+  if(resultState==='WAIT_EXTERNAL'||resultState==='SYSTEM_INCOMPLETE'&&externalState?.systemOwned){automatic.label=externalState.label;automatic.nextStep=externalState.nextStep;automatic.owner=externalState.owner;}
+  if(resultState==='SYSTEM_INCOMPLETE'&&externalState?.systemOwned)automatic.reason=`${externalState.label}；当前尚未形成完整业务结论，不表示投标材料缺失。`;
+  if(resultState==='WAIT_EXTERNAL')automatic.reason=`${externalState.label}；尚未形成满足或不满足要求的业务结论。`;
+  if(externalState)automatic.externalState=externalState;
+  if(resultState==='USER_ACTION'&&codes.includes('MISSING_TENDER_ATTACHMENT')){automatic.label='缺招标附件';automatic.nextStep='请补充招标文件引用的技术规范书等附件；当前无法确定完整要求，不表示投标材料缺失。';}
+  if(resultState==='USER_ACTION'&&codes.includes('COST_APPLICABILITY_REQUIRED')){automatic.label='适用条件待确认';automatic.nextStep='请核实招标前附表的成本免核条件；未明确适用范围前，不判定成本核算不通过。';}
+  if(resultState==='USER_ACTION'&&codes.includes('CAPABILITY_CRITERIA_REQUIRED')){automatic.label='核验标准待明确';automatic.nextStep='招标原文未说明履约能力的具体指标或认可的证明方式，需依据招标澄清明确标准；这不表示投标材料缺失。';}
+  if(resultState==='SYSTEM_INCOMPLETE'&&codes.includes('EXTERNAL_CONNECTOR_FAILED')&&!externalState)automatic.nextStep='系统需修复并重试指定外部查询；已完成文件证据保留，不要求补交投标材料。';
+  if(resultState==='USER_ACTION'&&scoringReview)automatic.label=codes.includes('SCORE_SOURCE_LIST_AMBIGUOUS')?'评分口径待确认':'评分档次待评审';
   automatic=adaptLegacyBusinessPresentation(saved,automatic,status);
   return includeReview?applyManualReviewPresentation(automatic,reviewOf(finding)):automatic;
 }
@@ -832,6 +955,10 @@ function findingProofScope(finding) {
   const conditions=(atomicCheckOf(finding)?.conditions||[]).filter(c=>c.conditionRole==='REQUIREMENT'&&c.status!=='NOT_APPLICABLE');
   if(!conditions.length||conditions.some(c=>c.status!=='PASS'||c.evaluated!==true||!c.proof||!Object.keys(c.proof).length||!Array.isArray(c.evidences)||!c.evidences.length||(c.gaps||[]).length))return unknown;
   const atomic=atomicCheckOf(finding);
+  if(atomic.complete===true&&!(atomic.gaps||[]).length){
+    for(const [state,label] of Object.entries({QUALITY_UNDERTAKING_ONLY:'质量承诺已响应',BID_VALIDITY_UNDERTAKING_ONLY:'投标有效期已响应',CONDITIONAL_MATERIAL_SUBMISSION_ONLY:'材料提交要求已满足'}))if(conditions.every(c=>c.proof.proofScope===state))return {state,label};
+  }
+  if(atomic.complete===true&&!(atomic.gaps||[]).length&&conditions.every(c=>c.proof.proofScope==='DURATION_UNDERTAKING_ONLY'))return {state:'DURATION_UNDERTAKING_ONLY',label:'工期承诺已响应'};
   if(atomic.complete===true&&!(atomic.gaps||[]).length&&conditions.every(c=>c.predicate==='PERSON_COUNT'&&c.proof.proofScope==='ROLE_CONFIGURATION_ONLY'))return {state:'ROLE_CONFIGURATION_ONLY',label:'岗位配置已确认'};
   if(conditions.every(c=>['MATERIAL','DECLARATION','SECTION','VISUAL'].includes(c.predicate)))return {state:'WRITTEN_RESPONSE',label:'书面要求已满足'};
   if(conditions.every(c=>['NUMBER','CERTIFICATE','VALIDITY','DATE_RANGE','MONTHS','PERSON_ROLE','RELATION','FIELD','SAME_FIELD','CONTRACT'].includes(c.predicate)))return {state:'BUSINESS_CONDITIONS',label:'业务条件已验证'};
@@ -864,9 +991,12 @@ function findingDimensions(finding) {
   const evidence=status==='NOT_APPLICABLE'?'NOT_APPLICABLE':unknown?'SCOPE_UNRESOLVED':['PASS','FAIL'].includes(status)&&references&&a.ocrReview?.required!==true?'SUFFICIENT':references||body?'PARTIAL':'NOT_RETRIEVED';
   const conclusion=({PASS:'SATISFIED',FAIL:'NOT_SATISFIED',WARNING:'SUSPECTED_RISK',NOT_APPLICABLE:'NOT_APPLICABLE'})[status]||'UNDETERMINED';
   const computed={execution:{state:execution,label:executionStates[execution],active:['QUEUED','RUNNING','RETRY_WAIT'].includes(execution),jobId:job?.id||'',reason:job?.stopReason||job?.reason||'',nextAction:job?.nextAction||''},evidence:{state:evidence,label:({NOT_APPLICABLE:'不适用',SCOPE_UNRESOLVED:'要求范围尚未明确',SUFFICIENT:'判断依据已记录',PARTIAL:body?'部分义务已有证明':'证据尚未核全',NOT_RETRIEVED:'尚未取得充分依据'})[evidence]},conclusion:{state:conclusion,label:({SATISFIED:'满足要求',NOT_SATISFIED:'不满足要求',SUSPECTED_RISK:'疑似风险，待确认',NOT_APPLICABLE:'不适用',UNDETERMINED:'尚不能判断'})[conclusion],determined:['SATISFIED','NOT_SATISFIED','NOT_APPLICABLE'].includes(conclusion)}};
+  const visualReview=trustedVisualReview(finding);
+  if(visualReview.unreadableOnly)computed.evidence={state:'REVIEWED_UNREADABLE',label:'指定原图已检查，签章无法辨清'};
+  else if(visualReview.negative&&status==='FAIL'&&references&&!unknown&&atomicCheckOf(finding)?.complete===true)computed.evidence={state:'SUFFICIENT',label:'判断依据已记录'};
   computed.proofScope=findingProofScope(finding);if(computed.proofScope.label)computed.conclusion.label=computed.proofScope.label;
   // Execution is always read from the durable current job, never from a cached display label.
-  if(['business-dimensions-1','business-dimensions-2','business-dimensions-3'].includes(saved?.projectionVersion)&&saved.finalStatus===status&&saved.dimensions?.evidence&&saved.dimensions?.conclusion){const currentScope=computed.proofScope.state!=='UNSPECIFIED';return {...computed,evidence:saved.dimensions.evidence,conclusion:currentScope?computed.conclusion:saved.dimensions.conclusion,proofScope:currentScope?computed.proofScope:saved.dimensions.proofScope||computed.proofScope};}
+  if(!visualReview.reviewed&&['business-dimensions-1','business-dimensions-2','business-dimensions-3'].includes(saved?.projectionVersion)&&saved.finalStatus===status&&saved.dimensions?.evidence&&saved.dimensions?.conclusion){const currentScope=computed.proofScope.state!=='UNSPECIFIED';return {...computed,evidence:saved.dimensions.evidence,conclusion:currentScope?computed.conclusion:saved.dimensions.conclusion,proofScope:currentScope?computed.proofScope:saved.dimensions.proofScope||computed.proofScope};}
   return computed;
 }
 function groupUnresolvedCount(item) {
@@ -896,9 +1026,9 @@ function renderFindingDimensions(finding) {
 }
 function renderFieldCoverage(finding) {
   const rows=atomicCheckOf(finding)?.fieldCoverage;if(!Array.isArray(rows)||!rows.length)return '';
-  const labels={UNREAD:'尚未读取',READ_NOT_FOUND:'已读未见',EXTRACTED:'已提取',FAILED:'处理失败'},counts={};for(const row of rows)if(Object.hasOwn(labels,row.status))counts[row.status]=(counts[row.status]||0)+1;
+  const labels={UNREAD:'尚未读取',READ_NOT_FOUND:'已读未见',EXTRACTED:'已提取',FAILED:'处理失败',UNVERIFIED:'字段对应未确认'},counts={},displayStatus=row=>row.status==='FAILED'&&(row.errorCode||row.reason)==='FIELD_VALIDATION_FAILED'?'UNVERIFIED':row.status;for(const row of rows)if(Object.hasOwn(labels,displayStatus(row)))counts[displayStatus(row)]=(counts[displayStatus(row)]||0)+1;
   if(!Object.keys(counts).length)return '';
-  return `<details class="field-observation-details"><summary>字段读取记录 · ${e(Object.entries(counts).map(([key,n])=>`${labels[key]} ${n}`).join(' · '))}</summary><p class="preview-caption">记录只覆盖本项已选原文。已读未见不表示文件缺少材料；已提取字段仍须按本项要求判断。</p><ul>${rows.filter(row=>Object.hasOwn(labels,row.status)).map(row=>{const target=row.target||{},name=[target.subject,fields[target.field]||({amount:'金额',role:'岗位',certificate:'证书',license:'资格证照',employer:'任职单位'})[target.field]||(/[^\x00-\x7F]/.test(target.field||'')?target.field:'本项字段')].filter(Boolean).join(' · ')||'本项字段';return `<li><strong>${e(name)}</strong><span>${e(labels[row.status])}${row.status==='EXTRACTED'&&row.sourceScopeComplete!==true?' · 本字段仍有未完成范围':''}</span></li>`;}).join('')}</ul></details>`;
+  return `<details class="field-observation-details"><summary>字段读取记录 · ${e(Object.entries(counts).map(([key,n])=>`${labels[key]} ${n}`).join(' · '))}</summary><p class="preview-caption">记录只覆盖本项已选原文。已读未见不表示文件缺少材料；字段对应未确认不表示请求失败；已提取字段仍须按本项要求判断。</p><ul>${rows.filter(row=>Object.hasOwn(labels,displayStatus(row))).map(row=>{const target=row.target||{},name=[target.subject,fields[target.field]||({amount:'金额',role:'岗位',certificate:'证书',license:'资格证照',employer:'任职单位'})[target.field]||(/[^\x00-\x7F]/.test(target.field||'')?target.field:'本项字段')].filter(Boolean).join(' · ')||'本项字段';return `<li><strong>${e(name)}</strong><span>${e(labels[displayStatus(row)])}${row.status==='EXTRACTED'&&row.sourceScopeComplete!==true?' · 本字段仍有未完成范围':''}</span></li>`;}).join('')}</ul></details>`;
 }
 function businessGroups(results) {
   const index = new Map(results.map(f => [f.id, f])), seen = new Set(), groups = [];
@@ -911,7 +1041,7 @@ function businessGroups(results) {
   return groups;
 }
 function businessGroupState(item) {
-  const priority = ['RISK','SYSTEM_INCOMPLETE','EVIDENCE_PENDING','USER_ACTION','UNDETERMINED','SATISFIED','NOT_APPLICABLE'];
+  const priority = ['RISK','SYSTEM_INCOMPLETE','EVIDENCE_PENDING','WAIT_EXTERNAL','USER_ACTION','UNDETERMINED','SATISFIED','NOT_APPLICABLE'];
   const states = new Set(item.members.map(f=>businessPresentation(f,true).state));
   if (states.size===2 && states.has('SATISFIED') && states.has('NOT_APPLICABLE')) return 'SYSTEM_INCOMPLETE';
   return priority.find(value => states.has(value)) || 'EVIDENCE_PENDING';
@@ -1014,9 +1144,15 @@ function assessmentState(finding) {
 }
 function originalReviewIsSourceRecord(finding) {
   const business=businessPresentation(finding,true);
-  return ['SYSTEM_INCOMPLETE','EVIDENCE_PENDING'].includes(business.state)&&!business.userActionRequired;
+  return ['SYSTEM_INCOMPLETE','EVIDENCE_PENDING','WAIT_EXTERNAL'].includes(business.state)&&!business.userActionRequired;
 }
 function renderOriginalReview(finding, presentation) {
+  const observed=trustedVisualReview(finding);
+  if(observed.reviewed){
+    const business=businessPresentation(finding,true),description=observed.negative?'指定原图已检查，未观察到要求签章；请对照所列位置确认签署风险。本项不自动否决投标。':'指定原图已检查，但签章无法辨清。';
+    const locations=[...new Map(observed.observations.map(o=>[`${o.documentId}:${o.location}:${o.type}:${o.outcome}`,o])).values()];
+    return `<div class="ocr-review-note original-review-note"><strong>原图核验记录</strong><p>${e(description)}${business.userActionRequired?'':' 其他系统处理缺口尚未解决，当前不转交人工核对。'}</p><ul class="document-warning-list">${locations.map(o=>`<li><button class="text-action" data-action="page-preview" data-id="${e(o.documentId)}" data-page="${o.location}">第 ${o.location} 页${icon('external',true)}</button> · ${o.type==='SEAL'?'盖章位置':'签字位置'}：${o.outcome==='NOT_OBSERVED'?'未观察到':'无法辨清'}</li>`).join('')}</ul></div>`;
+  }
   const review = originalReview(finding, presentation);
   if (!review.required) return '';
   if(originalReviewIsSourceRecord(finding))return `<details class="recognition-source-record"><summary>识别来源记录${review.locations.length?` · ${review.locations.length} 处位置`:''}</summary><p>保留本项使用的识别来源与处理说明，不计入人工核对待办。</p>${review.reason?`<details><summary>原始识别说明</summary><p>${e(review.reason)}</p></details>`:''}${review.locations.length?`<ul class="document-warning-list" tabindex="0" aria-label="识别来源位置">${review.locations.map(item=>`<li><button class="text-action" data-action="page-preview" data-id="${e(item.documentId)}" data-page="${item.page}">${e(item.label||locationLabel(item))}${icon('external',true)}</button></li>`).join('')}</ul>`:''}</details>`;
@@ -1161,7 +1297,11 @@ function renderRulesRetrievalCoverage(data) {
   const unit = document?.locationType ? locationUnit(document.locationType) : '处', groups = consistencyGroups();
   const model = onDemandModelCoverage(), retrieval = state.run?.summary?.retrievalEvidence;
   const displayCount = (value, key) => countValue(value, key) ?? '—';
-  const structuredModelCounts = countValue(model, 'atomicCheckpoints') > 0 ? `<span>条件核验模型尝试 ${displayCount(model, 'structuredModelAttempts')} 次 · 处理完成 ${displayCount(model, 'structuredModelCompleted')} 次 · 失败 ${displayCount(model, 'structuredModelFailed')} 次 · 状态未知 ${displayCount(model, 'structuredModelUnknown')} 次</span><span>此项按条件核验的处理记录单独统计，不代表实际发送次数或业务通过数。</span>` : '';
+  const retrievalExecution = retrieval?.telemetryComplete === true
+    ? `<span>检索执行 ${displayCount(retrieval, 'searchAttempts')} 次 · 向量参与 ${displayCount(retrieval, 'vectorSearches')} 次 · 降级检索 ${displayCount(retrieval, 'degradedSearches')} 次</span>`
+    : retrieval?.telemetryComplete === false ? '<span>历史检索执行明细不完整，不能据此判断向量检索未参与。</span>' : '';
+  const agentModelCounts=countValue(model,'agentInvestigations')>0?`<span>自动查证 ${displayCount(model,'agentInvestigations')} 项 · 模型授权请求 ${displayCount(model,'agentModelCalls')} 次 · 服务未完成 ${displayCount(model,'agentFailedInvestigations')} 项；不计作 HTTP 成功或业务通过。</span>`:'';
+  const structuredModelCounts = (countValue(model, 'atomicCheckpoints') > 0 ? `<span>条件核验模型尝试 ${displayCount(model, 'structuredModelAttempts')} 次 · 处理完成 ${displayCount(model, 'structuredModelCompleted')} 次 · 失败 ${displayCount(model, 'structuredModelFailed')} 次 · 状态未知 ${displayCount(model, 'structuredModelUnknown')} 次</span><span>此项按条件核验的处理记录单独统计，不代表实际发送次数或业务通过数。</span>` : '') + agentModelCounts + retrievalExecution;
   const modelNotRequested = fullModelNotRequested(data);
   const alerts = [unparsed > 0 ? `${unparsed} ${unit}未取得可比对内容` : '', scanned == null || total == null ? '规则扫描范围未完整提供' : scanned < total ? '规则扫描未覆盖全部位置' : '', skipped > 0 ? `${skipped} ${unit}未进入规则扫描` : '', coverage.occurrencesTruncated ? '事实提取达到上限' : '', ...onDemandModelAlerts()];
   if (!modelNotRequested) alerts.push('全量模型扫描的请求范围待核实');
@@ -1362,7 +1502,7 @@ function renderResults() {
   const document = (state.run.documents || docs()).find(d => d.id === (state.sourceDoc || evidence?.documentId)) || (state.run.documents || docs()).find(d => d.id === run.documentId);
   const publishedVersion = publishedRunVersion();
   const versionSwitch = publishedVersion ? `<div class="result-version-switch"><label for="result-version-view">查看结论版本</label><select id="result-version-view"><option value="current" ${state.resultVersionView === 'current' ? 'selected' : ''}>当前发布版本 V${e(publishedVersion.revision)}</option><option value="source" ${state.resultVersionView === 'source' ? 'selected' : ''}>原始检查报告</option></select><small>${state.resultVersionView === 'current' ? `由 ${e(publishedVersion.publishedBy || '审核人')} 发布：${e(publishedVersion.publicationNote || '未填写发布说明')}` : '历史原始结论只读保留，未被增量发布覆盖'}</small></div>` : '';
-  const reportHeader = `<div class="result-topline"><select id="run-select" aria-label="选择历史检查报告">${runs.map(r => `<option value="${e(r.id)}" ${r.id === run.id ? 'selected' : ''}>${e(date(r.createdAt))} · ${e(r.recoveryOnly?'补查批次 · ':'')}${e(terminal.has(r.status)&&!failed.has(r.status)?'本轮执行结束':runStatuses[r.status] || r.status)}</option>`).join('')}</select><div class="report-actions"><button class="button button-primary button-small" data-action="retry-run" ${!complete || state.busy.has('run') || isRunning() || !checksReady() || processing() ? 'disabled' : ''}>${icon('refresh', true)}重新检查</button><button class="button button-secondary button-small" data-action="tab" data-tab="${checksReady() ? 'profile' : 'checkpoints'}">${icon('upload', true)}替换投标文件</button><span>下载报告</span>${['html', 'csv', 'json'].map(format => `<button class="button button-secondary button-small" data-action="download-report" data-format="${format}" ${!complete ? 'disabled' : ''}>${icon('download', true)}${format.toUpperCase()}</button>`).join('')}</div></div>${versionSwitch}${!complete ? `<div class="run-status-banner ${e(run.status)}">${failed.has(run.status) ? icon('alert') : '<span class="spinner"></span>'}<div><strong>${e(runStatuses[run.status] || run.status)}</strong><div>${e(run.error || run.stage || '正在处理检查任务')}</div>${typeof run.progress === 'number' ? `<div class="progress-track" role="progressbar" aria-label="检查进度" aria-valuenow="${Math.max(0, Math.min(100, run.progress))}" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style="width:${Math.max(0, Math.min(100, run.progress))}%"></div></div>` : ''}${failed.has(run.status) && run.taskId ? `<button class="text-action" data-action="retry-task" data-id="${e(run.taskId)}">重试检查任务</button>` : ''}</div></div>` : ''}`;
+  const reportHeader = `<div class="result-topline"><select id="run-select" aria-label="选择历史检查报告">${runs.map(r => `<option value="${e(r.id)}" ${r.id === run.id ? 'selected' : ''}>${e(date(r.createdAt))} · ${e(reviewModeLabel(r.reviewMode))} · ${e(r.recoveryOnly?'补查批次 · ':'')}${e(terminal.has(r.status)&&!failed.has(r.status)?'本轮执行结束':runStatuses[r.status] || r.status)}</option>`).join('')}</select><div class="report-actions"><span class="pill">${e(reviewModeLabel(run.reviewMode))}</span>${renderReviewModeSelect(state.rerunReviewMode || run.reviewMode, 'rerun-review-mode')}<button class="button button-primary button-small" data-action="retry-run" ${!complete || state.busy.has('run') || isRunning() || !checksReady() || processing() ? 'disabled' : ''}>${icon('refresh', true)}重新检查</button><button class="button button-secondary button-small" data-action="tab" data-tab="${checksReady() ? 'profile' : 'checkpoints'}">${icon('upload', true)}替换投标文件</button><span>下载报告</span>${['html', 'csv', 'json'].map(format => `<button class="button button-secondary button-small" data-action="download-report" data-format="${format}" ${!complete ? 'disabled' : ''}>${icon('download', true)}${format.toUpperCase()}</button>`).join('')}</div></div>${versionSwitch}${!complete ? `<div class="run-status-banner ${e(run.status)}">${failed.has(run.status) ? icon('alert') : '<span class="spinner"></span>'}<div><strong>${e(runStatuses[run.status] || run.status)}</strong><div>${e(run.error || run.stage || '正在处理检查任务')}</div>${typeof run.progress === 'number' ? `<div class="progress-track" role="progressbar" aria-label="检查进度" aria-valuenow="${Math.max(0, Math.min(100, run.progress))}" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style="width:${Math.max(0, Math.min(100, run.progress))}%"></div></div>` : ''}${failed.has(run.status) && run.taskId ? `<button class="text-action" data-action="retry-task" data-id="${e(run.taskId)}">重试检查任务</button>` : ''}</div></div>` : ''}`;
   const categoryNav=renderCategoryNavigation(categoryCounts,state.category,'result-category','业务事项');
   if (state.reportView === 'consistency'&&state.category==='全文信息检查') return reportHeader + renderIncrementalCandidates() + categoryNav + renderResolutionOverview(groups,scopedResults) + renderReportViewTabs() + renderConsistency();
   const actions = uniqueUserActions(scopedResults), mandatoryCount=searchedGroups.filter(item=>item.members.some(f=>findingPurpose(f)==='MANDATORY')).length, scoringCount=searchedGroups.filter(item=>item.members.some(f=>findingPurpose(f)==='SCORING')).length, externalCount=searchedGroups.filter(item=>item.members.some(f=>findingVerificationMode(f)==='EXTERNAL')).length;
@@ -1371,8 +1511,12 @@ function renderResults() {
 }
 function renderFinding(f, sourcePanel = '') {
   const cp=f.checkpoint,ev=f.evaluation,presentation=findingPresentation(f),business=businessPresentation(f),review=reviewOf(f),references=findingEvidence(f),evidences=references.bid,isConsistency=cp.type==='ENTITY_FIELD_CONSISTENCY';
-  const evidenceMissing=findingDimensions(f).evidence.state!=='SUFFICIENT',analysis=business.reason||presentation.reason||'未提供分析说明。';
-  return `<div class="finding-detail-header"><div class="detail-kicker">${e(findingCategory(f))} / ${e(types[cp.type]||cp.type)}</div><h2>${e(cp.title)}</h2><div class="detail-tags"><span class="pill ${e(business.state)}">${e(business.label)}</span>${renderResultScopeTags(f)}${review?badge(review.status,`人工：${statuses[review.status]||review.status}`):''}</div></div><div class="panel-body">${renderFindingDimensions(f)}<div class="result-reason ${e(business.state)}"><strong>检查结论</strong><p>${e(analysis)}</p></div><p class="suggestion result-next-step"><b>下一步</b><span>${e(business.nextStep)}</span></p>${renderTemplateSubchecks(f)}${renderCompleteness(f)}${originalReviewIsSourceRecord(f)?'':renderOriginalReview(f,presentation)}<div class="evidence-title"><span>${isConsistency?'多处信息与依据对照':'招标要求与投标证据'}</span><small>原文可追溯</small></div><div class="evidence-grid">${renderEvidence(references.source,'招标依据',cp.source?'未取得本次招标文件的有效依据。':'该项为手动或全文通用检查，无独立招标条款。')}${renderEvidence(evidences[0],isConsistency?'证据位置 1':'投标证据',evidenceMissing?'本项尚未取得足够原文依据；当前不据此认定投标材料缺失。':'未返回可展示的投标原文，请按证据引用继续追溯。')}</div>${references.tender.length?`<div class="more-evidence">${references.tender.map(item=>renderEvidence(item,'补充招标依据')).join('')}</div>`:''}${evidences.length>1?`<div class="more-evidence">${evidences.slice(1).map((item,i)=>renderEvidence(item,`证据位置 ${i+2}`)).join('')}</div>`:''}${sourcePanel}${renderInheritedReviews(f)}<details class="business-processing-details result-diagnostics"><summary>处理详情与诊断</summary><div class="result-diagnostics-body">${renderTemplateDiagnostics(f)}<p class="preview-caption">条款风险等级：${e(({HIGH:'高',MEDIUM:'中',LOW:'低'})[cp.severity]||'未设置')} · ${e(methodLabel(ev.method))}</p>${renderAtomicCheck(f)}${renderFieldCoverage(f)}${originalReviewIsSourceRecord(f)?renderOriginalReview(f,presentation):''}${renderOriginalExplanation(presentation)}${renderAssessmentDetails(f)}</div></details><details class="business-manual-details" ${disclosureAttributes(`manual-finding-${f.id}`,!!review||state.reviewDrafts.has(f.id))}><summary>记录人工复核${review?' · 已有记录':''}</summary>${renderManualReview(f)}</details></div>`;
+  const evidenceMissing=findingDimensions(f).evidence.state!=='SUFFICIENT',analysis=businessAnalysisReason(f,presentation,business)||'未提供分析说明。';
+  return `<div class="finding-detail-header"><div class="detail-kicker">${e(findingCategory(f))} / ${e(types[cp.type]||cp.type)}</div><h2>${e(cp.title)}</h2><div class="detail-tags"><span class="pill ${e(business.state)}">${e(business.label)}</span>${renderResultScopeTags(f)}${review?badge(review.status,`人工：${statuses[review.status]||review.status}`):''}</div></div><div class="panel-body">${renderFindingDimensions(f)}<div class="result-reason ${e(business.state)}"><strong>检查结论</strong><p>${e(analysis)}</p></div><p class="suggestion result-next-step"><b>下一步</b><span>${e(business.nextStep)}</span></p>${renderTemplateSubchecks(f)}${renderCompleteness(f)}${originalReviewIsSourceRecord(f)?'':renderOriginalReview(f,presentation)}<div class="evidence-title"><span>${isConsistency?'多处信息与依据对照':'招标要求与投标证据'}</span><small>原文可追溯</small></div><div class="evidence-grid">${renderEvidence(references.source,'招标依据',cp.source?'未取得本次招标文件的有效依据。':'该项为手动或全文通用检查，无独立招标条款。')}${renderEvidence(evidences[0],isConsistency?'证据位置 1':'投标证据',evidenceMissing?'本项尚未取得足够原文依据；当前不据此认定投标材料缺失。':'未返回可展示的投标原文，请按证据引用继续追溯。')}</div>${references.tender.length?`<div class="more-evidence">${references.tender.map(item=>renderEvidence(item,'补充招标依据')).join('')}</div>`:''}${evidences.length>1?`<div class="more-evidence">${evidences.slice(1).map((item,i)=>renderEvidence(item,`证据位置 ${i+2}`)).join('')}</div>`:''}${sourcePanel}${renderInheritedReviews(f)}<details class="business-processing-details result-diagnostics"><summary>处理详情与诊断</summary><div class="result-diagnostics-body">${renderAgentInvestigationDetails(f)}${renderTargetProgressDetails(f)}${renderExternalCheckDetails(f)}${renderTemplateDiagnostics(f)}<p class="preview-caption">条款风险等级：${e(({HIGH:'高',MEDIUM:'中',LOW:'低'})[cp.severity]||'未设置')} · ${e(methodLabel(ev.method))}</p>${renderAtomicCheck(f)}${renderFieldCoverage(f)}${originalReviewIsSourceRecord(f)?renderOriginalReview(f,presentation):''}${renderOriginalExplanation(presentation)}${renderAssessmentDetails(f)}</div></details><details class="business-manual-details" ${disclosureAttributes(`manual-finding-${f.id}`,!!review||state.reviewDrafts.has(f.id))}><summary>记录人工复核${review?' · 已有记录':''}</summary>${renderManualReview(f)}</details></div>`;
+}
+function businessAnalysisReason(finding,presentation,business) {
+  const raw=finding.evaluation?.reason||'',current=typeof business?.reason==='string'?business.reason:raw;
+  return current.trim()&&current!==raw?current:typeof presentation?.reason==='string'?presentation.reason:raw;
 }
 function atomicCheckOf(finding) {
   const value = assessmentOf(finding)?.atomicCheck;
@@ -1397,11 +1541,11 @@ function atomicReadable(value, conditions = []) {
   }
   return text.replace(/(?<![A-Za-z0-9_])(?:rule|condition|r)[_-]\d+(?:[_-]\d+)*(?![A-Za-z0-9_])/gi, '本条件');
 }
-function atomicMappingPending(code) { return ['COMPARISON_FIELD_MAPPING_REQUIRED','COMPARISON_RECORD_IDENTITY_UNPROVEN','REGISTRATION_EMPLOYER_BINDING_REQUIRED'].includes(code); }
+function atomicMappingPending(code) { return ['COMPARISON_FIELD_MAPPING_REQUIRED','COMPARISON_RECORD_IDENTITY_UNPROVEN','REGISTRATION_EMPLOYER_BINDING_REQUIRED','FORM_TEMPLATE_REFERENCE_REQUIRED','FORM_REQUIREMENT_SOURCE_REQUIRED','FORM_PROJECT_BINDING_REQUIRED','FORM_INSTANCE_AMBIGUOUS','FORM_CONTENT_COVERAGE_REQUIRED','FORM_CONDITION_COVERAGE_REQUIRED','DURATION_REQUIREMENT_SOURCE_REQUIRED','DURATION_REQUIREMENT_FIELD_UNBOUND','DURATION_RESPONSE_FORMAT_REQUIRED'].includes(code); }
 function atomicCategory(code) {
   if (typeof code !== 'string') return 'NEEDS_REVIEW';
   if (atomicMappingPending(code)) return 'RELATION_UNCONFIRMED';
-  if (code.startsWith('MODEL_') || code.startsWith('HTTP_') || ['RULE_COMPILATION_UNAVAILABLE','FACT_EXTRACTION_UNAVAILABLE','TRANSPORT_FAILURE','REQUEST_TIMEOUT','CAPACITY_TIMEOUT','OUTPUT_JSON_INVALID','OUTPUT_SCHEMA_INVALID','OUTPUT_INCOMPLETE','OUTPUT_LIMIT','INPUT_LIMIT'].includes(code)) return 'PROCESSING_FAILED';
+  if (code.startsWith('MODEL_') || code.startsWith('HTTP_') || ['AGENT_INVESTIGATION_FAILED','RULE_COMPILATION_UNAVAILABLE','FACT_EXTRACTION_UNAVAILABLE','TRANSPORT_FAILURE','REQUEST_TIMEOUT','CAPACITY_TIMEOUT','OUTPUT_JSON_INVALID','OUTPUT_SCHEMA_INVALID','OUTPUT_INCOMPLETE','OUTPUT_LIMIT','INPUT_LIMIT'].includes(code)) return 'PROCESSING_FAILED';
   if (code.includes('COMPILATION') || code.startsWith('REQUIREMENT_') || ['UNSUPPORTED_RULE','OPERATOR_UNSUPPORTED','SUBJECT_REQUIRED','ATOMIC_CONDITION_NOT_EVALUATED','PRICE_REQUIREMENT_DIMENSIONS_REQUIRED','PERSON_COUNT_ROLE_REQUIRED','PERSON_COUNT_COMPARISON_REQUIRED'].includes(code)) return 'REQUIREMENT_UNPARSED';
   if (/RELATION|IDENTITY|APPOINTMENT|EMPLOYER|SCOPE|DIMENSION|SELECTION|VERSION/.test(code) || ['REFERENCE_TIME_UNCONFIRMED','CERTIFICATE_CATEGORY_REQUIRED','VALIDITY_FIELD_REQUIRED','CONFLICTING_EVIDENCE','PRICE_SUBJECT_REQUIRED'].includes(code)) return 'RELATION_UNCONFIRMED';
   if (['CERTIFICATE_EVIDENCE_REQUIRED','REGISTRATION_CERTIFICATE_REQUIRED','FIELD_EVIDENCE_REQUIRED','PRICE_EVIDENCE_REQUIRED','COMPARISON_SOURCE_REQUIRED','MATERIAL_EVIDENCE_REQUIRED','DECLARATION_EVIDENCE_REQUIRED','CERTIFICATE_FIELD_REQUIRED','VALIDITY_RANGE_REQUIRED','CONTRACT_PROOF_REQUIRED','FULL_SECTION_REQUIRED','EXTERNAL_RECORD_REQUIRED','EVIDENCE_NOT_FOUND','NO_CANDIDATE_EVIDENCE'].includes(code)) return 'EVIDENCE_NOT_FOUND';
@@ -1411,14 +1555,14 @@ function atomicPresentation(check, conditions = check?.conditions || []) {
   const labels = { PROCESSING_FAILED: '处理失败', REQUIREMENT_UNPARSED: '条款未解析完整', RELATION_UNCONFIRMED: '对应关系待确认', EVIDENCE_NOT_FOUND: '证据未找到', WAIT_STAGE: '等待适用时点', COMPLETED: '条件计算已结束', NEEDS_REVIEW: '尚未形成结论' };
   const reasons = { PROCESSING_FAILED: '本项处理未完成，已得到的条件和依据予以保留；不能据此判断材料缺失或不符合。', REQUIREMENT_UNPARSED: '尚未完整明确本条款的核验要求，暂不能据此判断投标是否符合。', RELATION_UNCONFIRMED: '要求对象与文件中的单位、人员、证件或报价口径尚未完整对应，需要结合原文确认。', EVIDENCE_NOT_FOUND: '本次检查尚未定位到足以支持判断的相关证据，不代表原文件缺少材料。', WAIT_STAGE: '本条件尚未到适用的核验时点。', COMPLETED: '条件处理已完成，整项结论及原图复核要求以上方结果为准。', NEEDS_REVIEW: '仍有需要人工确认的范围，请结合条件说明和原文核对。' };
   const actions = { PROCESSING_FAILED: '查看处理说明；系统需继续处理失败请求，本提示不要求补交材料，不计入人工核对待办。', REQUIREMENT_UNPARSED: '先对照招标原句明确要求对象、比较条件与适用范围。', RELATION_UNCONFIRMED: '核对相关原文中的人员、单位、证件及项目口径，确认它们是否对应同一要求。', EVIDENCE_NOT_FOUND: '先核对本次文件中的相关材料和定位范围，再确认是否确需补充材料。', WAIT_STAGE: '核对条款规定的核验时点，当前保留待核。' };
-  const remap=(check?.gaps||[]).some(gap=>atomicMappingPending(gap?.code)||gap?.code==='REGISTRATION_CERTIFICATE_REQUIRED');
+  const remap=check?.agentInvestigation?.status==='FAILED'||(check?.gaps||[]).some(gap=>atomicMappingPending(gap?.code)||['AGENT_INVESTIGATION_FAILED','REGISTRATION_CERTIFICATE_REQUIRED'].includes(gap?.code));
   const raw = !remap && check?.presentation && typeof check.presentation === 'object' ? check.presentation : {};
   const publishedPending = check?.finalBusinessStatus && !['PASS','FAIL','WARNING','NOT_APPLICABLE'].includes(check.finalBusinessStatus);
   const businessCompleted = !publishedPending && check?.complete === true && check?.workflowState === 'COMPLETED';
   const issues = Array.isArray(raw.issues) ? raw.issues.filter(item => item && typeof item === 'object') : (Array.isArray(check?.gaps) ? check.gaps : []).filter(item => item && typeof item === 'object').map(gap => { const category = atomicCategory(gap.code); return { code: gap.code, category, label: labels[category], description: atomicReadable(gap.description, conditions), nextStep: atomicMappingPending(gap.code)?'系统需继续完成证据字段或人员单位对应；当前不要求补交材料，也不计入人工核对待办。':actions[category] || '请结合条件说明和原文人工核对。' }; });
   if (publishedPending && check?.complete === true && check?.workflowState === 'COMPLETED') issues.push({category:'REQUIREMENT_UNPARSED',label:'整项要求尚未证明',description:'辅助条件的完成不足以证明整项要求；以守卫后的业务结论为准。',nextStep:'需补齐主条件及其证据，不能用参考日期或处理完成替代业务证明。'});
   const categories = issues.map(item => item.category);
-  if (['ENGINE_FAILURE','ERROR'].includes(check?.workflowState) || Number(check?.modelDiagnostics?.unresolvedFailures) > 0) { categories.unshift('PROCESSING_FAILED'); if (!issues.some(issue => issue.category === 'PROCESSING_FAILED')) issues.push({category: 'PROCESSING_FAILED', label: businessCompleted ? '候选处理记录' : labels.PROCESSING_FAILED, description: businessCompleted ? '部分候选处理曾未完成；其他证据已支持当前完整结论，详见处理记录。' : reasons.PROCESSING_FAILED, nextStep: actions.PROCESSING_FAILED}); }
+  if (['ENGINE_FAILURE','ERROR'].includes(check?.workflowState) || check?.agentInvestigation?.status==='FAILED' || Number(check?.modelDiagnostics?.unresolvedFailures) > 0) { categories.unshift('PROCESSING_FAILED'); if (!issues.some(issue => issue.category === 'PROCESSING_FAILED')) issues.push({category: 'PROCESSING_FAILED', label: businessCompleted ? '候选处理记录' : labels.PROCESSING_FAILED, description: businessCompleted ? '部分候选处理曾未完成；其他证据已支持当前完整结论，详见处理记录。' : reasons.PROCESSING_FAILED, nextStep: actions.PROCESSING_FAILED}); }
   const priority = ['PROCESSING_FAILED','REQUIREMENT_UNPARSED','RELATION_UNCONFIRMED','EVIDENCE_NOT_FOUND','NEEDS_REVIEW'];
   issues.sort((a, b) => priority.indexOf(a.category) - priority.indexOf(b.category));
   const inferred = ['PROCESSING_FAILED','REQUIREMENT_UNPARSED','RELATION_UNCONFIRMED','EVIDENCE_NOT_FOUND','NEEDS_REVIEW'].find(item => categories.includes(item)) || (check?.workflowState === 'WAIT_STAGE' ? 'WAIT_STAGE' : !publishedPending && (check?.complete === true && check?.workflowState === 'COMPLETED' || ['PASS','FAIL','NOT_APPLICABLE'].includes(check?.status)) ? 'COMPLETED' : 'NEEDS_REVIEW');
@@ -1528,6 +1672,7 @@ async function loadRun(id, paint = true) {
   }
   catch (error) { if (request !== state.runRequest || expectedProject !== projectId()) return; throw error; }
   if (request !== state.runRequest || expectedProject !== projectId()) return;
+  if (state.run?.run?.id !== detail?.run?.id) state.rerunReviewMode = null;
   state.run = detail;
   if (state.resultVersionRunId !== id) {
     state.resultVersionRunId = id;
@@ -2104,7 +2249,8 @@ async function handleAction(action, el) {
       const frozen = action === 'retry-run' ? state.run?.run : state.project?.project;
       const checkSetId = frozen?.checkSetId || frozen?.activeCheckSetId || '';
       const manifestRevision = frozen?.manifestRevision ?? frozen?.activeCheckSetManifestRevision;
-      const body = { documentId, idempotencyKey: randomKey('start-run'), ...(action === 'retry-run' ? { force: true } : {}) };
+      const reviewMode = action === 'retry-run' ? (state.rerunReviewMode || state.run?.run.reviewMode || 'FIXED_WORKFLOW') : state.newReviewMode;
+      const body = { documentId, reviewMode, idempotencyKey: randomKey('start-run'), ...(action === 'retry-run' ? { force: true } : {}) };
       if (checkSetId && Number.isInteger(Number(manifestRevision))) { body.checkSetId = checkSetId; body.manifestRevision = Number(manifestRevision); }
       const run = await api(`/api/projects/${enc(pid)}/runs`, { method: 'POST', body }); if (pid !== projectId()) { pollRun(run.id, pid); return; } await loadProject(pid); if (pid !== projectId()) return; await loadRun(run.id, false); if (pid !== projectId()) return; state.tab = 'results'; state.filter = 'ALL'; state.category = 'ALL'; state.selectedFinding = null; state.selectedConsistencyGroup = null; state.sourceDoc = null; state.sourcePage = 1; window.scrollTo({ top: 0, behavior: 'auto' }); pollRun(run.id, pid);
     }
@@ -2160,6 +2306,8 @@ document.addEventListener('change', async event => {
     if (el.dataset.upload) { await upload(el.files[0], el.dataset.upload); return; }
     if (el.dataset.toggleCheckpoint) { const cp = checkpoints().find(c => c.id === el.dataset.toggleCheckpoint); if (cp) { el.disabled = true; await updateCheckpoint(cp, { enabled: el.checked }); render(); } return; }
     if (el.id === 'run-document') { state.runDocumentId = el.value; state.profileDoc = el.value; state.sourceDoc = null; state.sourcePage = 1; render(); try { await loadProfile(el.value); } finally { render(); } return; }
+    if (el.id === 'new-review-mode') { state.newReviewMode = el.value === 'AGENT_LED' ? 'AGENT_LED' : 'FIXED_WORKFLOW'; return; }
+    if (el.id === 'rerun-review-mode') { state.rerunReviewMode = el.value === 'AGENT_LED' ? 'AGENT_LED' : 'FIXED_WORKFLOW'; return; }
     if (el.id === 'run-select') { state.selectedFinding = null; state.purposeFilter='ALL'; state.externalOnly=false; state.selectedConsistencyGroup = null; state.consistencyFilter = 'ALL'; state.consistencyField = 'ALL'; state.consistencyCategory = 'ALL'; state.consistencyRelation = 'ALL'; state.consistencyReview = 'ALL'; state.consistencyQuery = ''; state.consistencyFactsPage = 1; state.consistencyFactsMode = 'ALL'; state.sourceDoc = null; state.sourcePage = 1; await loadRun(el.value); return; }
     if (el.id === 'result-version-view') { state.resultVersionView = el.value === 'current' && publishedRunVersion() ? 'current' : 'source'; state.selectedFinding = null; state.sourceDoc = null; state.sourcePage = 1; render(); return; }
     if (el.id === 'consistency-facts-mode') { state.consistencyFactsMode = el.value; state.consistencyFactsPage = 1; setDisclosureOpen('consistency-facts', true); render(); return; }

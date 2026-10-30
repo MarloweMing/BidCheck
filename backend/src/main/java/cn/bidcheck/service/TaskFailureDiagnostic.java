@@ -127,16 +127,22 @@ public final class TaskFailureDiagnostic {
     private static String sqlState(SQLException error) {String value=error.getSQLState();return value!=null&&value.matches("[A-Z0-9]{5}")?value:"UNKNOWN";}
     private static String safeType(String type) {return type!=null&&type.length()<=200&&type.matches("[A-Za-z0-9_.$]+")?type:"UNAVAILABLE";}
     private static List<String> frames(Throwable error) {
-        List<String> frames=new ArrayList<>();
+        List<String> application=new ArrayList<>(),infrastructure=new ArrayList<>();
         int visited=0;
         for(StackTraceElement frame:error.getStackTrace()) {
-            if(++visited>64)break;
+            if(++visited>192)break;
             String type=frame.getClassName(),method=frame.getMethodName();
             if(type.length()>180||!type.matches("[A-Za-z0-9_.$]+")||!method.matches("[A-Za-z0-9_$]{1,80}|<init>|<clinit>"))continue;
             if(!List.of("cn.bidcheck.","org.apache.ibatis.","org.mybatis.","org.springframework.","java.sql.","com.mysql.cj.","org.h2.").stream().anyMatch(type::startsWith))continue;
-            frames.add(type+"#"+method+":"+(frame.getLineNumber()>=0&&frame.getLineNumber()<1_000_000?frame.getLineNumber():"?"));
-            if(frames.size()==MAX_FRAMES)break;
+            String value=type+"#"+method+":"+(frame.getLineNumber()>=0&&frame.getLineNumber()<1_000_000?frame.getLineNumber():"?");
+            List<String> target=type.startsWith("cn.bidcheck.")?application:infrastructure;
+            if(target.size()<MAX_FRAMES)target.add(value);
         }
+        // JDBC/MyBatis wrappers can occupy dozens of frames. Reserve application call sites so
+        // the safe bounded record still identifies the failed publication, without raw SQL/text.
+        List<String> frames=new ArrayList<>(application.subList(0,Math.min(2,application.size())));
+        for(String frame:infrastructure)if(frames.size()<MAX_FRAMES)frames.add(frame);
+        for(int i=2;i<application.size()&&frames.size()<MAX_FRAMES;i++)frames.add(application.get(i));
         return frames;
     }
     private static Map<String,Business> businessMessages() {

@@ -111,6 +111,7 @@ public class TaskWorker {
                 try { mapper.releaseClaim(task.id,task.leaseOwner,BidService.now()); } catch(RuntimeException ignored) {}
             } else {
                 TaskFailureDiagnostic.Diagnostic diagnostic=diagnose(task.id,TaskFailureDiagnostic.Phase.EXECUTION,failure);
+                log.warn("bidcheck.task_failure taskId={} attempt={} progress={} traceId={} category={}",task.id,task.attempt,task.progress,diagnostic.traceId(),diagnostic.category());
                 try { service.fail(task,diagnostic.userMessage()); }
                 catch(RuntimeException unavailable) { diagnose(task.id,TaskFailureDiagnostic.Phase.FAILURE_RECORD,unavailable); }
             }

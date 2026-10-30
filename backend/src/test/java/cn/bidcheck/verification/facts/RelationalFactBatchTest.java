@@ -61,6 +61,13 @@ class RelationalFactBatchTest {
         assertEquals(canonical(expected),canonical(values.stream().map(v->repository.get(text(v,"id"))).toList()));
     }
     @Test void emptyBatchAndEmptyLookupDoNotExecuteSql(){statements.count=0;repository.insertBatch(List.of());assertTrue(repository.existingIds(List.of()).isEmpty());assertEquals(0,statements.count);}
+    @Test void bulkReadPreservesAllSourceAliasesAndEntityAuditUsingThreeQueries(){
+        List<Map<String,Object>> input=new ArrayList<>();for(int i=0;i<10;i++)input.add(occurrence("bulk-"+i));repository.insertBatch(input);
+        var ids=input.stream().map(row->text(row,"id")).toList();Map<String,Map<String,Object>> expected=new LinkedHashMap<>();ids.forEach(id->expected.put(id,repository.get(id)));
+        session.clearCache();statements.count=0;var actual=repository.getAll(ids);
+        assertEquals(canonical(expected),canonical(actual));assertEquals(3,statements.count);
+        statements.count=0;assertTrue(repository.getAll(List.of()).isEmpty());assertEquals(0,statements.count);
+    }
     @Test void nativeDocumentFactsHydrateInOneJoinedReadAndKeepDomainValues(){
         List<String> lines=new ArrayList<>();List<Fact> expected=new ArrayList<>();
         for(int i=0;i<80;i++){String raw="原始值-"+i;lines.add(raw);expected.add(new Fact("PERSON","人员-"+i,"字段-"+i,raw,"规范值-"+i,

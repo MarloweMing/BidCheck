@@ -15,6 +15,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -37,10 +38,10 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
  * the 109-check execution path: every accepted parameter keeps its exact requirement fragment,
  * every rule gets a stable source-derived ID, and a fragment is considered covered only when all
  * of its deterministic candidates can be represented by the closed DSL.  Unknown text is never
- * discarded.  It is returned as a gap for the constrained compiler model.</p>
+ * discarded. It is retained as a source-bound pending condition for an explicit rule update.</p>
  */
 final class DeterministicRequirementCompiler {
-    static final String VERSION = "deterministic-requirement-compiler-4-price-closure";
+    static final String VERSION = "deterministic-requirement-compiler-13-preserved-duration-intent";
 
     /** All registered mapping templates have a server-owned conversion. */
     static final Set<String> SUPPORTED_TEMPLATE_IDS = Set.of(
@@ -75,6 +76,51 @@ final class DeterministicRequirementCompiler {
         String source = Objects.toString(requirement, "").strip();
         if (source.isBlank()) return Result.empty(json, source);
 
+        Rule confirmedDuration=confirmedDuration(checkpoint,source);
+        if(confirmedDuration!=null)return single(source,confirmedDuration);
+
+        Rule registration=LegalRegistrationProof.compile(source);
+        if(registration!=null)return single(source,registration);
+
+        Rule bidLetterResponse=BidLetterResponse.compile(source);
+        if(bidLetterResponse!=null)return single(source,bidLetterResponse);
+
+        Rule conditionalMaterial=ConditionalMaterialEvidence.compile(checkpoint,source,sourceContext,runContext);
+        if(conditionalMaterial!=null)return single(source,conditionalMaterial);
+        Rule compound=CompoundBusinessRequirements.compile(checkpoint,source);
+        if(compound!=null)return single(source,compound);
+        Rule payment=PaymentRequirementProof.compile(checkpoint,source);
+        if(payment!=null)return single(source,payment);
+        List<Rule> signatures=SourceSignatureRequirements.compile(checkpoint,source,sourceContext,runContext);
+        if(!signatures.isEmpty())return selected(source,signatures);
+
+        List<Rule> routed=RequirementBusinessRouting.compile(checkpoint,source,sourceContext,runContext);
+        if(!routed.isEmpty())return selected(source,routed);
+        List<Rule> inventory=SourceRequirementInventory.compile(checkpoint,source,sourceContext,runContext);
+        if(!inventory.isEmpty())return selected(source,inventory);
+
+        List<Rule> restoredScoring=SourceScoringRules.compile(checkpoint,source,sourceContext,runContext);
+        if(!restoredScoring.isEmpty())return selected(source,restoredScoring);
+
+        Rule qualificationTree=qualificationTree(source);
+        if(qualificationTree!=null)return single(source,qualificationTree);
+        Rule personnelTree=personnelQualificationTree(source);
+        if(personnelTree!=null)return single(source,personnelTree);
+
+        // Some table rows are one source-bound obligation. Splitting the response from
+        // its referenced form loses the response mode and creates unrelated conditions.
+        Rule response = formResponse(source);
+        if (response != null) return single(source, response);
+        Rule invoice = invoiceAlternatives(checkpoint, source, runContext);
+        if (invoice != null) return single(source, invoice);
+        if (nameComparisonOnly(source)) {
+            Map<String,Object> p=nativeParams("BIDDER_NAME");
+            p.put("comparisonTargetReference", clean(source).split("与",2)[1].split("一致",2)[0]);
+            p.put("comparisonOperandKind", "SOURCE_REFERENCE");
+            p.put("nameChangeEvidenceRequiredWhenDifferent", source.contains("变更"));
+            return single(source,rule("NAME-CONSISTENCY","投标人名称与对应证照一致","SAME_FIELD","投标人","投标人名称","=","","",p,source));
+        }
+
         SourceRef rootSource = sourceRef(checkpoint, source, sourceContext);
         ClauseNode.LocalContext local = new ClauseNode.LocalContext("", "", null, "",
                 lot(source), inheritedSubject(sourceContext), "TENDER_REQUIREMENT",
@@ -83,7 +129,7 @@ final class DeterministicRequirementCompiler {
         ClauseNode root = new ClauseNode(stableSourceId, ClauseNode.Kind.PARAGRAPH,
                 source, rootSource, local, List.of());
         RequirementMappingService mapper = new RequirementMappingService(externalAdapters(runContext));
-        RequirementMappingResult mapped = mapper.map(List.of(root));
+        RequirementMappingResult mapped = mapper.map(mappingRoots(root,sourceContext));
         Map<String, RequirementDraft> drafts = new LinkedHashMap<>();
         for (RequirementDraft draft : mapped.drafts()) drafts.put(draft.fragmentId(), draft);
 
@@ -99,6 +145,12 @@ final class DeterministicRequirementCompiler {
             if (draft != null && !draft.templateCandidates().isEmpty()) {
                 for (TemplateCandidate candidate : draft.templateCandidates()) {
                     templates.add(candidate.templateId());
+                    if(submissionException(draft.text()))continue;
+                    if("MATERIAL_PRESENT".equals(candidate.templateId())&&!certificateProofRules("probe",draft.text(),"",source).isEmpty())continue;
+                    if("MATERIAL_PRESENT".equals(candidate.templateId())
+                            &&!text(candidate.parameters(),"materialType").isBlank()
+                            &&namedMaterialRules("probe",draft.text(),"").stream()
+                                .anyMatch(named->named.expected().contains(text(candidate.parameters(),"materialType"))))continue;
                     if (candidate.origin() != TemplateCandidate.Origin.DETERMINISTIC_RULE) {
                         reasons.add("CLASSIFIER_CANDIDATE_NOT_EXECUTABLE:" + candidate.templateId());
                         continue;
@@ -131,6 +183,9 @@ final class DeterministicRequirementCompiler {
 
             if (item.status() != CoverageItem.Status.NON_CHECKING) {
                 List<Rule> nativeRules = nativeRules(item, checkpoint, source);
+                for(Rule nativeRule:nativeRules){List<Rule> nativeLeaves=new ArrayList<>();flatten(nativeRule,nativeLeaves);
+                    for(Rule leaf:nativeLeaves)if("UNSUPPORTED".equals(leaf.predicate()))
+                        reasons.add("NATIVE_RULE_UNSUPPORTED:"+text(leaf.parameters(),"deterministicFamily"));}
                 for (Rule nativeRule : nativeRules) if (converted.stream().noneMatch(existing -> sameObligation(existing, nativeRule)))
                     converted.add(nativeRule);
                 reasons.removeIf(reason -> represented(reasonTemplate(reason), converted));
@@ -162,7 +217,30 @@ final class DeterministicRequirementCompiler {
             }
         }
 
-        rules = deduplicate(rules);
+        rules = new ArrayList<>(deduplicate(rules).stream().map(r->secureInvoiceRule(r,checkpoint,source,runContext)).toList());
+        // Presence is a separate obligation. A reference to a prescribed form must
+        // retain a content/filled-field audit even when its material rule is satisfied.
+        rules.addAll(TenderFormAudit.compile(checkpoint, source, runContext));
+        Rule summary=SourceRequirementInventory.dependencyRule(checkpoint,source,sourceContext,runContext);
+        if(summary!=null){
+            rules.add(summary);
+            // Replace only the exact reference fragment represented by this validated
+            // dependency. Any extra obligation in a mapper gap remains unresolved.
+            gaps.removeIf(g->SourceRequirementInventory.dependencyCovers(g.text(),summary,sourceContext));
+            for(int i=0;i<ledger.size();i++){
+                FragmentCoverage row=ledger.get(i);
+                if(SourceRequirementInventory.dependencyCovers(row.text(),summary,sourceContext))
+                    ledger.set(i,new FragmentCoverage(row.fragmentId(),row.text(),row.source(),"RULE",List.of(summary.id()),row.templateIds(),"SOURCE_DEPENDENCY_EXECUTION",true));
+            }
+        }
+        if(source.matches("(?s).*投标保证金.*(?:按|按照).{0,20}规定缴纳.*")
+                &&rules.stream().allMatch(r->"MATERIAL".equals(r.predicate())))
+            rules.add(rule("PAYMENT-COVERAGE","保证金实际缴纳要求尚未展开","UNSUPPORTED","","payment","","","",
+                    Map.of("deterministicFamily","PAYMENT_OBLIGATION_REFERENCE_REQUIRED","compilationIssue","提交凭证不证明缴纳金额、方式和时点满足引用要求"),source));
+        if(source.matches("(?s).*(?:清单(?:详见|见)|等(?:必须|必需|必备)的(?:承诺)?(?:文件|材料)).*")
+                &&rules.stream().anyMatch(r->"MATERIAL".equals(r.predicate())))
+            rules.add(rule("INVENTORY-COVERAGE","必备材料全集尚未展开核验","UNSUPPORTED","","materialInventory","","","",
+                    Map.of("deterministicFamily","REQUIREMENT_INVENTORY_UNRESOLVED","compilationIssue","定位到一份材料不能证明引用清单中的全部必备文件齐全"),source));
         String logic = topLogic(source, rules);
         ObjectNode rootJson = json.createObjectNode();
         rootJson.put("logic", logic);
@@ -173,6 +251,72 @@ final class DeterministicRequirementCompiler {
                 + "|" + gaps.stream().map(Gap::identity).toList());
         return new Result(rootJson, List.copyOf(rules), List.copyOf(ledger), List.copyOf(gaps),
                 Set.copyOf(templates), digest, source, json);
+    }
+
+    private Result single(String source, Rule rule) {
+        return selected(source,List.of(rule));
+    }
+    /** Preserve reviewed numeric intent only when its field/value/unit are visible in this
+     * exact obligation. An omitted comparison in a labelled tender table does not erase the
+     * confirmed comparator; an explicit contradictory comparator always prevents preservation. */
+    Rule confirmedDuration(Checkpoint checkpoint,String source) {
+        if(checkpoint==null||!checkpoint.confirmed()||!"VALUE_COMPARE".equals(checkpoint.type()))return null;
+        String label=switch(Objects.toString(checkpoint.field(),"")){
+            case "bidValidity"->"投标有效期";case "designDuration"->"设计工期";
+            case "constructionDuration"->"施工工期";case "duration"->"(?:总工期|项目工期|工期)";default->"";};
+        if(label.isBlank()||!Set.of(">=","<=","=",">","<").contains(Objects.toString(checkpoint.operator(),"")))return null;
+        Matcher m=Pattern.compile("(?:"+label+")[\\s:：]*(不少于|不低于|至少|不得少于|不超过|不得超过|至多|不得高于|不高于|大于|超过|小于|少于|等于|为|≥|≤|>=|<=|=)?[\\s:：]*([0-9]+(?:\\.[0-9]+)?)[\\s]*(日历日|天|日|个月|月|年)").matcher(source);
+        if(!m.find())return null;
+        String comparator=m.group(1),value=m.group(2),unit=m.group(3),fragment=m.group();int from=m.start(),to=m.end();
+        if(m.find())return null;
+        try{if(new BigDecimal(value).compareTo(new BigDecimal(checkpoint.expected()))!=0)return null;}catch(RuntimeException invalid){return null;}
+        String normalizedUnit=switch(unit){case "日历日","天","日"->"DAY";case "个月","月"->"MONTH";case "年"->"YEAR";default->"";};
+        String reviewedUnit=switch(Objects.toString(checkpoint.unit(),"")){case "日历日","天","日","DAY"->"DAY";case "个月","月","MONTH"->"MONTH";case "年","YEAR"->"YEAR";default->"";};
+        if(!normalizedUnit.equals(reviewedUnit))return null;
+        if(comparator!=null){String op=switch(comparator){case "不少于","不低于","至少","不得少于","≥",">="->">=";case "不超过","不得超过","至多","不得高于","不高于","≤","<="->"<=";case "大于","超过"->">";case "小于","少于"->"<";default->"=";};if(!op.equals(checkpoint.operator()))return null;}
+        // Only a table label/number may accompany this obligation; never discard other duties.
+        String remainder=(source.substring(0,from)+source.substring(to)).replaceAll("[\\s:：|。.;；0-9]","");
+        if(!remainder.isBlank()&&!remainder.equals("投标有效期"))return null;
+        return rule("CONFIRMED-DURATION",checkpoint.title(),"NUMBER","",checkpoint.field(),checkpoint.operator(),checkpoint.expected(),checkpoint.unit(),
+                Map.of("deterministicFamily","SOURCE_VERIFIED_CONFIRMED_DURATION","comparisonBasis",comparator==null?"CONFIRMED_CHECKPOINT_WITH_SOURCE_VALUE":"EXPLICIT_SOURCE_COMPARATOR","sourceValue",value,"sourceUnit",unit),fragment);
+    }
+    private Result selected(String source,List<Rule> rules) {
+        ObjectNode root=json.createObjectNode();root.put("logic","ALL");ArrayNode nodes=root.putArray("rules");rules.forEach(r->nodes.add(ruleNode(r)));root.putArray("policyNotes");
+        String digest=identity(VERSION+"|"+source+"|"+rules.stream().map(SharedFactReuse::signature).toList());
+        return new Result(root,List.copyOf(rules),List.of(),List.of(),Set.of(),digest,source,json);
+    }
+    private static boolean nameComparisonOnly(String source) {
+        String certificate="(?:营业执照|登记证书|资质证书|其他组织证明)";
+        return clean(source).matches("^(?:(?:[0-9]+(?:\\.[0-9]+)*)?形式评审)?投标人名称[:：]?与"+certificate+"(?:[、或及和]"+certificate+")*一致[，,](?:招标文件规定必须提交的文件中)?(?:投标人)?名称如有变更须附有效证明文件[。]?$" );
+    }
+    private Rule formResponse(String source) {
+        String compact=clean(source);
+        if(!compact.matches("工期[：:]?满足[。.]?[（(]见投标函[）)][。.]?"))return null;
+        String field="durationCommitment";
+        return rule("FORM-RESPONSE-"+field,"投标函承诺响应","DECLARATION","",field,"",compact.startsWith("质量")?"合格":"满足","",
+                Map.of("deterministicFamily","TENDER_FORM_RESPONSE","documentType","投标函","responseField",field),source);
+    }
+
+    /** The tender permits two complete alternatives, not a generic promise document. */
+    private Rule invoiceAlternatives(Checkpoint checkpoint,String source,Map<String,Object> context){
+        if(!clean(source).matches("(?:其他要求)?(?:(?:本项目须)?提供增值税专用发票[。；;])?提供一般纳税人证明文件或可开具增值税专用发票承诺书[（(]格式可参考第[一二三四五六七八九十0-9]+章中《增值税专用发票承诺书》[）)][。；;]?"))return null;
+        String base="INVOICE-"+identity(source).substring(0,12);
+        Rule taxpayer=rule(base+"-TAXPAYER","当前一般纳税人资格证明","MATERIAL","投标人","material","","一般纳税人证明文件","",
+                Map.of("currentTaxpayerProof",true,"deterministicFamily","CURRENT_TAXPAYER_PROOF"),source);
+        Rule promise=TenderFormAudit.namedRule(checkpoint,source,"增值税专用发票承诺书",context,true,base+"-PROMISE");
+        return group(base,source,"ANY",List.of(taxpayer,promise));
+    }
+    private Rule secureInvoiceRule(Rule r,Checkpoint cp,String source,Map<String,Object> context){
+        List<Rule> children=r.children().stream().map(c->secureInvoiceRule(c,cp,source,context)).toList();
+        if(r.predicate().equals("MATERIAL")&&r.expected().contains("一般纳税人")){
+            Map<String,Object> p=new LinkedHashMap<>(r.parameters());p.put("currentTaxpayerProof",true);
+            return new Rule(r.id(),r.description(),r.predicate(),r.subject().isBlank()?"投标人":r.subject(),r.field(),r.operator(),r.expected(),r.unit(),p,r.sourceQuote(),r.logic(),children);
+        }
+        if(Set.of("MATERIAL","DECLARATION").contains(r.predicate())&&r.expected().matches(".*(?:承诺书|开具增值税专用发票).*")
+                &&r.sourceQuote().contains("增值税")
+                &&clean(source).contains("一般纳税人证明文件或可开具增值税专用发票承诺书"))
+            return TenderFormAudit.namedRule(cp,source,"增值税专用发票承诺书",context,true,r.id());
+        return new Rule(r.id(),r.description(),r.predicate(),r.subject(),r.field(),r.operator(),r.expected(),r.unit(),r.parameters(),r.sourceQuote(),r.logic(),children);
     }
 
     private List<Rule> convert(TemplateCandidate candidate, RequirementDraft draft, Checkpoint checkpoint,
@@ -354,6 +498,13 @@ final class DeterministicRequirementCompiler {
     }
 
     private Rule objectiveScore(String id, String quote, String subject, Map<String, Object> p) {
+        String category=certificateCategory(quote);
+        if(!category.isBlank()&&quote.matches("(?s).*(?:具备|具有)"+Pattern.quote(category)+"(?:证书)?[，,]得[0-9]+分[；;。]?.*")){
+            Map<String,Object> parameters=new LinkedHashMap<>(p);parameters.put("category",category);parameters.put("score",text(p,"maxScore"));parameters.put("deterministicFamily","CERTIFICATE_SCORING_CRITERION");
+            // The certificate is the scored fact. Query/validity/common proof remains separate;
+            // the scoring sentence itself is never an additional material to find in the bid.
+            return rule(id,quote,"CERTIFICATE",subject,"certificate","","","",parameters,quote);
+        }
         // The mapper only marks a single binary material award complete.  It is therefore safe to
         // check its source-bound criterion as a material condition; no model score is accepted.
         Map<String, Object> params = new LinkedHashMap<>(p);params.put("score", text(p, "maxScore"));
@@ -383,6 +534,8 @@ final class DeterministicRequirementCompiler {
     private List<Rule> nativeRules(CoverageItem item, Checkpoint checkpoint, String requirementSource) {
         String quote = exactQuote(requirementSource, item.text());String subject = explicitSubject(quote);
         String base = stableId("NATIVE", item.fragmentId(), quote, "0");
+        if(submissionException(quote))return List.of(rule(base+"-APPLICABILITY","需先确定免交材料的适用条件","UNSUPPORTED",subject,"material","","","",
+                Map.of("deterministicFamily","CONDITIONAL_SUBMISSION_APPLICABILITY","compilationIssue","原文明确免交条件，尚未绑定该条件；不得生成无条件材料或签字义务"),quote));
         List<Rule> rules = new ArrayList<>();
 
         Matcher months = MONTHS.matcher(quote);
@@ -437,9 +590,22 @@ final class DeterministicRequirementCompiler {
                     "material", "", "电子投标", "", nativeParams("ELECTRONIC_SUBMISSION"), quote));
         }
 
+        rules.addAll(namedMaterialRules(base,quote,subject));
+        rules.addAll(certificateProofRules(base,quote,subject,requirementSource));
+        // A clause that explicitly accepts a named commitment can be executed as a
+        // written-response obligation. It does not become a factual/online status check.
+        if(quote.matches("(?s).*经营状况[：:\\t].*未处于.*")&&requirementSource.contains("《企业经营状况承诺书》")){
+            String point=quote.replaceFirst("^.*?经营状况[：:\\t]","");
+            rules.add(rule(base+"-OPERATING-RESPONSE","经营状况书面承诺内容","DECLARATION",subject,"commitment","",point,"",
+                    Map.of("deterministicFamily","SOURCE_AUTHORIZED_COMMITMENT","documentType","企业经营状况承诺书","proofScope","WRITTEN_RESPONSE"),quote));
+        }
+        if(quote.matches("(?s).*上述人员不得超出法律规定的同时承接项目的最大数量承接本项目.*")&&requirementSource.contains("《人员承诺书》"))
+            rules.add(rule(base+"-WORKLOAD-RESPONSE","人员在建项目数量书面承诺","DECLARATION","","commitment","",quote.replaceAll("[。；;]$",""),"",
+                    Map.of("deterministicFamily","SOURCE_AUTHORIZED_COMMITMENT","documentType","人员承诺书","proofScope","WRITTEN_RESPONSE"),quote));
         if (quote.matches("(?s).*(?:盖章|单位公章|签字|签名章|签署).*")) rules.addAll(signatureRules(base, quote));
         if (quote.matches("(?s).*(?:法定代表人身份证明|授权委托书).*")) rules.addAll(signingAuthority(base, quote));
-        if (quote.matches("(?s).*(?:独立法人|其他组织|登记注册|依法设立|合法成立|经营范围未受限).*")) {
+        if (quote.matches("(?s).*(?:独立法人|其他组织|登记注册|依法设立|合法成立|经营范围未受限).*")
+                &&!quote.matches("(?s).*(?:利害关系|不得投标|禁止投标|不得参加|禁止参加|控股|管理关系).*")) {
             Map<String, Object> p = nativeParams("LEGAL_REGISTRATION");
             rules.add(rule(base + "-LEGAL", "依法登记成立", "CERTIFICATE", "投标人",
                     "registrationStatus", "", "", "", p, quote));
@@ -461,6 +627,65 @@ final class DeterministicRequirementCompiler {
         return deduplicate(rules);
     }
 
+    /** Named tender forms keep their complete name; “合同条款偏离表” must not become “合同”. */
+    private List<Rule> namedMaterialRules(String base,String quote,String subject){
+        if(!quote.matches("(?s).*(?:提交|提供|出具|附具|附上).*"))return List.of();
+        if(quote.matches("(?s).*(?:任选|或者|或|如为|如有|若|联合体投标时|无需|无须|不需|免于).*"))return List.of();
+        Matcher named=Pattern.compile("《([^》]{0,60}(?:承诺书|承诺函|偏离表|委托书|投标函|证明书|协议书))》").matcher(quote);
+        Set<String> names=new LinkedHashSet<>();while(named.find())names.add(named.group(1));
+        List<Rule> result=new ArrayList<>();int at=0;
+        for(String name:names)result.add(rule(base+"-NAMED-"+(++at),"提交"+name,"MATERIAL",subject,"material","",name,"",nativeParams("NAMED_MATERIAL"),quote));
+        return result;
+    }
+
+    /** Closed ancillary proof clause. Consistency remains a source-reference comparison;
+     * merely locating the screenshot can never establish agreement or certificate registration. */
+    private List<Rule> certificateProofRules(String base,String quote,String subject,String requirementSource){
+        String normalized=quote.replaceFirst("^[ /\\t]+","");
+        if(!normalized.equals(quote))return certificateProofRules(base,normalized,subject,requirementSource);
+        String effectiveSubject=subject.isBlank()?explicitSubject(requirementSource):subject;
+        if(quote.matches("^(?:证明材料|证明文件要求)[:：](?:须|需|应|必须)(?:提交|提供)有效证明文件，并提供查询网址及网址查询截图[。；;]?$")){
+            Map<String,Object> p=nativeParams("CERTIFICATE_PROOF_DOCUMENTS");
+            String category=certificateCategory(requirementSource);
+            if(!category.isBlank()){
+                String certificateSource=Arrays.stream(requirementSource.split("\\n")).filter(line->line.contains(category)).findFirst().orElse("");
+                Map<String,Object> certificateParams=new LinkedHashMap<>(p);certificateParams.put("category",category);certificateParams.put("sharedProofSourceQuote",quote);
+                Map<String,Object> queryParams=new LinkedHashMap<>(p);queryParams.put("certificateProofCategory",category);queryParams.put("certificateRequirementQuote",certificateSource);
+                Map<String,Object> chainParams=new LinkedHashMap<>(queryParams);chainParams.put("certificateProofRequireValidity",true);
+                return List.of(rule(base+"-PROOF","提供对应证书证明文件","CERTIFICATE",effectiveSubject,"certificate","","","",certificateParams,certificateSource),
+                        rule(base+"-URL","提供对应认证证书查询网址","MATERIAL",effectiveSubject,"material","","查询网址","",queryParams,quote),
+                        rule(base+"-SCREENSHOT","提供对应认证证书查询截图","MATERIAL",effectiveSubject,"material","","查询截图","",queryParams,quote),
+                        rule(base+"-CHAIN","同一证书的查询与有效期证据完整对应","MATERIAL",effectiveSubject,"material","","同证书查询及有效期","",chainParams,quote),
+                        rule(base+"-VALIDITY","对应证书有效性","VALIDITY",effectiveSubject,"有效期","","","",certificateParams,certificateSource));
+            }
+            return List.of(rule(base+"-PROOF","提供证书证明文件","MATERIAL",subject,"material","","证明文件","",p,quote),
+                    rule(base+"-URL","提供查询网址","MATERIAL",subject,"material","","查询网址","",p,quote),
+                    rule(base+"-SCREENSHOT","提供查询截图","MATERIAL",subject,"material","","查询截图","",p,quote),
+                    rule(base+"-ASSOCIATION","共用证明材料需对应当前证书并核实有效性","UNSUPPORTED",subject,"certificate","","","",nativeParams("SHARED_CERTIFICATE_PROOF_ASSOCIATION"),quote));
+        }
+        if(!quote.matches("^(?:须|需|应|必须)(?:提交|提供)有效证明文件[（(]并提供查询网址及网址查询截图，查询截图信息应与证明文件信息一致[）)](?:[（(]注册类资质须已在本单位完成注册[）)])?[。；;]?$"))return List.of();
+        List<Rule> result=new ArrayList<>();Map<String,Object> p=nativeParams("CERTIFICATE_PROOF_DOCUMENTS");
+        p.put("certificateRequirementQuote",requirementSource);
+        result.add(rule(base+"-PROOF","提供证书证明文件","MATERIAL",subject,"material","","证明文件","",p,quote));
+        result.add(rule(base+"-URL","提供查询网址","MATERIAL",subject,"material","","查询网址","",p,quote));
+        result.add(rule(base+"-SCREENSHOT","提供查询截图","MATERIAL",subject,"material","","查询截图","",p,quote));
+        result.add(rule(base+"-MATCH","查询截图与证明文件信息一致","SAME_FIELD",subject,"证书信息","","","",p,quote));
+        if(quote.contains("注册类资质")){
+            Map<String,Object> registration=new LinkedHashMap<>(Map.of("deterministicFamily","CERTIFICATE_REGISTRATION","registrationConditional",true,"credentialRequirement",requirementSource));
+            if(Set.of("设计负责人","设计部分负责人").contains(effectiveSubject)&&requirementSource.contains(effectiveSubject))registration.put("registrationEmployerRole","设计单位");
+            if(Set.of("施工负责人","施工部分负责人").contains(effectiveSubject)&&requirementSource.contains(effectiveSubject))registration.put("registrationEmployerRole","施工单位");
+            result.add(rule(base+"-REGISTRATION","注册类资质在本单位完成注册","RELATION",effectiveSubject,"注册单位","","本单位","",registration,quote));
+        }
+        return result;
+    }
+
+    private static String certificateCategory(String text){
+        for(String category:List.of("职业健康安全管理体系认证","质量管理体系认证","环境管理体系认证","安全生产许可证","营业执照","登记证书"))
+            if(text.contains(category))return category;
+        return "";
+    }
+    private static boolean submissionException(String quote){return quote.matches("(?s).*(?:无需|无须|不需|免于)(?:提供|提交|出具).*" );}
+
     private List<Rule> explicitValidityRules(String base, String quote, String inheritedSubject) {
         int marker = quote.indexOf("有效");
         if (marker < 0 || !quote.substring(marker).matches("(?s).*(?:执照|证书|许可证|合格证).*")) return List.of();
@@ -472,7 +697,7 @@ final class DeterministicRequirementCompiler {
         tail = tail.substring(0, end);
         LinkedHashSet<String> categories = new LinkedHashSet<>();
         for (String part : tail.split("或|或者|及|和|、")) {
-            String category = part.replaceFirst("^(?:具有|具备|取得|持有|提供|提交|的)+", "").strip();
+            String category = normalizeCategory(part.replaceFirst("^(?:具有|具备|取得|持有|提供|提交|的)+", "").strip());
             if (category.matches("(?s).*(?:营业执照|登记证书|法人证书|资质证书|许可证|合格证(?:书)?|注册证书|认证证书)$"))
                 categories.add(category);
         }
@@ -492,7 +717,10 @@ final class DeterministicRequirementCompiler {
         LinkedHashSet<String> categories = new LinkedHashSet<>();
         Matcher matcher = QUALIFICATION.matcher(quote);
         while (matcher.find()) {
-            String value = matcher.group(1).replaceFirst("^(?:具有|具备|取得|持有|认证|及|且|或)+", "").strip();
+            // Names of laws/policies containing “资质” are references, never certificate categories.
+            int inside=quote.lastIndexOf('《',matcher.start(1)),closed=quote.lastIndexOf('》',matcher.start(1));
+            if(inside>closed||matcher.group(1).matches("(?s).*(?:《|通知|改革方案|根据|规定已换发).*") )continue;
+            String value = normalizeCategory(matcher.group(1).replaceFirst("^(?:具有|具备|取得|持有|认证|及|且|或)+", "").strip());
             if (value.length() > 80) value = value.substring(Math.max(0, value.length() - 80));
             if (!value.isBlank()) categories.add(value);
         }
@@ -504,11 +732,101 @@ final class DeterministicRequirementCompiler {
             String grade = grade(category);if (!grade.isBlank()) p.put("grade", grade);
             String profession = profession(category);if (!profession.isBlank()) p.put("profession", profession);
             if (quote.contains("本单位完成注册")) p.put("employer", "本单位");
+            // A grade in a sibling certificate must not become this certificate's
+            // constraint. The three ungraded certification branches keep their exact
+            // numbered actor sentence; other categories retain their bounded span.
+            String categoryQuote=Set.of("质量管理体系认证","职业健康安全管理体系认证","环境管理体系认证").contains(category)
+                    &&!quote.matches("(?s).*(?:一级|二级|三级|甲级|乙级|丙级|壹级|贰级|叁级).*")?quote:category;
             leaves.add(rule(base + "-CERT-" + (++at), "证照资格：" + category, "CERTIFICATE", subject,
-                    "certificate", "", "", "", p, category));
+                    "certificate", "", "", "", p, categoryQuote));
         }
+        // OCR may omit the closing book-title mark; an unfinished policy reference still
+        // cannot erase the alternative qualification route.
+        Matcher replacement=Pattern.compile("或根据《[^。；;]*?(?:换发|换证)[^。；;]*").matcher(quote);
+        if(replacement.find())leaves.add(rule(base+"-REPLACEMENT","换发新资质对应关系尚未确定","UNSUPPORTED",subject,
+                "certificate","","","",nativeParams("QUALIFICATION_REPLACEMENT_MAPPING_REQUIRED"),replacement.group()));
         if (leaves.size() == 1) return leaves;
         return List.of(group(base + "-CERT-CHOICE", quote, quote.contains("或") ? "ANY" : "ALL", leaves));
+    }
+
+    /** Closed personnel clauses use one source-bound executor instead of overlapping broad templates. */
+    private Rule personnelQualificationTree(String source){
+        Matcher header=Pattern.compile("^(施工企业主要负责人|项目负责人|施工部分负责人|施工负责人|专职安全员)(?:[（(]可兼任施工部分负责人[）)])?(?:资格要求)?[:：]具有").matcher(source);
+        if(!header.find())return null;String subject=header.group(1);int proofAt=source.indexOf("须提交有效证明文件",header.end());
+        String credential=source.substring(header.end(),proofAt<0?source.length():proofAt).strip().replaceFirst("[。；;]$","");
+        List<Rule> rules=new ArrayList<>();String base="PERSONNEL-"+identity(source).substring(0,16);int at=0;
+        String issuer="(?:住建主管部门颁发的)?";
+        Matcher builder=Pattern.compile("^"+issuer+"([壹贰一二])级((?:含以上|及以上|[（(]含[）)]以上)?)(注册建造师执业资格证书)[（(](房屋建筑工程)专业[）)]").matcher(credential);
+        if(builder.find()){
+            Map<String,Object> p=nativeParams("TYPED_PERSONNEL_CREDENTIAL");p.put("personnelCredentialKind","REGISTERED_BUILDER");p.put("category",builder.group(3));p.put("requiredGrade",builder.group(1)+"级");p.put("gradeInclusive",!builder.group(2).isBlank());p.put("requiredProfession",builder.group(4));
+            String quote=source.substring(0,header.end())+builder.group();rules.add(rule(base+"-BUILDER","注册建造师等级及专业","CERTIFICATE",subject,"certificate","","","",p,quote));
+            if(proofAt>=0)rules.add(rule(base+"-BUILDER-VALID","同一注册建造师证书在要求时点有效","VALIDITY",subject,"有效期","","","",p,source));
+            at=builder.end();if(at<credential.length()){if(credential.charAt(at)!='及')return null;at++;}
+        }
+        if(at<credential.length()){
+            String remaining=credential.substring(at);Matcher safety=Pattern.compile("^"+issuer+"(?:有效的|有效期内的)?安全生产考核合格证[（(]([AB]|C[123]?)(?:类|证)[）)]或((?:建筑)?施工企业(?:主要负责人|项目负责人|专职安全生产管理人员)安全生产考核合格证书)(?:[（(](C[123]?)(?:类|证)[）)])?$").matcher(remaining);
+            if(!safety.matches())return null;
+            List<String> classes=new ArrayList<>();classes.add(safety.group(1));if(safety.group(3)!=null)classes.add(safety.group(3));
+            if(safety.group(2).contains("主要负责人")&&!classes.contains("A")||safety.group(2).contains("项目负责人")&&!classes.contains("B"))return null;
+            Map<String,Object> p=nativeParams("TYPED_PERSONNEL_CREDENTIAL");p.put("personnelCredentialKind","SAFETY");p.put("category","安全生产考核合格证");p.put("allowedSafetyClasses",List.copyOf(classes));
+            rules.add(rule(base+"-SAFETY","安全生产考核证类别","CERTIFICATE",subject,"certificate","","","",p,source.substring(0,proofAt<0?source.length():proofAt).strip()));
+            if(remaining.contains("有效")||proofAt>=0)rules.add(rule(base+"-SAFETY-VALID","同一安全生产考核证在要求时点有效","VALIDITY",subject,"有效期","","","",p,source));
+        }
+        if(rules.isEmpty())return null;
+        if(proofAt>=0){List<Rule> proof=certificateProofRules(base+"-COMMON",source.substring(proofAt).strip(),subject,source);if(proof.isEmpty())return null;rules.addAll(proof);}
+        return new Rule(base,"人员证照、有效期及共同证明","GROUP",subject,"","","","",nativeParams("TYPED_PERSONNEL_REQUIREMENT"),source,"ALL",List.copyOf(rules));
+    }
+
+    private static String normalizeCategory(String value){
+        String specific=certificateCategory(value);
+        if(!specific.isBlank()&&value.matches("(?s).*(?:安全生产许可证|营业执照|登记证书|管理体系认证)(?:证书)?$"))return specific;
+        return value;
+    }
+
+    private Rule qualificationTree(String source){
+        Optional<QualificationRequirementTree.Tree> parsed=QualificationRequirementTree.parse(source);
+        if(parsed.isEmpty())return null;
+        var tree=parsed.get();String base="QUALIFICATION-TREE-"+identity(source).substring(0,16);
+        List<Rule> alternatives=new ArrayList<>();int index=0;
+        for(var branch:tree.branches()){
+            String id=base+"-B"+(++index);
+            if(!branch.unresolved().isBlank()){
+                alternatives.add(rule(id,"资质替代分支待解析","UNSUPPORTED",tree.subject(),"certificate","","","",
+                        nativeParams(branch.unresolved()),branch.quote()));continue;
+            }
+            Map<String,Object> parameters=nativeParams("QUALIFICATION_CERTIFICATE");
+            parameters.put("category",branch.category());parameters.put("grade",branch.grade());
+            parameters.put("gradeOperator",branch.gradeOperator());parameters.put("inheritedLogic","ANY");
+            alternatives.add(rule(id,"资质要求："+branch.category(),"CERTIFICATE",tree.subject(),"certificate","","","",parameters,branch.quote()));
+        }
+        Rule choice=new Rule(base+"-CHOICE","满足任一资质路线","GROUP",tree.subject(),"","","","",
+                nativeParams("SOURCE_ALTERNATIVE_TREE"),tree.choiceQuote(),"ANY",List.copyOf(alternatives));
+        List<Rule> mandatory=new ArrayList<>();int mandatoryIndex=0;
+        for(String quote:tree.mandatoryQuotes()){
+            String id=base+"-MANDATORY-"+(++mandatoryIndex);
+            if(quote.contains("安全生产许可证")){
+                Map<String,Object> p=nativeParams("QUALIFICATION_CERTIFICATE");p.put("category","安全生产许可证");
+                mandatory.add(rule(id+"-CERT","施工单位安全生产许可","CERTIFICATE",tree.subject(),"certificate","","","",p,"安全生产许可证"));
+                if(quote.contains("有效"))mandatory.add(rule(id+"-VALID","安全生产许可有效性","VALIDITY",tree.subject(),"有效期","","","",p,quote));
+                if(!tree.proofQuote().isBlank()){
+                    Map<String,Object> proof=nativeParams("CERTIFICATE_PROOF_DOCUMENTS");proof.put("certificateProofCategory","安全生产许可证");proof.put("certificateRequirementQuote",quote);proof.put("certificateProofRequireValidity",true);
+                    mandatory.add(rule(id+"-QUERY","安全生产许可证的查询及有效期对应","MATERIAL",tree.subject(),"material","","同证书查询及有效期","",proof,tree.proofQuote()));
+                }
+            }else mandatory.add(rule(id,"独立共同义务待解析","UNSUPPORTED",tree.subject(),"","","","",nativeParams("QUALIFICATION_MANDATORY_NOT_COMPILED"),quote));
+        }
+        if(tree.proofQuote().isBlank()&&mandatory.isEmpty())return choice;
+        List<Rule> proofRules=certificateProofRules(base+"-PROOF",tree.proofQuote(),tree.subject(),source);
+        proofRules=proofRules.stream().map(proof->{
+            if(!Set.of("MATERIAL","SAME_FIELD").contains(proof.predicate()))return proof;
+            Map<String,Object> parameters=new LinkedHashMap<>(proof.parameters());
+            parameters.put("qualificationChoiceFingerprint",QualificationProofAssociation.choiceFingerprint(choice));
+            return new Rule(proof.id(),proof.description(),proof.predicate(),proof.subject(),proof.field(),proof.operator(),proof.expected(),proof.unit(),parameters,proof.sourceQuote(),proof.logic(),proof.children());
+        }).toList();
+        if(proofRules.isEmpty()&&!tree.proofQuote().isBlank())proofRules=List.of(rule(base+"-PROOF-GAP","共同证明义务待解析","UNSUPPORTED",tree.subject(),"certificate","","","",
+                nativeParams("QUALIFICATION_COMMON_PROOF_NOT_COMPILED"),tree.proofQuote()));
+        List<Rule> all=new ArrayList<>();all.add(choice);all.addAll(mandatory);all.addAll(proofRules);
+        return new Rule(base,"资质可选条件与共同证明要求","GROUP",tree.subject(),"","","","",
+                nativeParams("SOURCE_REQUIREMENT_TREE"),source,"ALL",List.copyOf(all));
     }
 
     private List<Rule> signatureRules(String base, String quote) {
@@ -592,6 +910,23 @@ final class DeterministicRequirementCompiler {
 
     private static void flatten(Rule rule, List<Rule> out) {
         if (rule.children().isEmpty()) out.add(rule);else rule.children().forEach(child -> flatten(child, out));
+    }
+
+    /** Repaired requirements may select disjoint source spans. Do not assign their joined
+     * text an invented offset on the first page; the mapper sees each exact original span. */
+    private List<ClauseNode> mappingRoots(ClauseNode fallback,RequirementSourceContext.Context context){
+        if(context==null)return List.of(fallback);
+        // Reference expansion and legacy repair both join disjoint original spans. Keep each
+        // original location rather than pretending the joined requirement is one page range.
+        List<Map<String,Object>> selected=context.sources().stream().filter(s->Set.of("OBLIGATION","SCOPED_OBLIGATION","SCOPED_PROOF","SCOPED_BOOK_CONDITION","SCOPED_SCORING_CONTINUATION","REFERENCE_CLAUSE").contains(s.get("kind"))).toList();
+        String joined=selected.stream().map(s->str(s,"sourceQuote")).distinct().collect(java.util.stream.Collectors.joining("\n"));
+        if(selected.isEmpty()||!joined.equals(fallback.text()))return List.of(fallback);
+        List<ClauseNode> roots=new ArrayList<>();int index=0;
+        for(Map<String,Object> source:selected){String quote=str(source,"sourceQuote");
+            SourceRef ref=new SourceRef(str(source,"documentId"),number(source.get("documentVersion"),0),str(source,"documentHash"),VERSION,identity(quote),str(source,"locationType"),number(source.get("location"),0),quote,integer(source.get("start")),integer(source.get("end")));
+            roots.add(new ClauseNode(fallback.id()+":s"+(index++),ClauseNode.Kind.PARAGRAPH,quote,ref,fallback.localContext(),List.of()));
+        }
+        return List.copyOf(roots);
     }
 
     private SourceRef sourceRef(Checkpoint checkpoint, String requirement, RequirementSourceContext.Context sourceContext) {
@@ -877,7 +1212,7 @@ final class DeterministicRequirementCompiler {
             ObjectNode root = json.createObjectNode();root.put("logic", "ALL");root.putArray("rules");root.putArray("policyNotes");
             return new Result(root, List.of(), List.of(), List.of(), Set.of(), identity(VERSION + requirement), requirement, json);
         }
-        boolean complete() { return !rules.isEmpty() && gaps.isEmpty() && ledger.stream().allMatch(FragmentCoverage::covered); }
+        boolean complete() { return !rules.isEmpty() && gaps.isEmpty() && ledger.stream().allMatch(FragmentCoverage::covered) && rules.stream().noneMatch(DeterministicRequirementCompiler::containsUnsupported); }
         Map<String, Object> audit() { return linked("version", VERSION, "digest", digest,
                 "complete", complete(), "fragmentCount", ledger.size(),
                 "coveredFragments", ledger.stream().filter(FragmentCoverage::covered).count(),

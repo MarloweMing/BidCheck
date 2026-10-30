@@ -8,7 +8,7 @@ import static cn.bidcheck.verification.engine.VerificationTypes.clean;
 /** A fully bounded, source-mapped single commitment. It never resets personnel or following-page scope. */
 final class StandaloneCommitmentScope {
     private record Navigation(String label,String title,int page,Page source,String quote) {}
-    private static final Pattern NAV=Pattern.compile("^([0-9]+(?:\\.[0-9]+)*[.、]?)\\s*([^\\n]{2,65}?)\\s*[.．…·]{3,}\\s*([0-9]+)\\s*$");
+    private static final Pattern NAV=Pattern.compile("^([0-9]+(?:\\.[0-9]+)*[.、]?|[（(][0-9]+[）)])\\s*([^\\n]{2,65}?)\\s*[.．…·]{3,}\\s*([0-9]+)\\s*$");
     private static final Pattern DATE=Pattern.compile("日期\\s*[:：]\\s*(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月\\s*(\\d{1,2})\\s*日");
     private static final Pattern ISSUER=Pattern.compile("(?m)^投标人[（(][^）)\\n]{0,24}[）)]\\s*[:：]\\s*([^\\n]+)$");
     private final Map<Integer,Map<String,Object>> proofs=new HashMap<>();
@@ -31,11 +31,17 @@ final class StandaloneCommitmentScope {
         if(!letterText.matches("(?s).*已仔细研究了[（(]"+Pattern.quote(project)+"[）)][（(]招标编号[:：]"+Pattern.quote(number)+"[）)].*")
                 ||!bidder.equals(clean(one(ISSUER,letter.text())))||recipient.isBlank()||date.isBlank())return;
         for(Navigation entry:navigation){
-            if(!entry.label().matches("[0-9]+(?:\\.[0-9]+)+")||!entry.title().matches(".{2,45}承诺(?:书|函)"))continue;
-            if(navigation.stream().filter(n->n.label().equals(entry.label())||n.title().equals(entry.title())).count()!=1)continue;
-            if(unsafeAncestor(entry,navigation))continue;
+            boolean nested=entry.label().matches("[（(][0-9]+[）)]");
+            if(!nested&&!entry.label().matches("[0-9]+(?:\\.[0-9]+)+")||!entry.title().matches(".{2,45}承诺(?:书|函)"))continue;
+            Navigation parent=nested?nestedParent(entry,navigation):null;
+            if(nested&&(parent==null||duplicate.contains(parent.page())||!mapped(parent,pages.get(parent.page()))||unsafeAncestor(parent,navigation)))continue;
+            List<Navigation> siblings=nested?nestedSiblings(parent,navigation):navigation;
+            if(siblings.stream().filter(n->n.label().equals(entry.label())||n.title().equals(entry.title())).count()!=1)continue;
+            if(!nested&&unsafeAncestor(entry,navigation))continue;
             Page page=pages.get(entry.page());if(duplicate.contains(entry.page())||!mapped(entry,page)||unsafe(page.text(),project,number))continue;
-            int dot=entry.label().lastIndexOf('.');String nextLabel=entry.label().substring(0,dot+1)+(Integer.parseInt(entry.label().substring(dot+1))+1);
+            // The final child may be closed by the next parent, but its prior siblings never inherit this proof.
+            if(nested&&(siblings.isEmpty()||siblings.get(siblings.size()-1)!=entry))continue;
+            String boundaryLabel=nested?parent.label():entry.label();int dot=boundaryLabel.lastIndexOf('.');String nextLabel=boundaryLabel.substring(0,dot+1)+(Integer.parseInt(boundaryLabel.substring(dot+1))+1);
             List<Navigation> nextEntries=navigation.stream().filter(n->n.label().equals(nextLabel)).toList();
             if(nextEntries.size()!=1)continue;Navigation next=nextEntries.get(0);Page nextPage=pages.get(next.page());
             if(next.page()!=entry.page()+1||duplicate.contains(next.page())||!mapped(next,nextPage))continue;
@@ -43,12 +49,26 @@ final class StandaloneCommitmentScope {
             if(lines.size()<5||!clean(lines.get(1)).equals(entry.title())||!recipient.equals(recipient(page.text()))
                     ||!date.equals(date(page.text()))||!bidder.equals(clean(one(ISSUER,page.text())))
                     ||!clean(page.text()).matches("(?s).*(?:我方承诺|我公司承诺).+"))continue;
-            List<Map<String,Object>> anchors=List.of(anchor(cover,"CURRENT_COVER",cover.text()),anchor(entry.source(),"UNIQUE_NUMBERED_NAVIGATION",entry.quote()),
+            List<Map<String,Object>> anchors=new ArrayList<>(List.of(anchor(cover,"CURRENT_COVER",cover.text()),anchor(entry.source(),"UNIQUE_NUMBERED_NAVIGATION",entry.quote()),
                     anchor(letter,"CURRENT_BID_LETTER_PROJECT_ISSUER_RECIPIENT_DATE",letter.text()),anchor(page,"COMPLETE_SINGLE_COMMITMENT",page.text()),
-                    anchor(next.source(),"NEXT_SIBLING_NAVIGATION",next.quote()),anchor(nextPage,"NEXT_SIBLING_BODY_BOUNDARY",nativeText(nextPage.text())));
+                    anchor(next.source(),"NEXT_SIBLING_NAVIGATION",next.quote()),anchor(nextPage,"NEXT_SIBLING_BODY_BOUNDARY",nativeText(nextPage.text()))));
+            if(nested){anchors.add(anchor(parent.source(),"UNIQUE_PARENT_NAVIGATION",parent.quote()));anchors.add(anchor(pages.get(parent.page()),"MAPPED_PARENT_BODY_BOUNDARY",nativeText(pages.get(parent.page()).text())));}
             proofs.put(page.number(),Map.of("status","CURRENT_BID_SECTION","projectName",project,"projectNumber",number,"sectionStart",page.number(),"sectionEnd",page.number(),
                     "anchors",anchors,"derivedBy","SERVER_SINGLE_COMMITMENT_SCOPE","boundary","仅证明此页当前承诺文书范围；不证明实际签章、承诺履行、联合体各方资格或人员归属"));
         }
+    }
+    private static Navigation nestedParent(Navigation entry,List<Navigation> navigation){
+        int index=navigation.indexOf(entry);Navigation parent=null;
+        for(int i=index-1;i>=0;i--)if(!navigation.get(i).label().matches("[（(][0-9]+[）)]")){parent=navigation.get(i);break;}
+        if(parent==null||!parent.label().matches("[0-9]+(?:\\.[0-9]+)+")||parent.page()>entry.page()||!parent.title().contains(entry.title())
+                ||parent.title().matches("(?s).*(?:历史|业绩|已完成|参考|示例|样例|模板|履历|工作经历).*"))return null;
+        Navigation selected=parent;if(navigation.stream().filter(n->n.label().equals(selected.label())).count()!=1)return null;
+        return parent;
+    }
+    private static List<Navigation> nestedSiblings(Navigation parent,List<Navigation> navigation){
+        List<Navigation> result=new ArrayList<>();for(int i=navigation.indexOf(parent)+1;i<navigation.size();i++){
+            Navigation value=navigation.get(i);if(!value.label().matches("[（(][0-9]+[）)]"))break;result.add(value);
+        }return result;
     }
     Map<String,Object> currentEvidence(Page page,String quote){
         if(!"PAGE".equals(page.locationType())||quote.isBlank()||!Objects.toString(page.text(),"").contains(quote))return Map.of();

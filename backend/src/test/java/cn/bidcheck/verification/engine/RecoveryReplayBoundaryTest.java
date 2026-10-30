@@ -81,4 +81,17 @@ class RecoveryReplayBoundaryTest {
         assertTrue(RecoveryReplay.sources(context,new EvidenceCorpus(List.of(changed)),noModel.identity()).isEmpty());
         assertTrue(RecoveryReplay.facts(context,corpus.all,List.of(),noModel.identity()).facts().isEmpty(),"A read window itself is not an extracted fact");
     }
+    @Test void dependencyEventsAddAllNewSourceWindowsButNeverAuthorizeOldVersionIds(){
+        Document first=bid();List<Page> pages=new ArrayList<>(first.pages());pages.add(new Page(2,"本项目补充资格材料\n注册证书编号A123，登记单位为本次投标设计单位。该证书及其查询记录共同证明本页所列登记信息。","PAGE","PDF_TEXT",""));
+        Document doc=new Document(first.id(),first.projectId(),first.role(),first.name(),first.version(),first.sha256(),first.createdAt(),pages,first.warnings());
+        EvidenceCorpus corpus=new EvidenceCorpus(List.of(doc));assertTrue(corpus.all.size()>=2);
+        String oldSource=corpus.all.get(0).id(),newSource=corpus.all.get(corpus.all.size()-1).id();
+        Map<String,Object> context=linked("recoveryChangedSourceIds",List.of(newSource,oldSource,"foreign-source-id"));
+        List<Source> selected=RecoveryReplay.sources(context,corpus,noModel.identity());
+        assertEquals(Set.of(oldSource,newSource),new HashSet<>(selected.stream().map(Source::id).toList()));
+        assertTrue(RecoveryReplay.facts(context,selected,List.of(),noModel.identity()).facts().isEmpty(),"new source locations still require actual source-grounded fact lookup");
+        Document changed=new Document(doc.id(),doc.projectId(),doc.role(),doc.name(),2,"changed-hash",doc.createdAt(),doc.pages(),doc.warnings());
+        assertTrue(RecoveryReplay.sources(context,new EvidenceCorpus(List.of(changed)),noModel.identity()).isEmpty());
+        assertFalse(RecoveryReplay.localOnly(linked("recoveryStrategy","TARGETED_EVIDENCE","recoveryChangedSourceIds",List.of("foreign-source-id"))),"unknown changed IDs must leave ordinary targeted retrieval available");
+    }
 }

@@ -7,12 +7,13 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 
 /** Server-derived heading/row context. Original requirement text is never rewritten. */
 final class RequirementSourceContext {
-    static final String VERSION="requirement-source-context-1";
+    static final String VERSION="requirement-source-context-2-versioned-source-spans";
     private static final Pattern ROLE_HEADING=Pattern.compile("^[\\s★*]*(?:[0-9]+(?:[.．][0-9]+)*[、.．)]?\\s*)?("+RequirementContextBindings.ROLES+")(?:资格要求|资质要求|要求)\\s*[:：]?\\s*$");
     private static final Pattern BOUNDARY=Pattern.compile("^(?:第[一二三四五六七八九十百0-9]+[章节部分]|[0-9]+(?:[.．][0-9]+)+\\s*[^0-9]|[一二三四五六七八九十]+[、.．])|.*(?:第[^\\s]{1,12}标段|历史项目|示例|如果|否则|如为|如有|如组成).*");
     record Context(String bindingSource,Map<String,Object> identity,List<Map<String,Object>> sources){
         static Context empty(String source){return new Context(source,Map.of(),List.of());}
-        Map<String,Object> map(){return linked("version",VERSION,"identity",identity,"sources",sources);}
+        Map<String,Object> map(){return linked("version",VERSION,"identity",identity,"sources",sources,
+                "sourceMappingVersion",RequirementSourceRepair.VERSION,"sourceSpanPolicy","EACH_LOCATION_VERBATIM_NO_CROSS_BLOCK_QUOTES");}
     }
     static Context resolve(Checkpoint cp,String original,Map<String,Object> context){
         if(cp.source()==null||original.isBlank()||!original.equals(cp.source().quote()))return Context.empty(original);
@@ -25,6 +26,12 @@ final class RequirementSourceContext {
         if(at<0)return Context.empty(original);Page page=pages.get(at);int offset=RequirementContextBindings.uniqueOffset(page.text(),original);
         if(offset<0)return Context.empty(original);
         Map<String,Object> identity=linked("projectId",doc.projectId(),"documentId",doc.id(),"documentHash",doc.sha256(),"documentVersion",doc.version(),"locationType",page.locationType(),"location",page.number(),"start",offset,"end",offset+original.length(),"sourceHash",VerificationTypes.identity(original));
+        if("scoring".equals(cp.field())){
+            identity.put("scoringSourceVersion",cn.bidcheck.engine.ScoringSourceSegments.VERSION);
+            List<String> repeated=cn.bidcheck.engine.ScoringSourceSegments.repeatedPlanItems(original);
+            if(!repeated.isEmpty())identity.put("sourceWarnings",List.of(linked("code","REPEATED_SOURCE_LIST_ITEMS","items",repeated,
+                    "message","招标原文清单存在重复项，保留原文及声明数量，不自动删项或重新解释评分总数")));
+        }
         List<Map<String,Object>> sources=new ArrayList<>();sources.add(source(doc,page,original,offset,"OBLIGATION"));
         String heading="";Map<String,Object> inherited=null;
         // A table's subject is inherited only from its own row under an explicit subject column.
@@ -44,7 +51,13 @@ final class RequirementSourceContext {
                 if(BOUNDARY.matcher(text).find()||text.contains("|"))break;
             }
         }
-        if(inherited!=null)sources.add(inherited);
+        if(QualificationBidderContext.applies(cp,original)){
+            // Neutral invoice clauses need a closed qualification scope; the generic nearby
+            // heading walk must not lend a bidder across an unrelated unnumbered section.
+            heading="";
+            QualificationBidderContext.Binding qualification=QualificationBidderContext.resolve(cp,doc,at,original);
+            if(qualification!=null){heading=qualification.heading();sources.addAll(qualification.sources());}
+        }else if(inherited!=null)sources.add(inherited);
         // A synthetic prefix is used only by the local binder, with its original evidence retained above.
         return new Context(heading.isBlank()?original:heading+"\n"+original,identity,List.copyOf(sources));
     }

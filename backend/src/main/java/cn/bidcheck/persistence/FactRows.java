@@ -97,7 +97,7 @@ public final class FactRows {
   public String sourceId;
   public int sourceOrder;
  }
- public static final class Source extends EvidenceBase {}
+ public static final class Source extends EvidenceBase { public String occurrenceId; }
  public static class EvidenceBase {
   public String id;
   public String projectId;

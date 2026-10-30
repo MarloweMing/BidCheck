@@ -1,0 +1,44 @@
+package cn.bidcheck.verification.engine;
+
+import cn.bidcheck.domain.Domain.*;
+import java.util.*;
+import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
+import static cn.bidcheck.verification.engine.VerificationTypes.*;
+
+class VisualMarkReviewTest {
+    private static final String COMPANY="北方甲建设有限公司";
+    private EvidenceCorpus corpus(){return new EvidenceCorpus(List.of(new Document("bid","p","BID","投标文件.pdf",1,"sha","",List.of(
+            new Page(1,"投标文件\n项目名称：北方新城装修工程\n投标人："+COMPANY,"PAGE","TEXT",""),
+            new Page(2,"本项目授权委托书\n项目名称：北方新城装修工程\n投标人（盖章）："+COMPANY,"PAGE","TEXT","")),List.of())));}
+    private Rule rule(){return new Rule("mark","授权委托书盖章位置","VISUAL",COMPANY,"seal","","","",Map.of("documentType","授权委托书"),"须盖章","",List.of());}
+    private Map<String,Object> observation(EvidenceCorpus c){Source s=c.all.stream().filter(x->x.evidence().page()==2).findFirst().orElseThrow();return linked(
+            "id","observation","obligationId","mark","documentId","bid","location",2,"locationType","PAGE","imageHash","img","type","SEAL","label",COMPANY,"value","","observedValue","","readability","NOT_OBSERVED",
+            "requestedTask","SEAL_VISIBILITY","requestedFields",List.of(COMPANY),"requestedSourceIds",List.of(s.id()),
+            "source",linked("documentId","bid","documentHash","sha","documentVersion",1,"page",2,"renderedSha256","img","renderedWidth",100,"renderedHeight",100,"roiApplied",false,
+                    "transform",Map.of("cropX",0,"cropY",0,"cropWidth",100,"cropHeight",100)));}
+    private RuleEvaluator evaluator(EvidenceCorpus c,List<Map<String,Object>> observations){return new RuleEvaluator(List.of(),c,Map.of("visualObservations",observations));}
+    @Test void fullPageBoundNegativeIsRiskNotAutomaticRejection(){var c=corpus();var e=evaluator(c,List.of(observation(c)));Decision d=e.evaluate(rule());assertEquals("FAIL",d.status(),d.toString());assertEquals(false,d.proof().get("automaticRejection"));assertEquals("NOT_OBSERVED",d.proof().get("observationOutcome"));assertTrue(d.evidences().stream().anyMatch(x->x.anchor().equals("image:img")));assertTrue(e.visualRequests.isEmpty());}
+    @Test void unreadableCannotBecomeAbsenceOrPass(){var c=corpus();var o=observation(c);o.put("readability","UNREADABLE");var e=evaluator(c,List.of(o));Decision d=e.evaluate(rule());assertEquals("UNDETERMINED",d.status());assertEquals("VISUAL_MARK_UNREADABLE",d.gaps().get(0).code());assertTrue(e.visualRequests.isEmpty());}
+    @Test void notObservedBecauseImageIsUnclearCannotBeNegative(){for(String limitation:List.of("印章区域模糊，无法辨识","盖章位置被裁切，未观察到印章","印章处在裁剪区域外，未观察到")){var c=corpus();var o=observation(c);o.put("modelLimitations",List.of(limitation));var e=evaluator(c,List.of(o));Decision d=e.evaluate(rule());assertEquals("UNDETERMINED",d.status(),limitation);assertEquals("VISUAL_MARK_UNREADABLE",d.gaps().get(0).code());assertTrue(e.visualRequests.isEmpty());}}
+    @Test void contradictoryClearObservationPreventsNegativeAndPositiveConclusion(){var c=corpus();var no=observation(c);var yes=observation(c);yes.put("id","positive");yes.put("readability","CLEAR");yes.put("value",COMPANY);yes.put("observedValue",COMPANY);yes.put("sourceBbox",List.of(1,1,30,30));Decision d=evaluator(c,List.of(no,yes)).evaluate(rule());assertEquals("UNDETERMINED",d.status());assertEquals("VISUAL_MARK_OBSERVATION_CONFLICT",d.gaps().get(0).code());}
+    @Test void unreadableConflictCannotBeCountedAsProvedAbsence(){var c=corpus();var no=observation(c);var other=observation(c);other.put("id","blur");other.put("readability","UNREADABLE");assertEquals("VISUAL_MARK_OBSERVATION_CONFLICT",evaluator(c,List.of(no,other)).evaluate(rule()).gaps().get(0).code());}
+    @Test void partialConflictsWithNegative(){var c=corpus();var no=observation(c);var other=observation(c);other.put("readability","PARTIAL");other.put("value","北方");other.put("observedValue","北方");other.put("sourceBbox",List.of(1,1,30,30));assertEquals("UNDETERMINED",evaluator(c,List.of(no,other)).evaluate(rule()).status());}
+    @Test void anotherSubjectCannotSupplyNegative(){var c=corpus();var o=observation(c);o.put("requestedFields",List.of("另一公司"));var e=evaluator(c,List.of(o));assertEquals("VISUAL_OBSERVATION_REQUIRED",e.evaluate(rule()).gaps().get(0).code());assertFalse(e.visualRequests.isEmpty());}
+    @Test void anotherPageCannotSupplyNegative(){var c=corpus();var o=observation(c);o.put("location",1);assertNotEquals("FAIL",evaluator(c,List.of(o)).evaluate(rule()).status());}
+    @Test void wrongObligationCannotSupplyNegative(){var c=corpus();var o=observation(c);o.put("obligationId","other");assertNotEquals("FAIL",evaluator(c,List.of(o)).evaluate(rule()).status());}
+    @Test void wrongSourceIdentifierCannotSupplyNegative(){var c=corpus();var o=observation(c);o.put("requestedSourceIds",List.of("unrelated"));assertNotEquals("FAIL",evaluator(c,List.of(o)).evaluate(rule()).status());}
+    @Test void wrongTypeCannotSupplyNegative(){var c=corpus();var o=observation(c);o.put("type","FIELD");assertNotEquals("FAIL",evaluator(c,List.of(o)).evaluate(rule()).status());}
+    @Test void wrongTaskCannotSupplyNegative(){var c=corpus();var o=observation(c);o.put("requestedTask","SIGNATURE_VISIBILITY");assertNotEquals("FAIL",evaluator(c,List.of(o)).evaluate(rule()).status());}
+    @Test void staleVersionHashAndCroppedImagesCannotSupplyNegative(){for(String change:List.of("version","hash","cropFlag","cropTransform","missingVersion","missingSourceId")){var c=corpus();var o=observation(c);Map<String,Object> origin=new LinkedHashMap<>((Map<String,Object>)o.get("source"));o.put("source",origin);switch(change){case "version"->origin.put("documentVersion",2);case "hash"->origin.put("documentHash","old");case "cropFlag"->origin.put("roiApplied",true);case "cropTransform"->origin.put("transform",Map.of("cropX",1,"cropY",0,"cropWidth",99,"cropHeight",100));case "missingVersion"->origin.remove("documentVersion");case "missingSourceId"->origin.remove("documentId");}assertNotEquals("FAIL",evaluator(c,List.of(o)).evaluate(rule()).status(),change);}}
+    @Test void additionalUnobservedCandidatePagePreventsAbsenceConclusion(){var c=corpus();Document doc=c.documents.get(0);List<Page> pages=new ArrayList<>(doc.pages());pages.add(new Page(3,"本项目授权委托书\n项目名称：北方新城装修工程\n投标人（盖章）："+COMPANY,"PAGE","TEXT",""));var extended=new EvidenceCorpus(List.of(new Document(doc.id(),doc.projectId(),doc.role(),doc.name(),doc.version(),doc.sha256(),doc.createdAt(),pages,List.of())));var e=evaluator(extended,List.of(observation(extended)));assertEquals("UNDETERMINED",e.evaluate(rule()).status());assertTrue(e.visualRequests.stream().anyMatch(r->Integer.valueOf(3).equals(r.get("location"))));}
+    @Test void clearSealStillPassesWithoutAuthenticityAssessment(){var c=corpus();var o=observation(c);o.put("readability","CLEAR");o.put("value",COMPANY);o.put("observedValue",COMPANY);o.put("sourceBbox",List.of(1,1,30,30));o.put("modelLimitations",List.of("无法核实印章真伪"));assertEquals("PASS",evaluator(c,List.of(o)).evaluate(rule()).status());}
+    @Test void ninthCandidateIsNotHiddenByEightRequestWindow(){
+        Document original=corpus().documents.get(0);List<Page> pages=new ArrayList<>(original.pages());for(int page=3;page<=10;page++)pages.add(new Page(page,original.pages().get(1).text(),"PAGE","TEXT",""));
+        EvidenceCorpus c=new EvidenceCorpus(List.of(new Document(original.id(),original.projectId(),original.role(),original.name(),1,"sha","",pages,List.of())));List<Map<String,Object>> observations=new ArrayList<>();
+        for(int page=2;page<=9;page++){Map<String,Object> o=observation(c);o.put("location",page);o.put("id","negative-"+page);int target=page;o.put("requestedSourceIds",List.of(c.all.stream().filter(s->s.evidence().page()==target).findFirst().orElseThrow().id()));Map<String,Object> source=new LinkedHashMap<>((Map<String,Object>)o.get("source"));source.put("page",page);o.put("source",source);observations.add(o);}
+        RuleEvaluator pending=evaluator(c,observations);assertEquals("UNDETERMINED",pending.evaluate(rule()).status());assertTrue(pending.visualRequests.stream().anyMatch(r->Integer.valueOf(10).equals(r.get("location"))));
+        var visible=observation(c);visible.put("id","last-visible");visible.put("location",10);visible.put("type","SEAL");visible.put("readability","CLEAR");visible.put("value",COMPANY);visible.put("observedValue",COMPANY);visible.put("sourceBbox",List.of(1,1,30,30));Map<String,Object> source=new LinkedHashMap<>((Map<String,Object>)visible.get("source"));source.put("page",10);visible.put("source",source);visible.put("requestedSourceIds",List.of(c.all.stream().filter(s->s.evidence().page()==10).findFirst().orElseThrow().id()));observations.add(visible);
+        assertEquals("UNDETERMINED",evaluator(c,observations).evaluate(rule()).status());
+    }
+}

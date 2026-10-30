@@ -81,6 +81,54 @@ scripts/frontend_inventory_fixture.mjs
 scripts/frontend_inventory_presentation_test.mjs
 scripts/frontend_resolution_browser_test.mjs
 
+# Private acceptance/replay tests depend on ignored real-run artifacts, local
+# replay inputs, or private test resources and are not part of the public tree.
+backend/src/test/java/cn/bidcheck/service/AgentInvestigationStateTest.java
+backend/src/test/java/cn/bidcheck/service/FrozenVisualMarkRecoveryIntegrationTest.java
+backend/src/test/java/cn/bidcheck/service/HistoricalRetrievalReplayTest.java
+backend/src/test/java/cn/bidcheck/service/RecoveryFailureOriginReplayTest.java
+backend/src/test/java/cn/bidcheck/service/RecoverySemanticLogReplayTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/AgentCollectiveSocialFrozenReplayTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/AgentFrozenPersonnelReplayTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/AgentInvestigationLiveSampleTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/BoundCommitmentProofTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/BusinessProofSourceGuardTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/CertificateFactBindingRegressionTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/CertificateRecordBindingsTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/CurrentTaxpayerProofTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/DurationResponseProofTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/FormIdentityAttachmentTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/FrozenFailureRepairAcceptanceTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/FrozenRemaining37AcceptanceTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/FrozenScoringSourceProjectionTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/LegalRegistrationProofTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/LogDrivenFrozenEvidenceReplayTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/PerformanceInventoryProofTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/PersonnelAttachmentIdentityTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/PersonnelCertificateRecordsTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/PersonnelCredentialSelectionReceiptTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/PersonnelWorkloadCommitmentProofTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/RequirementCompilerRealFailuresTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/RequirementFrozen109ReplayTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/SameFieldSourceOccurrencesTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/SocialInsuranceFrozenReplayTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/SourceExtraPersonnelScoreTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/SourceLocalCertificateClosureTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/SourceObligationDirectoryReplayTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/SourcePerformanceProofTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/SourcePerformanceScoreTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/SourceScoringRulesTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/SourceSignatureRequirementsTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/VatQualificationIntegrationTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/VerificationModelLiveSamplesTest.java
+
+# Internal browser checks consume ignored acceptance artifacts.
+scripts/frontend_agent_target_test.mjs
+scripts/frontend_external_responsibility_test.mjs
+scripts/frontend_remaining37_test.mjs
+scripts/frontend_target_diagnostics_test.mjs
+scripts/frontend_visual_review_test.mjs
+
 # Internal design/acceptance history and environment-specific audit records are private.
 CODE_REVIEW.md
 deploy/VERIFICATION.md

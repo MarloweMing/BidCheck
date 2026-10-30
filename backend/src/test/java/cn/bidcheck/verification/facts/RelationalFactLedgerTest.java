@@ -51,6 +51,35 @@ class RelationalFactLedgerTest {
         assertEquals(a.get("occurrenceIds"),b.get("occurrenceIds"));assertEquals(1,b.get("reused"));assertEquals(1,count("qc_fact_occurrence"));assertEquals(1,count("qc_evidence"));
         var found=ledger.lookup("project","engine",List.of(d),Map.of("sourceIds",List.of("B")));assertEquals(1,found.size());assertEquals(List.of("B"),map(found.get(0).get("fact")).get("sourceIds"));assertEquals("B",maps(found.get(0).get("sources")).get(0).get("id"));
     }
+    @Test void declarationExplanationCreatesAnAuditReceiptButNotAnotherOccurrence()throws Exception {
+        Document d=fixture.doc("declaration-doc","合成甲承诺未超出最大承接数量");
+        Map<String,Object> fact=fixture.fact("first","未超出最大承接数量","A");fact.put("kind","DECLARATION");fact.put("field","commitment");fact.put("basis","人员承诺书");
+        var first=publish("run","cp1",List.of(d),fixture.batch(List.of(fact),List.of(fixture.source(d,"A"))));
+        fact.put("id","second");fact.put("basis","人员承诺书明确承诺未超出最大承接数量");
+        var second=publish("run","cp2",List.of(d),fixture.batch(List.of(fact),List.of(fixture.source(d,"A"))));
+        assertEquals(first.get("occurrenceIds"),second.get("occurrenceIds"));assertEquals(1,second.get("reused"));assertEquals(1,count("qc_fact_occurrence"));
+        assertEquals(2,store.maps("fact_batch","project",null).size(),"explanations remain auditable");
+    }
+    @Test void pricingBasisStillCreatesDistinctOccurrences()throws Exception {
+        Document d=fixture.doc("price-doc","合成甲 含税总价100元，不含税单价100元");
+        Map<String,Object> fact=fixture.fact("first","100","A");fact.put("kind","NUMBER");fact.put("field","amount");fact.put("basis","含税总价");fact.put("unit","元");
+        var first=publish("run","cp1",List.of(d),fixture.batch(List.of(fact),List.of(fixture.source(d,"A"))));
+        fact.put("id","second");fact.put("basis","不含税单价");
+        var second=publish("run","cp2",List.of(d),fixture.batch(List.of(fact),List.of(fixture.source(d,"A"))));
+        assertNotEquals(first.get("occurrenceIds"),second.get("occurrenceIds"));assertEquals(2,count("qc_fact_occurrence"));
+    }
+    @Test void legacyDeclarationIdentityIsStillVerifiedAndNeverRewritten()throws Exception {
+        Document d=fixture.doc("legacy-declaration","合成甲承诺未超出最大承接数量");store.save("document",d.id(),"project","",d);
+        Map<String,Object> fact=fixture.fact("first","未超出最大承接数量","A");fact.put("kind","DECLARATION");fact.put("field","commitment");fact.put("basis","人员承诺书");
+        var receipt=publish("old","cp",List.of(d),fixture.batch(List.of(fact),List.of(fixture.source(d,"A"))));
+        Map<String,Object> original=repository.get(strings(receipt.get("occurrenceIds")).get(0));
+        Map<String,Object> semantic=new LinkedHashMap<>(map(original.get("fact")));semantic.remove("id");semantic.put("sourceIds",maps(original.get("sources")).stream().map(s->text(s,"sourceFingerprint")).sorted().toList());
+        String legacyId=dbKey("occurrence",canonical(List.of("project","engine",semantic)));assertNotEquals(original.get("id"),legacyId);
+        original.put("id",legacyId);original.put("occurrenceId",legacyId);store.save("fact_occurrence",legacyId,"project","legacy",original);
+        String frozenBody=store.mapper().get(legacyId).body;
+        assertEquals(1,ledger.migrateLegacyOccurrences("project",10).get("migrated"));
+        assertEquals(frozenBody,store.mapper().get(legacyId).body);assertEquals(2,count("qc_fact_occurrence"),"old historical row remains, new writes use the typed key");
+    }
     @Test void parentTransactionRollbackRemovesCoreAndDependenciesTogether()throws Exception {
         Document d=fixture.doc("doc","合成甲 一级");publish("run","cp",List.of(d),batch(d,"A","一级"));assertEquals(1,count("qc_fact_occurrence"));session.rollback();
         for(String table:List.of("qc_entity","qc_fact_occurrence","qc_evidence","qc_fact_evidence","qc_record"))assertEquals(0,count(table),table);

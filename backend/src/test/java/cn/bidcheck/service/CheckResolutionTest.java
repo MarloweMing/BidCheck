@@ -21,6 +21,15 @@ class CheckResolutionTest {
         assertEquals("VERIFY_SOURCE_PAGES",CheckResolution.plan(f).get("strategy"));
         assertEquals("QUEUED",CheckResolution.plan(f).get("status"));
     }
+    @Test void pendingVisualWorkRunsBeforeAnAgentStallWaitsForNewInput(){
+        Finding f=finding("UNDETERMINED",Map.of("atomicCheck",Map.of(
+            "agentInvestigation",Map.of("status","FAILED","errorCode","AGENT_STALLED_WITH_REMAINING_TARGETS"),
+            "gaps",List.of(Map.of("code","AGENT_INVESTIGATION_STALLED")),
+            "visualRequests",List.of(Map.of("documentId","bid","page",7,"task","FIELD")))));
+        Map<String,Object> plan=CheckResolution.plan(f);
+        assertEquals("VERIFY_SOURCE_PAGES",plan.get("strategy"));
+        assertEquals("QUEUED",plan.get("status"));
+    }
     @Test void samePolicyAndNoProgressCannotOfferAnEndlessReplay(){
         Map<String,Object> summary=CheckResolution.summary(Map.of("status","COMPLETED","resolutionPolicyIdentity","p"),List.of(finding("UNDETERMINED",Map.of())),
             List.of(Map.of("id","job","status","BLOCKED_NO_PROGRESS")),"p");
@@ -31,9 +40,9 @@ class CheckResolutionTest {
         assertEquals("RETRY_FAILED_STEP",CheckResolution.plan(f).get("strategy"));
         assertEquals(true,CheckResolution.summary(Map.of("status","FAILED","resolutionPolicyIdentity","p"),List.of(f),List.of(Map.of("status","FAILED")),"p").get("canRecover"));
     }
-    @Test void externalStageDoesNotTriggerRepeatedModelRequests(){
+    @Test void missingExternalScopeIsSystemRepairInsteadOfUnknownStageOrUserWork(){
         Finding f=finding("UNDETERMINED",Map.of("atomicCheck",Map.of("externalRequests",List.of(Map.of("type","UPLOAD_PLATFORM")))));
-        assertEquals("WAITING_EXTERNAL",CheckResolution.plan(f).get("status"));
+        assertEquals("FAILED",CheckResolution.plan(f).get("status"));assertEquals("REPAIR_EXTERNAL_SCOPE",CheckResolution.plan(f).get("strategy"));
     }
     @Test void completeExternalRequestQueuesConnectorButWrongBusinessStageStillWaits(){
         Map<String,Object> request=Map.of("type","CREDIT_CHINA","subject","海南测试有限公司",
@@ -43,7 +52,7 @@ class CheckResolutionTest {
         assertEquals("QUEUED",CheckResolution.plan(ready).get("status"));
         Finding wrongStage=finding("UNDETERMINED",Map.of("atomicCheck",Map.of("workflowState","WAIT_STAGE","externalRequests",List.of(request))));
         assertEquals("WAITING_EXTERNAL",CheckResolution.plan(wrongStage).get("status"));
-        assertEquals("BLOCKED",CheckResolution.plan(wrongStage).get("strategy"));
+        assertEquals("WAIT_STAGE",CheckResolution.plan(wrongStage).get("strategy"));
     }
     @Test void completedBusinessResultDoesNotInheritAnUnrelatedFailure(){
         assertEquals("SUCCEEDED",CheckResolution.plan(finding("PASS",Map.of("model",Map.of("retryable",true)))).get("status"));
@@ -83,6 +92,12 @@ class CheckResolutionTest {
     Finding condition(String id,String status,String role,Evidence source){
         return finding("UNDETERMINED",Map.of("atomicCheck",Map.of("conditions",List.of(Map.of("id",id,"title","描述"+id,"predicate","CERTIFICATE","subject","施工单位","sourceQuote","施工单位应持有资质","conditionRole",role,"status",status,"evidences",List.of(source))))));
     }
+    Finding frozenInputs(Finding finding){
+        Map<String,Object> atomic=new LinkedHashMap<>(CheckResolution.atomic(finding));
+        atomic.put("recoveryDependencies",Map.of("version","receipt-v3","sourceRevision","frozen-docs","validationIdentity","validator-v2","planRevision","same-rules","inputRevision","same-inputs"));
+        Map<String,Object> assessment=new LinkedHashMap<>(finding.assessment());assessment.put("atomicCheck",atomic);
+        return new Finding(finding.id(),finding.runId(),finding.checkpoint(),finding.evaluation(),assessment);
+    }
     @Test void aVerifiedBusinessConditionCountsButItsRandomIdDoesNot(){
         Evidence e=new Evidence("bid","bid.pdf",15,"PAGE","证书编号：A12345","a",0);
         Finding before=condition("R1","UNDETERMINED","REQUIREMENT",e),after=condition("R987","PASS","REQUIREMENT",e);
@@ -107,13 +122,55 @@ class CheckResolutionTest {
     }
     @Test void temporaryFailureCannotEraseCompletedPartialProofAndNewContradictionIsNotHidden(){
         Evidence e=new Evidence("bid","bid.pdf",15,"PAGE","证书编号A1","",0);
-        Finding before=condition("a","PASS","REQUIREMENT",e);
-        Finding failed=finding("UNDETERMINED",Map.of("atomicCheck",Map.of("modelDiagnostics",Map.of("errorCode","MODEL_TIMEOUT"))));
+        Finding before=frozenInputs(condition("a","PASS","REQUIREMENT",e));
+        Finding failed=frozenInputs(finding("UNDETERMINED",Map.of("atomicCheck",Map.of("modelDiagnostics",Map.of("errorCode","MODEL_TIMEOUT")))));
         Finding kept=CheckResolution.protectCompletedProof(before,failed);
         assertEquals(CheckResolution.atomic(before),CheckResolution.atomic(kept));assertEquals("UNDETERMINED",kept.evaluation().status());
         assertEquals(true,CheckResolution.map(kept.assessment().get("recoveryFailure")).get("retainedCompletedProof"));
+        assertEquals(true,CheckResolution.map(kept.assessment().get("recoveryFailure")).get("processingFailed"));
         Finding contradicted=condition("a","FAIL","REQUIREMENT",e);
         assertSame(contradicted,CheckResolution.protectCompletedProof(before,contradicted));
+    }
+    @Test void unresolvedNewRuleDoesNotReviveProofThatTheCurrentValidatorDidNotProve(){
+        Finding before=condition("a","PASS","REQUIREMENT",new Evidence("bid","bid.pdf",15,"PAGE","证书编号A1","",0));
+        Finding unresolved=finding("UNDETERMINED",Map.of("atomicCheck",Map.of("compilationAudit",Map.of("state","UNRESOLVED"))));
+        Finding kept=CheckResolution.protectCompletedProof(before,unresolved);
+        assertEquals(CheckResolution.atomic(unresolved),CheckResolution.atomic(kept));
+        var receipt=CheckResolution.map(kept.assessment().get("supersededProof"));
+        assertEquals(false,receipt.get("activeBusinessProof"));assertEquals("NO_EXPLICIT_TRANSPORT_FAILURE",receipt.get("reasonCode"));
+        assertFalse(CheckResolution.maps(receipt.get("previousConditions")).isEmpty());assertFalse(RecoveryTransition.hasProcessingFailure(kept));
+    }
+    @Test void retainedPartialProofDoesNotRestoreAnAlreadyRecoveredRequestFailure(){
+        Finding proved=condition("a","PASS","REQUIREMENT",new Evidence("bid","bid.pdf",15,"PAGE","证书编号A1","",0));
+        Map<String,Object> old=new LinkedHashMap<>(CheckResolution.atomic(proved));old.put("modelDiagnostics",Map.of("unresolvedFailures",1,"errorCode","MODEL_TIMEOUT"));
+        Finding before=finding("UNDETERMINED",Map.of("atomicCheck",old));
+        Finding after=finding("UNDETERMINED",Map.of("atomicCheck",Map.of("compilationAudit",Map.of("state","UNRESOLVED"),"modelDiagnostics",Map.of("unresolvedFailures",0))));
+        assertTrue(RecoveryTransition.hasProcessingFailure(before));
+        Finding kept=CheckResolution.protectCompletedProof(before,after);
+        assertEquals(CheckResolution.atomic(after),CheckResolution.atomic(kept));assertFalse(RecoveryTransition.hasProcessingFailure(kept));
+        assertEquals(CheckResolution.plan(after),CheckResolution.plan(kept));
+        var transition=RecoveryTransition.afterAttempt(before,kept,"RETRY_FAILED_STEP",CheckResolution.plan(kept),false,false,true,List.of());
+        assertEquals(false,transition.get("processingFailed"));assertEquals(true,transition.get("technicalRecovered"));
+    }
+    @Test void sourceRejectionOrExplicitRevalidationRevokesPriorPassEvenWhenAnotherRequestTimesOut(){
+        Evidence evidence=new Evidence("bid","bid.pdf",15,"PAGE","证书编号A1","",0);Finding before=frozenInputs(condition("a","PASS","REQUIREMENT",evidence));
+        for(Map<String,Object> revocation:List.of(Map.<String,Object>of("rejectedFacts",List.of(Map.of("code","RECOVERY_SOURCE_REVISION_MISMATCH","sourceIds",List.of("s1")))),
+                Map.<String,Object>of("conditions",List.of(Map.of("id","a","status","UNDETERMINED","conditionRole","REQUIREMENT","gaps",List.of(Map.of("code","SUBJECT_IDENTITY_CONFLICT"))))))){
+            Map<String,Object> atomic=new LinkedHashMap<>(revocation);atomic.put("modelDiagnostics",Map.of("errorCode","MODEL_TIMEOUT"));atomic.put("compilationAudit",Map.of("state","UNRESOLVED"));
+            Finding after=frozenInputs(finding("UNDETERMINED",Map.of("atomicCheck",atomic))),result=CheckResolution.protectCompletedProof(before,after);
+            assertEquals(CheckResolution.atomic(after),CheckResolution.atomic(result));assertFalse(result.assessment().containsKey("recoveryFailure"));
+            assertEquals("CURRENT_VALIDATOR_REVOKED_PROOF",CheckResolution.map(result.assessment().get("supersededProof")).get("reasonCode"));
+        }
+    }
+    @Test void timeoutCannotCarryOldProofAcrossUnknownChangedSourcesOrValidatorVersions(){
+        Finding before=frozenInputs(condition("a","PASS","REQUIREMENT",new Evidence("bid","bid.pdf",15,"PAGE","证书编号A1","",0)));
+        Finding timeout=frozenInputs(finding("UNDETERMINED",Map.of("atomicCheck",Map.of("modelDiagnostics",Map.of("errorCode","MODEL_TIMEOUT")))));
+        for(String key:List.of("version","sourceRevision","validationIdentity","planRevision","inputRevision")){
+            Map<String,Object> atomic=new LinkedHashMap<>(CheckResolution.atomic(timeout)),receipt=new LinkedHashMap<>(CheckResolution.map(atomic.get("recoveryDependencies")));receipt.put(key,"changed");atomic.put("recoveryDependencies",receipt);
+            Finding after=finding("UNDETERMINED",Map.of("atomicCheck",atomic)),result=CheckResolution.protectCompletedProof(before,after);
+            assertEquals(CheckResolution.atomic(after),CheckResolution.atomic(result),key);assertEquals(false,CheckResolution.map(result.assessment().get("supersededProof")).get("activeBusinessProof"));
+        }
+        Finding legacy=finding("UNDETERMINED",Map.of("atomicCheck",Map.of("modelDiagnostics",Map.of("errorCode","MODEL_TIMEOUT"))));assertEquals(CheckResolution.atomic(legacy),CheckResolution.atomic(CheckResolution.protectCompletedProof(before,legacy)));
     }
     @Test void extractionTimeoutIsNotMisreportedAsACompilationServiceFailure(){
         Finding f=finding("UNDETERMINED",Map.of("atomicCheck",Map.of("compilationAudit",Map.of("state","UNRESOLVED"),

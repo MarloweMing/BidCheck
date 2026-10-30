@@ -72,6 +72,18 @@ class TaskFailureDiagnosticTest {
         assertThat(result.causes().get(0).frames()).hasSize(4).contains("cn.bidcheck.service.BidService#execute:12");
         assertThat(result.logRecord().toString()).doesNotContain("SECRET","evil.","SELECT",".java","C:/");
     }
+    @Test void databaseWrappersDoNotHideTheApplicationPublicationSite() {
+        var failure=new SQLException("SECRET_QUERY_AND_DOCUMENT","40001",1213);
+        List<StackTraceElement> frames=new ArrayList<>();
+        for(int i=0;i<70;i++)frames.add(new StackTraceElement("org.mybatis.spring.SqlSessionTemplate","invoke","SECRET.java",i+1));
+        frames.add(new StackTraceElement("cn.bidcheck.service.FocusedCheckContext","lambda$prepare$8","SECRET.java",125));
+        frames.add(new StackTraceElement("cn.bidcheck.service.BidService","checkTask","SECRET.java",1269));
+        failure.setStackTrace(frames.toArray(StackTraceElement[]::new));
+        var result=inspect(failure);
+        assertThat(result.causes().get(0).frames()).hasSize(4)
+            .contains("cn.bidcheck.service.FocusedCheckContext#lambda$prepare$8:125","cn.bidcheck.service.BidService#checkTask:1269");
+        assertThat(result.logRecord().toString()).doesNotContain("SECRET_QUERY","SECRET.java");
+    }
     @Test void sqlStateIsValidatedInsteadOfBlindlyLogged() {
         var result=inspect(new SQLException("secret query","SECRET_SQL_STATE\nINJECTED",1064));
         assertThat(result.causes().get(0).sqlState()).isEqualTo("UNKNOWN");

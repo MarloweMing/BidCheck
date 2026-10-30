@@ -10,7 +10,8 @@ import static cn.bidcheck.verification.engine.ProofVerifier.*;
 final class RequirementGrounding {
     private static final String NUMBER="([0-9]+(?:[.][0-9]+)?|[零一二三四五六七八九十百两]+)";
     static String issue(Rule rule){return issue(rule,rule.sourceQuote());}
-    static String issue(Rule rule,String original){String quote=rule.sourceQuote();Map<String,Object> p=rule.parameters();
+    static String issue(Rule rule,String original){return issue(rule,original,false);}
+    static String issue(Rule rule,String original,boolean confirmedNumeric){String quote=rule.sourceQuote();Map<String,Object> p=rule.parameters();
         if(rule.predicate().equals("ENTITY_COUNT"))return EntityCountRequirement.issue(rule);
         if(rule.predicate().equals("PERSON_COUNT")){String countIssue=PersonCountRequirement.issue(rule);if(countIssue!=null)return countIssue;}
         if(rule.predicate().equals("NUMBER")){
@@ -18,7 +19,7 @@ final class RequirementGrounding {
             if(!quote.contains("不含税")&&quote.contains("含税")&&!str(p,"taxBasis").equals("含税"))return "数值比较的明确含税口径未保留";
             BigDecimal expected=decimal(rule.expected());boolean supported=false;Matcher m=Pattern.compile("(不少于|不低于|至少|最低|不超过|不得超过|至多|最多|不高于|最高|大于|超过|小于|低于|等于|为|≥|≤|>=|<=|=|>|<)\\s*"+NUMBER+"\\s*(亿元|万元|元|个月|月|年|天|日|项|个)?").matcher(quote);
             while(m.find()){BigDecimal amount=number(m.group(2));String unit=Objects.toString(m.group(3),"");if(expected!=null&&amount!=null&&expected.compareTo(amount)==0&&unitEquals(unit,rule.unit())&&operator(m.group(1)).equals(canonicalOp(rule.operator())))supported=true;}
-            if(!supported&&!PriceRequirementBinding.bound(rule,original))return "比较符、门槛和原单位未作为同一约束绑定到条款";
+            if(!supported&&!confirmedNumeric&&!PriceRequirementBinding.bound(rule,original))return "比较符、门槛和原单位未作为同一约束绑定到条款";
         }
         if(rule.predicate().equals("MONTHS")){
             int count=RunSession.number(p.get("count"),0);boolean supported=false;Matcher m=Pattern.compile("连续\\s*"+NUMBER+"\\s*个?月").matcher(quote);while(m.find())if(number(m.group(1))!=null&&number(m.group(1)).compareTo(BigDecimal.valueOf(count))==0)supported=true;
@@ -28,7 +29,10 @@ final class RequirementGrounding {
         }
         for(String key:List.of("category","grade","profession","personRole","amountBasis","taxBasis")){String value=str(p,key);if(!value.isBlank()&&!contains(quote,value)&&RequirementContextBindings.validatedReference(rule,key,value,original)==null)return "条件参数未对应原条款："+key;}
         if(!str(p,"sinceDate").isBlank()&&!datePresent(quote,str(p,"sinceDate")))return "合同日期下限未对应原条款";
-        if(rule.predicate().equals("CERTIFICATE")){Matcher grade=Pattern.compile("(?:[一二三四五六七八九十甲乙丙丁]+级)").matcher(quote);if(grade.find()&&str(p,"grade").isBlank())return "证照等级义务未保留";}
+        if(rule.predicate().equals("CERTIFICATE")){
+            if(PersonnelCredentialProof.applies(rule)&&!PersonnelCredentialProof.sourceGradeBound(rule))return "人员证照类别或等级字段未对应原条款";
+            Matcher grade=Pattern.compile("(?:[一二三四五六七八九十甲乙丙丁]+级)").matcher(quote);if(grade.find()&&str(p,"grade").isBlank()&&!PersonnelCredentialProof.sourceGradeBound(rule))return "证照等级义务未保留";
+        }
         if(rule.predicate().equals("CONTRACT")){
             String basis=str(p,"amountBasis");for(String required:List.of("建安工程费","建安费","施工费","设计费"))if(quote.contains(required)&&!basis.contains(required))return "合同金额组成口径未保留";
             if(quote.contains("不含税")&&!str(p,"taxBasis").equals("不含税"))return "合同税基义务未保留";

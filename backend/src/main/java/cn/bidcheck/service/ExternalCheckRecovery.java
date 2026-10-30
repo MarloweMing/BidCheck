@@ -23,6 +23,19 @@ final class ExternalCheckRecovery {
 
     private ExternalCheckRecovery() {}
 
+    /** Preserve a failed/skipped query receipt even when no new evidence permits recomputation.
+     * This updates diagnostics only: callers must not count a new Finding instance as a re-evaluation. */
+    static Finding attachDiagnostics(Finding finding,List<Map<String,Object>> diagnostics) {
+        List<Map<String,Object>> external=diagnostics==null?List.of():diagnostics.stream()
+            .filter(row->text(row.get("code")).startsWith("EXTERNAL_")).map(Map::copyOf).toList();
+        if(external.isEmpty())return finding;
+        Map<String,Object> assessment=new LinkedHashMap<>(CheckResolution.map(finding.assessment()));
+        assessment.put("externalQueryDiagnostics",external);
+        assessment.put("externalQueryUpdate",Map.of("evidenceChanged",false,"conclusionRecomputed",false,"diagnosticsUpdated",true));
+        return new Finding(finding.id(),finding.runId(),finding.checkpoint(),finding.evaluation(),
+            FocusedCheckEvaluator.reconcileAssessment(finding.evaluation(),assessment));
+    }
+
     static Outcome execute(List<Map<String,Object>> previous,List<Map<String,Object>> collected,
                            Consumer<List<Map<String,Object>>> publisher,
                            Supplier<Map<String,Object>> contextLoader,
@@ -36,6 +49,7 @@ final class ExternalCheckRecovery {
         List<Map<String,Object>> changed=RecoveryInputs.changedExternalRecords(previous,
                 maps(context.get("externalRecords")));
         if(changed.isEmpty())return new Outcome(context,List.of(),before,false);
+        RecoveryInputs.changedExternalInputs(context,before,changed);
         return new Outcome(context,changed,Objects.requireNonNull(evaluator.apply(context)),true);
     }
 
@@ -43,8 +57,12 @@ final class ExternalCheckRecovery {
         if(record==null||!"TRUSTED_CONNECTOR".equals(text(record.get("provenanceStatus"))))return false;
         for(String key:List.of("type","subject","source","queriedAt","effectiveAt","evaluationStage","rawSnapshotHash"))
             if(text(record.get(key)).isBlank())return false;
-        if(!Boolean.TRUE.equals(record.get("coverageComplete"))||!(record.get("result") instanceof Map<?,?> result))return false;
-        return List.of("VERIFIED","NOT_FOUND","INCONCLUSIVE").contains(text(result.get("status")));
+        if(!(record.get("coverageComplete") instanceof Boolean)||!(record.get("result") instanceof Map<?,?> result))return false;
+        String status=text(result.get("status"));
+        // Partial authoritative receipts are new evidence too. The evaluator retains coverage
+        // gaps; an incomplete negative search cannot claim absence.
+        return List.of("VERIFIED","NOT_FOUND","INCONCLUSIVE").contains(status)
+            &&(!"NOT_FOUND".equals(status)||Boolean.TRUE.equals(record.get("coverageComplete")));
     }
 
     @SuppressWarnings("unchecked") private static List<Map<String,Object>> maps(Object value){

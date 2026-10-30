@@ -14,9 +14,23 @@ public class RelationalFactRepository implements FactRepository {
     public RelationalFactRepository(FactMapper mapper,ObjectMapper json){this.mapper=mapper;this.json=json;}
     public Map<String,Object> get(String id){
         FactRows.Occurrence row=mapper.getOccurrence(id);if(row==null)return Map.of();
-        FactRows.Entity entity=mapper.getEntity(row.entityKey);if(entity==null)throw new IllegalStateException("FACT_ENTITY_MISSING");
+        return hydrate(row,mapper.getEntity(row.entityKey),mapper.sources(id),Set.of("RELATION","PERSON_ROLE").contains(row.kind)?mapper.getLink(id):null);
+    }
+    public Map<String,Map<String,Object>> getAll(Collection<String> requested){
+        List<String> ids=requested.stream().distinct().toList();Map<String,Map<String,Object>> out=new LinkedHashMap<>();
+        for(int at=0;at<ids.size();at+=100){List<String> part=ids.subList(at,Math.min(ids.size(),at+100));
+            List<FactRows.Occurrence> rows=mapper.getOccurrences(part);if(rows.isEmpty())continue;
+            Map<String,FactRows.Entity> entities=new HashMap<>();for(var row:mapper.getEntities(rows.stream().map(v->v.entityKey).distinct().toList()))entities.put(row.id,row);
+            Map<String,List<FactRows.Source>> sources=new HashMap<>();for(var row:mapper.sourcesMany(rows.stream().map(v->v.id).toList()))sources.computeIfAbsent(row.occurrenceId,k->new ArrayList<>()).add(row);
+            List<String> relationIds=rows.stream().filter(v->Set.of("RELATION","PERSON_ROLE").contains(v.kind)).map(v->v.id).toList();Map<String,FactRows.Link> links=new HashMap<>();
+            if(!relationIds.isEmpty())for(var row:mapper.getLinks(relationIds))links.put(row.id,row);
+            for(var row:rows)out.put(row.id,hydrate(row,entities.get(row.entityKey),sources.getOrDefault(row.id,List.of()),links.get(row.id)));
+        }return out;
+    }
+    private Map<String,Object> hydrate(FactRows.Occurrence row,FactRows.Entity entity,List<FactRows.Source> sourceRows,FactRows.Link link){
+        String id=row.id;if(entity==null)throw new IllegalStateException("FACT_ENTITY_MISSING");
         if(!row.projectId.equals(entity.projectId)||!row.engineKey.equals(entity.engineKey))throw new IllegalStateException("FACT_ENTITY_SCOPE_MISMATCH");
-        List<Map<String,Object>> sources=new ArrayList<>();for(FactRows.Source s:mapper.sources(id)){
+        List<Map<String,Object>> sources=new ArrayList<>();for(FactRows.Source s:sourceRows){
             if(!row.projectId.equals(s.projectId)||!row.engineKey.equals(s.engineKey))throw new IllegalStateException("FACT_SOURCE_SCOPE_MISMATCH");
             sources.add(map("id",s.sourceId,"projectId",s.projectId,"documentHash",s.documentHash,"documentVersion",s.documentVersion,"parserFingerprint",s.parserFingerprint,"sourceFingerprint",s.sourceFingerprint,
                 "evidence",map("documentId",s.documentId,"documentName",s.documentName,"page",s.locationNumber,"locationType",s.locationType,"quote",s.quote,"anchor",s.anchor,"confidence",s.confidence)));
@@ -27,7 +41,7 @@ public class RelationalFactRepository implements FactRepository {
         Map<String,Object> identity=object(row.entityAuditJson);identity.put("id",entity.entityId);identity.put("type",entity.entityType);identity.put("identityStrength",entity.identityStrength);
         Map<String,Object> result=map("id",id,"occurrenceId",id,"projectId",row.projectId,"engineIdentity",row.engineIdentity,"fact",fact,"sources",sources,"entity",identity,"layoutIdentity",row.layoutIdentity,"createdAt",row.createdAt,"ledgerVersion",row.ledgerVersion,"sourceDomain",row.sourceDomain,"extractionMethod",row.extractionMethod);
         if(Set.of("RELATION","PERSON_ROLE").contains(row.kind)){
-            FactRows.Link link=mapper.getLink(id);if(link==null||!row.projectId.equals(link.projectId)||!row.engineKey.equals(link.engineKey))throw new IllegalStateException("FACT_RELATION_MISSING");
+            if(link==null||!row.projectId.equals(link.projectId)||!row.engineKey.equals(link.engineKey))throw new IllegalStateException("FACT_RELATION_MISSING");
             result.put("relation",map("id",link.id,"kind",link.kind,"subject",row.subject,"field",link.predicate,"predicate",link.predicate,"object",link.object,"scope",link.scope,"resolution",link.resolution,"value",row.value,"attributes",object(link.attributesJson),"entityId",entity.entityId));
         }
         return result;

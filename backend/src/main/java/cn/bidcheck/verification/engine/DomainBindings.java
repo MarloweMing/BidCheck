@@ -12,11 +12,18 @@ final class DomainBindings {
     private DomainBindings() {}
     private static final Set<String> ROLE_TO_NAME=Set.of("为","是","名称","对应主体","成员名称","：",":");
     private static final Set<String> NAME_TO_ROLE=Set.of("身份","角色","成员角色","作为","担任","为","是","拟在本合同任职","在本项目中担任职务","在本项目担任职务");
-    private static final Pattern CERT_NUMBER=Pattern.compile("(?:证书编号|证书号码|注册编号|注册证号|资格证号|证件号码|证号)\\s*[:：]\\s*([^\\s;；，,。|<>]{2,80})");
-    private static final Pattern VALIDITY_FIELD=Pattern.compile("注册有效期|使用有效期|证书有效期|资格有效期|有效截止日期|有效期限|有效期至|有效期");
+    private static final Pattern CERT_NUMBER=Pattern.compile("(?:证书编号|证书号码|注册编号|注册证号|资格证号|(?<![\\p{IsHan}])证号|(?<![\\p{IsHan}])编号)\\s*[:：]\\s*([^\\s;；，,。|<>]{2,80})");
+    private static final Pattern VALIDITY_FIELD=Pattern.compile("注册有效期|使用有效期|证书有效日期|证书有效期|资格有效期|有效截止日期|有效期限|有效期至|有效期");
     static boolean role(String value){return memberSelector(value)||PersonnelRoles.known(value);}
     static boolean memberSelector(String value){return clean(value).matches("(?:本项目|本次)?(?:联合体成员(?:单位)?|(?:联合体)?(?:各成员|所有成员|全部成员))");}
     static boolean known(String value){return !value.isBlank()&&!Set.of("UNKNOWN","UNRESOLVED","未知","待确认","未明确","-","/").contains(value);}
+    /** Only three named management-system certifications admit the optional document suffix. */
+    static boolean sameCertificateCategory(String actual,String required){
+        if(actual.equals(required))return true;
+        if(CertificateEvidenceRecords.category(actual).equals(CertificateEvidenceRecords.category(required)))return true;
+        String a=clean(actual),b=clean(required),known="(?:质量管理体系|职业健康安全管理体系|环境管理体系)认证(?:证书)?";
+        return a.matches(known)&&b.matches(known)&&a.replaceFirst("证书$","").equals(b.replaceFirst("证书$",""));
+    }
     static List<Fact> roleLinks(String selector,List<Fact> facts,EvidenceCorpus corpus){
         if(!role(selector))return List.of();
         return facts.stream().filter(f->f.scope().equals("CURRENT_PROJECT")&&currentRoleSource(f,corpus.byId))
@@ -75,9 +82,9 @@ final class DomainBindings {
                     &&!line.matches(".*(?:拟聘|拟录用|中标后|不属于|未建立|不存在|非本单位|不受聘|未受聘|未聘用|不聘用|不任职|未任职|不是|并非).*"))))return "EMPLOYMENT_RELATION_UNPROVEN";
         }
         if(Set.of("CERTIFICATE","DATE_RANGE").contains(f.kind())){
-            boolean structured=structuredCertificate(f,sources,layout);
+            boolean structured=structuredCertificate(f,sources,layout)||CertificateRecordBindings.matches(f,sources);
             for(String key:List.of("category","number","numberField","employer"))if(!structured&&known(str(f.attributes(),key))
-                &&refs.stream().noneMatch(s->contains(subjectBlock(s.evidence().quote(),f.subject()),str(f.attributes(),key))))return "CERTIFICATE_IDENTITY_FIELD_UNPROVEN";
+                &&refs.stream().noneMatch(s->contains(certificateBlock(s.evidence().quote(),f),str(f.attributes(),key))))return "CERTIFICATE_IDENTITY_FIELD_UNPROVEN";
             if(!structured&&certificateIdentity(f)&&refs.stream().noneMatch(s->certificateIdentityBound(f,s.evidence().quote())))return "CERTIFICATE_IDENTITY_BLOCK_AMBIGUOUS";
             String start=str(f.attributes(),"start"),end=str(f.attributes(),"end");
             if(!start.isBlank()||!end.isBlank()){
@@ -116,13 +123,13 @@ final class DomainBindings {
         // Multiple identical price labels in one unstructured record cannot establish a single row.
         int first=block.indexOf(f.basis());return first<0||block.indexOf(f.basis(),first+f.basis().length())>=0?"":block;
     }
-    private static boolean certificateIdentityBound(Fact f,String text){String local=subjectBlock(text,f.subject());
+    private static boolean certificateIdentityBound(Fact f,String text){String local=certificateBlock(text,f);
         if(!contains(local,str(f.attributes(),"category"))||!contains(local,str(f.attributes(),"number"))||!near(local,str(f.attributes(),"numberField"),str(f.attributes(),"number")))return false;
         Set<String> numbers=new HashSet<>();Matcher numbered=CERT_NUMBER.matcher(local);while(numbered.find())numbers.add(clean(numbered.group(1)));
         return numbers.size()<=1&&(numbers.isEmpty()||numbers.contains(clean(str(f.attributes(),"number"))));
     }
     private static boolean certificateDateBound(Fact f,String text,String field,String start,String end){
-        String local=subjectBlock(text,f.subject());if(local.isBlank()||field.isBlank())return false;
+        String local=certificateBlock(text,f);if(local.isBlank()||field.isBlank())return false;
         String number=str(f.attributes(),"number");Set<String> numbers=new HashSet<>();Matcher numbered=CERT_NUMBER.matcher(local);while(numbered.find())numbers.add(clean(numbered.group(1)));
         if(numbers.size()>1||known(number)&&!contains(local,number))return false;
         String category=str(f.attributes(),"category");if(known(category)&&!contains(local,category))return false;
@@ -146,7 +153,8 @@ final class DomainBindings {
     static boolean certificateIdentity(Fact f){return known(f.subject())&&!role(f.subject())&&known(str(f.attributes(),"category"))&&known(str(f.attributes(),"number"))&&known(str(f.attributes(),"numberField"));}
     static boolean validityField(String value){return VALIDITY_FIELD.matcher(value).matches();}
     static Set<String> validityFields(Fact f,Map<String,Source> sources,List<Map<String,Object>> layout){Set<String> labels=new LinkedHashSet<>();
+        labels.addAll(CertificateRecordBindings.validityFields(f,sources));if(!labels.isEmpty())return labels;
         if(structuredCertificate(f,sources,layout)){var binding=LayoutBinding.structure(f,layout,sources);for(var row:binding.rows())for(String field:row.fields().keySet())if(field.startsWith("DATE:")&&validityField(field.substring(5)))labels.add(field.substring(5));return labels;}
-        for(String id:f.sourceIds()){Source source=sources.get(id);if(source==null||!certificateIdentityBound(f,source.evidence().quote()))continue;Matcher matcher=VALIDITY_FIELD.matcher(subjectBlock(source.evidence().quote(),f.subject()));while(matcher.find())labels.add(matcher.group());}
+        for(String id:f.sourceIds()){Source source=sources.get(id);if(source==null||!certificateIdentityBound(f,source.evidence().quote()))continue;Matcher matcher=VALIDITY_FIELD.matcher(certificateBlock(source.evidence().quote(),f));while(matcher.find())labels.add(matcher.group());}
         return labels;}
 }

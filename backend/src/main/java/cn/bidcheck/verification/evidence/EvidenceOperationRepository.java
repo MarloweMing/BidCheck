@@ -16,6 +16,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
+import org.springframework.dao.DuplicateKeyException;
 
 /**
  * Durable cache identity and single-flight coordinator for evidence-producing operations.
@@ -217,15 +218,31 @@ public final class EvidenceOperationRepository {
     }
 
     private boolean tryClaim(String projectId,String operationKey,String owner,long now,long until){
+        return EvidenceLeaseClaimRetry.execute(projectId,operationKey,()->{
+            long claimNow=Math.max(now,System.currentTimeMillis());
+            return tryClaimOnce(projectId,operationKey,owner,claimNow,safeUntil(claimNow,until-now));
+        });
+    }
+    private boolean tryClaimOnce(String projectId,String operationKey,String owner,long now,long until){
         EvidenceOperationLeaseRow row=new EvidenceOperationLeaseRow();row.operationKey=operationKey;row.projectId=projectId;
         row.owner=owner;row.acquiredAt=now;row.leaseUntil=until;
         try{if(store.mapper().tryInsertEvidenceOperationLease(row)==1)return true;}
         catch(RuntimeException collision){
             // A plain INSERT can still lose a race on databases without INSERT IGNORE. Treat it as
             // contention only when the winning row is visible; genuine database failures propagate.
+            if(!duplicateKey(collision))throw collision;
             if(store.mapper().evidenceOperationLease(operationKey)==null)throw collision;
         }
         return store.mapper().takeOverEvidenceOperationLease(operationKey,projectId,owner,now,until)==1;
+    }
+    private static boolean duplicateKey(Throwable error){
+        Set<Throwable> seen=Collections.newSetFromMap(new IdentityHashMap<>());
+        for(Throwable next=error;next!=null&&seen.add(next);next=next.getCause()){
+            if(next instanceof DuplicateKeyException)return true;
+            // Direct MyBatis sessions (including offline integration tests) retain the JDBC cause.
+            if(next instanceof java.sql.SQLException sql&&(sql.getErrorCode()==1062||"23505".equals(sql.getSQLState())))return true;
+        }
+        return false;
     }
 
     private static long safeUntil(long now,long duration){return Long.MAX_VALUE-now<duration?Long.MAX_VALUE:now+duration;}

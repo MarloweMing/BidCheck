@@ -20,4 +20,8 @@ class FocusedPurposeRoutingTest {
         assertTrue(evaluator.supports(cp("承诺书正文完整性","提交承诺书正文，格式末尾标有（盖章）。")));
     }
     @Test void fullDocumentConsistencyKeepsItsDedicatedScanner(){assertFalse(evaluator.supports(cp("整份投标文件全文一致性检查","核对全文中的项目名称和报价。")));}
+    @Test void typedDurationUsesSameAtomicExecutorAsSemanticDuration(){
+        assertTrue(evaluator.supports(new Checkpoint("duration","工期要求","商务","HIGH","VALUE_COMPARE","duration","<=","60","日",true,true,true,null)));
+        assertFalse(evaluator.supports(new Checkpoint("count","历史业绩数量","评分","HIGH","VALUE_COMPARE","contractCount",">=","3","个",true,true,true,null)));
+    }
 }

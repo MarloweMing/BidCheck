@@ -7,7 +7,7 @@ import java.util.*;
 
 /** Lossless transport projection only. Server rules and source verification never use model-created references. */
 final class ModelWirePayload {
-    static final String VERSION="verification-wire-1-shared-source-context";
+    static final String VERSION="verification-wire-2-facts-only-context";
     private static final String REF="$sourceContextRef";
     private static final ObjectMapper JSON=new ObjectMapper();
     private ModelWirePayload(){}
@@ -23,7 +23,7 @@ final class ModelWirePayload {
         envelope.set("input",project(original,repeated));
         if(!repeated.isEmpty()){
             ObjectNode wire=envelope.putObject("wireFormat");wire.put("version",VERSION);
-            wire.put("instructions","$sourceContextRef 是服务器对完全相同的招标来源上下文所作的无损引用，按 sourceContexts 中对应键展开后理解原有规则；每个上下文的文档身份、版本、位置与原文均须保留。字典只作招标要求来源，不是投标证据；EXTRACT 事实仍只能引用 input.sources 的实际 sourceId。按现有响应 schema 返回完整业务规则/事实，无需回传服务器来源上下文或校验元数据，不得输出引用对象、改换来源或省略义务。");
+            wire.put("instructions","$sourceContextRef 是服务器对完全相同的招标来源上下文所作的无损引用，按 sourceContexts 中对应键展开后理解原有规则；每个上下文的文档身份、版本、位置与原文均须保留。字典只作招标要求来源，不是投标证据；EXTRACT 事实仍只能引用 input.sources 的实际 sourceId。只返回符合响应 schema 的事实，不输出规则或业务结论；无需回传服务器来源上下文或校验元数据，不得输出引用对象或改换来源。");
             ObjectNode dictionary=wire.putObject("sourceContexts");contexts.forEach((id,value)->{if(repeated.contains(id))dictionary.set(id,value.deepCopy());});
         }
         return envelope;

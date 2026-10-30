@@ -36,6 +36,16 @@ class ExternalCheckRecoveryTest {
         assertFalse(outcome.recomputed());assertSame(before,outcome.finding());assertEquals(0,publishes.get());assertEquals(0,evaluations.get());
     }
 
+    @Test void authenticatedPartialRecordIsPersistedAndRecomputedWithoutClaimingConclusion(){
+        Map<String,Object> partial=new java.util.LinkedHashMap<>(trustedRecord());partial.put("coverageComplete",false);partial.put("result",Map.of("status","INCONCLUSIVE","facts",List.of()));
+        List<Map<String,Object>> saved=new ArrayList<>();Finding before=finding("UNDETERMINED");AtomicInteger calls=new AtomicInteger();
+        var outcome=ExternalCheckRecovery.execute(List.of(),List.of(partial),saved::addAll,()->Map.of("externalRecords",saved),context->{calls.incrementAndGet();return before;},before);
+        assertTrue(outcome.recomputed());assertEquals(1,calls.get());assertEquals(List.of(partial),saved);assertEquals("UNDETERMINED",outcome.finding().evaluation().status());
+        partial.put("result",Map.of("status","NOT_FOUND","facts",List.of()));saved.clear();
+        var invalid=ExternalCheckRecovery.execute(List.of(),List.of(partial),saved::addAll,()->Map.of("externalRecords",saved),context->{fail("partial negative must not be accepted");return before;},before);
+        assertFalse(invalid.recomputed());assertTrue(saved.isEmpty());
+    }
+
     private static Finding finding(String status){
         Checkpoint checkpoint=new Checkpoint("cp","失信记录核验","资格检查","HIGH","SEMANTIC_RESPONSE","dishonestJudgmentDebtor","=","false","",true,true,true,null);
         return new Finding("finding","run",checkpoint,new Evaluation(status,"规则计算结果","",List.of(),0,"FOCUSED_ATOMIC_RULES"),Map.of());

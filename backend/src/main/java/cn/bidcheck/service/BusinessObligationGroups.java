@@ -33,8 +33,8 @@ public final class BusinessObligationGroups {
                 "mergeMethod",merged?(tender==null?"SAME_SOURCE_EXACT":"FROZEN_TENDER_EQUIVALENT"):"UNMERGED",
                 "identityDimensions",signature.dimensions(),"occurrences",members.stream().map(f->signatures.get(f.id()).occurrence()).toList(),
                 "explanation",merged?(tender==null?"同一来源位置的严格等价展示；缺少冻结文档时不跨章节合并。":"已核对冻结招标原文，义务、适用主体、标段、资格/评分用途及全部限定条件相同；允许合并展示，逐项结论仍分别保留。"):signature.reason(),
-                "executionReusable",false,
-                "boundary","仅合并同义同范围的展示；原检查项、来源、自动判断及人工记录分别保留。"));
+                "executionReusable",false,"evidenceInvestigationReusable",merged&&tender!=null,"businessDecisionReusable",false,
+                "boundary","冻结原文证明完全等价时可以只执行一次证据调查；每个原检查项仍用自己的规则树重新计算，结论及人工记录分别保留。"));
         }
         return List.copyOf(result);
     }
@@ -46,7 +46,8 @@ public final class BusinessObligationGroups {
             items.add(BidService.fields("resultId",finding.id(),"checkpointId",finding.checkpoint().id(),"eligible",s.eligible(),
                 "candidateIdentity",s.eligible()?BidService.stableId(BusinessObligationIdentity.VERSION+":"+s.key()):"",
                 "reason",s.reason(),"dimensions",s.dimensions(),"occurrence",s.occurrence()));}
-        return BidService.fields("identityVersion",BusinessObligationIdentity.VERSION,"items",List.copyOf(items),"executionReusable",false);
+        return BidService.fields("identityVersion",BusinessObligationIdentity.VERSION,"items",List.copyOf(items),"executionReusable",false,
+            "evidenceInvestigationReusable",tender!=null,"businessDecisionReusable",false);
     }
 
     private static String identity(Finding finding) {

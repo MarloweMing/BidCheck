@@ -13,10 +13,14 @@ final class RequirementArtifact {
     static {for(int i=0;i<LOCKS.length;i++)LOCKS[i]=new ReentrantLock(true);}
     final RunSession session;final Map<String,Object> request;final ReentrantLock lock;
     RequirementArtifact(RunSession session,Map<String,Object> input,RequirementSourceContext.Context source){
+        this(session,input,source,false);
+    }
+    RequirementArtifact(RunSession session,Map<String,Object> input,RequirementSourceContext.Context source,boolean serverOwned){
         this.session=session;Map<String,Object> semantic=new LinkedHashMap<>(input);semantic.remove("title");
-        String fingerprint=session.fingerprint("COMPILE",semantic);
-        request=new LinkedHashMap<>(source.identity());request.put("schemaVersion",VERSION);request.put("compilerPolicyVersion",CompilationRecovery.VERSION);
-        request.put("modelIdentity",session.model.identity());request.put("inputFingerprint",fingerprint);
+        String policy=CompilationRecovery.VERSION+(serverOwned?":"+DeterministicRequirementCompiler.VERSION:"");
+        String fingerprint=serverOwned?identity(policy+canonical(semantic)):session.fingerprint("COMPILE",semantic);
+        request=new LinkedHashMap<>(source.identity());request.put("schemaVersion",VERSION);request.put("compilerPolicyVersion",policy);
+        request.put("modelIdentity",serverOwned?"SERVER_OWNED":session.model.identity());request.put("inputFingerprint",fingerprint);
         request.put("artifactId",identity(canonical(request)));lock=LOCKS[(request.get("artifactId").hashCode()&Integer.MAX_VALUE)%LOCKS.length];
     }
     boolean enabled(){return request.containsKey("documentHash")&&session.context.get("requirementArtifactLookup") instanceof Function<?,?>&&session.context.get("requirementArtifactPublisher") instanceof Consumer<?>;}
@@ -25,11 +29,15 @@ final class RequirementArtifact {
         if(!enabled())return Map.of();Object value=((Function<Map<String,Object>,Map<String,Object>>)session.context.get("requirementArtifactLookup")).apply(Map.copyOf(request));
         if(!(value instanceof Map<?,?> raw))return Map.of();Map<String,Object> saved=new LinkedHashMap<>();raw.forEach((k,v)->saved.put(String.valueOf(k),v));
         if(request.entrySet().stream().anyMatch(e->!Objects.equals(e.getValue(),saved.get(e.getKey()))))return Map.of();
-        if(!Set.of("VALIDATED","UNRESOLVED","REPAIR_RETRY_PENDING").contains(str(saved,"state"))||!(saved.get("rawResponse") instanceof Map<?,?>))return Map.of();return saved;
+        if(!Set.of("VALIDATED","UNRESOLVED","REPAIR_RETRY_PENDING").contains(str(saved,"state"))||!(saved.get("rawResponse") instanceof Map<?,?>))return Map.of();
+        if("SERVER_OWNED".equals(request.get("modelIdentity"))&&!identity(canonical(saved.get("rawResponse"))).equals(str(saved,"responseDigest")))return Map.of();
+        return saved;
     }
     @SuppressWarnings("unchecked") void publish(JsonNode raw,Plan plan,boolean repairFailed,int repairs){
         if(!enabled())return;Map<String,Object> artifact=new LinkedHashMap<>(request);artifact.put("state",repairFailed?"REPAIR_RETRY_PENDING":CompilationRecovery.diagnostics(plan).isEmpty()?"VALIDATED":"UNRESOLVED");
         artifact.put("rawResponse",session.json.convertValue(raw,Map.class));artifact.put("validationAudit",session.compilationAudit);artifact.put("repairAttempts",repairs);artifact.put("createdAtEpochMillis",now());
+        artifact.put("responseDigest",identity(canonical(artifact.get("rawResponse"))));
+        artifact.put("deterministicCompilation",plan.requirementScope().getOrDefault("deterministicCompilation",Map.of()));
         if(repairFailed)artifact.put("retryNotBeforeEpochMillis",now()+60_000L);
         ((Consumer<Map<String,Object>>)session.context.get("requirementArtifactPublisher")).accept(Map.copyOf(artifact));
     }

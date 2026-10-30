@@ -27,6 +27,11 @@ class RecoveryTargetsTest {
         assertEquals(List.of(target,sibling),RecoveryTargets.select(List.of(parent,unrelated),List.of(target,sibling,unrelated),targeted("parent")));
         assertEquals(List.of(target),RecoveryTargets.select(List.of(parent,unrelated),List.of(target,sibling,unrelated),targeted("target")));
     }
+    @Test void localRecomputeDoesNotExpandChangedDependenciesToEveryUnresolvedMaterial(){
+        Rule target=rule("certificate","CERTIFICATE","设计负责人","注册证书"),role=rule("role","PERSON_ROLE","设计负责人",""),unrelated=rule("other","MATERIAL","设计负责人","另一份证明");
+        Map<String,Object> context=linked("recoveryMode","RECOMPUTE_ONLY","recoveryModelAllowed",false,"recoveryStrategy","VERIFY_SOURCE_PAGES","recoveryTargetObligationIds",List.of("certificate"));
+        assertEquals(List.of(target,role),RecoveryTargets.select(List.of(target,role,unrelated),List.of(target,role,unrelated),context));
+    }
     @Test void conditionalTargetRetainsTheApplicabilityProofAndParentOwnPredicate(){
         Rule gate=rule("gate","PERSON_ROLE","设计负责人",""),target=rule("target","CERTIFICATE","设计负责人","注册证书"),other=rule("otherwise","MATERIAL","","替代证明");
         Rule parent=new Rule("parent","复合要求","MATERIAL","设计负责人","material","EXISTS","资格材料","",Map.of(),"条件要求","CONDITIONAL",List.of(gate,target,other));

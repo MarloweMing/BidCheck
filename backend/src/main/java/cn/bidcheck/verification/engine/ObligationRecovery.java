@@ -16,7 +16,7 @@ final class ObligationRecovery {
         }).toList();
     }
     static List<Map<String,Object>> actions(Plan plan,Map<String,Decision> decisions,List<Source> candidates,RunSession session){
-        List<Map<String,Object>> out=new ArrayList<>();String base=identity(VERSION+CompilationRecovery.VERSION+session.scope+plan.logic()+plan.rules().stream().map(SharedFactReuse::signature).toList()+plan.issues()+candidates.stream().map(Source::id).toList());
+        List<Map<String,Object>> out=new ArrayList<>();String base=identity(VERSION+CompilationRecovery.VERSION+RequirementRepairPolicy.versions()+session.scope+plan.requirementScope().getOrDefault("requirementRevisions",Map.of())+plan.logic()+plan.rules().stream().map(SharedFactReuse::signature).toList()+plan.issues()+candidates.stream().map(Source::id).toList());
         for(Map<String,Object> diagnostic:CompilationRecovery.diagnostics(plan))add(out,"REPAIR_REQUIREMENT",str(diagnostic,"reasonCode"),str(diagnostic,"obligationId"),str(diagnostic,"need"),base);
         if(plan.method().equals("SCOPE_UNRESOLVED"))add(out,"RESTORE_REQUIREMENT_SOURCE","REQUIREMENT_SCOPE_UNRESOLVED","",String.join("；",plan.issues()),base);
         for(Decision d:decisions.values())for(Gap gap:d.gaps()){
@@ -26,10 +26,14 @@ final class ObligationRecovery {
             if(RecoveryFailureRouting.requirement(gap.code())){
                 add(out,"REPAIR_REQUIREMENT",gap.code(),d.id(),gap.description(),base);continue;
             }
-            String strategy=gap.code().contains("VISUAL")?"OBSERVE_SOURCE_PAGE":gap.code().contains("EXTERNAL")?"RESOLVE_EXTERNAL_RECORD":gap.code().contains("SUBJECT")||gap.code().contains("IDENTITY")?"RESOLVE_SUBJECT":gap.code().contains("APPLICABILITY")||gap.code().contains("INPUT")?"RESOLVE_APPLICABILITY":"RETRIEVE_EVIDENCE";
+            String strategy=switch(RecoveryFailureRouting.owner(gap.code())){
+                case "SOURCE_IMAGE"->"OBSERVE_SOURCE_PAGE";case "EXTERNAL"->"RESOLVE_EXTERNAL_RECORD";
+                case "RELATIONSHIP"->"RESOLVE_SUBJECT";case "APPLICABILITY"->"RESOLVE_APPLICABILITY";
+                case "EXPERT_REVIEW"->"REVIEW_QUALITY_GRADE";case "REQUIREMENT_CLARIFICATION"->"CLARIFY_REQUIREMENT_SOURCE";
+                case "PROCESSING"->"RETRY_FAILED_STEP";default->"RETRIEVE_EVIDENCE";};
             add(out,strategy,gap.code(),d.id(),gap.description(),base);
         }
-        for(Map<String,Object> failure:RuleEvaluator.maps(session.diagnostics().get("failures")))if(!Boolean.TRUE.equals(failure.get("recoveredByRetry"))){
+        for(Map<String,Object> failure:RuleEvaluator.maps(session.diagnostics().get("failures")))if(!Boolean.TRUE.equals(failure.get("recoveredByRetry"))&&!Boolean.TRUE.equals(failure.get("transportRecovered"))){
             String strategy="EXTRACT".equals(failure.get("stage"))&&Boolean.TRUE.equals(failure.get("splittable"))?"SPLIT_FAILED_REQUEST":Boolean.TRUE.equals(failure.get("retryable"))?"RETRY_FAILED_STEP":"RESTORE_SERVICE";
             add(out,strategy,str(failure,"errorCode"),"",str(failure,"stage"),base);
         }
@@ -37,8 +41,9 @@ final class ObligationRecovery {
     }
     private static void add(List<Map<String,Object>> out,String strategy,String code,String id,String need,String base){
         String fp=identity(base+strategy+code+id+need);if(out.stream().anyMatch(row->fp.equals(row.get("inputFingerprint"))))return;
-        Map<String,Object> action=linked("strategy",strategy,"reasonCode",code,"obligationId",id,"need",need,"inputFingerprint",fp);
-        if("REPAIR_REQUIREMENT".equals(strategy))action.putAll(linked("executionMode","RECOMPUTE_ONLY","modelRequestsAllowed",false,"businessProof",false));
+        Map<String,Object> action=linked("strategy",strategy,"reasonCode",code,"gapOwner",RecoveryFailureRouting.owner(code),"obligationId",id,"need",need,"inputFingerprint",fp);
+        if(RequirementRepairPolicy.requirementWork(strategy))action.putAll(linked("executionMode","RESTORE_REQUIREMENT_SOURCE".equals(strategy)?"RESTORE_REQUIREMENT_SOURCE":"RECOMPILE_REQUIREMENT",
+            "requirementRevisions",RequirementRepairPolicy.versions(),"modelRequestsAllowed",false,"businessProof",false));
         out.add(action);
     }
 }

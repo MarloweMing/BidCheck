@@ -54,8 +54,17 @@ final class MappedSectionScope {
                          String sectionPath, List<Map<String, Object>> anchors) { }
 
     private final Map<Integer, Proof> approved = new HashMap<>();
+    private final boolean certificateConsumer;
 
     MappedSectionScope(Document document) {
+        this(document,false);
+    }
+
+    /** This resolver is never installed as the general document/person scope. */
+    static MappedSectionScope forCertificateConsumer(Document document){return new MappedSectionScope(document,true);}
+
+    private MappedSectionScope(Document document,boolean certificateConsumer) {
+        this.certificateConsumer=certificateConsumer;
         if (document == null || !"BID".equalsIgnoreCase(document.role())
                 || document.pages() == null || document.pages().isEmpty()) return;
 
@@ -77,9 +86,11 @@ final class MappedSectionScope {
 
         for (Navigation entry : navigation) {
             if (byPath.getOrDefault(entry.path(), List.of()).size() != 1 || excludedTitle(entry.title())) continue;
+            if(certificateConsumer&&!entry.title().matches(".*(?:质量管理体系|职业健康安全管理体系|环境管理体系)认证(?:证书)?"))continue;
             Navigation parent = entry.parentPath().isBlank() ? null
                     : unique(byPath.getOrDefault(entry.parentPath(), List.of()));
-            if (parent != null && (excludedTitle(parent.title()) || !bodyMapped(parent, pages.get(parent.page()))))
+            boolean recognizedParent=certificateConsumer&&parent!=null&&recognizedSamePageParent(parent,entry,pages.get(parent.page()));
+            if (parent != null && (excludedTitle(parent.title()) || !bodyMapped(parent, pages.get(parent.page()))&&!recognizedParent))
                 continue;
             // A parenthesized child without a unique numbered parent is structurally ambiguous.
             if ("PAREN".equals(entry.kind()) && parent == null) continue;
@@ -114,8 +125,8 @@ final class MappedSectionScope {
                     cover.project() + " / " + cover.number() + " / " + cover.bidder()));
             if (parent != null) {
                 anchors.add(anchor(parent.source(), "UNIQUE_PARENT_NAVIGATION", parent.quote()));
-                anchors.add(anchor(pages.get(parent.page()), "MAPPED_PARENT_BODY_TITLE",
-                        headingQuote(pages.get(parent.page()))));
+                anchors.add(anchor(pages.get(parent.page()), recognizedParent?"MAPPED_PARENT_RECOGNIZED_TITLE_WITH_NATIVE_CHILD":"MAPPED_PARENT_BODY_TITLE",
+                        recognizedParent?recognizedHeadingQuote(pages.get(parent.page())):headingQuote(pages.get(parent.page()))));
             }
             anchors.add(anchor(entry.source(), "UNIQUE_SECTION_NAVIGATION", entry.quote()));
             anchors.add(anchor(first, "MAPPED_SECTION_BODY_TITLE_AND_PRINTED_PAGE", headingQuote(first)));
@@ -145,7 +156,7 @@ final class MappedSectionScope {
                 "sectionStart", proof.first(),
                 "sectionEnd", proof.last(),
                 "anchors", proof.anchors(),
-                "derivedBy", "SERVER_MAPPED_SECTION_SCOPE",
+                "derivedBy", certificateConsumer?"SERVER_MAPPED_CERTIFICATE_SECTION_SCOPE":"SERVER_MAPPED_SECTION_SCOPE",
                 "boundary", "仅证明目录映射且由下一同级正文限定的当前投标章节；不证明人员归属、证书有效、签章真实性或业务条件满足"
         );
     }
@@ -206,6 +217,24 @@ final class MappedSectionScope {
         String expected = heading(navigation.label() + navigation.title());
         return nativeText(page.text()).lines().map(String::strip).filter(line -> !line.isBlank())
                 .limit(10).map(MappedSectionScope::heading).anyMatch(expected::equals);
+    }
+
+    private static boolean recognizedSamePageParent(Navigation parent,Navigation child,Page page){
+        if(page==null||parent.page()!=child.page()||!"PAREN".equals(child.kind())||!bodyMapped(child,page))return false;
+        String original=Objects.toString(page.text(),"");int marker=original.indexOf("【PDF识别文字】");
+        if(marker<0||original.indexOf("【PDF识别文字】",marker+1)>=0)return false;
+        List<String> recognized=original.substring(marker+"【PDF识别文字】".length()).lines().map(String::strip).filter(line->!line.isBlank())
+                .map(line->line.replaceFirst("^[#*\\s]+","").replaceFirst("[*\\s]+$","")).map(MappedSectionScope::heading).toList();
+        String expectedParent=heading(parent.label()+parent.title()),expectedChild=heading(child.label()+child.title());
+        return recognized.size()>=2&&recognized.get(0).equals(expectedParent)&&recognized.get(1).equals(expectedChild)
+                &&recognized.stream().filter(expectedParent::equals).count()==1&&recognized.stream().filter(expectedChild::equals).count()==1;
+    }
+
+    private static String recognizedHeadingQuote(Page page){
+        String original=Objects.toString(page.text(),"");int marker=original.indexOf("【PDF识别文字】");if(marker<0)return "";
+        String recognized=original.substring(marker+"【PDF识别文字】".length());Matcher lines=Pattern.compile("[^\\r\\n]+").matcher(recognized);int count=0;
+        while(lines.find())if(!lines.group().isBlank()&&++count==2)return recognized.substring(0,lines.end());
+        return "";
     }
 
     private static boolean printedMatches(Page page) {

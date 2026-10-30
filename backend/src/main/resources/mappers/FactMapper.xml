@@ -46,6 +46,7 @@
   <result property="extractionMethod" column="extraction_method" javaType="java.lang.String"/>
  </resultMap>
  <select id="getOccurrence" resultMap="Occurrence">SELECT * FROM qc_fact_occurrence WHERE id=#{id}</select>
+ <select id="getOccurrences" resultMap="Occurrence">SELECT * FROM qc_fact_occurrence WHERE id IN <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach></select>
  <select id="existingOccurrenceIds" resultType="java.lang.String">SELECT id FROM qc_fact_occurrence WHERE id IN <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach></select>
  <select id="getEntities" resultMap="Entity">SELECT * FROM qc_entity WHERE id IN <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach></select>
  <insert id="insertOccurrence">INSERT INTO qc_fact_occurrence(id,project_id,engine_key,engine_identity,entity_key,kind,subject_text,field_name,field_hash,raw_value,normalized_value,unit,basis,scope_type,model_fact_id,attributes_json,entity_audit_json,layout_identity,created_at,ledger_version,document_id,document_version,document_hash,content_hash,source_domain,extraction_method) VALUES(#{id},#{projectId},#{engineKey},#{engineIdentity},#{entityKey},#{kind},#{subject},#{field},#{fieldHash},#{rawValue},#{value},#{unit},#{basis},#{scope},#{modelFactId},#{attributesJson},#{entityAuditJson},#{layoutIdentity},#{createdAt},#{ledgerVersion},#{documentId},#{documentVersion},#{documentHash},#{contentHash},#{sourceDomain},#{extractionMethod})</insert>
@@ -84,8 +85,10 @@
   <result property="attributesJson" column="attributes_json" javaType="java.lang.String"/>
  </resultMap>
  <select id="getLink" resultMap="Link">SELECT * FROM qc_entity_link WHERE id=#{id}</select>
+ <select id="getLinks" resultMap="Link">SELECT * FROM qc_entity_link WHERE id IN <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach></select>
  <insert id="insertLink">INSERT INTO qc_entity_link(id,occurrence_id,project_id,engine_key,subject_entity_key,kind,predicate,predicate_hash,object_text,scope_type,resolution,attributes_json) VALUES(#{id},#{occurrenceId},#{projectId},#{engineKey},#{subjectEntityKey},#{kind},#{predicate},#{predicateHash},#{object},#{scope},#{resolution},#{attributesJson})</insert>
  <resultMap id="Source" type="cn.bidcheck.persistence.FactRows$Source">
+  <result property="occurrenceId" column="occurrence_id"/>
   <result property="id" column="id" javaType="java.lang.String"/>
   <result property="projectId" column="project_id" javaType="java.lang.String"/>
   <result property="engineKey" column="engine_key" javaType="java.lang.String"/>
@@ -104,6 +107,7 @@
   <result property="sourceId" column="local_source_id"/><result property="sourceOrder" column="source_order"/>
  </resultMap>
  <select id="sources" resultMap="Source">SELECT e.*, f.source_id AS local_source_id, f.source_order FROM qc_fact_evidence f JOIN qc_evidence e ON e.id=f.evidence_id WHERE f.occurrence_id=#{id} ORDER BY f.source_order</select>
+ <select id="sourcesMany" resultMap="Source">SELECT e.*, f.occurrence_id, f.source_id AS local_source_id, f.source_order FROM qc_fact_evidence f JOIN qc_evidence e ON e.id=f.evidence_id WHERE f.occurrence_id IN <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach> ORDER BY f.occurrence_id,f.source_order</select>
  <insert id="attach">INSERT INTO qc_fact_evidence(occurrence_id,evidence_id,source_id,source_order) VALUES(#{occurrenceId},#{evidenceId},#{sourceId},#{sourceOrder})</insert>
  <insert id="attachBatch">INSERT INTO qc_fact_evidence(occurrence_id,evidence_id,source_id,source_order) VALUES <foreach collection="rows" item="row" separator=",">(#{row.occurrenceId},#{row.evidenceId},#{row.sourceId},#{row.sourceOrder})</foreach></insert>
 <select id="nativeIds" resultType="java.lang.String">SELECT id FROM qc_fact_occurrence WHERE project_id=#{project} AND engine_key=#{engine} AND document_id=#{document} AND document_version=#{version} AND document_hash=#{hash} AND source_domain='NATIVE_FACT' ORDER BY created_at,id</select>

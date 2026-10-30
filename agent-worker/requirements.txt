@@ -1,0 +1,3 @@
+# Runtime dependency set. Install requirements.lock for the tested resolved environment.
+openai-agents==0.24.0
+jsonschema==4.26.0

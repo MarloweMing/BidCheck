@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.io.*;
 import java.net.URI;
 import java.net.http.*;
@@ -24,6 +26,7 @@ import static cn.bidcheck.retrieval.LexicalIndex.*;
 /** Document-isolated exact cosine index, BM25/RRF and real remote reranking. No vector database is implied. */
 @Service
 public class HybridRetriever {
+    private static final Logger LOG = LoggerFactory.getLogger(HybridRetriever.class);
     private static final String POLICY = "hybrid-bm25-cosine-rrf-rerank-1";
     private static final int BATCH = 10, MAX_HITS = 16, RESPONSE_LIMIT = 2 * 1024 * 1024;
     private final boolean requested;
@@ -183,6 +186,10 @@ public class HybridRetriever {
                     "rankingScore", scored.score()));
         }
         audit.values.put("mode", mode); audit.values.put("embeddingCalls", audit.embeddingCalls.get()); audit.values.put("rerankCalls", audit.rerankCalls.get());
+        audit.values.put("vectorSearchExecuted", !audit.denseRanks.isEmpty());
+        audit.values.put("denseCandidateCount", audit.denseRanks.size());
+        audit.values.put("lexicalCandidateCount", audit.lexicalRanks.size());
+        audit.values.put("vectorEnabled", requested);
         audit.values.put("cacheHits", audit.cacheHits); audit.values.put("memoryVectorHits", audit.memoryHits); audit.values.put("cacheInvalid", audit.cacheInvalid);
         audit.values.put("cacheWriteFailures", audit.cacheWriteFailures.get()); audit.values.put("returned", hits.size()); audit.values.put("hits", detail);
         audit.values.putAll(progressSnapshot(audit));
@@ -195,6 +202,11 @@ public class HybridRetriever {
         audit.values.putIfAbsent("denseCoverageComplete", false);
         audit.values.put("scopeBoundary", "仅提供原文位置及检索线索，不确认项目、主体、人员身份或证据真实性。");
         reportProgress(audit);
+        // Never log query text, source text, endpoint credentials or model response bodies.
+        LOG.info("bidcheck.retrieval operation={} scope={} mode={} vectorEnabled={} vectorExecuted={} chunks={} denseCandidates={} lexicalCandidates={} returned={} embeddingCalls={} rerankCalls={} elapsedMs={} failureCode={}",
+                audit.values.get("operation"), audit.values.getOrDefault("scopeFingerprint", ""), mode, requested,
+                !audit.denseRanks.isEmpty(), audit.documentChunks, audit.denseRanks.size(), audit.lexicalRanks.size(), hits.size(),
+                audit.embeddingCalls.get(), audit.rerankCalls.get(), audit.values.get("elapsedMs"), audit.values.getOrDefault("failureCode", ""));
         return new RetrievalResult(hits, mode, audit.values);
     }
 

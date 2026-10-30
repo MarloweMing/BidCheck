@@ -6,6 +6,14 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class BusinessResultPresentationTest {
+    @Test void rejectedFieldEvidenceIsNotAnUnreadOrFailedRequestButExplicitMappingStillNeedsSystemWork(){
+        var field=Map.of("status","FAILED","errorCode","FIELD_VALIDATION_FAILED");
+        var atomic=new LinkedHashMap<String,Object>(Map.of("fieldCoverage",List.of(field)));
+        var p=BusinessResultPresentation.describe(evaluation("UNDETERMINED"),Map.of("atomicCheck",atomic));
+        assertEquals("EVIDENCE_PENDING",p.get("state"));assertEquals("FINISHED",dimension(p,"execution").get("state"));
+        atomic.put("gaps",List.of(Map.of("code","REGISTRATION_EMPLOYER_BINDING_REQUIRED")));
+        assertEquals("SYSTEM_INCOMPLETE",BusinessResultPresentation.describe(evaluation("UNDETERMINED"),Map.of("atomicCheck",atomic)).get("state"));
+    }
     @Test void verifiedSemanticWrittenProofHasSameNarrowScopeAsAtomicDeclaration(){
         var evidence=new cn.bidcheck.domain.Domain.Evidence("bid","投标文件",1,"PAGE","我方承诺遵守相关管理规定。","p1",1);
         var evaluation=new Evaluation("PASS","承诺文字已提供","",List.of(evidence),0,"SEMANTIC");
@@ -83,9 +91,9 @@ class BusinessResultPresentationTest {
         }
         var missing=BusinessResultPresentation.describe(evaluation("UNDETERMINED"),Map.of("atomicCheck",Map.of("gaps",List.of(Map.of("code","REGISTRATION_CERTIFICATE_REQUIRED"))),"ocrReview",Map.of("required",true)));assertEquals("EVIDENCE_PENDING",missing.get("state"));assertEquals(false,missing.get("userActionRequired"));
     }
-    @Test void explicitExternalActionIsSeparatedFromSystemProcessing(){
+    @Test void requestAloneDoesNotProveExternalExecutionOrCreateUserTask(){
         var p=BusinessResultPresentation.describe(evaluation("UNDETERMINED"),Map.of("atomicCheck",Map.of("externalRequests",List.of(Map.of("kind","PLATFORM")))));
-        assertEquals("USER_ACTION",p.get("state"));assertEquals(true,p.get("userActionRequired"));
+        assertEquals("SYSTEM_INCOMPLETE",p.get("state"));assertEquals(false,p.get("userActionRequired"));
     }
     @Test void successfulPublishedResultKeepsSeparateVisualTaskAndRecoveredFailure(){
         var p=BusinessResultPresentation.describe(evaluation("PASS"),Map.of("ocrReview",Map.of("required",true),"adjustments",List.of(Map.of("code","MODEL_TIMEOUT"))));
@@ -116,9 +124,9 @@ class BusinessResultPresentationTest {
             assertEquals("SYSTEM_INCOMPLETE",result.get("state"));assertEquals(false,result.get("userActionRequired"));
         }
     }
-    @Test void explicitUserActionAndVisualOnlyDowngradeRemainVisible(){
+    @Test void unexecutedExternalQueryRemainsSystemWorkWhileVisualOnlyDowngradeRemainsVisible(){
         var external=Map.<String,Object>of("preOcrEvaluation",evaluation("UNDETERMINED"),"atomicCheck",Map.of("externalRequests",List.of(Map.of("kind","PLATFORM"))),"ocrReview",Map.of("required",true));
-        assertEquals("USER_ACTION",BusinessResultPresentation.describe(evaluation("UNDETERMINED"),external).get("state"));
+        assertEquals("SYSTEM_INCOMPLETE",BusinessResultPresentation.describe(evaluation("UNDETERMINED"),external).get("state"));
         var visual=Map.<String,Object>of("preOcrEvaluation",evaluation("PASS"),"ocrReview",Map.of("required",true));
         assertEquals("USER_ACTION",BusinessResultPresentation.describe(evaluation("UNDETERMINED"),visual).get("state"));
     }
@@ -180,9 +188,43 @@ class BusinessResultPresentationTest {
         assertEquals("RISK",BusinessResultPresentation.describe(evaluation("FAIL"),assessment).get("state"));
         assertEquals("报价范围尚未核全",((Map<?,?>)((List<?>)FocusedCheckEvaluator.presentation(atomic).get("issues")).get(0)).get("label"));
     }
+    @Test void permittedDurationResponseIsDisplayedAsUndertakingNotObservedNumber(){
+        var evidence=Map.of("documentId","bid","page",7,"quote","承诺工期为满足");
+        var condition=Map.of("predicate","NUMBER","conditionRole","REQUIREMENT","status","PASS","evaluated",true,"proof",Map.of("proofScope","DURATION_UNDERTAKING_ONLY","numericObservationSynthesized",false),"evidences",List.of(evidence),"gaps",List.of());
+        var assessment=Map.<String,Object>of("atomicCheck",Map.of("complete",true,"gaps",List.of(),"conditions",List.of(condition)));
+        var actual=BusinessResultPresentation.describe(evaluation("PASS"),assessment);
+        assertEquals("SATISFIED",actual.get("state"));assertEquals("工期承诺已响应",actual.get("label"));assertTrue(actual.get("nextStep").toString().contains("未将“满足”转写"));
+        assertEquals("DURATION_UNDERTAKING_ONLY",((Map<?,?>)((Map<?,?>)actual.get("dimensions")).get("proofScope")).get("state"));
+    }
+    @Test void unresolvedFormAndRequirementBindingsRemainSystemOwned(){
+        for(String code:List.of("FORM_TEMPLATE_REFERENCE_REQUIRED","FORM_INSTANCE_AMBIGUOUS","FORM_CONTENT_COVERAGE_REQUIRED","FORM_CONDITION_COVERAGE_REQUIRED","DURATION_REQUIREMENT_SOURCE_REQUIRED","DURATION_REQUIREMENT_FIELD_UNBOUND")){
+            var actual=BusinessResultPresentation.describe(evaluation("UNDETERMINED"),Map.of("atomicCheck",Map.of("gaps",List.of(Map.of("code",code)))));
+            assertEquals("SYSTEM_INCOMPLETE",actual.get("state"),code);assertEquals(false,actual.get("userActionRequired"),code);
+        }
+    }
     @Test void previousHumanReviewIsClearlyHistoricalAndScopedToOriginalFinding(){
         var rows=List.of(Map.<String,Object>of("resultId","parent-f","status","PASS","note","原批次依据","reviewer","审核人","runId","parent-run"));
         assertEquals("",ReportService.inheritedReviewText(rows,"other-f"));assertEquals("",ReportService.inheritedReviewText(rows,""));
         assertTrue(ReportService.inheritedReviewText(rows,"parent-f").contains("未自动套用"));assertTrue(ReportService.inheritedReviewText(rows,null).contains("parent-run"));
+    }
+    @Test void scopedLetterAndConditionalSubmissionKeepTheirLimitedMeaning(){
+        for(var entry:Map.of("QUALITY_UNDERTAKING_ONLY","质量承诺已响应","BID_VALIDITY_UNDERTAKING_ONLY","投标有效期已响应","CONDITIONAL_MATERIAL_SUBMISSION_ONLY","材料提交要求已满足").entrySet()){
+            var condition=Map.of("predicate","DECLARATION","conditionRole","REQUIREMENT","status","PASS","evaluated",true,"proof",Map.of("proofScope",entry.getKey()),"evidences",List.of(Map.of("page",7)),"gaps",List.of());
+            var assessment=Map.<String,Object>of("atomicCheck",Map.of("complete",true,"gaps",List.of(),"conditions",List.of(condition)));
+            var result=BusinessResultPresentation.describe(evaluation("PASS"),assessment);
+            assertEquals("SATISFIED",result.get("state"));assertEquals(entry.getValue(),result.get("label"));
+        }
+    }
+    @Test void completedStructuralScanShowsReviewRatherThanMissingMaterialsButCannotHideFailures(){
+        var reviewGap=Map.of("code","QUALITY_GRADE_REVIEW_REQUIRED");
+        var condition=Map.of("predicate","QUALITY_ADVISORY","conditionRole","REQUIREMENT","status","UNDETERMINED","evaluated",true,
+            "proof",Map.of("decisionBasis","PROGRAM_STRUCTURAL_COVERAGE","coverageComplete",true),"evidences",List.of(Map.of("page",50)),"gaps",List.of(reviewGap));
+        var atomic=Map.<String,Object>of("complete",false,"conditions",List.of(condition),"gaps",List.of(reviewGap));
+        var result=BusinessResultPresentation.describe(evaluation("UNDETERMINED"),Map.of("atomicCheck",atomic));
+        assertEquals("USER_ACTION",result.get("state"));assertEquals("评分档次待评审",result.get("label"));assertTrue(result.get("nextStep").toString().contains("不代表达到最高档"));
+        var failed=new LinkedHashMap<>(atomic);failed.put("gaps",List.of(reviewGap,Map.of("code","MODEL_TIMEOUT")));
+        assertEquals("SYSTEM_INCOMPLETE",BusinessResultPresentation.describe(evaluation("UNDETERMINED"),Map.of("atomicCheck",failed)).get("state"));
+        var unverified=Map.<String,Object>of("gaps",List.of(reviewGap));
+        assertEquals("EVIDENCE_PENDING",BusinessResultPresentation.describe(evaluation("UNDETERMINED"),Map.of("atomicCheck",unverified)).get("state"));
     }
 }

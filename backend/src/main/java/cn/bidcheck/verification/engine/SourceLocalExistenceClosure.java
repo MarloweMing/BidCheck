@@ -16,6 +16,7 @@ final class SourceLocalExistenceClosure {
     private static final Set<String> FALSE_CLAIMS=Set.of("upperBoundProven","exactCountProven","concurrentRolesProven","qualificationCountProven","globalIdentityProven","populationComplete");
 
     static boolean proven(Rule rule,Decision decision,RuleEvaluator evaluator){
+        if(ProgramSourceRead.applies(rule))return ProgramSourceRead.proven(rule,decision,evaluator);
         if(!rule.predicate().equals("PERSON_COUNT")||!rule.children().isEmpty()||!Set.of("","ALL").contains(rule.logic())
             ||!decision.status().equals("PASS")||!decision.gaps().isEmpty()||!rule.id().equals(decision.id())
             ||!PersonCountRequirement.roleConfiguration(rule)||!one(rule.expected()))return false;
@@ -48,7 +49,11 @@ final class SourceLocalExistenceClosure {
             RuleEvaluator.maps(evaluator.context.get("_validatedLayoutCells")));
         if(!verified.rejected().isEmpty()||verified.facts().size()!=1)return false;
         Fact current=verified.facts().get(0);
-        Decision fresh=PersonnelCount.evaluate(rule,new RuleEvaluator(List.of(current),evaluator.corpus,evaluator.context));
+        // Keep the witness first, but do not drop other current facts: they may carry a
+        // conflicting strong identity. A saved local receipt cannot hide fresh counterevidence.
+        List<Fact> currentFacts=new ArrayList<>();currentFacts.add(current);
+        evaluator.facts.stream().filter(f->!f.id().equals(fact.id())&&!f.id().equals(current.id())).forEach(currentFacts::add);
+        Decision fresh=PersonnelCount.evaluate(rule,new RuleEvaluator(currentFacts,evaluator.corpus,evaluator.context));
         if(!fresh.status().equals("PASS")||!fresh.gaps().isEmpty()||!proofShape(rule,fresh.proof()))return false;
         List<Map<String,Object>> refreshed=RuleEvaluator.maps(fresh.proof().get("sourceLocalExistenceWitness"));
         if(refreshed.size()!=1)return false;

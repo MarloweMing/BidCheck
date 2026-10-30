@@ -24,6 +24,8 @@
   <insert id="insertRecord">INSERT INTO qc_record(id,kind,project_id,parent_id,body,created_at) VALUES(#{id},#{kind},#{projectId},#{parentId},#{body},#{createdAt})</insert>
   <insert id="insertRecords">INSERT INTO qc_record(id,kind,project_id,parent_id,body,created_at) VALUES <foreach collection="records" item="record" separator=",">(#{record.id},#{record.kind},#{record.projectId},#{record.parentId},#{record.body},#{record.createdAt})</foreach></insert>
   <select id="get" resultMap="record">SELECT * FROM qc_record WHERE id=#{id}</select>
+  <select id="getMany" resultMap="record">SELECT * FROM qc_record WHERE id IN <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach></select>
+  <select id="listParents" resultMap="record">SELECT * FROM qc_record WHERE kind=#{kind} AND project_id=#{projectId} AND parent_id IN <foreach collection="parentIds" item="id" open="(" separator="," close=")">#{id}</foreach> ORDER BY created_at,id</select>
   <select id="getForUpdate" resultMap="record">SELECT * FROM qc_record WHERE id=#{id} FOR UPDATE</select>
   <select id="list" resultMap="record">SELECT * FROM qc_record WHERE kind=#{kind}<if test="projectId != null"> AND project_id=#{projectId}</if><if test="parentId != null"> AND parent_id=#{parentId}</if> ORDER BY created_at,id</select>
   <select id="count" resultType="long">SELECT COUNT(*) FROM qc_record WHERE kind=#{kind}<if test="projectId != null"> AND project_id=#{projectId}</if><if test="parentId != null"> AND parent_id=#{parentId}</if></select>
@@ -42,8 +44,8 @@
   <update id="clearLease">UPDATE qc_task SET lease_owner=NULL,lease_until=NULL WHERE id=#{id} AND lease_owner=#{owner} AND status &lt;&gt; 'RUNNING'</update>
   <update id="failExhaustedTask">UPDATE qc_task SET status='FAILED',stage='已达到最大尝试次数',error='任务已尝试3次，请检查输入或配置后重新发起',lease_owner=NULL,lease_until=NULL,updated_at=#{now} WHERE id=#{id} AND status='PENDING' AND attempt &gt;= 3</update>
   <update id="retryTask">UPDATE qc_task SET status='PENDING',stage='等待重试',error=NULL,progress=0,lease_owner=NULL,lease_until=NULL,updated_at=#{now} WHERE id=#{id} AND status='FAILED' AND attempt &lt; 3</update>
-  <insert id="tryInsertEvidenceOperationLease" databaseId="h2">INSERT INTO qc_evidence_operation_lease(operation_key,project_id,owner,lease_until,acquired_at) SELECT #{operationKey},#{projectId},#{owner},#{leaseUntil},#{acquiredAt} WHERE NOT EXISTS (SELECT 1 FROM qc_evidence_operation_lease WHERE operation_key=#{operationKey})</insert>
-  <insert id="tryInsertEvidenceOperationLease" databaseId="mysql">INSERT INTO qc_evidence_operation_lease(operation_key,project_id,owner,lease_until,acquired_at) SELECT #{operationKey},#{projectId},#{owner},#{leaseUntil},#{acquiredAt} FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM qc_evidence_operation_lease WHERE operation_key=#{operationKey})</insert>
+  <!-- The primary key arbitrates contenders. Self INSERT/SELECT acquired avoidable gap locks in MySQL. -->
+  <insert id="tryInsertEvidenceOperationLease">INSERT INTO qc_evidence_operation_lease(operation_key,project_id,owner,lease_until,acquired_at) VALUES (#{operationKey},#{projectId},#{owner},#{leaseUntil},#{acquiredAt})</insert>
   <select id="evidenceOperationLease" resultMap="evidenceOperationLease">SELECT operation_key,project_id,owner,lease_until,acquired_at FROM qc_evidence_operation_lease WHERE operation_key=#{operationKey}</select>
   <update id="takeOverEvidenceOperationLease">UPDATE qc_evidence_operation_lease SET owner=#{owner},lease_until=#{leaseUntil},acquired_at=#{now} WHERE operation_key=#{operationKey} AND project_id=#{projectId} AND lease_until &lt;= #{now}</update>
   <update id="renewEvidenceOperationLease">UPDATE qc_evidence_operation_lease SET lease_until=#{leaseUntil} WHERE operation_key=#{operationKey} AND project_id=#{projectId} AND owner=#{owner} AND lease_until &gt; #{now} AND #{leaseUntil} &gt; #{now}</update>

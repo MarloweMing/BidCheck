@@ -13,7 +13,7 @@ class TargetedRecoveryRoutingTest {
             List.of(new Gap("REQUIREMENT_VISUAL_REFERENCE_UNRESOLVED","签章要求的引用条款尚未展开","展开条款","REQUIREMENT_MAPPING_CHANGED")),Map.of());
         List<Map<String,Object>> actions=ObligationRecovery.actions(plan,Map.of("R1",decision),List.of(),new RunSession(ModelGateway.disabled(),Map.of(),"scope"));
         assertEquals(1,actions.size());Map<String,Object> action=actions.get(0);
-        assertEquals("REPAIR_REQUIREMENT",action.get("strategy"));assertEquals("RECOMPUTE_ONLY",action.get("executionMode"));
+        assertEquals("REPAIR_REQUIREMENT",action.get("strategy"));assertEquals("RECOMPILE_REQUIREMENT",action.get("executionMode"));
         assertEquals(false,action.get("modelRequestsAllowed"));assertEquals(false,action.get("businessProof"));assertEquals("R1",action.get("obligationId"));
     }
     @Test void anActualVisualObservationGapKeepsItsSourcePageExecutor(){
@@ -23,11 +23,17 @@ class TargetedRecoveryRoutingTest {
         assertEquals("OBSERVE_SOURCE_PAGE",actions.get(0).get("strategy"));
     }
     @Test void requirementDimensionsAndFieldEvidenceHaveDistinctExecutors(){
-        for(String code:List.of("PRICE_REQUIREMENT_DIMENSIONS_REQUIRED","PERSON_COUNT_COMPARISON_REQUIRED","PERSON_COUNT_ROLE_REQUIRED","COMPARISON_FIELD_MAPPING_REQUIRED","COMPARISON_RECORD_IDENTITY_UNPROVEN","REGISTRATION_CERTIFICATE_REQUIRED")){
+        for(String code:List.of("PRICE_REQUIREMENT_DIMENSIONS_REQUIRED","PERSON_COUNT_COMPARISON_REQUIRED","PERSON_COUNT_ROLE_REQUIRED","QUALIFICATION_PROOF_PARENT_REQUIRED","COMPARISON_FIELD_MAPPING_REQUIRED","COMPARISON_RECORD_IDENTITY_UNPROVEN","REGISTRATION_CERTIFICATE_REQUIRED")){
             Plan plan=new Plan("ALL",List.of(),"SOURCE_RULE",List.of());
             Decision decision=new Decision("R1","条件","UNDETERMINED","缺口",List.of(),List.of(gap(code,"缺口")),Map.of());
             List<Map<String,Object>> actions=ObligationRecovery.actions(plan,Map.of("R1",decision),List.of(),new RunSession(ModelGateway.disabled(),Map.of(),"scope"));
             assertEquals(RecoveryFailureRouting.requirement(code)?"REPAIR_REQUIREMENT":"COMPARISON_RECORD_IDENTITY_UNPROVEN".equals(code)?"RESOLVE_SUBJECT":"RETRIEVE_EVIDENCE",actions.get(0).get("strategy"),code);
+        }
+    }
+    @Test void scoringSubjectiveReviewSourceAmbiguityAndMissingExecutorDoNotRetryEvidence(){
+        for(var entry:Map.of("QUALITY_GRADE_REVIEW_REQUIRED","REVIEW_QUALITY_GRADE","SCORE_SOURCE_LIST_AMBIGUOUS","CLARIFY_REQUIREMENT_SOURCE","SCORING_EXCEPTION_RULE_REQUIRED","REPAIR_REQUIREMENT").entrySet()){
+            Plan plan=new Plan("ALL",List.of(),"SOURCE_RULE",List.of());Decision decision=new Decision("R1","评分","UNDETERMINED","缺口",List.of(),List.of(gap(entry.getKey(),"精确缺口")),Map.of());
+            assertEquals(entry.getValue(),ObligationRecovery.actions(plan,Map.of("R1",decision),List.of(),new RunSession(ModelGateway.disabled(),Map.of(),"scope")).get(0).get("strategy"));
         }
     }
 }

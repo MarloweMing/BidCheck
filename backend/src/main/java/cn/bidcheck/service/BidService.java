@@ -21,6 +21,7 @@ import java.nio.file.*;
 import java.security.*;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -31,6 +32,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class BidService {
+    private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(BidService.class);
     public static final String RULE_VERSION="deterministic-1.0-requirements-aligned";
     public static final int MAX_DOCUMENTS_PER_PROJECT=100;
     public static final List<String> CHECK_CATEGORIES=List.of("形式检查","资格检查","响应检查","全文信息检查","效期检查");
@@ -44,6 +46,8 @@ public class BidService {
     private FocusedCheckEvaluator focusedChecks;
     @org.springframework.beans.factory.annotation.Autowired(required=false)
     private FocusedCheckContext focusedContext;
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private cn.bidcheck.verification.agent.AgentInvestigator reviewInvestigator;
     @org.springframework.beans.factory.annotation.Autowired(required=false)
     private cn.bidcheck.checktemplate.LegacyTemplateBridge templateChecks;
     @org.springframework.beans.factory.annotation.Autowired(required=false)
@@ -82,7 +86,9 @@ public class BidService {
     /** Compatibility field: -1 means attempts are recorded without a run-wide cap. */
     public int onDemandAttemptBudget() {return -1;}
     public String onDemandPolicyVersion() {return cn.bidcheck.semantic.OnDemandPolicy.VERSION;}
-    public String focusedCheckIdentity() {return focusedChecks==null?"UNAVAILABLE":hash(focusedChecks.identity()+FocusedCheckContext.VERSION);}
+    public String focusedCheckIdentity() {return focusedChecks==null?"UNAVAILABLE":hash(focusedChecks.identity()+FocusedCheckContext.VERSION+AgentBusinessGroupReuse.VERSION);}
+    public boolean agentReviewAvailable(){return "RULES_RETRIEVAL".equals(checkMode())&&focusedChecks!=null&&focusedContext!=null&&reviewInvestigator!=null&&reviewInvestigator.enabled();}
+    private void requireReviewMode(String mode){if(CheckReviewMode.AGENT.equals(mode)&&!agentReviewAvailable())throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Agent 主审尚未配置完成：请启用 SDK、模型服务和主审执行器。本请求未降级为标准检查。");}
     public boolean templateRouteEnabled(){return templateRouteEnabled&&templateChecks!=null&&templateEvidence!=null;}
     /**
      * The evaluator identity is deliberately independent from the rollout switch. A run freezes the
@@ -651,6 +657,11 @@ public class BidService {
         return startRun(project,documentId,force,"",null,"");
     }
     public Map<String,Object> startRun(String project,String documentId,boolean force,String requestedCheckSetId,Integer requestedManifestRevision,String idempotencyKey) {
+        return startRun(project,documentId,force,requestedCheckSetId,requestedManifestRevision,idempotencyKey,CheckReviewMode.FIXED);
+    }
+    public Map<String,Object> startRun(String project,String documentId,boolean force,String requestedCheckSetId,Integer requestedManifestRevision,String idempotencyKey,String requestedReviewMode) {
+        String reviewMode=CheckReviewMode.normalize(requestedReviewMode);requireReviewMode(reviewMode);
+        boolean useTemplates=CheckReviewMode.FIXED.equals(reviewMode)&&templateRouteEnabled();
         Document d=document(documentId); scoped(d,project,"BID");
         return tx.execute(s->{
             Map<String,Object> projectState=store.map(store.lock("project",project).body);
@@ -669,12 +680,12 @@ public class BidService {
             String checkSetId=selectedSet.map(value->text(value,"checkSetId")).orElse("");Integer manifestRevision=selectedSet.map(value->((Number)value.get("manifestRevision")).intValue()).orElse(null);
             String templateSpecIdentity=selectedSet.map(value->text(value,"templateSpecIdentity")).orElseGet(()->checkSpecifications==null?"UNAVAILABLE":checkSpecifications.confirmedSpecsIdentity(project,checks));
             List<String> configuredTemplateIds=selectedSet.map(value->stringList(value.get("templateCheckpointIds"))).orElseGet(()->checks.stream().filter(c->currentTemplateRoute(project,c)).map(Checkpoint::id).toList());
-            List<String> templateRouteIds=templateRouteEnabled()?configuredTemplateIds:List.of();
-            String normalizedRequest=store.encode(fields("documentId",d.id(),"documentVersion",d.version(),"documentHash",d.sha256(),"force",force,"checkSetId",checkSetId,"manifestRevision",manifestRevision==null?-1:manifestRevision,"templateRouteEnabled",templateRouteEnabled(),"templateCheckpointIds",templateRouteIds));
+            List<String> templateRouteIds=useTemplates?configuredTemplateIds:List.of();
+            String normalizedRequest=store.encode(fields("documentId",d.id(),"documentVersion",d.version(),"documentHash",d.sha256(),"force",force,"checkSetId",checkSetId,"manifestRevision",manifestRevision==null?-1:manifestRevision,"reviewMode",reviewMode,"templateRouteEnabled",useTemplates,"templateCheckpointIds",templateRouteIds));
             String requestDigest=hash(normalizedRequest),apiRequestId=runApiRequestId(project,idempotencyKey);
             Map<String,Object> prior=idempotencyKey==null||idempotencyKey.isBlank()?null:priorRunRequest(apiRequestId,requestDigest);
             if(prior!=null)return store.getMap("run",text(prior,"resourceId"));
-            String fingerprint=hash(d.id()+"\n"+d.sha256()+store.encode(checks)+store.encode(information)+RULE_VERSION+semantic.identity()+ocrPreparationIdentity()+consistencyIdentity()+focusedCheckIdentity()+templateCheckIdentity()+"|templateRoute="+templateRouteEnabled()+store.encode(templateRouteIds)+templateSpecIdentity+"|checkSet="+checkSetId+"@"+(manifestRevision==null?"legacy":manifestRevision)+resolutionPolicyIdentity());
+            String fingerprint=hash(d.id()+"\n"+d.sha256()+store.encode(checks)+store.encode(information)+RULE_VERSION+semantic.identity()+ocrPreparationIdentity()+consistencyIdentity()+focusedCheckIdentity()+templateCheckIdentity()+"|reviewMode="+reviewMode+"|templateRoute="+useTemplates+store.encode(templateRouteIds)+templateSpecIdentity+"|checkSet="+checkSetId+"@"+(manifestRevision==null?"legacy":manifestRevision)+resolutionPolicyIdentity());
             Optional<Map<String,Object>> existing=store.maps("run",project,null).stream().filter(r->fingerprint.equals(r.get("fingerprint"))&&!"FAILED".equals(r.get("status"))&&(!force||Set.of("PENDING","RUNNING").contains(r.get("status")))).reduce((first,last)->last);
             if(existing.isPresent()) {persistRunRequest(project,apiRequestId,idempotencyKey,requestDigest,text(existing.get(),"id"));return existing.get();}
             String id=Store.id(); TaskRow task=newTask(project,"CHECK",fields("runId",id,"documentId",documentId));
@@ -684,11 +695,13 @@ public class BidService {
             run.put("ocrPreparationIdentity",ocrPreparationIdentity());
             run.put("consistencyIdentity",consistencyIdentity());
             run.put("focusedCheckIdentity",focusedCheckIdentity());
-            run.put("templateRouteEnabled",templateRouteEnabled());
+            run.put("reviewMode",reviewMode);run.put("reviewModeVersion",CheckReviewMode.VERSION);
+            run.put("consistencyReviewMode","RULES_RETRIEVAL");
+            run.put("templateRouteEnabled",useTemplates);
             run.put("templateCheckIdentity",templateCheckIdentity());
             run.put("templateSpecIdentity",templateSpecIdentity);
             run.put("resolutionPolicyIdentity",resolutionPolicyIdentity());
-            run.put("onDemandCheckpointCount",checks.stream().filter(c->!templateRouteIds.contains(c.id())&&("SEMANTIC_RESPONSE".equals(c.type())||focusedChecks!=null&&focusedChecks.supports(c))).count());
+            run.put("onDemandCheckpointCount",checks.stream().filter(c->!templateRouteIds.contains(c.id())&&("SEMANTIC_RESPONSE".equals(c.type())||focusedChecks!=null&&focusedChecks.supports(c,reviewMode))).count());
             run.put("checkMode",checkMode());run.put("onDemandPolicyVersion",onDemandPolicyVersion());
             run.put("onDemandAttemptBudget",onDemandAttemptBudget());run.put("onDemandAttemptsUnlimited",true);run.put("onDemandAttemptsReserved",0);
             run.put("consistencyReviewPolicyVersion",ConsistencyDoubtReviewer.VERSION);
@@ -710,7 +723,7 @@ public class BidService {
     private String runApiRequestId(String project,String key){if(key==null||key.isBlank())return "";if(key.length()>160||!key.matches("[A-Za-z0-9._:-]+"))throw bad("幂等键格式无效或长度超过限制");return stableId("api-request:START_RUN:"+project+":"+key);}
     private Map<String,Object> priorRunRequest(String id,String digest){Stored row=store.mapper().get(id);if(row==null)return null;if(!"api_request".equals(row.kind))throw new IllegalStateException("IDEMPOTENCY_RECORD_SCOPE_MISMATCH");Map<String,Object> saved=store.map(row.body);if(!digest.equals(text(saved,"requestDigest")))throw cn.bidcheck.checktemplate.TemplateApiException.conflict("IDEMPOTENCY_CONFLICT","同一幂等键已用于不同的检查请求",-1);return saved;}
     private void persistRunRequest(String project,String id,String key,String digest,String runId){if(id==null||id.isBlank())return;Map<String,Object> value=fields("schemaVersion","api-request-v1","projectId",project,"operation","START_RUN","idempotencyKey",key,"requestDigest",digest,"resourceId",runId,"committedAt",now());store.insertImmutableIfAbsent("api_request",id,project,project,value);}
-    public String resolutionPolicyIdentity(){return hash(CheckResolution.VERSION+RULE_VERSION+"|ocrReview="+cn.bidcheck.engine.OcrReviewPolicy.VERSION+"|"+semantic.identity()+focusedCheckIdentity()+templateCheckIdentity()+consistencyIdentity()+onDemandPolicyVersion()
+    public String resolutionPolicyIdentity(){return hash(CheckResolution.VERSION+RULE_VERSION+"|reviewMode="+CheckReviewMode.VERSION+"|agentGroup="+AgentBusinessGroupReuse.VERSION+"|ocrReview="+cn.bidcheck.engine.OcrReviewPolicy.VERSION+"|"+semantic.identity()+focusedCheckIdentity()+templateCheckIdentity()+consistencyIdentity()+onDemandPolicyVersion()
         +(focusedContext==null?"":focusedContext.identity())+(verification==null?"":verification.getObject().checkSourceIdentity()));}
 
     private boolean currentTemplateRoute(String projectId,Checkpoint checkpoint){
@@ -722,6 +735,7 @@ public class BidService {
     }
     private boolean frozenTemplateRoute(String projectId,String runId,Checkpoint checkpoint){
         Map<String,Object> run=store.getMap("run",runId);boolean enabled=run.containsKey("templateRouteEnabled")?Boolean.TRUE.equals(run.get("templateRouteEnabled")):run.containsKey("templateCheckIdentity");
+        if(CheckReviewMode.agent(run))return false;
         if(!enabled)return false;
         Map<String,Object> routing=CheckResolution.map(run.get("templateRouting"));
         List<String> frozenIds=stringList(routing.get("templateCheckpointIds"));
@@ -757,6 +771,7 @@ public class BidService {
             store.lock("project",project);
             Map<String,Object> parent=store.getMap("run",parentRunId);
             if(!project.equals(text(parent,"projectId")))throw bad("检查记录不属于当前项目");
+            String reviewMode=CheckReviewMode.of(parent);requireReviewMode(reviewMode);
             if(!Set.of("COMPLETED","FAILED").contains(text(parent,"status")))throw bad("当前检查仍在执行，请等待本轮结束");
             List<Checkpoint> checks=store.list("snapshot",project,parentRunId,Checkpoint.class);
             boolean parentTemplateRoute=Boolean.TRUE.equals(parent.get("templateRouteEnabled"));
@@ -778,7 +793,7 @@ public class BidService {
             Map<String,Object> run=new LinkedHashMap<>(parent);
             for(String key:List.of("finishedAt","error","retrievalPreparation","atomicReferenceDates","atomicFactIdentity","resolutionSummary"))run.remove(key);
             run.putAll(fields("id",id,"taskId",task.id,"parentRunId",parentRunId,"recoveryOnly",true,"createdAt",now(),"status","PENDING","stage","等待补查未完成事项","progress",0,
-                "fingerprint",hash(parentRunId+policy+frozenTemplateSpecIdentity+"|templateSnapshot="+text(parent,"templateSnapshotDigest")),"ruleVersion",RULE_VERSION,"semanticConfiguration",semantic.identity(),"model",semanticModel(),
+                "fingerprint",hash(parentRunId+policy+frozenTemplateSpecIdentity+"|reviewMode="+reviewMode+"|templateSnapshot="+text(parent,"templateSnapshotDigest")),"reviewMode",reviewMode,"reviewModeVersion",CheckReviewMode.VERSION,"ruleVersion",RULE_VERSION,"semanticConfiguration",semantic.identity(),"model",semanticModel(),
                 "checkMode",checkMode(),"onDemandPolicyVersion",onDemandPolicyVersion(),"ocrPreparationIdentity",ocrPreparationIdentity(),"ocrPreparationComplete",true,
                 "focusedCheckIdentity",focusedCheckIdentity(),"templateRouteEnabled",parentTemplateRoute,"templateCheckIdentity",parent.getOrDefault("templateCheckIdentity",templateCheckIdentity()),"templateSpecIdentity",frozenTemplateSpecIdentity,"consistencyIdentity",consistencyIdentity(),"resolutionPolicyIdentity",policy,
                 "onDemandAttemptsUnlimited",true,"onDemandAttemptsReserved",0,"consistencyReviewAttemptsReserved",0,"visualCallCount",0));
@@ -1127,7 +1142,11 @@ public class BidService {
         });
     }
     private void checkTask(TaskRow task,String runId,String documentId) throws IOException {
+        long checkStarted=System.nanoTime();
+        LOG.info("bidcheck.check_run taskId={} runId={} attempt={} state=STARTED",task.id,runId,task.attempt);
         Map<String,Object> frozen=store.getMap("run",runId);
+        String reviewMode=CheckReviewMode.of(frozen);requireReviewMode(reviewMode);
+        if(!CheckReviewMode.VERSION.equals(text(frozen,"reviewModeVersion")))throw bad("检查编排模式已升级，请重新发起检查，避免旧队列按新策略继续执行");
         if(!RULE_VERSION.equals(text(frozen,"ruleVersion"))) throw new IllegalArgumentException("检查引擎已升级，请重新发起检查，历史结果保持原样");
         if(frozen.containsKey("semanticConfiguration")&&!semantic.identity().equals(frozen.get("semanticConfiguration"))) throw new IllegalArgumentException("语义服务配置已变更，请新建检查任务，避免混用不同模型的结论");
         if(!ocrPreparationIdentity().equals(text(frozen,"ocrPreparationIdentity")))throw bad("OCR配置、识别计划或预算已变更，请新建检查任务");
@@ -1138,7 +1157,9 @@ public class BidService {
         if(frozen.containsKey("resolutionPolicyIdentity")&&!resolutionPolicyIdentity().equals(text(frozen,"resolutionPolicyIdentity")))throw bad("补查规则或原图服务配置已变化，请新建检查，避免混用不同版本的证据");
         List<Checkpoint> checkpoints=store.list("snapshot",task.projectId,runId,Checkpoint.class);
         Document original=document(text(frozen,"documentId"));scoped(original,task.projectId,"BID");
+        long ocrStarted=System.nanoTime();
         Document d=Boolean.TRUE.equals(frozen.get("ocrPreparationComplete"))?original:preparePlannedDocument(task,original,checkpoints);
+        checkPhase(task,runId,"OCR_PREPARATION",ocrStarted,d.pages().size());
         tx.executeWithoutResult(s->{progress(task,4,"检查计划所需识别已结束");Map<String,Object> current=store.getMap("run",runId);
             current.putIfAbsent("inputDocumentId",documentId);current.put("documentId",d.id());current.put("documentVersion",d.version());current.put("ocrPreparationComplete",true);current.put("ocrPlan",ocrPlan(d.id()));store.save("run",runId,task.projectId,d.id(),current);});
         String tenderId=text(frozen,"tenderDocumentId");
@@ -1162,7 +1183,9 @@ public class BidService {
         // minutes to a template-only run, those generated findings were outside the confirmed
         // check-set manifest.  Mixed/legacy runs retain the existing conservative baseline.
         boolean templateOnly=allCheckpointsUseFrozenTemplates(task.projectId,runId,checkpoints);
+        long consistencyStarted=System.nanoTime();
         Map<String,Object> consistency=templateOnly?Map.of():prepareConsistency(task,runId,d,tender,checkpoints);
+        checkPhase(task,runId,templateOnly?"CONSISTENCY_SKIPPED_TEMPLATE_ONLY":"CONSISTENCY_SCAN",consistencyStarted,ConsistencyRunSupport.maps(consistency.get("groups")).size());
         if(templateOnly)tx.executeWithoutResult(s->{String stage="固定模板按证据依赖执行，复用已保存文字与事实";
             progress(task,5,stage);updateRun(task,"RUNNING",5,stage,null);});
         if(!templateOnly&&("RULES_RETRIEVAL".equals(checkMode())||semantic.enabled()) && (checkpoints.stream().anyMatch(c->"SEMANTIC_RESPONSE".equals(c.type()))
@@ -1178,6 +1201,7 @@ public class BidService {
                 });
                 Map<String,Object> entry=new LinkedHashMap<>(preparation.diagnostics());
                 entry.put("attempt",attempt);entry.put("mode",preparation.mode());entry.put("elapsedMillis",(System.nanoTime()-started)/1_000_000);
+                LOG.info("bidcheck.check_phase taskId={} runId={} phase=RETRIEVAL_PREPARATION attempt={} mode={} durationMs={}",task.id,runId,attempt,preparation.mode(),entry.get("elapsedMillis"));
                 preparations.add(entry);
                 tx.executeWithoutResult(s->{
                     progress(task,5,stage);
@@ -1189,6 +1213,7 @@ public class BidService {
             }
         }
         OnDemandModelBudget modelBudget=new OnDemandModelBudget(store,tx,task,runId);
+        long consistencyReviewStarted=System.nanoTime();
         if("RULES_RETRIEVAL".equals(checkMode())&&!consistency.isEmpty()) {
             ConsistencyDoubtReviewer reviewer=consistencyDoubtReviewer==null
                 ?new ConsistencyDoubtReviewer(new cn.bidcheck.retrieval.HybridRetriever(),semantic):consistencyDoubtReviewer;
@@ -1230,7 +1255,9 @@ public class BidService {
             tx.executeWithoutResult(s->{progress(task,5,"全文一致性定向复核记录已保存");
                 store.savePrepared(finalReviewReport);});
         }
+        checkPhase(task,runId,"CONSISTENCY_REVIEW",consistencyReviewStarted,ConsistencyRunSupport.maps(consistency.get("groups")).size());
         tx.executeWithoutResult(s->{progress(task,5,"开始执行检查项：规则先行，相关疑点按需核验");updateRun(task,"RUNNING",5,task.stage,null);});
+        long checkpointsStarted=System.nanoTime();
         // Snapshot existing results on the task thread. Worker threads only evaluate immutable
         // input; progress, lease fencing and result persistence stay on the original task thread.
         boolean[] existing=new boolean[checkpoints.size()];
@@ -1241,7 +1268,7 @@ public class BidService {
             existing[i]=previous!=null&&!(job!=null&&"REEVALUATE_CHANGED_POLICY".equals(text(store.map(job.body),"strategy"))
                 &&CheckResolution.ACTIVE.contains(text(store.map(job.body),"status")));
         }
-        boolean focused="RULES_RETRIEVAL".equals(checkMode())&&focusedChecks!=null&&focusedContext!=null&&checkpoints.stream().anyMatch(c->focusedChecks.supports(c)&&!frozenTemplateRoute(task.projectId,runId,c));
+        boolean focused="RULES_RETRIEVAL".equals(checkMode())&&focusedChecks!=null&&focusedContext!=null&&checkpoints.stream().anyMatch(c->focusedChecks.supports(c,reviewMode)&&!frozenTemplateRoute(task.projectId,runId,c));
         List<Map<String,Object>> atomicOccurrences=processingOccurrences(List.of(d));
         cn.bidcheck.verification.graph.FactLedgerEvidenceGraphBridge.PriorEvidenceReuse priorGraph=priorEvidenceGraph(task.projectId,runId,d);
         if(!priorGraph.occurrences().isEmpty()){
@@ -1257,36 +1284,130 @@ public class BidService {
         tx.executeWithoutResult(s->{Map<String,Object> current=store.getMap("run",runId);current.put("priorEvidenceGraphReuse",graphAudit);store.save("run",runId,task.projectId,d.id(),current);});
         java.util.function.Function<Checkpoint,Map<String,Object>> atomicContexts=focused
             ?focusedContext.prepare(task,runId,d,tender,focusedChecks.identity(),atomicOccurrences,modelBudget::reserve):cp->Map.of();
-        java.util.function.IntFunction<Finding> evaluate=i->existing[i]?null:evaluateFinding(runId,checkpoints.get(i),d,tender,facts,consistency,modelBudget::reserve,
-            focused&&focusedChecks.supports(checkpoints.get(i))&&!frozenTemplateRoute(task.projectId,runId,checkpoints.get(i))?atomicContexts.apply(checkpoints.get(i)):Map.of());
+        AgentBusinessGroupReuse.Plan agentReuse=CheckReviewMode.AGENT.equals(reviewMode)
+            ?AgentBusinessGroupReuse.plan(checkpoints,tender,cp->focused&&focusedChecks.supports(cp,reviewMode)
+                &&!frozenTemplateRoute(task.projectId,runId,cp)):new AgentBusinessGroupReuse.Plan(Map.of(),List.of());
+        Map<String,CompletableFuture<Finding>> agentGroupLeaders=new ConcurrentHashMap<>();
+        agentReuse.groups().forEach(group->agentGroupLeaders.put(group.groupId(),new CompletableFuture<>()));
+        if(agentReuse.reusableGroupCount()>0)LOG.info("bidcheck.agent_group_plan runId={} groups={} followerCheckpoints={} policy={}",runId,
+            agentReuse.reusableGroupCount(),agentReuse.reusedCheckpointCount(),AgentBusinessGroupReuse.VERSION);
+        java.util.function.IntFunction<Finding> evaluate=i->{
+            Checkpoint checkpoint=checkpoints.get(i);AgentBusinessGroupReuse.Membership membership=agentReuse.membership(checkpoint.id());
+            CompletableFuture<Finding> leaderFuture=membership==null?null:agentGroupLeaders.get(membership.groupId());
+            if(existing[i]){
+                if(membership!=null&&membership.leader(checkpoint.id())){
+                    Finding saved=store.get("finding",stableId(runId+":"+checkpoint.id()),Finding.class);leaderFuture.complete(saved);
+                }
+                return null;
+            }
+            Finding leader=null;
+            if(membership!=null&&!membership.leader(checkpoint.id()))leader=awaitAgentGroupLeader(leaderFuture,runId,checkpoint.id());
+            Map<String,Object> atomicContext=focused&&focusedChecks.supports(checkpoint,reviewMode)&&!frozenTemplateRoute(task.projectId,runId,checkpoint)
+                ?new LinkedHashMap<>(atomicContexts.apply(checkpoint)):new LinkedHashMap<>();
+            if(leader!=null){
+                // The ledger alone does not identify which frozen source windows belong to this
+                // equivalent obligation. Fan out the leader's source-scoped snapshot, then let
+                // RecoveryReplay resolve and verify every source/fact against the follower's
+                // current corpus before independently recomputing its own rule tree.
+                List<Map<String,Object>> leaderSteps=store.maps("check_atomic_step",task.projectId,
+                    stableId(runId+":atomic-steps:"+membership.leaderCheckpointId()));
+                AgentBusinessGroupReuse.EvidenceReceipt evidenceReceipt=AgentBusinessGroupReuse.evidenceReceipt(
+                    membership,checkpoint.id(),leader,leaderSteps);
+                boolean receiptApplied=AgentBusinessGroupReuse.attach(evidenceReceipt,atomicContext);
+                // TARGETED keeps requirement generation independent for the follower.  Setting
+                // EVIDENCE_RECOMPUTE here would require an old follower plan and could turn a
+                // first execution into RECOVERY_PLAN_MISSING.
+                atomicContext.put("recoveryStrategy","RECOMPUTE_SHARED_EVIDENCE");atomicContext.put("recoveryMode","TARGETED");
+                atomicContext.put("recoveryModelAllowed",false);
+                Map<String,Object> reuse=new LinkedHashMap<>(membership.audit(checkpoint.id()));
+                Map<String,Object> sourceModel=CheckResolution.map(CheckResolution.map(leader.assessment()).get("model"));
+                reuse.put("sourceFindingId",leader.id());
+                reuse.putAll(evidenceReceipt.audit());reuse.put("receiptApplied",receiptApplied);
+                reuse.put("sourceAgentAttemptCount",CheckResolution.maps(sourceModel.get("agentAttempts")).size());
+                reuse.put("newAgentInvestigation",false);atomicContext.put("agentEvidenceReuse",reuse);
+                LOG.info("bidcheck.agent_group_reuse runId={} groupId={} leaderCheckpointId={} checkpointId={} sourceAgentAttempts={} receiptApplied={} validatedSources={} replayedFacts={} newAgentInvestigation=false",
+                    runId,membership.groupId(),membership.leaderCheckpointId(),checkpoint.id(),reuse.get("sourceAgentAttemptCount"),receiptApplied,
+                    reuse.get("validatedSourceCount"),reuse.get("replayedFactCount"));
+            }
+            try{
+                Finding result=evaluateFinding(runId,checkpoint,d,tender,facts,consistency,modelBudget::reserve,atomicContext);
+                if(membership!=null&&membership.leader(checkpoint.id()))leaderFuture.complete(result);
+                return result;
+            }catch(RuntimeException|Error failure){
+                if(membership!=null&&membership.leader(checkpoint.id()))leaderFuture.completeExceptionally(failure);
+                throw failure;
+            }
+        };
         int[] completed={0};
         java.util.function.BiConsumer<Integer,Finding> persist=(i,result)->{
             int done=completed[0]+1;
             int p=5+done*90/Math.max(1,checkpoints.size()); String stage="已检查 "+done+" / "+checkpoints.size();
-            tx.executeWithoutResult(s->{
+            DbTransactionRetry.executeWithoutResult(tx,"CHECK_RESULT_PUBLISH",Map.of("taskId",task.id,"runId",runId,"checkpointId",checkpoints.get(i).id()),s->{
                 progress(task,p,stage);
                 if(result!=null) {Finding published=withPreviousReference(result);store.save("finding",published.id(),task.projectId,runId,published);recordResolution(task,runId,published);}
                 updateRun(task,"RUNNING",p,task.stage,null);
             });
             completed[0]=done;
+            LOG.info("bidcheck.checkpoint_publish taskId={} runId={} checkpointId={} completed={} total={} reused={}",task.id,runId,checkpoints.get(i).id(),done,checkpoints.size(),result==null);
         };
         if(checkpointExecutor==null) {
             for(int i=0;i<checkpoints.size();i++) persist.accept(i,evaluate.apply(i));
         } else checkpointExecutor.forEachCompleted(checkpoints.size(),evaluate,persist);
+        checkPhase(task,runId,"CHECKPOINTS",checkpointsStarted,completed[0]);
+        long resolutionStarted=System.nanoTime();
         continueResolution(task,runId,d,tender,facts,consistency,modelBudget,atomicContexts);
+        checkPhase(task,runId,"RESOLUTION",resolutionStarted,store.maps("check_resolution",task.projectId,runId).size());
+        if(focused)recomputeRequirementAggregates(task,runId,d,tender,facts,consistency,atomicContexts);
         publishTemplateDependencyGraph(task.projectId,runId);
         publishProjectEvidenceGraph(task.projectId,runId,d);
         tx.executeWithoutResult(s->{
             List<Finding> finalFindings=store.list("finding",task.projectId,runId,Finding.class);
             long unresolved=finalFindings.stream().filter(CheckResolution::unresolved).count();
             String stage=unresolved>0?"本轮执行结束，仍有 "+unresolved+" 条原始事项未形成完整结论":"本轮执行结束";
-            updateRun(task,"COMPLETED",100,stage,null);finish(task,stage);
+            // Keep the same task -> run lock order as concurrent evidence writers.
+            finish(task,stage);updateRun(task,"COMPLETED",100,stage,null);
         });
+        LOG.info("bidcheck.check_run taskId={} runId={} attempt={} state=COMPLETED checkpointCount={} durationMs={}",task.id,runId,task.attempt,checkpoints.size(),(System.nanoTime()-checkStarted)/1_000_000);
+    }
+    private static void checkPhase(TaskRow task,String runId,String phase,long started,int count){
+        LOG.info("bidcheck.check_phase taskId={} runId={} phase={} state=COMPLETED count={} durationMs={}",task.id,runId,phase,count,(System.nanoTime()-started)/1_000_000);
+    }
+    private static Finding awaitAgentGroupLeader(CompletableFuture<Finding> leader,String runId,String checkpointId){
+        if(leader==null)throw new IllegalStateException("AGENT_GROUP_LEADER_MISSING");
+        try{return leader.get();}
+        catch(InterruptedException stopped){Thread.currentThread().interrupt();throw new CancellationException("Agent 业务组复用等待已中断");}
+        catch(ExecutionException failed){Throwable cause=failed.getCause();if(cause instanceof RuntimeException runtime)throw runtime;if(cause instanceof Error error)throw error;
+            throw new IllegalStateException("Agent 业务组首项执行失败: "+runId+":"+checkpointId,cause);}
+    }
+    /** Finish source-dependency summaries after children/recovery publish their final proofs. */
+    private void recomputeRequirementAggregates(TaskRow task,String runId,Document bid,Document tender,List<Fact> facts,
+            Map<String,Object> consistency,java.util.function.Function<Checkpoint,Map<String,Object>> contexts){
+        long started=System.nanoTime();int recomputed=0;
+        for(Finding before:store.list("finding",task.projectId,runId,Finding.class)){
+            if(!cn.bidcheck.verification.engine.SourceRequirementInventory.aggregateCheckpoint(before.checkpoint())
+                    ||frozenTemplateRoute(task.projectId,runId,before.checkpoint()))continue;
+            Map<String,Object> context=RecoveryInputs.context(before,"QUERY_EXTERNAL",contexts.apply(before.checkpoint()));
+            context.put("recoveryMode","EVIDENCE_RECOMPUTE");context.put("recoveryModelAllowed",false);
+            context.put("recoveryStrategy","RECOMPUTE_REQUIREMENT_DEPENDENCIES");context.remove("recoveryTargetObligationIds");
+            Finding after=evaluateFinding(runId,before.checkpoint(),bid,tender,facts,consistency,()->false,context);
+            Map<String,Object> assessment=new LinkedHashMap<>(after.assessment());
+            assessment.put("requirementDependencyRecomputation",fields("version",cn.bidcheck.verification.engine.SourceRequirementInventory.VERSION,
+                    "revision",context.getOrDefault("requirementDependencyRevision",""),"newModelCalls",0,"sourceRunId",runId));
+            Finding published=withPreviousReference(new Finding(after.id(),after.runId(),after.checkpoint(),after.evaluation(),assessment));
+            DbTransactionRetry.executeWithoutResult(tx,"REQUIREMENT_DEPENDENCY_PUBLISH",Map.of("taskId",task.id,"runId",runId,"checkpointId",before.checkpoint().id()),s->{
+                progress(task,97,"汇总关联事项的最终结果");store.save("finding",published.id(),task.projectId,runId,published);recordResolution(task,runId,published);
+            });
+            recomputed++;
+            LOG.info("bidcheck.requirement_dependency runId={} checkpointId={} state=RECOMPUTED before={} after={} revision={} newModelCalls=0",
+                    runId,before.checkpoint().id(),before.evaluation().status(),published.evaluation().status(),context.getOrDefault("requirementDependencyRevision",""));
+        }
+        checkPhase(task,runId,"REQUIREMENT_DEPENDENCIES",started,recomputed);
     }
     /** True only for an explicit, non-empty run snapshot fully covered by fixed templates. */
     boolean allCheckpointsUseFrozenTemplates(String projectId,String runId,List<Checkpoint> checkpoints){
         if(checkSpecifications==null||checkpoints==null||checkpoints.isEmpty())return false;
         Map<String,Object> run=store.getMap("run",runId),routing=CheckResolution.map(run.get("templateRouting"));
+        if(CheckReviewMode.agent(run))return false;
         // Runs created before routing became an immutable part of the run contract keep the legacy
         // pipeline. Do not infer eligibility from today's bridge support or a mutable catalog.
         if(!Boolean.TRUE.equals(run.get("templateRouteEnabled"))||!routing.containsKey("templateCheckpointIds"))return false;
@@ -1295,6 +1416,7 @@ public class BidService {
             &&checkSpecifications.findSnapshotSpec(projectId,runId,checkpoint.id()).isPresent());
     }
     private void recordResolution(TaskRow task,String runId,Finding finding){
+        OrdinaryRecoveryDependencies.bind(store,task.projectId,runId,finding);
         String id=CheckResolution.jobId(runId,finding.checkpoint().id());Stored saved=store.mapper().get(id);
         if(saved==null&&!CheckResolution.unresolved(finding))return;
         Map<String,Object> job=saved==null?new LinkedHashMap<>():store.map(saved.body);
@@ -1302,6 +1424,14 @@ public class BidService {
         job.putIfAbsent("attempts",0);job.put("updatedAt",now());job.put("outcomeFingerprint",CheckResolution.outcomeFingerprint(finding));
         job.put("policyIdentity",resolutionPolicyIdentity());job.put("newEvidenceCount",0);
         job.put("evidenceNeeds",CheckResolution.maps(CheckResolution.atomic(finding).get("gaps")));
+        if(CheckReviewMode.agent(store.getMap("run",runId))&&CheckReviewMode.eligible(finding.checkpoint())
+                &&"WAIT_AGENT_INPUT_CHANGE".equals(text(job,"strategy"))){
+            // Waiting for changed input is valid only after an explicit no-progress receipt.
+            // Visual work, external queries and retryable technical failures keep the strategy
+            // chosen by CheckResolution.plan and must remain executable.
+            job.put("reviewMode",CheckReviewMode.AGENT);
+            job.put("requiredRequirementRevisions",cn.bidcheck.verification.engine.RequirementRepairPolicy.versions());
+        }
         if(!CheckResolution.ACTIVE.contains(text(job,"status"))&&!"SUCCEEDED".equals(text(job,"status")))job.put("stopReason",job.get("reason"));else job.remove("stopReason");
         store.save("check_resolution",id,task.projectId,runId,job);
     }
@@ -1316,22 +1446,80 @@ public class BidService {
     /** Each distinct strategy/input is attempted once; progress can schedule a different missing-field strategy. */
     private void continueResolution(TaskRow task,String runId,Document bid,Document tender,List<Fact> facts,Map<String,Object> consistency,
             OnDemandModelBudget budget,java.util.function.Function<Checkpoint,Map<String,Object>> contexts){
+        boolean agentOwned=CheckReviewMode.agent(store.getMap("run",runId));
+        List<Checkpoint> recoveryCheckpoints=store.list("snapshot",task.projectId,runId,Checkpoint.class);
+        if(recoveryCheckpoints.isEmpty())recoveryCheckpoints=store.list("finding",task.projectId,runId,Finding.class).stream().map(Finding::checkpoint).toList();
+        AgentBusinessGroupReuse.Plan recoveryGroups=agentOwned&&focusedChecks!=null
+            ?AgentBusinessGroupReuse.plan(recoveryCheckpoints,tender,cp->focusedChecks.supports(cp,CheckReviewMode.AGENT)&&!frozenTemplateRoute(task.projectId,runId,cp))
+            :new AgentBusinessGroupReuse.Plan(Map.of(),List.of());
         tx.executeWithoutResult(s->{progress(task,96,"整理未完成义务与补查任务");
             for(Finding f:store.list("finding",task.projectId,runId,Finding.class))if(CheckResolution.unresolved(f)
                 &&store.mapper().get(CheckResolution.jobId(runId,f.checkpoint().id()))==null)recordResolution(task,runId,f);});
         while(true){
+            tx.executeWithoutResult(s->{progress(task,96,"核对新增证据影响的检查条件");OrdinaryRecoveryDependencies.schedule(store,task.projectId,runId);});
             List<Map<String,Object>> queued=store.maps("check_resolution",task.projectId,runId).stream().filter(j->CheckResolution.ACTIVE.contains(text(j,"status"))).toList();
             if(queued.isEmpty())break;
             for(Map<String,Object> pending:queued){
                 String checkpointId=text(pending,"checkpointId"),jobId=text(pending,"id");
                 Finding before=store.get("finding",stableId(runId+":"+checkpointId),Finding.class);
                 String strategy=text(pending,"strategy");
+                AgentBusinessGroupReuse.Membership recoveryGroup=recoveryGroups.membership(checkpointId);
+                AgentGroupRecovery.Outcome groupRecovery=null;
+                if(recoveryGroup!=null){
+                    List<Finding> members=new ArrayList<>();for(String memberId:recoveryGroup.checkpointIds()){
+                        Stored savedMember=store.mapper().get(stableId(runId+":"+memberId));if(savedMember!=null)members.add(store.decode(savedMember.body,Finding.class));
+                    }
+                    groupRecovery=AgentGroupRecovery.execute(before,recoveryGroup,members,
+                        memberId->store.maps("check_atomic_step",task.projectId,stableId(runId+":atomic-steps:"+memberId)),
+                        contexts.apply(before.checkpoint()),resolutionPolicyIdentity(),
+                        local->evaluateFinding(runId,before.checkpoint(),bid,tender,facts,consistency,()->false,local));
+                    AgentGroupRecovery.Outcome reused=groupRecovery;
+                    if(reused.attempted())tx.executeWithoutResult(s->{
+                        progress(task,96,"复用同事项证据，完成本地核验");
+                        if(reused.published()){
+                            Finding published=withPreviousReference(reused.finding());store.save("finding",published.id(),task.projectId,runId,published);recordResolution(task,runId,published);
+                        }
+                        // Consumption and a proved conclusion commit together; a restart cannot
+                        // lose a conclusion after recording its evidence as already consumed.
+                        String parent=stableId(runId+":atomic-steps:"+checkpointId);Map<String,Object> marker=new LinkedHashMap<>(reused.consumedStep());
+                        marker.put("runId",runId);marker.put("savedAt",now());
+                        store.save("check_atomic_step",stableId(parent+":"+text(marker,"id")+":"+text(marker,"status")),task.projectId,parent,marker);
+                    });
+                    LOG.info("bidcheck.agent_group_recovery_reuse requestId={} runId={} checkpointId={} groupId={} availableReceipts={} consumedReceipts={} newReceipts={} recomputed={} published={} durationMs={} localOnly=true",
+                        task.id,runId,checkpointId,recoveryGroup.groupId(),reused.audit().get("availableReceiptCount"),reused.audit().get("consumedReceiptCount"),
+                        reused.audit().get("newReceiptCount"),reused.attempted(),reused.published(),reused.audit().getOrDefault("durationMs",0));
+                    if(reused.published())continue;
+                }
+                if(agentOwned&&CheckReviewMode.eligible(before.checkpoint())&&!CheckReviewMode.changedEvidence(pending)
+                        &&(groupRecovery==null||!groupRecovery.attempted())
+                        &&("WAIT_AGENT_INPUT_CHANGE".equals(strategy)||Boolean.TRUE.equals(pending.get("requiresInputChange")))){
+                    tx.executeWithoutResult(s->{Map<String,Object> job=new LinkedHashMap<>(pending);job.putAll(fields("status","BLOCKED_NO_PROGRESS","strategy","WAIT_AGENT_INPUT_CHANGE",
+                        "requiredRequirementRevisions",cn.bidcheck.verification.engine.RequirementRepairPolicy.versions(),
+                        "stopReason","本项由 Agent 管理调查；没有新的相关证据，未进入旧补查循环。","updatedAt",now()));store.save("check_resolution",jobId,task.projectId,runId,job);});
+                    LOG.info("bidcheck.agent_review_recovery_gate runId={} checkpointId={} allowed=false reason=NO_NEW_RELEVANT_EVIDENCE",runId,checkpointId);continue;
+                }
                 // Generated consistency groups are recovered by their object-aware reviewer above.
-                if(CheckResolution.map(before.assessment()).containsKey("consistencyGroupId")||!Set.of("VERIFY_SOURCE_PAGES","QUERY_EXTERNAL","REPAIR_REQUIREMENT","RETRY_FAILED_STEP","TARGETED_EVIDENCE","SPLIT_FAILED_REQUEST").contains(strategy)){
+                if(CheckResolution.map(before.assessment()).containsKey("consistencyGroupId")||!Set.of("VERIFY_SOURCE_PAGES","QUERY_EXTERNAL","RESTORE_REQUIREMENT_SOURCE","RECOMPILE_REQUIREMENT","REPAIR_REQUIREMENT","RETRY_FAILED_STEP","TARGETED_EVIDENCE","RECOMPUTE_SHARED_EVIDENCE","SPLIT_FAILED_REQUEST").contains(strategy)){
                     tx.executeWithoutResult(s->{progress(task,96,"保存补查结果");Map<String,Object> job=new LinkedHashMap<>(pending);
                         job.put("status","BLOCKED_NO_PROGRESS");job.put("stopReason","本轮可用策略已执行；保留具体证据缺口，等待规则或证据变化。");job.put("updatedAt",now());store.save("check_resolution",jobId,task.projectId,runId,job);});continue;
                 }
-                String input=CheckResolution.actionFingerprint(before,resolutionPolicyIdentity(),bid.sha256(),strategy);
+                Map<String,Object> initialContext=RecoveryInputs.context(before,strategy,contexts.apply(before.checkpoint()));
+                if(!RecoveryInputs.applyDependencyTrigger(initialContext,pending,before)){
+                    tx.executeWithoutResult(s->{progress(task,96,"受影响条件已完成，保留其他事项结论");Map<String,Object> job=new LinkedHashMap<>(pending);
+                        job.put("status","BLOCKED_NO_PROGRESS");job.put("stopReason","新增证据影响的条件已经完成，未重复调查整项其他缺口。");job.put("updatedAt",now());
+                        job.remove("dependencyTargetObligationIds");job.remove("dependencyTrigger");store.save("check_resolution",jobId,task.projectId,runId,job);});continue;
+                }
+                AgentGroupRecovery.carryChangedInputs(groupRecovery,initialContext);
+                List<Map<String,Object>> semanticHistory=store.maps("check_resolution_attempt",task.projectId,jobId);
+                Map<String,Object> semanticGate=RecoverySemanticGate.inspect(before,strategy,initialContext,semanticHistory,resolutionPolicyIdentity());
+                if(Boolean.FALSE.equals(semanticGate.get("allowed"))){
+                    tx.executeWithoutResult(s->{progress(task,96,"停止缺少新相关证据的重复调查");Map<String,Object> job=new LinkedHashMap<>(pending);
+                        job.putAll(fields("status","BLOCKED_NO_PROGRESS","semanticGate",semanticGate,"stopReason",text(semanticGate,"description"),"updatedAt",now()));
+                        store.save("check_resolution",jobId,task.projectId,runId,job);});
+                    LOG.info("bidcheck.recovery_semantic_gate runId={} checkpointId={} strategy={} allowed=false reason={} blockedTargets={}",runId,checkpointId,strategy,semanticGate.get("reasonCode"),semanticGate.get("blockedTargetIds"));continue;
+                }
+                RecoverySemanticGate.applyTargets(initialContext,semanticGate);
+                String input=CheckResolution.actionFingerprint(before,resolutionPolicyIdentity(),bid.sha256(),strategy,initialContext);
                 String attemptId=stableId(jobId+":"+input);Stored prior=store.mapper().get(attemptId);
                 if(prior!=null&&Set.of("FINISHED","NO_PROGRESS").contains(text(store.map(prior.body),"status"))){
                     tx.executeWithoutResult(s->{progress(task,96,"停止无新增证据的重复补查");Map<String,Object> job=new LinkedHashMap<>(pending);
@@ -1342,7 +1530,7 @@ public class BidService {
                     Map<String,Object> job=new LinkedHashMap<>(pending);job.put("status","RUNNING");job.put("inputFingerprint",input);job.put("updatedAt",now());
                     job.put("attempts",((Number)job.getOrDefault("attempts",0)).intValue()+1);store.save("check_resolution",jobId,task.projectId,runId,job);
                     store.save("check_resolution_attempt",attemptId,task.projectId,jobId,fields("id",attemptId,"strategy",strategy,"inputFingerprint",input,"status","RUNNING","startedAt",now()));});
-                Map<String,Object> context=RecoveryInputs.context(before,strategy,contexts.apply(before.checkpoint()));
+                Map<String,Object> context=initialContext;
                 List<Map<String,Object>> diagnostics=new ArrayList<>();
                 List<Map<String,Object>> newObservations=new ArrayList<>();
                 List<Map<String,Object>> newExternalRecords=new ArrayList<>();
@@ -1381,38 +1569,63 @@ public class BidService {
                 else {
                     tx.executeWithoutResult(s->{progress(task,96,"正在用补充证据核验："+before.checkpoint().title());
                         updateRun(task,"RUNNING",96,task.stage,null);});
-                    after=evaluateFinding(runId,before.checkpoint(),bid,tender,facts,consistency,budget::reserve,context);
+                    try{after=evaluateFinding(runId,before.checkpoint(),bid,tender,facts,consistency,budget::reserve,context);}
+                    catch(cn.bidcheck.verification.engine.RecoveryDependencyGate.NoDependencyChange unchanged){
+                        after=before;context.put("recoveryNoopReason",unchanged.reasonCode());
+                        diagnostics.add(fields("code",unchanged.reasonCode(),"description","规则和所依赖输入未变化；保留已完成证明，未重复查询事实或执行提取。",
+                            "planRevision",unchanged.receipt().get("planRevision"),"inputRevision",unchanged.receipt().get("inputRevision"),"businessProof",false));
+                    }
                 }
+                boolean businessRecomputed=after!=before;
+                if("QUERY_EXTERNAL".equals(strategy)&&newExternalRecords.isEmpty())after=ExternalCheckRecovery.attachDiagnostics(after,diagnostics);
                 String outcome=CheckResolution.outcomeFingerprint(after);Map<String,Object> proofProgress=CheckResolution.progress(before,after);
                 boolean progressMade=Boolean.TRUE.equals(proofProgress.get("progressMade"));
                 Map<String,Object> recoveryInput=fields("mode",context.getOrDefault("recoveryMode","TARGETED"),"targetObligationIds",context.getOrDefault("recoveryTargetObligationIds",List.of()),
                     "changedLocations",context.getOrDefault("recoveryChangedLocations",List.of()),"newObservationCount",newObservations.size(),
-                    "newExternalRecordCount",newExternalRecords.size(),"recomputed",after!=before,"newModelCalls",after==before?0:CheckResolution.map(CheckResolution.atomic(after).get("metrics")).getOrDefault("modelCalls",0));
+                    "newExternalRecordCount",newExternalRecords.size(),"recomputed",businessRecomputed,"newModelCalls",!businessRecomputed?0:CheckResolution.map(CheckResolution.atomic(after).get("metrics")).getOrDefault("modelCalls",0),
+                    "dependencyRevision",context.getOrDefault("recoveryDependencyRevision",""),"noopReason",context.getOrDefault("recoveryNoopReason",""));
                 Finding preserved=CheckResolution.protectCompletedProof(before,after);
                 Finding published=withPreviousReference(preserved);
                 Map<String,Object> requirementsProgress=RecoveryInputs.requirementProgress(before,preserved);
-                boolean requirementsRepaired="REPAIR_REQUIREMENT".equals(strategy)&&Boolean.TRUE.equals(requirementsProgress.get("progressMade"));
-                Map<String,Object> nextPlan=CheckResolution.plan(after);
+                boolean requirementsRepaired=cn.bidcheck.verification.engine.RequirementRepairPolicy.requirementWork(strategy)&&Boolean.TRUE.equals(requirementsProgress.get("progressMade"));
+                Map<String,Object> nextPlan=CheckResolution.plan(published);
+                Map<String,Object> dependencyContinuation=RecoveryInputs.dependencyContinuation(pending,published,nextPlan);
+                Map<String,Object> transition=RecoveryTransition.afterAttempt(before,published,strategy,nextPlan,progressMade,requirementsRepaired,businessRecomputed,diagnostics);
+                List<Map<String,Object>> semanticConsumedInputs=RecoverySemanticGate.inputs(published,context,resolutionPolicyIdentity());
+                List<Map<String,Object>> nextHistory=new ArrayList<>(semanticHistory);
+                nextHistory.add(fields("strategy",strategy,"status","FINISHED","semanticConsumedInputs",semanticConsumedInputs));
+                Map<String,Object> nextGateContext=RecoveryInputs.context(published,text(nextPlan,"strategy"),context);
+                if(dependencyContinuation.containsKey("dependencyTargetObligationIds"))nextGateContext.put("recoveryTargetObligationIds",dependencyContinuation.get("dependencyTargetObligationIds"));
+                Map<String,Object> nextSemanticGate=RecoverySemanticGate.inspect(published,text(nextPlan,"strategy"),nextGateContext,nextHistory,resolutionPolicyIdentity());
+                RecoveryTransition.applySemanticGate(transition,nextSemanticGate);
                 Map<String,Object> failedOutcome=preserved==after?Map.of():fields("evaluation",after.evaluation(),"assessment",after.assessment());
                 tx.executeWithoutResult(s->{progress(task,96,"保存定向补查结果");store.save("finding",published.id(),task.projectId,runId,published);
+                    OrdinaryRecoveryDependencies.bind(store,task.projectId,runId,published);
                     Map<String,Object> job=store.getMap("check_resolution",jobId);job.putAll(nextPlan);job.put("updatedAt",now());
+                    job.remove("dependencyTargetObligationIds");job.remove("dependencyTrigger");job.putAll(dependencyContinuation);
                     job.put("newEvidenceCount",Math.max(0,(published.evaluation().evidences()==null?0:published.evaluation().evidences().size())-(before.evaluation().evidences()==null?0:before.evaluation().evidences().size())));
                     job.put("outcomeFingerprint",outcome);job.put("diagnostics",diagnostics);job.put("proofProgress",proofProgress);job.put("requirementsProgress",requirementsProgress);job.put("recoveryInput",recoveryInput);
-                    if(CheckResolution.unresolved(published)&&(!(progressMade||requirementsRepaired)||strategy.equals(text(job,"strategy")))){
-                        boolean temporaryVisual=diagnostics.stream().anyMatch(diagnostic->Set.of("VISUAL_RETRY_PENDING","VISUAL_ENGINE_FAILURE","VISUAL_SOURCE_UNAVAILABLE").contains(text(diagnostic,"code")));
-                        job.put("status","RETRY_FAILED_STEP".equals(strategy)||temporaryVisual||"FAILED".equals(text(nextPlan,"status"))?"FAILED":"BLOCKED_NO_PROGRESS");
-                        if(temporaryVisual){long retryAt=store.maps("verification_visual_page_status",task.projectId,runId).stream()
+                    job.put("status",transition.get("status"));job.put("lastAttemptOutcome",transition);
+                    job.put("semanticGate",nextSemanticGate);
+                    job.remove("stopReason");job.remove("retryNotBeforeEpochMillis");
+                    if(transition.containsKey("stopReason"))job.put("stopReason",transition.get("stopReason"));
+                    if(Boolean.TRUE.equals(transition.get("temporaryVisualFailure"))){long retryAt=store.maps("verification_visual_page_status",task.projectId,runId).stream()
                             .filter(v->"RETRY_PENDING".equals(text(v,"status"))).map(v->v.get("retryNotBeforeEpochMillis")).filter(Number.class::isInstance)
                             .mapToLong(v->((Number)v).longValue()).max().orElse(System.currentTimeMillis()+30000);job.put("retryNotBeforeEpochMillis",retryAt);}
-                        job.put("stopReason",diagnostics.isEmpty()?"本次补查没有关闭剩余缺口，已保留证据与处理记录。":text(diagnostics.get(0),"description"));
-                    }
+                    else if(nextPlan.get("retryNotBeforeEpochMillis") instanceof Number time)job.put("retryNotBeforeEpochMillis",time.longValue());
                     store.save("check_resolution",jobId,task.projectId,runId,job);
                     Map<String,Object> attempt=store.getMap("check_resolution_attempt",attemptId);
-                    attempt.putAll(fields("outcomeFingerprint",outcome,"status",progressMade||requirementsRepaired?"FINISHED":"NO_PROGRESS","finishedAt",now(),
+                    attempt.putAll(fields("outcomeFingerprint",outcome,"status",progressMade||requirementsRepaired||Boolean.TRUE.equals(transition.get("technicalRecovered"))?"FINISHED":"NO_PROGRESS","finishedAt",now(),"outcome",transition,
                         "elapsedMillis",(System.nanoTime()-recoveryStarted)/1_000_000,"proofProgress",proofProgress,"requirementsProgress",requirementsProgress,"recoveryInput",recoveryInput,"businessComplete",!CheckResolution.unresolved(published),"diagnostics",diagnostics));
+                    attempt.put("semanticConsumedInputs",semanticConsumedInputs);
                     if(!failedOutcome.isEmpty())attempt.put("unpublishedFailedOutcome",failedOutcome);
                     store.save("check_resolution_attempt",attemptId,task.projectId,jobId,attempt);
                 });
+                LOG.info("bidcheck.resolution taskId={} runId={} checkpointId={} strategy={} durationMs={} progressMade={} requirementsRepaired={} businessComplete={} recomputed={} newModelCalls={} technicalRecovered={} processingFailed={} nextStrategy={} resolutionStatus={}",
+                    task.id,runId,checkpointId,strategy,(System.nanoTime()-recoveryStarted)/1_000_000,progressMade,requirementsRepaired,!CheckResolution.unresolved(published),recoveryInput.get("recomputed"),recoveryInput.get("newModelCalls"),transition.get("technicalRecovered"),transition.get("processingFailed"),transition.get("nextStrategy"),transition.get("status"));
+                LOG.info("bidcheck.recovery_dependencies runId={} checkpointId={} strategy={} targets={} revision={} noopReason={} gapCodes={}",runId,checkpointId,strategy,
+                    recoveryInput.get("targetObligationIds"),recoveryInput.get("dependencyRevision"),recoveryInput.get("noopReason"),CheckResolution.maps(CheckResolution.atomic(before).get("gaps")).stream().map(g->text(g,"code")).filter(c->c.matches("[A-Z0-9_]{1,100}")).distinct().sorted().toList());
+                LOG.info("bidcheck.recovery_semantic_gate runId={} checkpointId={} strategy={} allowed={} reason={} eligibleTargets={} blockedTargets={}",runId,checkpointId,text(nextPlan,"strategy"),nextSemanticGate.get("allowed"),nextSemanticGate.get("reasonCode"),nextSemanticGate.get("eligibleTargetIds"),nextSemanticGate.get("blockedTargetIds"));
             }
         }
     }
@@ -1535,6 +1748,9 @@ public class BidService {
     }
     private Finding evaluateFinding(String runId,Checkpoint c,Document d,Document tender,List<Fact> facts,Map<String,Object> consistency,java.util.function.BooleanSupplier reserveAttempt,Map<String,Object> atomicContext) {
         long started=System.nanoTime();
+        LOG.info("bidcheck.checkpoint runId={} checkpointId={} state=STARTED recovery={}",runId,c.id(),atomicContext.containsKey("recoveryMode"));
+        if(CheckReviewMode.agent(store.getMap("run",runId))&&CheckReviewMode.eligible(c)&&!CheckReviewMode.AGENT.equals(atomicContext.get("reviewMode")))
+            throw new IllegalStateException("AGENT_REVIEW_CONTEXT_MISSING: Agent 主审上下文缺失，未降级为标准检查");
         SemanticAssessment assessment;
         if(frozenTemplateRoute(d.projectId(),runId,c)) {
             Optional<cn.bidcheck.checktemplate.CheckSpec> frozenSpec=checkSpecifications==null?Optional.empty():checkSpecifications.findSnapshotSpec(d.projectId(),runId,c.id());
@@ -1567,7 +1783,17 @@ public class BidService {
             Evaluation summary=ConsistencyRunSupport.summary(consistency,store);
             assessment=new SemanticAssessment(summary,summary,fields("consistencyReportId",ConsistencyRunSupport.reportId(runId),"coverage",consistency.get("coverage")));
         }
-        else if(!consistency.isEmpty()&&"ENTITY_FIELD_CONSISTENCY".equals(c.type())&&Set.of("companyName","personName").contains(c.field())
+        else if(CheckReviewMode.AGENT.equals(atomicContext.get("reviewMode"))&&"FULL_TEXT_REVIEW".equals(c.type())
+                &&Set.of("amountAccuracy","missingFields","signatureDate","signingAfterOpening","typos","certificateCoverage").contains(c.field())) {
+            // These document-wide checks already have bounded program executors. Agent owns the
+            // orchestration but delegates the scan to deterministic code; asking the model to
+            // rediscover the same anomaly detector only adds cost and cannot improve coverage.
+            Evaluation deterministic=engine.evaluate(c,d,facts,tender);
+            assessment=new SemanticAssessment(deterministic,deterministic,fields("agentDelegation",fields(
+                "mode",CheckReviewMode.AGENT,"executor","DETERMINISTIC_FULL_TEXT_REVIEW","modelCalls",0,
+                "reason","该全文检查已有程序扫描器，由 Agent 主审流程直接调用并保留原文证据。")));
+        }
+        else if(!CheckReviewMode.AGENT.equals(atomicContext.get("reviewMode"))&&!consistency.isEmpty()&&"ENTITY_FIELD_CONSISTENCY".equals(c.type())&&Set.of("companyName","personName").contains(c.field())
                 &&(c.expected()==null||c.expected().isBlank())) {
             // The legacy per-field cards must use the same current-project scope as the full-text report.
             List<Map<String,Object>> groups=ConsistencyRunSupport.maps(consistency.get("groups")).stream().filter(g->c.field().equals(g.get("field"))).toList();
@@ -1578,7 +1804,7 @@ public class BidService {
                     "查看全文一致性中的同字段原文与范围，历史业绩和范围不明的人员不与本次投标直接合并。",evidence,groups.isEmpty()?0:0.8,"FULL_TEXT_SCOPED_IDENTITY");
             assessment=new SemanticAssessment(scoped,scoped,fields("consistencyReportId",ConsistencyRunSupport.reportId(runId),"coverage",consistency.get("coverage")));
         }
-        else if(!atomicContext.isEmpty()&&focusedChecks!=null&&focusedChecks.supports(c)) {
+        else if(!atomicContext.isEmpty()&&focusedChecks!=null&&focusedChecks.supports(c,CheckReviewMode.normalize(atomicContext.get("reviewMode")))) {
             FocusedCheckEvaluator.Result result=focusedChecks.assess(c,d,tender,atomicContext);
             assessment=new SemanticAssessment(result.evaluation(),result.evaluation(),result.assessment());
         }
@@ -1609,7 +1835,10 @@ public class BidService {
         trace.put("rawEvaluation",assessment.rawEvaluation());trace.put("preOcrEvaluation",beforeOcr);
         trace.put("adjustments",adjustments);trace.put("ocrReview",decision.review());
         trace.put("elapsedMillis",(System.nanoTime()-started)/1_000_000);
-        return new Finding(stableId(runId+":"+c.id()),runId,c,e,FocusedCheckEvaluator.reconcileAssessment(e,trace));
+        Finding finding=new Finding(stableId(runId+":"+c.id()),runId,c,e,FocusedCheckEvaluator.reconcileAssessment(e,trace));
+        LOG.info("bidcheck.checkpoint runId={} checkpointId={} state=COMPLETED method={} businessState={} evidenceCount={} durationMs={}",runId,c.id(),e.method(),
+            text(CheckResolution.map(finding.assessment().get("businessPresentation")),"state"),e.evidences()==null?0:e.evidences().size(),trace.get("elapsedMillis"));
+        return finding;
     }
     /** Explicit production boundary for a semantic checkpoint without executable atomic context. */
     static SemanticAssessment atomicContextUnavailable(Checkpoint checkpoint){

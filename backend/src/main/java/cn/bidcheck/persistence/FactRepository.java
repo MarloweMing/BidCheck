@@ -5,6 +5,9 @@ import java.util.*;
 /** Core immutable storage. Implementations join the caller's transaction; they never replace existing values. */
 public interface FactRepository {
     Map<String,Object> get(String occurrenceId);
+    default Map<String,Map<String,Object>> getAll(Collection<String> ids) {
+        Map<String,Map<String,Object>> values=new LinkedHashMap<>();for(String id:new LinkedHashSet<>(ids)){Map<String,Object> value=get(id);if(!value.isEmpty())values.put(id,value);}return values;
+    }
     void insert(Map<String,Object> occurrence);
     /** Bounded caller-owned batches; implementations must retain insert-only semantics. */
     default Set<String> existingIds(Collection<String> ids) {

@@ -41,6 +41,28 @@ final class PersonnelCount {
             .filter(f->!SubjectIdentity.person(f).isBlank()).toList();
         String lot=str(r.parameters(),"lot");
         Set<String> members=new HashSet<>(),lots=new HashSet<>();all.forEach(f->{if(known(str(f.attributes(),"employer")))members.add(str(f.attributes(),"employer"));if(known(str(f.attributes(),"lot")))lots.add(DomainBindings.lot(str(f.attributes(),"lot")));});
+        // A source-local single-slot appointment is an existential witness. Unrelated
+        // candidates with unknown employer must not invalidate it. This path cannot add
+        // members, establish a per-member quota, exact count, or cross-lot coverage.
+        if(operator.equals("ROLE_CONFIGURATION")&&expected==1&&employer.isBlank()&&lot.isBlank()&&lots.isEmpty()
+                &&!DomainBindings.employment(r.description()+r.sourceQuote())
+                &&!r.sourceQuote().matches("(?s).*(?:各成员|每个成员|每一成员|各标段|每个标段).*")){
+            List<Map<String,Object>> witness=existenceWitness(r,e,all);
+            if(!witness.isEmpty()){
+                // Existence avoids a cross-source identity join, but it does not authorize
+                // ignoring contradictory strong identities already present for this role.
+                IdentityCount candidates=identities(e,all);
+                if(candidates.ambiguous())return e.unknown(r,"PERSON_COUNT_IDENTITY_AMBIGUOUS","同名任职材料出现不同身份，当前岗位对应人员未消歧，不能据此判人数足够或不足",all,
+                        countProof(r,e,all,employer,lot,expected,operator,candidates,List.of()));
+                String witnessId=str(witness.get(0),"factId");List<Fact> used=all.stream().filter(f->f.id().equals(witnessId)).toList();
+                Map<String,Object> proof=countProof(r,e,used,employer,lot,expected,operator,identities(e,used),List.of());
+                proof.putAll(linked("proofScope","ROLE_CONFIGURATION_ONLY","countBasis","SOURCE_LOCAL_CURRENT_APPOINTMENT_EXISTENCE","sourceLocalExistenceWitness",witness,
+                        "provenExistenceLowerBound",1,"provenDistinctPeople",0,"populationComplete",false,"globalIdentityProven",false,"upperBoundProven",false,"exactCountProven",false,
+                        "qualificationCountProven",false,"concurrentRolesProven",false,"ignoredUnrelatedCandidateCount",Math.max(0,all.size()-used.size())));
+                return e.pass(r,"已由当前项目明确任职原文证明该岗位有1名人员配置；无关候选不改变此存在性证明，单位归属、资格及人数上限另核",used,
+                        proof);
+            }
+        }
         if(employer.isBlank()&&(members.size()>1||!members.isEmpty()&&all.stream().anyMatch(f->!known(str(f.attributes(),"employer")))))return e.unknown(r,"PERSON_COUNT_MEMBER_REQUIRED","同岗位涉及不同或未明确的成员单位，须明确本条人数按哪一成员计算，不能把成员人数相加",all);
         if(lot.isBlank()&&(lots.size()>1||!lots.isEmpty()&&all.stream().anyMatch(f->!known(str(f.attributes(),"lot")))))return e.unknown(r,"PERSON_COUNT_LOT_REQUIRED","同岗位涉及不同或未明确的标段，须明确本条人数适用标段，不能跨标段合计",all);
         List<Fact> selected=all.stream().filter(f->employer.isBlank()||employer.equals(str(f.attributes(),"employer")))
@@ -51,18 +73,11 @@ final class PersonnelCount {
                 &&DomainBindings.employment(link.field())&&employer.equals(str(link.attributes(),"object"))&&e.identities.samePerson(f,link)))
                 return e.unknown(r,"EMPLOYMENT_RELATION_REQUIRED","已找到岗位人员，但人数要求涉及聘用单位，须独立证明聘用关系；联合体职责不替代劳动关系",selected);
         }
-        Map<String,List<Fact>> identities=new LinkedHashMap<>();Map<String,Set<String>> names=new HashMap<>();int unresolved=0;
-        for(Fact f:selected){String id=e.identities.countIdentity(f);if(id.isBlank()){unresolved++;continue;}identities.computeIfAbsent(id,key->new ArrayList<>()).add(f);names.computeIfAbsent(f.value(),key->new HashSet<>()).add(id);}
-        boolean sameNameAmbiguous=names.values().stream().anyMatch(ids->ids.size()>1)
-            ||identities.values().stream().anyMatch(rows->rows.stream().map(Fact::value).distinct().count()>1);
+        IdentityCount identities=identities(e,selected);int unresolved=identities.unresolved();boolean sameNameAmbiguous=identities.ambiguous();
         List<Map<String,Object>> complete=completeLists(r,e,selected,employer,lot);
         boolean populationComplete=!complete.isEmpty()&&unresolved==0&&!sameNameAmbiguous;
-        int observed=identities.size();
-        Map<String,Object> proof=linked("requestedRole",r.subject(),"normalizedRole",PersonnelRoles.canonical(r.subject()),"employer",employer,"lot",lot,
-            "comparison",operator,"requiredCount",expected,"provenDistinctPeople",observed,"appointmentOccurrences",selected.size(),"unresolvedIdentityOccurrences",unresolved,
-            "populationComplete",populationComplete,"countBasis","SOURCE_IDENTIFIED_CURRENT_APPOINTMENTS","identityBindings",e.identities.bindings(selected),
-            "roleBindings",selected.stream().map(f->linked("factId",f.id(),"originalRole",f.subject(),"normalizedRole",PersonnelRoles.canonical(f.subject()),"sourceIds",f.sourceIds())).toList(),
-            "completeListEvidence",complete,"qualificationCountProven",false);
+        int observed=identities.distinct();
+        Map<String,Object> proof=countProof(r,e,selected,employer,lot,expected,operator,identities,complete);
         if(sameNameAmbiguous)return e.unknown(r,"PERSON_COUNT_IDENTITY_AMBIGUOUS","同名任职材料出现不同身份，当前岗位对应人员未消歧，不能据此判人数足够或不足",selected,proof);
         if(operator.equals("ROLE_CONFIGURATION")){
             proof.put("proofScope","ROLE_CONFIGURATION_ONLY");proof.put("upperBoundProven",false);proof.put("exactCountProven",false);proof.put("concurrentRolesProven",false);
@@ -87,6 +102,26 @@ final class PersonnelCount {
             "目前仅有已核到人员，尚未证明同岗位、成员和标段的完整名单及全部身份；不能由部分材料判不足或恰好满足",selected,proof);
         return Boolean.TRUE.equals(satisfied)?e.pass(r,"同范围完整名单与人员身份已核定，去重人数符合原文约束；人员资格另行核验",selected,proof)
             :e.fail(r,"已证明同范围名单完整且身份可去重，人数不符合原文明示约束",selected,proof);
+    }
+    private record IdentityCount(int distinct,int unresolved,boolean ambiguous){}
+    private static IdentityCount identities(RuleEvaluator evaluator,List<Fact> facts){
+        Map<String,Set<String>> namesByIdentity=new LinkedHashMap<>(),identitiesByName=new LinkedHashMap<>();int unresolved=0;
+        for(Fact fact:facts){String id=evaluator.identities.countIdentity(fact);if(id.isBlank()){unresolved++;continue;}
+            namesByIdentity.computeIfAbsent(id,key->new LinkedHashSet<>()).add(fact.value());
+            identitiesByName.computeIfAbsent(fact.value(),key->new LinkedHashSet<>()).add(id);
+        }
+        boolean ambiguous=identitiesByName.values().stream().anyMatch(ids->ids.size()>1)||namesByIdentity.values().stream().anyMatch(names->names.size()>1)
+                ||evaluator.identities.bindings(facts).stream().anyMatch(binding->RuleEvaluator.maps(binding.get("identityClaims")).stream()
+                    .filter(claim->"CN_ID".equals(str(claim,"field"))&&!str(claim,"valueFingerprint").isBlank())
+                    .map(claim->str(claim,"valueFingerprint")).distinct().count()>1);
+        return new IdentityCount(namesByIdentity.size(),unresolved,ambiguous);
+    }
+    private static Map<String,Object> countProof(Rule rule,RuleEvaluator evaluator,List<Fact> facts,String employer,String lot,int expected,String operator,IdentityCount identities,List<Map<String,Object>> complete){
+        return linked("requestedRole",rule.subject(),"normalizedRole",PersonnelRoles.canonical(rule.subject()),"employer",employer,"lot",lot,
+                "comparison",operator,"requiredCount",expected,"provenDistinctPeople",identities.distinct(),"appointmentOccurrences",facts.size(),"unresolvedIdentityOccurrences",identities.unresolved(),
+                "populationComplete",!complete.isEmpty()&&identities.unresolved()==0&&!identities.ambiguous(),"countBasis","SOURCE_IDENTIFIED_CURRENT_APPOINTMENTS","identityBindings",evaluator.identities.bindings(facts),
+                "roleBindings",facts.stream().map(f->linked("factId",f.id(),"originalRole",f.subject(),"normalizedRole",PersonnelRoles.canonical(f.subject()),"sourceIds",f.sourceIds())).toList(),
+                "completeListEvidence",complete,"qualificationCountProven",false);
     }
     private static List<Map<String,Object>> existenceWitness(Rule rule,RuleEvaluator evaluator,List<Fact> facts){
         if(rule.sourceQuote().matches("(?s).*(?:不得兼任|不能兼任|禁止兼任|不得兼岗|必须不同人员|人员不得重复).*"))return List.of();

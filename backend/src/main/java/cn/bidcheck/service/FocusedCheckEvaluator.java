@@ -13,7 +13,8 @@ import java.util.regex.Pattern;
 /** Adapts source-grounded atomic proofs to ordinary CHECK findings, without changing their condition tree. */
 @Service
 public final class FocusedCheckEvaluator {
-    public static final String VERSION="focused-check-3.1-business-proof";
+    private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(FocusedCheckEvaluator.class);
+    public static final String VERSION="focused-check-3.4-agent-group-reuse-audit";
     private static final ObjectMapper JSON=new ObjectMapper();
     private static final TypeReference<Map<String,Object>> OBJECT=new TypeReference<>() {};
     private static final Set<String> TYPES=Set.of("SEMANTIC_RESPONSE","DATE_VALIDITY","VALUE_COMPARE","SIGNATURE_SEAL");
@@ -26,6 +27,7 @@ public final class FocusedCheckEvaluator {
     private static final Pattern OTHER_PRIMARY_PURPOSE=Pattern.compile("(?:施工|设计|类似项目|类似工程)业绩|(?:得分|扣分|评分|计分|最高档)|黑名单|禁入期");
     private static final Set<String> PRICE_FIELDS=Set.of("totalPrice","totalBidPrice","bidPrice","quotedPrice","price","taxIncludedPrice","taxExcludedPrice","maximumBidPrice");
     private static final Set<String> CERTIFICATE_FIELDS=Set.of("certificateValidFrom","certificateValidUntil","credentialValidFrom","credentialValidUntil","credentialValidPeriod","qualificationValidUntil");
+    private static final Set<String> DURATION_FIELDS=Set.of("duration","totalDuration","designDuration","constructionDuration","deliveryPeriod","completionPeriod","constructionPeriod");
     private final VerificationEngine engine;
 
     public FocusedCheckEvaluator(VerificationEngine engine){this.engine=Objects.requireNonNull(engine);}
@@ -44,12 +46,16 @@ public final class FocusedCheckEvaluator {
         // clause, rather than falling back to a model-authored PASS/FAIL judgment.
         return "SEMANTIC_RESPONSE".equals(checkpoint.type())||!domains(checkpoint).isEmpty();
     }
+    public boolean supports(Checkpoint checkpoint,String reviewMode){return CheckReviewMode.AGENT.equals(reviewMode)?CheckReviewMode.eligible(checkpoint):supports(checkpoint);}
 
     public Result assess(Checkpoint checkpoint,Document bid,Document tender,Map<String,Object> context){
-        if(!supports(checkpoint))throw new IllegalArgumentException("FOCUSED_CHECK_DOMAIN_NOT_SUPPORTED");
+        String reviewMode=CheckReviewMode.normalize(context==null?null:context.get("reviewMode"));
+        if(!supports(checkpoint,reviewMode))throw new IllegalArgumentException("FOCUSED_CHECK_DOMAIN_NOT_SUPPORTED");
         List<String> selectedDomains=domains(checkpoint);
         Map<String,Object> input=new LinkedHashMap<>(context==null?Map.of():context);
         input.put("focusedCheck",true);input.put("focusedCheckVersion",VERSION);
+        input.put("checkpointId",checkpoint.id());
+        input.put("reviewMode",reviewMode);
         input.put("atomicDomains",selectedDomains);input.put("unlimitedModelCalls",true);
         if(input.get("referenceDateEvidence") instanceof Evidence evidence)input.put("referenceDateEvidence",JSON.convertValue(evidence,OBJECT));
         Map<String,Object> output=engine.evaluate(checkpoint,bid==null?List.of():List.of(bid),tender,input);
@@ -70,34 +76,45 @@ public final class FocusedCheckEvaluator {
         String business=validStatus(output.get("businessDecision"));
         List<Evidence> evidence=evidences(output.get("evidences"));
         List<Map<String,Object>> gaps=maps(output.get("gaps"));
+        Map<String,Object> metrics=map(output.get("metrics"));Map<String,Integer> gapCodes=new TreeMap<>();
+        for(Map<String,Object> gap:gaps){String code=text(gap,"code");if(code.matches("[A-Z0-9_]{1,100}"))gapCodes.merge(code,1,Integer::sum);}
+        LOG.info("bidcheck.proof runId={} checkpointId={} businessDecision={} complete={} facts={} reusedFacts={} rejectedFacts={} candidates={} modelCalls={} stopReason={} gapCodes={}",
+            input.getOrDefault("sourceRunId",""),checkpoint.id(),business,Boolean.TRUE.equals(output.get("complete")),metrics.get("facts"),metrics.get("reusedFacts"),
+            metrics.get("rejectedFacts"),metrics.get("finalCandidateCount"),metrics.get("modelCalls"),metrics.get("stopReason"),gapCodes);
         List<Map<String,Object>> requirements=conditions.stream().filter(c->"REQUIREMENT".equals(c.get("conditionRole"))).toList();
         Map<String,Object> summary=values("total",requirements.size(),"passed",count(requirements,"PASS"),"failed",count(requirements,"FAIL"),
             "pending",requirements.stream().filter(c->!Set.of("PASS","FAIL","NOT_APPLICABLE").contains(text(c,"status"))).count(),
             "notApplicable",count(requirements,"NOT_APPLICABLE"),"applicability",conditions.stream().filter(c->"APPLICABILITY".equals(c.get("conditionRole"))).count(),"auxiliary",conditions.stream().filter(c->"AUXILIARY".equals(c.get("conditionRole"))).count(),"allLeaves",conditions.size(),
             "boundary","总数及通过、失败、待核仅统计业务要求，适用判断和辅助参考日期另计。整项结论保留原条件树的且、或及适用分支，不能按通过比例计算。");
+        List<Map<String,Object>> attemptSteps=new ArrayList<>();
+        for(Map<String,Object> prior:maps(input.get("priorSteps")))if(!Boolean.TRUE.equals(prior.get("paidInPriorRevision")))attemptSteps.add(prior);
+        attemptSteps.addAll(maps(output.get("steps")));
+        Map<String,Object> currentAgent=map(output.get("agentInvestigation"));
+        List<Map<String,Object>> durableAgentAttempts=agentAttempts(attemptSteps,currentAgent);
+        Map<String,Object> effectiveAgent=currentAgent;
+        if(effectiveAgent.isEmpty()&&!durableAgentAttempts.isEmpty()){
+            effectiveAgent=new LinkedHashMap<>(durableAgentAttempts.get(durableAgentAttempts.size()-1));
+            effectiveAgent.put("auditRestoredFromAppendOnlySteps",true);effectiveAgent.put("currentExecutionAgentCalled",false);
+        }
         Map<String,Object> atomic=values("version",VERSION,"domains",selectedDomains,"businessDecision",business,
             "workflowState",output.getOrDefault("workflowState","NEEDS_REVIEW"),"complete",Boolean.TRUE.equals(output.get("complete")),
             "reason",text(output,"reason"),"conditions",conditions,"summary",summary,"gaps",gaps,"metrics",map(output.get("metrics")),
             "plan",plan,"proof",map(output.get("proof")),"evidences",evidence,"rejectedFacts",maps(output.get("rejectedFacts")),
             "visualRequests",maps(output.get("visualRequests")),"externalRequests",maps(output.get("externalRequests")),
-            "modelDiagnostics",map(output.get("modelDiagnostics")),
-            "compilationAudit",map(output.get("compilationAudit")),"recoveryActions",maps(output.get("recoveryActions")),"fieldCoverage",maps(output.get("fieldCoverage")),
+            "modelDiagnostics",map(output.get("modelDiagnostics")),"agentInvestigation",effectiveAgent,"agentAttempts",durableAgentAttempts,
+            "compilationAudit",map(output.get("compilationAudit")),"recoveryDependencies",map(output.get("recoveryDependencies")),"coverageDependencies",maps(output.get("coverageDependencies")),"recoveryEvidenceDependencies",maps(output.get("recoveryEvidenceDependencies")),"recoveryActions",maps(output.get("recoveryActions")),"fieldCoverage",maps(output.get("fieldCoverage")),
             "boundary","按本条款的独立义务分派核验，保留完整复合要求与尚未完成条件。未召回不表示材料缺失，来源校验不代表原图识别准确。");
+        atomic.put("documentIdentities",java.util.stream.Stream.of(bid,tender).filter(Objects::nonNull)
+            .map(d->values("id",d.id(),"version",d.version(),"sha256",d.sha256())).toList());
+        atomic.put("reviewMode",reviewMode);atomic.put("agentReview",map(output.get("agentReview")));
+        if(input.get("agentEvidenceReuse") instanceof Map<?,?>)atomic.put("agentEvidenceReuse",map(input.get("agentEvidenceReuse")));
         Map<String,Object> display=presentation(atomic,conditionNames);atomic.put("presentation",display);
-        List<Map<String,Object>> attemptSteps=new ArrayList<>();
-        for(Map<String,Object> prior:maps(input.get("priorSteps")))if(!Boolean.TRUE.equals(prior.get("paidInPriorRevision")))attemptSteps.add(prior);
-        attemptSteps.addAll(maps(output.get("steps")));
-        List<Map<String,Object>> attempts=engineAttempts(attemptSteps);
-        Map<String,Object> model=values("scope","RELATED_EVIDENCE_DOUBTS","policyVersion",cn.bidcheck.semantic.OnDemandPolicy.VERSION,
-            "requested",!attempts.isEmpty(),"decision",attempts.isEmpty()?"MODEL_NOT_NEEDED":"MODEL_ESCALATED",
-            "decisionReason",attempts.isEmpty()?"复用已保存的结构步骤或执行本地规则；是否完成以逐条件证明及缺口为准。":"调用结构化事实提取，程序逐条件校验证据并计算结论。",
-            "state",text(output,"workflowState"),"attempts",List.of(),"engineAttempts",attempts,"httpStatusObserved",false,
-            "boundary","结构调用记录与HTTP审计分列；步骤完成只表示返回结构，不计作HTTP 200或业务有效输出。");
+        Map<String,Object> model=modelAudit(attemptSteps,currentAgent,text(output,"workflowState"));
         Map<String,Object> assessment=values("atomicCheck",atomic,"model",model,"policyVersion",VERSION,
-            "structuredSteps",stepIndex(output.get("steps")),"confidenceCalibrated",false);
+            "structuredSteps",stepIndex(attemptSteps),"confidenceCalibrated",false);
         String suggestion=String.join("；",strings(display.get("nextSteps")).stream().limit(2).toList());
         // The engine supplies a proof, not a calibrated probability; never fabricate confidence.
-        Evaluation evaluation=new Evaluation(business,"UNDETERMINED".equals(business)?text(display,"reason"):readable(text(output,"reason"),conditionNames),suggestion,evidence,0d,"FOCUSED_ATOMIC_RULES");
+        Evaluation evaluation=new Evaluation(business,"UNDETERMINED".equals(business)?text(display,"reason"):readable(text(output,"reason"),conditionNames),suggestion,evidence,0d,CheckReviewMode.AGENT.equals(reviewMode)?"AGENT_LED_REVIEW":"FOCUSED_ATOMIC_RULES");
         return new Result(evaluation,Collections.unmodifiableMap(assessment));
     }
 
@@ -126,6 +143,7 @@ public final class FocusedCheckEvaluator {
         if(PERSONNEL.matcher(text).find())selected.add("PERSONNEL_CONSORTIUM");
         if(CERTIFICATE_FIELDS.contains(Objects.toString(checkpoint.field(),""))||CERTIFICATE.matcher(text).find()&&(VALIDITY.matcher(text).find()||"DATE_VALIDITY".equals(checkpoint.type())))selected.add("CERTIFICATE_VALIDITY");
         if(PRICE.matcher(text).find()||"VALUE_COMPARE".equals(checkpoint.type())&&PRICE_FIELDS.contains(Objects.toString(checkpoint.field(),"")))selected.add("PRICE_BASIS");
+        if("VALUE_COMPARE".equals(checkpoint.type())&&(DURATION_FIELDS.contains(Objects.toString(checkpoint.field(),""))||text.matches("(?s).*(?:工期|交货期|交付期|履约期限).*")&&!OTHER_PRIMARY_PURPOSE.matcher(text).find()))selected.add("DURATION_RESPONSE");
         return List.copyOf(selected);
     }
 
@@ -182,7 +200,7 @@ public final class FocusedCheckEvaluator {
         boolean businessCompleted=!publishedPending&&Boolean.TRUE.equals(check.get("complete"))&&"COMPLETED".equals(workflow);
         if(publishedPending&&Boolean.TRUE.equals(check.get("complete"))&&"COMPLETED".equals(workflow))
             issues.add(values("category","REQUIREMENT_UNPARSED","label","整项要求尚未证明","description","辅助条件的完成不足以证明整项要求；以守卫后的业务结论为准。","nextStep","需补齐主条件及其证据，不能用参考日期或处理完成替代业务证明。"));
-        if(Set.of("ENGINE_FAILURE","ERROR").contains(workflow)||map(check.get("modelDiagnostics")).get("unresolvedFailures") instanceof Number n&&n.longValue()>0)
+        if(Set.of("ENGINE_FAILURE","ERROR").contains(workflow)||"FAILED".equals(text(map(check.get("agentInvestigation")),"status"))||map(check.get("modelDiagnostics")).get("unresolvedFailures") instanceof Number n&&n.longValue()>0)
             issues.add(values("category","PROCESSING_FAILED","label",businessCompleted?"候选处理记录":stateLabel("PROCESSING_FAILED"),"description",businessCompleted?"部分候选处理曾未完成；其他证据已支持当前完整结论，详见处理记录。":stateReason("PROCESSING_FAILED"),"nextStep",stateNext("PROCESSING_FAILED")));
         List<String> order=List.of("PROCESSING_FAILED","REQUIREMENT_UNPARSED","RELATION_UNCONFIRMED","EVIDENCE_NOT_FOUND","NEEDS_REVIEW");
         issues.sort(Comparator.comparingInt(issue->order.indexOf(text(issue,"category"))));
@@ -193,13 +211,15 @@ public final class FocusedCheckEvaluator {
     }
     private static String category(String code){
         if(mappingPending(code))return "RELATION_UNCONFIRMED";
-        if(code.startsWith("MODEL_")||code.startsWith("HTTP_")||Set.of("RULE_COMPILATION_UNAVAILABLE","FACT_EXTRACTION_UNAVAILABLE","TRANSPORT_FAILURE","REQUEST_TIMEOUT","CAPACITY_TIMEOUT","OUTPUT_JSON_INVALID","OUTPUT_SCHEMA_INVALID","OUTPUT_INCOMPLETE","OUTPUT_LIMIT","INPUT_LIMIT").contains(code))return "PROCESSING_FAILED";
+        if(code.startsWith("MODEL_")||code.startsWith("HTTP_")||Set.of("AGENT_INVESTIGATION_FAILED","AGENT_INVESTIGATION_STALLED","RULE_COMPILATION_UNAVAILABLE","FACT_EXTRACTION_UNAVAILABLE","TRANSPORT_FAILURE","REQUEST_TIMEOUT","CAPACITY_TIMEOUT","OUTPUT_JSON_INVALID","OUTPUT_SCHEMA_INVALID","OUTPUT_INCOMPLETE","OUTPUT_LIMIT","INPUT_LIMIT").contains(code))return "PROCESSING_FAILED";
         if(code.contains("COMPILATION")||code.startsWith("REQUIREMENT_")||Set.of("UNSUPPORTED_RULE","OPERATOR_UNSUPPORTED","SUBJECT_REQUIRED","ATOMIC_CONDITION_NOT_EVALUATED","PRICE_REQUIREMENT_DIMENSIONS_REQUIRED","PERSON_COUNT_ROLE_REQUIRED","PERSON_COUNT_COMPARISON_REQUIRED").contains(code))return "REQUIREMENT_UNPARSED";
         if(code.contains("RELATION")||code.contains("IDENTITY")||code.contains("APPOINTMENT")||code.contains("EMPLOYER")||code.contains("SCOPE")||code.contains("DIMENSION")||code.contains("SELECTION")||code.contains("VERSION")||Set.of("REFERENCE_TIME_UNCONFIRMED","CERTIFICATE_CATEGORY_REQUIRED","VALIDITY_FIELD_REQUIRED","CONFLICTING_EVIDENCE","PRICE_SUBJECT_REQUIRED").contains(code))return "RELATION_UNCONFIRMED";
         if(Set.of("CERTIFICATE_EVIDENCE_REQUIRED","REGISTRATION_CERTIFICATE_REQUIRED","FIELD_EVIDENCE_REQUIRED","PRICE_EVIDENCE_REQUIRED","COMPARISON_SOURCE_REQUIRED","MATERIAL_EVIDENCE_REQUIRED","DECLARATION_EVIDENCE_REQUIRED","CERTIFICATE_FIELD_REQUIRED","VALIDITY_RANGE_REQUIRED","CONTRACT_PROOF_REQUIRED","FULL_SECTION_REQUIRED","EXTERNAL_RECORD_REQUIRED","EVIDENCE_NOT_FOUND","NO_CANDIDATE_EVIDENCE").contains(code))return "EVIDENCE_NOT_FOUND";
         return "NEEDS_REVIEW";
     }
-    static boolean mappingPending(String code){return Set.of("COMPARISON_FIELD_MAPPING_REQUIRED","COMPARISON_RECORD_IDENTITY_UNPROVEN","REGISTRATION_EMPLOYER_BINDING_REQUIRED").contains(code);}
+    static boolean mappingPending(String code){return Set.of("COMPARISON_FIELD_MAPPING_REQUIRED","COMPARISON_RECORD_IDENTITY_UNPROVEN","REGISTRATION_EMPLOYER_BINDING_REQUIRED",
+        "FORM_TEMPLATE_REFERENCE_REQUIRED","FORM_REQUIREMENT_SOURCE_REQUIRED","FORM_PROJECT_BINDING_REQUIRED","FORM_INSTANCE_AMBIGUOUS","FORM_CONTENT_COVERAGE_REQUIRED","FORM_CONDITION_COVERAGE_REQUIRED",
+        "DURATION_REQUIREMENT_SOURCE_REQUIRED","DURATION_REQUIREMENT_FIELD_UNBOUND","DURATION_RESPONSE_FORMAT_REQUIRED").contains(code);}
     private static String stateLabel(String state){return switch(state){case "PROCESSING_FAILED"->"处理失败";case "REQUIREMENT_UNPARSED"->"条款未解析完整";case "RELATION_UNCONFIRMED"->"对应关系待确认";case "EVIDENCE_NOT_FOUND"->"证据未找到";case "WAIT_STAGE"->"等待适用时点";case "COMPLETED"->"条件计算已结束";default->"尚未形成结论";};}
     private static String stateReason(String state){return switch(state){
         case "PROCESSING_FAILED"->"本项处理未完成，已得到的条件和依据予以保留；不能据此判断材料缺失或不符合。";
@@ -230,6 +250,58 @@ public final class FocusedCheckEvaluator {
     }
     private static List<String> strings(Object value){return value instanceof Collection<?> list?list.stream().filter(String.class::isInstance).map(String.class::cast).toList():List.of();}
 
+    /** SDK receipts and authorized-request events are separate from legacy extraction attempts. */
+    static Map<String,Object> modelAudit(Object steps,Map<String,Object> agent,String workflow){
+        List<Map<String,Object>> current=maps(steps).stream().filter(step->!Boolean.TRUE.equals(step.get("paidInPriorRevision"))).toList();
+        List<Map<String,Object>> attempts=engineAttempts(current);
+        Set<String> authorized=new LinkedHashSet<>();
+        for(Map<String,Object> step:current)if("AGENT_EVENT".equals(text(step,"type"))){
+            Map<String,Object> event=map(step.get("output"));
+            if("model_request_authorized".equals(text(event,"event"))&&!text(event,"requestId").isBlank()
+                &&event.get("modelIndex") instanceof Number index&&index.longValue()>0)
+                authorized.add(text(event,"requestId")+":"+index.longValue());
+        }
+        List<Map<String,Object>> agentAttempts=agentAttempts(current,agent);
+        long receiptCalls=sum(agentAttempts,"modelCalls"),agentCalls=Math.max(receiptCalls,authorized.size());
+        long toolCalls=sum(agentAttempts,"toolCalls"),inputTokens=sum(agentAttempts,"inputTokens"),outputTokens=sum(agentAttempts,"outputTokens");
+        long contextCompactions=sum(agentAttempts,"contextCompactions");
+        boolean requested=!attempts.isEmpty()||agentCalls>0,failed="FAILED".equals(text(agent,"status"))
+            ||agentAttempts.stream().anyMatch(attempt->"FAILED".equals(text(attempt,"status")));
+        String reason=agentCalls>0?"已发起自动查证模型请求；只接纳通过来源校验的事实，业务结论由程序计算。"
+            :failed?"自动查证服务未完成，尚无模型请求发起记录；需重试服务，不能认定无需模型。"
+            :requested?"调用结构化事实提取，程序逐条件校验证据并计算结论。"
+            :"复用已保存的结构步骤或执行本地规则；是否完成以逐条件证明及缺口为准。";
+        if(failed&&requested)reason+=" 本次自动查证尚未完成，已保留请求记录与有效证据。";
+        return values("scope","RELATED_EVIDENCE_DOUBTS","policyVersion",cn.bidcheck.semantic.OnDemandPolicy.VERSION,
+            "requested",requested,"decision",requested?"MODEL_ESCALATED":failed?"AGENT_SERVICE_FAILED":"MODEL_NOT_NEEDED",
+            "decisionReason",reason,"state",workflow,"attempts",List.of(),"engineAttempts",attempts,
+            "agentAttempts",agentAttempts,"agentInvestigationCount",agentAttempts.size(),"agentModelCalls",agentCalls,
+            "agentToolCalls",toolCalls,"agentInputTokens",inputTokens,"agentOutputTokens",outputTokens,"agentContextCompactions",contextCompactions,
+            "agentModelAuthorizedEvents",authorized.size(),"httpStatusObserved",false,
+            "boundary","Agent调用从本轮追加式步骤记录按requestId去重聚合；本地重算不会覆盖首次模型、工具与Token审计。请求发起不代表HTTP成功、有效事实或业务通过，已付费旧版本步骤不重复计入。");
+    }
+    static List<Map<String,Object>> agentAttempts(Object steps,Map<String,Object> currentAgent){
+        Map<String,Map<String,Object>> attempts=new LinkedHashMap<>();
+        for(Map<String,Object> step:maps(steps)){
+            if(!"AGENT_INVESTIGATION".equals(text(step,"type"))||!"COMPLETED".equals(text(step,"status")))continue;
+            Map<String,Object> receipt=map(step.get("output"));putAgentAttempt(attempts,receipt,text(step,"id"),text(step,"executionId"));
+        }
+        if(currentAgent!=null&&!currentAgent.isEmpty())putAgentAttempt(attempts,currentAgent,"current-agent-receipt","");
+        return List.copyOf(attempts.values());
+    }
+    private static void putAgentAttempt(Map<String,Map<String,Object>> attempts,Map<String,Object> receipt,String stepId,String executionId){
+        if(receipt==null||receipt.isEmpty())return;
+        String requestId=text(receipt,"requestId");String key=!requestId.isBlank()?"request:"+requestId:!executionId.isBlank()?"execution:"+executionId:"step:"+stepId;
+        Map<String,Object> attempt=new LinkedHashMap<>();
+        for(String field:List.of("status","errorCode","requestId","policy","sdk","sdkVersion","serverPlanFingerprint","serverPlanRevision",
+                "targetEvidenceRevision","targetEvidenceRevisions","targetObligationIds",
+                "modelCalls","modelPermissionRequests","toolCalls","inputTokens","outputTokens","contextCompactions","elapsedMs","acceptedFactCount",
+                "businessCheckCompleted","targetCheckCompleted","remainingGapCount","targetRemainingGapCount"))
+            if(receipt.containsKey(field))attempt.put(field,receipt.get(field));
+        attempt.put("auditKey",key);if(!stepId.isBlank())attempt.put("stepId",stepId);
+        attempts.putIfAbsent(key,Collections.unmodifiableMap(attempt));
+    }
+    private static long sum(List<Map<String,Object>> attempts,String field){long result=0;for(Map<String,Object> attempt:attempts)if(attempt.get(field) instanceof Number value)result+=Math.max(0,value.longValue());return result;}
     private static List<Map<String,Object>> engineAttempts(Object steps){
         Map<String,Map<String,Object>> attempts=new LinkedHashMap<>();
         for(Map<String,Object> step:maps(steps))if(Set.of("COMPILE","EXTRACT").contains(text(step,"type"))){
@@ -250,7 +322,9 @@ public final class FocusedCheckEvaluator {
         for(Map<String,Object> step:maps(steps)){
             Map<String,Object> entry=values("id",text(step,"id"),"type",text(step,"type"),"status",text(step,"status"),"attemptId",text(step,"attemptId"));
             for(String field:List.of("executionId","inputFingerprint","modelIdentity","elapsedMillis"))if(step.containsKey(field))entry.put(field,step.get(field));
-            if("RETRIEVE".equals(text(step,"type")))entry.put("retrieval",map(step.get("output")));
+            String type=text(step,"type");
+            if("RETRIEVE".equals(type)||type.startsWith("RETRIEVE_"))entry.put("retrieval",map(step.get("output")));
+            if(type.startsWith("RETRIEVAL_SELECTION_"))entry.put("selection",map(step.get("output")));
             String key=text(step,"id");if(key.isBlank())key="step-"+index.size();
             Map<String,Object> prior=index.get(key);if(prior==null||stepStateRank(text(entry,"status"))>=stepStateRank(text(prior,"status")))index.put(key,entry);
         }

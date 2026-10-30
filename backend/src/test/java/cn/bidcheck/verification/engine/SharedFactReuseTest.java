@@ -22,6 +22,53 @@ class SharedFactReuseTest {
     static Map<String,Object> source(EvidenceCorpus corpus,Source source){Document d=corpus.documents.stream().filter(x->x.id().equals(source.evidence().documentId())).findFirst().orElseThrow();Page p=corpus.pages.get(EvidenceCorpus.pageKey(d.id(),source.evidence().page(),source.evidence().locationType()));return linked("id",source.id(),"evidence",source.evidence(),"projectId",d.projectId(),"documentHash",d.sha256(),"documentVersion",d.version(),"parserFingerprint",SharedFactReuse.parserFingerprint(p));}
     static Map<String,Object> entry(EvidenceCorpus corpus,Map<String,Object> fact){return linked("fact",fact,"sources",corpus.all.stream().map(s->source(corpus,s)).toList(),"engineVersion",VERSION,"operationIdentity","operation");}
     SharedFactReuse reuse(EvidenceCorpus c,List<Map<String,Object>> entries){return new SharedFactReuse(c,Map.of("sharedFactLookup",(Function<Map<String,Object>,List<Map<String,Object>>>)(q)->entries),"model","engine");}
+    @Test void compileOnlyRepairDoesNotLookupOperationsFieldsOrHistoricalFacts(){
+        EvidenceCorpus c=new EvidenceCorpus(List.of(doc("d","p",1,"报价：80元")));AtomicInteger calls=new AtomicInteger();
+        Function<Map<String,Object>,Object> callback=request->{calls.incrementAndGet();throw new AssertionError("No evidence lookup is required for a compiler-only target");};
+        SharedFactReuse shared=new SharedFactReuse(c,Map.of("sharedFactLookup",callback,"evidenceOperationLookup",callback),"model","engine");
+        assertTrue(shared.lookup(List.of(),c.all,List.of(),"REPAIR_REQUIREMENT").isEmpty());
+        Rule unsupported=new Rule("u","未编译","UNSUPPORTED","","","","","",Map.of(),"原文","",List.of());
+        assertTrue(shared.lookup(List.of(unsupported),c.all,List.of()).isEmpty());assertEquals(0,calls.get());assertEquals(0,shared.sharedPublishes);
+    }
+    @Test void repeatedLookupAdoptsOccurrenceOnceButEveryCheckpointStillRecordsUse(){
+        EvidenceCorpus c=new EvidenceCorpus(List.of(doc("d","p",1,"报价：80元","补充说明")));List<Map<String,Object>> writes=new ArrayList<>();
+        Map<String,Object> context=Map.of("sharedFactLookup",(Function<Map<String,Object>,?>)request->List.of(entry(c,number(c.all.get(0),"80"))),"sharedFactPublisher",(Consumer<Map<String,Object>>)writes::add);
+        SharedFactReuse first=new SharedFactReuse(c,context,"model","engine");
+        assertEquals(1,first.lookup(List.of(rule()),List.of(c.all.get(0)),List.of()).size());
+        assertEquals(1,first.lookup(List.of(rule()),c.all,List.of(),"AFTER_FLIGHT").size());assertEquals(1,writes.size(),"Widening to unrelated candidates must not republish unchanged usage");
+        assertEquals(1,new SharedFactReuse(c,context,"model","engine").lookup(List.of(rule()),c.all,List.of()).size());assertEquals(2,writes.size(),"A new checkpoint must retain its own audit dependency");
+    }
+    @Test void revalidatedLocalResponseSkipsModelButChangedOrConflictingSourceDoesNot()throws Exception{
+        String project="北方新城中心综合楼二次装修工程",quote="质量\t合格。（见投标函）";
+        Document tender=new Document("t","p","TENDER","招标文件",1,"tender-hash","",List.of(new Page(1,project,"BLOCK","TEXT",null),new Page(2,quote,"BLOCK","TEXT",null)),List.of());
+        Checkpoint checkpoint=new Checkpoint("quality","质量响应","响应","HIGH","SEMANTIC_RESPONSE","compliance","RESPONDS",quote,"",true,true,true,new cn.bidcheck.domain.Domain.Evidence("t","招标文件",2,"BLOCK",quote,"p2",1));
+        Map<String,Object> context=Map.of("tenderDocuments",List.of(tender),"originalRequirement",quote,"requirementProjectId","p","focusedCheck",true);
+        Rule rule=new RequirementCompiler().compile(checkpoint,new RunSession(ModelGateway.disabled(),context,"test")).rules().get(0);
+        String cover="（"+project+"）\n投标文件\n投标人：北方装饰有限公司",letter="3.投标函\n（"+project+"）投标文件\n质量为 合格 （填写“合格”）。\n投标人：北方装饰有限公司。";
+        EvidenceCorpus corpus=new EvidenceCorpus(List.of(doc("bid","p",1,cover,letter)));
+        SharedFactReuse reuse=new SharedFactReuse(corpus,Map.of(),"model","engine");RuleEvaluator evaluator=new RuleEvaluator(List.of(),corpus,context);
+        assertEquals("PASS",evaluator.evaluate(rule).status());assertTrue(reuse.extractionRules(List.of(rule),corpus.all,evaluator).isEmpty());
+        assertTrue(reuse.completedReads().isEmpty(),"A program proof must never invent model read coverage");
+        EvidenceCorpus conflict=new EvidenceCorpus(List.of(doc("bid","p",1,cover,letter,letter.replace("质量为 合格","质量为 不合格"))));
+        assertEquals(1,new SharedFactReuse(conflict,Map.of(),"model","engine").extractionRules(List.of(rule),conflict.all,new RuleEvaluator(List.of(),conflict,context)).size());
+        Document changed=new Document(tender.id(),tender.projectId(),tender.role(),tender.name(),2,"changed-hash","",tender.pages(),List.of());
+        assertEquals(1,reuse.extractionRules(List.of(rule),corpus.all,new RuleEvaluator(List.of(),corpus,Map.of("tenderDocuments",List.of(changed)))).size());
+    }
+    @Test void visualRecoveryDoesNotInvalidateCanonicalTextManifestOrCauseUnboundedLookup(){
+        EvidenceCorpus c=new EvidenceCorpus(List.of(doc("d","p",1,"报价：80元")));Source text=c.all.get(0);
+        Source visual=new Source("Vimage",text.evidence(),text.opening(),false,false);
+        AtomicInteger lookups=new AtomicInteger();
+        Function<Map<String,Object>,List<Map<String,Object>>> callback=request->{
+            lookups.incrementAndGet();assertEquals("CANONICAL_SOURCE",request.get("lookupMode"));
+            assertEquals(List.of(text.id()),request.get("sourceIds"));
+            assertEquals(List.of(text.id()),RuleEvaluator.maps(request.get("sources")).stream().map(row->str(row,"id")).toList());
+            return List.of(entry(c,number(text,"80")));
+        };
+        SharedFactReuse shared=new SharedFactReuse(c,Map.of("sharedFactLookup",callback),"model","engine");
+        assertEquals(1,shared.lookup(List.of(rule()),List.of(text,visual),List.of()).size());
+        assertTrue(shared.lookup(List.of(rule()),List.of(visual),List.of()).isEmpty());
+        assertEquals(1,lookups.get(),"A visual-only window must not become an empty-source full-document query");
+    }
     @Test void revalidatesTypedValuesAgainstCurrentOriginal(){EvidenceCorpus c=new EvidenceCorpus(List.of(doc("d","p",1,"报价：80元")));Map<String,Object> f=number(c.all.get(0),"80");f.put("value","90");SharedFactReuse cache=reuse(c,List.of(entry(c,f)));assertTrue(cache.lookup(List.of(rule()),c.all,List.of()).isEmpty());assertEquals(1,cache.rejectedFacts);}
     @Test void rejectsOldVersionEvenWhenFileHashUnchanged(){EvidenceCorpus old=new EvidenceCorpus(List.of(doc("d","p",1,"报价：80元"))),current=new EvidenceCorpus(List.of(doc("d","p",2,"报价：80元")));assertTrue(reuse(current,List.of(entry(old,number(old.all.get(0),"80")))).lookup(List.of(rule()),current.all,List.of()).isEmpty());}
     @Test void rejectsOtherProjectEvenWithCollidingDocumentId(){EvidenceCorpus old=new EvidenceCorpus(List.of(doc("d","foreign",1,"报价：80元"))),current=new EvidenceCorpus(List.of(doc("d","p",1,"报价：80元")));assertEquals(old.all.get(0).id(),current.all.get(0).id());assertTrue(reuse(current,List.of(entry(old,number(old.all.get(0),"80")))).lookup(List.of(rule()),current.all,List.of()).isEmpty());}
@@ -48,6 +95,74 @@ class SharedFactReuseTest {
         SharedFactReuse reused=new SharedFactReuse(corpus,Map.of("evidenceOperationLookup",durable),"model","engine");List<Fact> facts=reused.lookup(List.of(rule),corpus.all,List.of());
         assertEquals(1,lookups.get());assertEquals(1,facts.size());RuleEvaluator evaluator=new RuleEvaluator(facts,corpus,Map.of());
         assertEquals("PASS",evaluator.evaluate(rule).status());assertTrue(reused.extractionRules(List.of(rule),corpus.all,evaluator).isEmpty());
+    }
+    @Test void independentOccurrenceReceiptReusesDifferentBatchFactIdsOnlyAfterProofValidation(){
+        EvidenceCorpus corpus=new EvidenceCorpus(List.of(priceDoc("d","80")));Rule rule=pricedRule("100");List<Map<String,Object>> published=new ArrayList<>();
+        new SharedFactReuse(corpus,Map.of("sharedFactPublisher",(Consumer<Map<String,Object>>)published::add),"model","engine").publish(List.of(pricedFact(corpus)),corpus.all,List.of(rule),List.of(),true,"EXTRACTED");
+        Map<String,Object> batch=published.get(0),receipt=new LinkedHashMap<>(RuleEvaluator.maps(batch.get("fieldCoverage")).get(0));receipt.put("factIds",List.of("occurrence-1"));Map<String,Object> factRow=new LinkedHashMap<>(RuleEvaluator.maps(batch.get("facts")).get(0));factRow.put("id","earliest-model-id");
+        Map<String,Object> factEntry=entry(corpus,factRow);factEntry.put("batchId","earliest-batch");factEntry.put("occurrenceId","occurrence-1");Map<String,Object> fieldEntry=independentFieldEntry(corpus,receipt,"later-batch");
+        List<Map<String,Object>> adoptions=new ArrayList<>();SharedFactReuse reused=new SharedFactReuse(corpus,Map.of("sharedFactLookup",(Function<Map<String,Object>,?>)q->List.of(factEntry,fieldEntry),"sharedFactPublisher",(Consumer<Map<String,Object>>)adoptions::add),"model","engine");
+        var facts=reused.lookup(List.of(rule),corpus.all,List.of());assertEquals(1,facts.size());assertEquals(1,reused.completedReads().size());assertTrue(reused.extractionRules(List.of(rule),corpus.all,new RuleEvaluator(facts,corpus,Map.of())).isEmpty());
+        var adopted=RuleEvaluator.maps(adoptions.get(0).get("fieldCoverage")).get(0);assertEquals(List.of(facts.get(0).id()),adopted.get("factIds"));assertEquals(false,adopted.get("observedInCurrentRun"));
+        for(String failure:List.of("unreturned-occurrence","invalid-value","wrong-field","wrong-alias")){
+            var badFact=new LinkedHashMap<>(factRow);var badReceipt=new LinkedHashMap<>(receipt);if(failure.equals("unreturned-occurrence"))badReceipt.put("factIds",List.of("absent"));if(failure.equals("invalid-value"))badFact.put("value","90");
+            if(failure.equals("wrong-field")){var target=new LinkedHashMap<>((Map<String,Object>)receipt.get("target"));target.put("field","taxRate");badReceipt.put("target",target);badReceipt.put("observationKey",cn.bidcheck.verification.facts.FieldCoverage.key(target));}
+            if(failure.equals("wrong-alias"))badReceipt.put("sourceIds",List.of("another-source"));var candidate=entry(corpus,badFact);candidate.put("occurrenceId","occurrence-1");var cache=reuse(corpus,List.of(candidate,independentFieldEntry(corpus,badReceipt,"later-batch")));
+            cache.lookup(List.of(rule),corpus.all,List.of());assertTrue(cache.completedReads().isEmpty(),failure);
+        }
+    }
+    @Test void duplicateFactsCannotHideACompletedReadAtEndOfLookup(){
+        EvidenceCorpus corpus=new EvidenceCorpus(List.of(priceDoc("d","80")));Rule rule=pricedRule("100");List<Map<String,Object>> entries=new ArrayList<>();
+        Map<String,Object> fact=new LinkedHashMap<>(SharedFactReuse.value(pricedFact(corpus)));fact.put("id","price");for(int i=0;i<245;i++){var row=entry(corpus,fact);row.put("batchId","batch-"+i);row.put("occurrenceId","same-occurrence");entries.add(row);}
+        entries.add(independentFieldEntry(corpus,readReceipt(rule,corpus.all.get(0),List.of("same-occurrence")),"read-after-duplicates"));SharedFactReuse cache=reuse(corpus,entries);var facts=cache.lookup(List.of(rule),corpus.all,List.of());assertEquals(1,facts.size());assertEquals(1,cache.completedReads().size());
+    }
+    @Test void uniqueFactAndReadLimitsAreIndependentAndAdoptionKeepsBoundedCompleteDependencies(){
+        String[] pages=new String[241];Arrays.fill(pages,"本项目甲公司，不划分标段，人民币含税投标总报价：80元。");EvidenceCorpus corpus=new EvidenceCorpus(List.of(doc("d","p",1,pages)));Rule rule=pricedRule("100");List<Map<String,Object>> entries=new ArrayList<>();
+        for(int i=0;i<241;i++){Source source=corpus.all.get(i);Fact fact=new Fact("f"+i,"NUMBER","甲公司","amount","80","80","元","投标总报价","CURRENT_PROJECT",List.of(source.id()),Map.of("lot","不划分标段","currency","人民币","taxBasis","含税"));var row=new LinkedHashMap<>(SharedFactReuse.value(fact));row.put("id",fact.id());entries.add(linked("fact",row,"sources",List.of(source(corpus,source)),"engineVersion",VERSION,"batchId","batch-"+i,"occurrenceId","occ-"+i));}
+        for(int i=0;i<241;i++)entries.add(independentFieldEntry(corpus,readReceipt(rule,corpus.all.get(i),List.of("occ-"+i)),"read-"+i));
+        List<Map<String,Object>> adoptions=new ArrayList<>();SharedFactReuse cache=new SharedFactReuse(corpus,Map.of("sharedFactLookup",(Function<Map<String,Object>,?>)q->entries,"sharedFactPublisher",(Consumer<Map<String,Object>>)adoptions::add),"model","engine");
+        var facts=cache.lookup(List.of(rule),corpus.all,List.of());assertEquals(240,facts.size());assertEquals(240,cache.completedReads().size());assertEquals(2,adoptions.size());
+        assertTrue(cache.factLookupTruncated());assertTrue(cache.fieldLookupTruncated());assertFalse(cache.lookupTruncations().isEmpty());
+        for(Map<String,Object> batch:adoptions){var rows=RuleEvaluator.maps(batch.get("facts"));var fields=RuleEvaluator.maps(batch.get("fieldCoverage"));assertTrue(rows.size()<=120);assertTrue(fields.size()<=120);assertTrue(RuleEvaluator.maps(batch.get("sources")).size()<=128);Set<String> ids=rows.stream().map(r->str(r,"id")).collect(java.util.stream.Collectors.toSet());assertTrue(fields.stream().allMatch(r->ids.containsAll(ProofVerifier.strings(r.get("factIds")))));}
+    }
+    Map<String,Object> readReceipt(Rule rule,Source source,List<String> facts){var target=SharedFactReuse.observationTarget(rule);return linked("target",target,"observationKey",cn.bidcheck.verification.facts.FieldCoverage.key(target),"observationPolicy",cn.bidcheck.verification.facts.FieldCoverage.POLICY,"modelIdentity","model","status",facts.isEmpty()?"READ_NOT_FOUND":"EXTRACTED","sourceScopeComplete",true,"sourceIds",List.of(source.id()),"factIds",facts,"absenceProven",false);}
+    @Test void consumesSeparateLedgerLimitsWithoutRejectingProvenFactsForAReceiptOnlyLimit(){
+        EvidenceCorpus corpus=new EvidenceCorpus(List.of(priceDoc("d","80")));Map<String,Object> fact=new LinkedHashMap<>(SharedFactReuse.value(pricedFact(corpus)));fact.put("id","f");Map<String,Object> row=entry(corpus,fact);row.put("factLookupTruncated",false);row.put("fieldLookupTruncated",true);row.put("lookupTruncation",Map.of("reason","LOOKUP_RESULT_CAPACITY"));
+        var cache=reuse(corpus,List.of(row));assertEquals(1,cache.lookup(List.of(pricedRule("100")),corpus.all,List.of()).size());assertFalse(cache.factLookupTruncated());assertTrue(cache.fieldLookupTruncated());assertEquals("LOOKUP_RESULT_CAPACITY",cache.lookupTruncations().get(0).get("reason"));
+    }
+    @Test void omittedFactBeyondEntryScanBoundCannotLookLikeCompleteEmptyEvidence(){
+        EvidenceCorpus corpus=new EvidenceCorpus(List.of(priceDoc("d","80")));List<Map<String,Object>> rows=new ArrayList<>();for(int i=0;i<1920;i++)rows.add(linked("recordType","FIELD_COVERAGE","engineVersion",VERSION));
+        Map<String,Object> fact=new LinkedHashMap<>(SharedFactReuse.value(pricedFact(corpus)));fact.put("id","f");rows.add(entry(corpus,fact));var cache=reuse(corpus,rows);
+        assertTrue(cache.lookup(List.of(pricedRule("100")),corpus.all,List.of()).isEmpty());assertTrue(cache.factLookupTruncated());assertEquals("SHARED_ENTRY_SCAN_CAPACITY",cache.lookupTruncations().get(0).get("reason"));
+    }
+    @Test void metadataOnlyTruncationIsConsumedWithoutInventingAFact(){
+        EvidenceCorpus corpus=new EvidenceCorpus(List.of(priceDoc("d","80")));var cache=reuse(corpus,List.of(linked("recordType","LOOKUP_METADATA","factLookupTruncated",true,"fieldLookupTruncated",false)));
+        assertTrue(cache.lookup(List.of(pricedRule("100")),corpus.all,List.of()).isEmpty());assertTrue(cache.factLookupTruncated());assertEquals(0,cache.rejectedFacts);
+    }
+    Map<String,Object> independentFieldEntry(EvidenceCorpus corpus,Map<String,Object> receipt,String batch){return linked("recordType","FIELD_COVERAGE","factReferenceType","OCCURRENCE_ID","engineVersion",VERSION,"batchId",batch,"fieldCoverage",List.of(receipt),"fieldCoverageSources",corpus.all.stream().map(s->source(corpus,s)).toList());}
+    @Test void nativeFactIsPublishedOncePerCheckpointEvenWhenComparisonThresholdChanges(){
+        EvidenceCorpus corpus=new EvidenceCorpus(List.of(priceDoc("d","80")));List<Map<String,Object>> written=new ArrayList<>();
+        SharedFactReuse shared=new SharedFactReuse(corpus,Map.of("sharedFactPublisher",(Consumer<Map<String,Object>>)written::add),"model","engine");
+        shared.publish(List.of(pricedFact(corpus)),corpus.all,List.of(pricedRule("100")),List.of(),false,"NATIVE");
+        shared.publish(List.of(pricedFact(corpus)),corpus.all,List.of(pricedRule("200")),List.of(),false,"NATIVE");
+        assertEquals(1,written.size());assertTrue(shared.completedReads().isEmpty(),"Publishing a native fact does not claim model field coverage");
+    }
+    @Test void failedNativePublicationIsRetriedAndCannotPoisonLocalDedupe(){
+        EvidenceCorpus corpus=new EvidenceCorpus(List.of(priceDoc("d","80")));AtomicInteger writes=new AtomicInteger();
+        SharedFactReuse shared=new SharedFactReuse(corpus,Map.of("sharedFactPublisher",(Consumer<Map<String,Object>>)row->{if(writes.incrementAndGet()==1)throw new IllegalStateException("synthetic-fence-failure");}),"model","engine");
+        assertThrows(IllegalStateException.class,()->shared.publish(List.of(pricedFact(corpus)),corpus.all,List.of(pricedRule("100")),List.of(),false,"NATIVE"));
+        shared.publish(List.of(pricedFact(corpus)),corpus.all,List.of(pricedRule("100")),List.of(),false,"NATIVE");assertEquals(2,writes.get());
+    }
+    @Test void splitParentPendingDisappearsOnlyAfterAllValidatedChildReadsComplete(){
+        EvidenceCorpus corpus=new EvidenceCorpus(List.of(doc("d","p",1,"甲页原始材料正文。","乙页原始材料正文。")));Rule rule=pricedRule("100");
+        SharedFactReuse shared=new SharedFactReuse(corpus,new MemoryLedger().context(),"model","engine");assertEquals(2,corpus.all.size());
+        shared.publishState(List.of(rule),corpus.all,"UNREAD","EXTRACTION_PENDING");
+        shared.publish(List.of(),List.of(corpus.all.get(0)),List.of(rule),List.of(),true,"EXTRACTED");
+        assertTrue(shared.coverage().stream().anyMatch(row->str(row,"status").equals("UNREAD")),"One child cannot close a two-source read");
+        shared.publish(List.of(),List.of(corpus.all.get(1)),List.of(rule),List.of(),true,"EXTRACTED");
+        assertEquals(2,shared.coverage().size());assertTrue(shared.coverage().stream().allMatch(row->str(row,"status").equals("READ_NOT_FOUND")));
+        shared.publishState(List.of(rule),corpus.all,"FAILED","NEW_CURRENT_FAILURE");
+        assertTrue(shared.coverage().stream().anyMatch(row->str(row,"status").equals("FAILED")),"Older child reads cannot hide a new parent failure");
     }
     @Test void additionalSourceStillGetsExtractedAndConflictingPriceIsNotPassed(){MemoryLedger ledger=new MemoryLedger();AtomicInteger calls=new AtomicInteger();VerificationEngine e=new VerificationEngine(numericModel(calls,false),null);Document original=doc("d","p",1,"报价：80元");e.evaluate(cp("first"),List.of(original),null,ledger.context());Map<String,Object> next=e.evaluate(cp("second"),List.of(original,doc("supplement","p",1,"报价：120元")),null,ledger.context());assertTrue(calls.get()>1);assertNotEquals("PASS",next.get("businessDecision"));assertTrue(((Integer)((Map<?,?>)next.get("metrics")).get("reusedFacts"))>0);}
     @Test void newSourceFailureCannotFallBackToCachedPass(){MemoryLedger ledger=new MemoryLedger();Document d=priceDoc("d","80");Map<String,Object> first=new VerificationEngine(groundedPriceModel(new AtomicInteger(),false),null).evaluate(priceCheckpoint("first"),List.of(d),null,ledger.context());assertEquals("PASS",first.get("businessDecision"),first.toString());Map<String,Object> next=new VerificationEngine(groundedPriceModel(new AtomicInteger(),true),null).evaluate(priceCheckpoint("second"),List.of(d,priceDoc("new","120")),null,ledger.context());assertEquals("UNDETERMINED",next.get("businessDecision"));assertTrue(RuleEvaluator.maps(next.get("gaps")).stream().anyMatch(g->str(g,"code").equals("SHARED_SOURCE_REVIEW_REQUIRED")));}

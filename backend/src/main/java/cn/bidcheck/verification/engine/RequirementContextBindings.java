@@ -8,7 +8,7 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 final class RequirementContextBindings {
     static final String ROLES="施工企业主要负责人|施工部分负责人|设计部分负责人|拟派项目负责人|拟派项目组人员|联合体牵头人|联合体成员|企业主要负责人|项目负责人|项目经理|设计负责人|施工负责人|技术负责人|专职安全员|法定代表人|授权代表|委托代理人|施工单位|设计单位|施工成员|设计成员|投标单位|投标人";
     private static final String COMPANY="[\\p{IsHan}A-Za-z0-9（）()]{2,60}(?:有限公司|公司)";
-    private static final Pattern HEADER=Pattern.compile("(?:^|[。；;，,\\n])\\s*(?:[★*]|[0-9]+(?:[.．][0-9]+){1,4}[、.．)]?|[0-9一二三四五六七八九十]+[、.．)])?\\s*(?:[^。；;，,\\n:：]{1,12}[:：]\\s*)?("+ROLES+"|"+COMPANY+")(?:(?:[（(][^）)]{0,30}[）)])?)(?:资格要求|资质要求|要求)?(?:\\s*[:：]|(?=须|应|需|具有|具备|提供|提交|持有|\\r?\\n|$))");
+    private static final Pattern HEADER=Pattern.compile("(?:^|[。；;，,\\n\\t]|\\s/\\s)\\s*(?:[★*]|[（(][0-9一二三四五六七八九十]+[）)]|[0-9]+(?:[.．][0-9]+){1,4}[、.．)]?|[0-9一二三四五六七八九十]+[、.．)])?\\s*(?:[^。；;，,\\n:：]{1,12}[:：]\\s*)?("+ROLES+"|"+COMPANY+")(?:(?:[（(][^）)]{0,30}[）)])?)(?:资格要求|资质要求|要求)?(?:\\s*[:：]|(?=须|应|需|具有|具备|提供|提交|持有|\\r?\\n|$))");
     private static final Pattern BRANCH=Pattern.compile("如果|若|否则|除非|如(?=为|属|有|无|提交|采用|组成|联合体)|特殊情况|(?<![一二三四五六七八九十])第[一二三四五六七八九十0-9]+标段");
     private static final List<String> FIELDS=List.of("lot","currency","amountBasis","taxBasis","category","number","validityField","employer","grade","profession","personRole");
     private static final Set<String> PERSONNEL_REFERENCES=Set.of("上述人员","以上人员","前述人员","上述各岗位人员");
@@ -18,11 +18,20 @@ final class RequirementContextBindings {
     private final String source;
     private final String sourceKind;
     private final boolean verifiedOuterSubject;
+    private final Rule confirmedNumeric;
 
     RequirementContextBindings(String source,String sourceKind){this(source,sourceKind,false);}
-    RequirementContextBindings(String source,String sourceKind,boolean verifiedOuterSubject){this.source=Objects.toString(source,"");this.sourceKind=sourceKind;this.verifiedOuterSubject=verifiedOuterSubject;}
+    RequirementContextBindings(String source,String sourceKind,boolean verifiedOuterSubject){this(source,sourceKind,verifiedOuterSubject,null);}
+    RequirementContextBindings(String source,String sourceKind,boolean verifiedOuterSubject,Rule confirmedNumeric){this.source=Objects.toString(source,"");this.sourceKind=sourceKind;this.verifiedOuterSubject=verifiedOuterSubject;this.confirmedNumeric=confirmedNumeric;}
     String source(){return source;}
     String sourceKind(){return sourceKind;}
+    /** This witness is rebuilt by the server from the current confirmed checkpoint and
+     * source. A model-supplied flag, hash or copied provenance can never authorize it. */
+    boolean confirmedNumeric(Rule rule){return confirmedNumeric!=null&&rule.children().isEmpty()&&rule.logic().isBlank()
+            &&rule.predicate().equals(confirmedNumeric.predicate())&&rule.field().equals(confirmedNumeric.field())
+            &&rule.subject().equals(confirmedNumeric.subject())&&rule.operator().equals(confirmedNumeric.operator())
+            &&rule.expected().equals(confirmedNumeric.expected())&&rule.unit().equals(confirmedNumeric.unit())
+            &&rule.sourceQuote().equals(confirmedNumeric.sourceQuote());}
 
     Rule bind(Rule rule,List<Parent> parents){
         Map<String,Object> parameters=new LinkedHashMap<>(rule.parameters());
@@ -32,7 +41,8 @@ final class RequirementContextBindings {
         int at=uniqueOffset(source,rule.sourceQuote());
         Scope scope=at<0?null:scope(rule,parents,at);
         String subject=rule.subject();
-        if(subject.isBlank()&&scope!=null&&!scope.subject().isBlank())subject=scope.subject();
+        if(subject.isBlank()&&scope!=null&&!scope.subject().isBlank()
+                &&!(scope.subject().equals("投标人")&&TenderFormAudit.independentInvoiceIssuer(rule,source)))subject=scope.subject();
         if(!subject.isBlank()){
             Map<String,Object> collective=collectiveProof(subject,rule.sourceQuote(),source);
             if(!collective.isEmpty()){
@@ -40,6 +50,7 @@ final class RequirementContextBindings {
                 refs.put("subject",reference(subject,source,0,"EXPLICIT_PERSONNEL_SET",""));
             }
             else if(at>=0&&rule.sourceQuote().contains(subject))refs.put("subject",reference(subject,rule.sourceQuote(),at,"LOCAL",""));
+            else if(at>=0&&TenderImplicitSubject.bidder(rule,source))refs.put("subject",reference(subject,rule.sourceQuote(),at,"SOURCE_DEFINED_BIDDER",""));
             else if(scope!=null&&subject.equals(scope.subject())){
                 int prefixEnd=source.indexOf('\n');String prefix=prefixEnd>=0?source.substring(0,prefixEnd):"";
                 if(verifiedOuterSubject&&scope.start()<prefixEnd&&prefix.contains(subject))refs.put("subject",reference(subject,prefix,0,"DOCUMENT_SUBJECT_INHERITANCE",""));
@@ -60,15 +71,19 @@ final class RequirementContextBindings {
         if(!PERSONNEL_REFERENCES.contains(subject)||!text.contains(subject)||uniqueOffset(text,quote)<0||differentLots(text))return Map.of();
         int firstEnd=text.indexOf('。');if(firstEnd<0)return Map.of();
         String heading=text.substring(0,firstEnd+1);
-        if(!heading.matches("(?s)^\\s*(?:[0-9.、（）()]+\\s*)?(?:拟派)?(?:人员要求|人员配置|项目人员配置|岗位配置)\\s*[:：].*"))return Map.of();
-        int wide=heading.indexOf('：'),narrow=heading.indexOf(':');int headerEnd=wide<0?narrow:narrow<0?wide:Math.min(wide,narrow);String enumeration=heading.substring(headerEnd+1);
+        Matcher header=Pattern.compile("(?s)^\\s*(?:[0-9.、（）()]+\\s*)?(?:拟派)?(?:人员要求|人员配置|项目人员配置|岗位配置)[ \\u3000]*[:：\\t]").matcher(heading);
+        if(!header.find())return Map.of();
+        String enumeration=heading.substring(header.end());
         if(BRANCH.matcher(enumeration).find()||enumeration.matches("(?s).*(?:人员要求|人员配置|岗位配置)\\s*[:：].*")||Pattern.compile(COMPANY).matcher(enumeration).find())return Map.of();
         List<PersonCountRequirement.Match> counts=PersonCountRequirement.matches(heading);
         if(counts.isEmpty()||counts.stream().anyMatch(m->!PersonnelRoles.personRole(m.role())))return Map.of();
         List<String> roles=counts.stream().map(PersonCountRequirement.Match::role).toList();
         if(new HashSet<>(roles).size()!=roles.size()||roles.stream().map(PersonnelRoles::canonical).distinct().count()!=roles.size())return Map.of();
-        // No second roster, employer, role heading or lot branch may change the antecedent.
-        String following=text.substring(firstEnd+1);
+        // A later role's credential subsection does not change an earlier common-duty actor.
+        // Only intervening source text can change the antecedent for this obligation.
+        int obligationEnd=uniqueOffset(text,quote)+quote.length();
+        if(obligationEnd<=firstEnd)return Map.of();
+        String following=text.substring(firstEnd+1,obligationEnd);
         if(following.matches("(?s).*(?:人员要求|人员配置|岗位配置)\\s*[:：].*")||HEADER.matcher(following).find()
             ||Pattern.compile(COMPANY).matcher(following).find()
             ||following.matches("(?s).*(?:第[一二三四五六七八九十0-9]+标段|另[一有]|其他人员|其余人员|新增人员|变更人员).*"))return Map.of();
@@ -138,7 +153,9 @@ final class RequirementContextBindings {
     boolean bound(Rule rule,String field,String value){return validatedReference(rule,field,value,source)!=null;}
     static Map<?,?> validatedReference(Rule rule,String field,String value,String source){
         if(!(rule.parameters().get("requirementBindings") instanceof Map<?,?> fields)||!(fields.get(field) instanceof Map<?,?> ref))return null;
-        return value.equals(ref.get("value"))&&validReference(ref,source)&&Objects.toString(ref.get("sourceQuote"),"").contains(value)?ref:null;
+        boolean literal=Objects.toString(ref.get("sourceQuote"),"").contains(value);
+        boolean implicit="subject".equals(field)&&"SOURCE_DEFINED_BIDDER".equals(ref.get("bindingKind"))&&TenderImplicitSubject.bidder(rule,source);
+        return value.equals(ref.get("value"))&&validReference(ref,source)&&(literal||implicit)?ref:null;
     }
     static boolean validReference(Map<?,?> ref,String source){
         if(!(ref.get("start") instanceof Number a)||!(ref.get("end") instanceof Number b))return false;

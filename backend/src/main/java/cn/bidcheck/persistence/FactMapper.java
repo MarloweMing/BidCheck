@@ -8,14 +8,17 @@ public interface FactMapper {
  List<FactRows.Entity> getEntities(@Param("ids") List<String> ids);
  void insertEntity(FactRows.Entity row);
  FactRows.Occurrence getOccurrence(@Param("id") String id);
+ List<FactRows.Occurrence> getOccurrences(@Param("ids") List<String> ids);
  List<String> existingOccurrenceIds(@Param("ids") List<String> ids);
  void insertOccurrence(FactRows.Occurrence row);
  FactRows.Evidence getEvidence(@Param("id") String id);
  List<FactRows.Evidence> getEvidences(@Param("ids") List<String> ids);
  void insertEvidence(FactRows.Evidence row);
  FactRows.Link getLink(@Param("id") String id);
+ List<FactRows.Link> getLinks(@Param("ids") List<String> ids);
  void insertLink(FactRows.Link row);
  List<FactRows.Source> sources(@Param("id") String occurrenceId);
+ List<FactRows.Source> sourcesMany(@Param("ids") List<String> ids);
  void attach(@Param("occurrenceId") String occurrenceId,@Param("evidenceId") String evidenceId,@Param("sourceId") String sourceId,@Param("sourceOrder") int sourceOrder);
  void attachBatch(@Param("rows") List<java.util.Map<String,Object>> rows);
  List<String> nativeIds(@Param("project") String project,@Param("engine") String engine,@Param("document") String document,@Param("version") int version,@Param("hash") String hash);

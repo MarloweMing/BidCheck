@@ -38,25 +38,29 @@ class CheckpointRenewalTest {
         var rules=extract("评分标准\n考察应答人管理体系认证情况，本项满分3分：\n（1）具备有效的ISO/IEC 20000系列信息技术服务管理体系认证证书的，得1分；\n（2）具备有效的GB/T 22080系列或ISO/IEC 27000系列信息安全管理体系认证证书的，得1分；\n（3）具备有效的GB/T 19000系列或ISO/IEC 9000系列质量管理体系认证证书的，得1分；");
         var scored=rules.stream().filter(c->c.field().equals("scoring")).toList();
         assertEquals(3,scored.size());
-        assertEquals("ISO/IEC 20000系列信息技术服务管理体系认证证书",scored.get(0).expected());
+        assertEquals("（1）具备有效的ISO/IEC 20000系列信息技术服务管理体系认证证书的，得1分；",scored.get(0).expected());
         assertTrue(scored.get(1).expected().contains("22080系列或ISO/IEC 27000"));
         assertTrue(scored.stream().allMatch(c->c.category().equals("响应检查")));
     }
 
-    @Test void planCombinesRequiredContentsWithTheHighestScoringTierOnly() {
+    @Test void planPreservesContentsAndEveryScoringTierAsOriginalText() {
         String plan="提供人员保障方案，保障人员的稳定性，不影响项目正常工作开展。方案包括但不仅限于不同项目间人员转换风险分析、人员稳定措施、人员补充及替换方式、人员薪酬保障措施。";
         String top="A、方案内容完整、合理、风险分析全面、可行性强的为优，得（1.3,2]分；";
         var rules=extract("评审标准\n"+plan+"\n以上方案内容分为优、良、中、差四个档次进行评分：\n"+top+"\nB、方案内容较为完整，风险分析较为全面，可行性较强为良，得(0.6,1.3]分；\nC、方案内容基本完整，风险分析准确，可执行性一般为中，得(0,0.6]分。\nD、未提供方案或方案不完整，风险分析不准确，可执行性较差，为差，得0分。");
         var scored=rules.stream().filter(c->c.field().equals("scoring")).toList();
         assertEquals(1,scored.size());
-        assertEquals(plan+"方案内容完整、合理、风险分析全面、可行性强。",scored.get(0).expected());
-        assertFalse(scored.get(0).expected().contains("较为"));
+        assertTrue(scored.get(0).expected().contains(plan));
+        assertTrue(scored.get(0).expected().contains(top));
+        assertTrue(scored.get(0).expected().contains("较为"));
+        assertTrue(scored.get(0).expected().contains("得0分"));
+        assertEquals(scored.get(0).source().quote(),scored.get(0).expected());
         assertTrue(scored.get(0).source().quote().contains(top));
     }
 
     @Test void tierSelectionUsesScoreInsteadOfAssumingFirstTierIsHighest() {
         var rules=extract("评分标准\n提供实施方案。\nA、方案基本完整，得1分。\nB、方案完整且可执行，得3分。");
         assertTrue(rules.stream().filter(c->c.field().equals("scoring")).findFirst().orElseThrow().expected().contains("方案完整且可执行"));
+        assertTrue(rules.stream().filter(c->c.field().equals("scoring")).findFirst().orElseThrow().expected().contains("方案基本完整，得1分"));
     }
 
     @Test void fiveGroupsAndGlobalChecksRemainEditableUnconfirmedCandidates() {

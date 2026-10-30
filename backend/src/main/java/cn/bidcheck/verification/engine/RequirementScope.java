@@ -9,12 +9,14 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 final class RequirementScope {
     private static final Pattern BOUNDARY=Pattern.compile("\\s+/\\s+|[。；;\\n\\r]");
     private static final String LEGACY_CONDITIONAL_GUIDANCE="；按招标文件确认适用条件";
-    record Selection(String original,String obligation,String reviewedExpected,int start,int end,String status,String issue) {
+    record Selection(String original,String obligation,String reviewedExpected,int start,int end,String status,String issue,Map<String,Object> sourceLocation) {
+        Selection(String original,String obligation,String reviewedExpected,int start,int end,String status,String issue){this(original,obligation,reviewedExpected,start,end,status,issue,Map.of());}
         boolean resolved(){return issue.isBlank();}
         Map<String,Object> map(){return linked("status",status,"sourceQuote",original,"reviewedExpected",reviewedExpected,
-            "obligationSpans",resolved()&&!obligation.isBlank()?List.of(linked("sourceQuote",obligation,"start",start,"end",end)):List.of(),
-            "contextOnly",!original.equals(obligation),"issue",issue,"offsetBasis","SOURCE_QUOTE_UTF16",
+            "obligationSpans",resolved()&&!obligation.isBlank()?List.of(span()):List.of(),
+            "contextOnly",!original.equals(obligation),"issue",issue,"offsetBasis",sourceLocation.getOrDefault("offsetBasis","SOURCE_QUOTE_UTF16"),
             "systemNotes","SYSTEM_GUIDANCE_SEPARATED".equals(status)?List.of(linked("text",LEGACY_CONDITIONAL_GUIDANCE.substring(1),"origin","LEGACY_GENERATED_CHECKPOINT_GUIDANCE","isBusinessObligation",false)):List.of());}
+        private Map<String,Object> span(){Map<String,Object> span=new LinkedHashMap<>(sourceLocation);span.putAll(linked("sourceQuote",obligation,"start",start,"end",end));return span;}
     }
     static Selection resolve(Checkpoint cp,String original){
         original=Objects.toString(original,"");String expected=Objects.toString(cp.expected(),"");
@@ -51,13 +53,24 @@ final class RequirementScope {
     }
     private static Selection unresolved(String original,String expected,String issue){return new Selection(original,"",expected,-1,-1,"UNRESOLVED",issue);}
     private static boolean scalar(String expected){return expected.strip().matches("[0-9０-９.,，+%％\\-/年月日\\s]+")||expected.isBlank();}
-    /** Whitespace alone may differ after table extraction; all other characters must match, with one source occurrence. */
+    /** Word-table joins use a whitespace-delimited slash; it is layout, not a business token.
+     * Keep original UTF-16 offsets and never normalize URL, fraction or unspaced alternative slashes. */
     private static int[] uniqueRange(String source,String needle){
         StringBuilder normalized=new StringBuilder();List<Integer> offsets=new ArrayList<>();
-        for(int i=0;i<source.length();i++)if(!Character.isWhitespace(source.charAt(i))){normalized.append(source.charAt(i));offsets.add(i);}
-        StringBuilder target=new StringBuilder();for(int i=0;i<needle.length();i++)if(!Character.isWhitespace(needle.charAt(i)))target.append(needle.charAt(i));
+        for(int i=0;i<source.length();i++)if(!layoutCharacter(source,i)){normalized.append(source.charAt(i));offsets.add(i);}
+        StringBuilder target=new StringBuilder();for(int i=0;i<needle.length();i++)if(!layoutCharacter(needle,i))target.append(needle.charAt(i));
         if(target.isEmpty())return null;int at=normalized.indexOf(target.toString());
         if(at<0||normalized.indexOf(target.toString(),at+1)>=0)return null;
         return new int[]{offsets.get(at),offsets.get(at+target.length()-1)+1};
+    }
+    private static boolean layoutCharacter(String text,int at){
+        char c=text.charAt(at);
+        if(Character.isWhitespace(c))return true;
+        if(c!='/'||at==0||at+1>=text.length()||!Character.isWhitespace(text.charAt(at-1))||!Character.isWhitespace(text.charAt(at+1)))return false;
+        String left=text.substring(0,at).stripTrailing(),right=text.substring(at+1).stripLeading();
+        // Plain “A / B” can be an alternative. Only recognize the table-join shapes
+        // emitted around a completed sentence or a named scoring-column heading.
+        return !left.isEmpty()&&"。；;：:".indexOf(left.charAt(left.length()-1))>=0
+                ||right.matches("(?s)^[（(](?:商务|技术|服务|价格)[）)].*");
     }
 }

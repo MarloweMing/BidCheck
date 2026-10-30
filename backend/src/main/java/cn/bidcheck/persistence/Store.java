@@ -130,6 +130,29 @@ public class Store {
     }
     public <T> T get(String kind,String id,Class<T> type) { return decode(require(kind,id).body,type); }
     public Map<String,Object> getMap(String kind,String id) { return map(require(kind,id).body); }
+    /** Bounded reads preserve kind and project isolation; missing rows are never cached. */
+    public Map<String,Map<String,Object>> mapsByIds(String kind,String project,Collection<String> ids) {
+        List<String> keys=ids.stream().filter(Objects::nonNull).distinct().toList();Map<String,Map<String,Object>> out=new LinkedHashMap<>();
+        for(int at=0;at<keys.size();at+=100){List<String> part=keys.subList(at,Math.min(keys.size(),at+100));
+            if(mapper==null){for(String id:part)try{Map<String,Object> value=getMap(kind,id);if(project==null||!value.containsKey("projectId")||project.equals(value.get("projectId")))out.put(id,value);}catch(ResponseStatusException missing){if(missing.getStatusCode().value()!=404)throw missing;}}
+            else for(Stored row:mapper.getMany(part))if(kind.equals(row.kind)&&(project==null||project.equals(row.projectId)))out.put(row.id,map(row.body));
+        }return out;
+    }
+    public Map<String,List<Map<String,Object>>> mapsByParents(String kind,String project,Collection<String> parents) {
+        List<String> keys=parents.stream().filter(Objects::nonNull).distinct().toList();Map<String,List<Map<String,Object>>> out=new LinkedHashMap<>();
+        for(int at=0;at<keys.size();at+=100){List<String> part=keys.subList(at,Math.min(keys.size(),at+100));
+            if(mapper==null)for(String parent:part)out.put(parent,maps(kind,project,parent));
+            else for(Stored row:mapper.listParents(kind,project,part))out.computeIfAbsent(row.parentId,k->new ArrayList<>()).add(map(row.body));
+        }return out;
+    }
+    /** Caller owns the same transaction/project fence as insertNew. Different parents may be batched. */
+    public void insertRows(List<Stored> rows) {
+        if(mapper==null){for(Stored row:rows)save(row.kind,row.id,row.projectId,row.parentId,map(row.body));return;}
+        for(int at=0;at<rows.size();at+=100)mapper.insertRecords(rows.subList(at,Math.min(rows.size(),at+100)));
+    }
+    public Stored newRow(String kind,String id,String project,String parent,Object value){
+        Stored row=new Stored();row.id=id;row.kind=kind;row.projectId=project;row.parentId=parent==null?"":parent;row.body=StoredBodyCodec.encode(kind,encode(value));row.createdAt=System.currentTimeMillis();return row;
+    }
     public <T> List<T> list(String kind,String project,String parent,Class<T> type) {
         return mapper.list(kind,project,parent).stream().map(x->decode(x.body,type)).toList();
     }

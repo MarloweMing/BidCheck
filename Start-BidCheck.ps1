@@ -29,6 +29,13 @@ try {
     if (-not $LocalOnly -and (Test-Path -LiteralPath '.local/model-key.dpapi')) {
         $bidEnvironment['BIDCHECK_MODEL_KEY'] = Read-BidCheckSecret '.local/model-key.dpapi'
     }
+    $bidAgentPython = Join-Path $PSScriptRoot '.local/agent-venv/Scripts/python.exe'
+    $bidAgentWorker = Join-Path $PSScriptRoot 'agent-worker/worker.py'
+    if (-not $LocalOnly -and (Test-Path -LiteralPath $bidAgentPython) -and (Test-Path -LiteralPath $bidAgentWorker)) {
+        foreach ($bidDefault in @(@('BIDCHECK_AGENT_ENABLED','true'),@('BIDCHECK_AGENT_PYTHON',$bidAgentPython),@('BIDCHECK_AGENT_WORKER',$bidAgentWorker))) {
+            if (-not $bidEnvironment.ContainsKey($bidDefault[0]) -and -not [Environment]::GetEnvironmentVariable($bidDefault[0], 'Process')) { $bidEnvironment[$bidDefault[0]] = $bidDefault[1] }
+        }
+    }
     foreach ($bidName in $bidEnvironment.Keys) {
         $bidPreviousEnvironment[$bidName] = [Environment]::GetEnvironmentVariable($bidName, 'Process')
         [Environment]::SetEnvironmentVariable($bidName, $bidEnvironment[$bidName], 'Process')

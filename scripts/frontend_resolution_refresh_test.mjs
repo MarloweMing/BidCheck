@@ -34,10 +34,14 @@ await check('another project cannot change current project batch states',async()
   assert.equal(h.q.state.project.runs[1].status,'RUNNING');assert.equal(h.context.paints,0);assert.equal(h.q.state.run,old);
 });
 await check('loading a terminal cooldown schedules exactly one lightweight read',async()=>{
-  const h=harness(),old=report('old',12000);h.q.set(old,[old.run]);h.context.responses.push(old);await h.q.loadRun('old',false);
-  h.q.scheduleResolutionRefresh(old,'p');assert.equal(h.timers.size,1);assert.equal([...h.timers.values()][0].delay,2250);assert.equal(h.context.calls.length,1);
+  const h=harness(),old=report('old',12000);h.q.set(old,[old.run]);h.context.responses.push(old,[]);await h.q.loadRun('old',false);
+  const detailReads=()=>h.context.calls.filter(call=>call.url==='/api/runs/old?includeContent=false').length;
+  const candidateReads=()=>h.context.calls.filter(call=>call.url==='/api/runs/old/dependency-recalculations').length;
+  h.q.scheduleResolutionRefresh(old,'p');assert.equal(h.timers.size,1);assert.equal([...h.timers.values()][0].delay,2250);
+  assert.equal(detailReads(),1);assert.equal(candidateReads(),1);assert.equal(h.context.calls.length,2);
   h.advance(2250);h.context.responses.push(report('old',12000,true));await h.fire();
-  assert.equal(h.context.calls.length,2);assert.equal(h.q.state.run.resolutionSummary.canRecover,true);assert.equal(h.timers.size,0);
+  assert.equal(detailReads(),2);assert.equal(candidateReads(),1);assert.equal(h.context.calls.length,3);
+  assert.equal(h.q.state.run.resolutionSummary.canRecover,true);assert.equal(h.timers.size,0);
   assert.ok(h.context.calls.every(call=>call.request===undefined));assert.equal(h.network(),0);
 });
 await check('background completion never enables recovery while another batch is still running',async()=>{
@@ -53,7 +57,7 @@ await check('leaving the report before cooldown skips its read',async()=>{
   assert.equal(h.context.calls.length,0);assert.equal(h.timers.size,0);
 });
 await check('loading another report cancels the obsolete cooldown timer',async()=>{
-  const h=harness(),old=report('old',12000),other=report('other');h.q.set(old,[old.run,other.run]);h.q.scheduleResolutionRefresh(old,'p');h.context.responses.push(other);await h.q.loadRun('other',false);
+  const h=harness(),old=report('old',12000),other=report('other');h.q.set(old,[old.run,other.run]);h.q.scheduleResolutionRefresh(old,'p');h.context.responses.push(other,[]);await h.q.loadRun('other',false);
   assert.equal(h.timers.size,0);assert.equal(h.q.state.run,other);
 });
 await check('inflight cooldown response cannot overwrite a newer selection or request',async()=>{
@@ -78,6 +82,6 @@ await check('ordinary finished, active, or already recoverable reports add no ti
   }
 });
 
-const out='artifacts/resolution-recovery-20261017/frontend/refresh-fix';await fs.mkdir(out,{recursive:true});
+const out=process.argv[2]||'artifacts/resolution-recovery-20261017/frontend/refresh-fix';await fs.mkdir(out,{recursive:true});
 const receipt={mode:'OFFLINE_REAL_POLL_AND_COOLDOWN_HANDLERS_WITH_IN_MEMORY_API',passed:checks.filter(c=>c.pass).length,failed:checks.filter(c=>!c.pass).length,checks,sourceSha256:createHash('sha256').update(source).digest('hex'),externalRequests:0,businessWrites:0};
 await fs.writeFile(out+'/targeted-tests.json',JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt));if(receipt.failed)process.exitCode=1;

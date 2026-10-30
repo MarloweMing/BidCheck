@@ -45,11 +45,11 @@ public final class RequirementMappingService {
     private static final Pattern PRICE_BOUND = Pattern.compile(
             "(不得超过|不超过|不得高于|不高于|最高限价(?:为)?|控制价(?:为)?|≤|小于等于|不少于|不得低于|不低于|≥|大于等于)\\s*(?:人民币)?\\s*([0-9][0-9,]*(?:\\.[0-9]+)?)\\s*(亿元|万元|元)");
     private static final Pattern PERSON_COUNT = Pattern.compile(
-            "(至少|不少于|不低于|不超过|至多|最多)?\\s*([0-9一二两三四五六七八九十]+)\\s*(?:名|人|个)");
+            "(至少|不少于|不低于|不超过|至多|最多)?\\s*([0-9一二两三四五六七八九十]+)\\s*(?:名|人)(?!民币|员证书)");
     private static final Pattern DATE = Pattern.compile(
             "((?:20)?[0-9]{2})[年./-]([01]?[0-9])[月./-]([0-3]?[0-9])日?");
     private static final Pattern DURATION_BOUND = Pattern.compile(
-            "(总工期|项目工期|设计工期|施工工期|安装工期|调试工期|服务期限|交付工期|交货期|工期)"
+            "(投标有效期|总工期|项目工期|设计工期|施工工期|安装工期|调试工期|服务期限|交付工期|交货期|工期)"
                     + "[^。；;]{0,32}?(不得超过|不超过|不得少于|不少于|不低于|至少|至多|为|共计|=|≤|>=|≥|<=)?"
                     + "\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(工作日|日历日|天|日|个月|月|年)");
     private static final Pattern SCORE_VALUE = Pattern.compile("(?:最高|上限|满分)?\\s*([0-9]+(?:\\.[0-9]+)?)\\s*分");
@@ -71,7 +71,7 @@ public final class RequirementMappingService {
             DATE_ROLE + "\\s*(?:应当|应|须|必须)?\\s*在\\s*" + DATE_ROLE
                     + "\\s*(之前|以前|之后|以后)");
     private static final List<String> ROLES = List.of(
-            "专职安全生产管理人员", "项目技术负责人", "项目负责人", "设计负责人", "项目经理",
+            "施工企业主要负责人", "施工部分负责人", "设计部分负责人", "专职安全生产管理人员", "专职安全员", "项目技术负责人", "项目负责人", "设计负责人", "项目经理",
             "技术负责人", "注册结构工程师", "注册建筑师", "造价工程师", "安全员", "施工员",
             "质量员", "材料员", "资料员", "造价员");
     private static final List<String> CREDENTIALS = List.of(
@@ -425,7 +425,10 @@ public final class RequirementMappingService {
         }
 
         String role = role(text, context);
-        if (!role.isBlank() && containsAny(text, "证书", "资格", "注册", "职称", "考核合格")) {
+        // A bidder blacklist clause may mention a project manager and companies
+        // registered by a prohibited supplier. That is not a personnel credential.
+        if (ROLES.contains(role) && (containsAny(text, "证书", "职称", "考核合格")
+                || text.matches("(?s).*注册(?:建造师|建筑师|监理工程师|造价工程师).*"))) {
             String certificateType = firstContained(text, CREDENTIALS);
             String employerRelation = containsAny(text, "注册单位", "聘用单位", "本单位", "投标人")
                     ? "MATCH_BIDDER_OR_APPLICABLE_CONSORTIUM_MEMBER" : "";
@@ -511,7 +514,7 @@ public final class RequirementMappingService {
         }
 
         if (candidates.stream().noneMatch(candidate -> Set.of("MATERIAL_ALTERNATIVE", "COMMITMENT_WITH_SEAL", "SECTION_CHECKLIST", "FORM_FIELD_COMPLETENESS")
-                .contains(candidate.templateId())) && containsAny(text, "提供", "提交", "附具", "附上")) {
+                .contains(candidate.templateId())) && containsAny(text, "提供", "提交", "附具", "附上", "出具")) {
             String material = firstContained(text, MATERIALS);
             if (!material.isBlank()) {
                 candidates.add(candidate("MATERIAL_PRESENT", 0.90, "命中明确材料提交要求",
@@ -622,6 +625,13 @@ public final class RequirementMappingService {
         int start = 0;
         int index = 0;
         while (matcher.find()) {
+            // A sentence such as “见第六章中《投标函》” is the identity of the material
+            // required by the immediately preceding submission verb, not another obligation.
+            // Keep the exact contiguous source so neither half loses its object or action.
+            String preceding=text.substring(start,matcher.start());
+            String following=text.substring(matcher.end()).stripLeading();
+            if(containsAny(preceding,"提交","提供","出具","附具")
+                    &&following.matches("(?s)^(?:见|详见)第[一二三四五六七八九十0-9]+章中?《[^》]+》.*"))continue;
             addFragment(fragments, node, text, start, matcher.start(), index++);
             start = matcher.end();
         }
@@ -805,6 +815,7 @@ public final class RequirementMappingService {
     }
 
     private String durationField(String label) {
+        if (label.equals("投标有效期")) return "bidValidity";
         if (label.contains("设计")) return "designDuration";
         if (label.contains("施工")) return "constructionDuration";
         if (label.contains("安装")) return "installationDuration";

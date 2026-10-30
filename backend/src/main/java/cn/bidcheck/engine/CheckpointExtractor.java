@@ -6,7 +6,7 @@ import java.util.regex.*;
 
 /** Conservative, editable candidates from explicit Chinese procurement clauses. */
 public final class CheckpointExtractor {
-    public static final String VERSION="checkpoint-extraction-3-source-only-conditional-obligations";
+    public static final String VERSION="checkpoint-extraction-5-complete-source-rubrics";
     public List<Checkpoint> extract(Document document) {
         Objects.requireNonNull(document,"document");
         Map<String,Checkpoint> rules=new LinkedHashMap<>();
@@ -61,8 +61,9 @@ public final class CheckpointExtractor {
                             if(at>=0 && at+1<document.pages().size()) following=EngineText.lines(document.pages().get(at+1)).stream().findFirst().orElse("");
                         }
                         boolean explicitCondition=following.matches(".*(?:无需|无要求可不提供|如.*则|按.*要求提供).*" );
-                        String referencedCondition=materialCondition(name,located);
-                        if(!explicitCondition && !referencedCondition.isBlank()) { following=referencedCondition; explicitCondition=true; }
+                        MaterialCondition referencedCondition=materialCondition(name,located,document);
+                        boolean usesReference=!explicitCondition&&referencedCondition!=null;
+                        if(usesReference) { following=referencedCondition.condition(); explicitCondition=true; }
                         boolean conditional=name.matches(".*(?:如有|认为有必要).*" ) || explicitCondition;
                         if(conditional) {
                             // Guidance belongs to presentation, not the original obligation. Keep
@@ -70,7 +71,8 @@ public final class CheckpointExtractor {
                             String expected=name;Evidence conditionSource=source;
                             if(explicitCondition){
                                 String pageText=Objects.toString(page.text(),"");int begin=pageText.indexOf(line),end=begin<0?-1:pageText.indexOf(following,begin+line.length());
-                                if(begin>=0&&end>=0&&pageText.substring(begin+line.length(),end).isBlank()){
+                                if(usesReference){conditionSource=referencedCondition.source();expected=conditionSource.quote();}
+                                else if(begin>=0&&end>=0&&pageText.substring(begin+line.length(),end).isBlank()){
                                     String quote=pageText.substring(begin,end+following.length());expected=quote;
                                     conditionSource=new Evidence(source.documentId(),source.documentName(),source.page(),source.locationType(),quote,source.anchor(),source.confidence());
                                 }else expected=name+"。"+following; // Unbound cross-block condition remains visible for source repair.
@@ -161,20 +163,9 @@ public final class CheckpointExtractor {
         if(located.get(clause.start()).page().text().stripLeading().startsWith("注：")) return;
         // Each independently scored certificate becomes one candidate; alternatives within a certificate stay together.
         if(!line.contains("方案") && line.matches(".*(?:证书|认证).*" ) && line.matches(".*(?:具备|具有|提供|获得|取得).*")) {
-            String proof=""; Matcher proofMatch=Pattern.compile("(?:证明材料|证明文件要求)[:：](.*)").matcher(line);
-            if(proofMatch.find()) { proof=proofMatch.group().strip(); line=line.substring(0,proofMatch.start()); }
-            for(String part:line.split("(?=[（(][0-9一二三四五六七八九十]+[）)])|[；;]")) {
-                if(!part.matches(".*(?:证书|认证).*" ) || !part.matches(".*(?:具备|具有|提供|获得|取得).*")) continue;
-                String requirement=part.replaceFirst("^.*?(?:具备|具有|提供|获得|取得)(?:有效的?|的)?\\s*","").strip();
-                // Keep validity, copies, thresholds and proof instructions; strip only the score awarded.
-                requirement=requirement.replaceFirst("[，,]?\\s*(?:可?得|计|获)[^分]*分.*$","").replaceFirst("的?[，,；;。]+$","");
-                requirement=requirement.replaceFirst("证书的$","证书");
-                String subject=part.replaceFirst("^(?:[\\s/]*[（(][0-9一二三四五六七八九十]+[）)])?\\s*","").split("(?:具备|具有|提供|获得|取得)",2)[0].strip();
-                if(subject.matches("(?:施工单位|设计单位|联合体牵头人|联合体成员|项目负责人|设计负责人)")) requirement=subject+"："+requirement;
-                if(!proof.isBlank()) requirement+="。"+proof;
-                put(rules,doc,requirement,"响应检查","MEDIUM","SEMANTIC_RESPONSE","scoring","RESPONDS",requirement,"",true,source);
-            }
-            return;
+            List<ScoringSourceSegments.Certificate> certificates=ScoringSourceSegments.certificates(source.quote());
+            for(var certificate:certificates)put(rules,doc,"认证评分核查："+shorten(certificate.clause().quote()),"响应检查","MEDIUM","SEMANTIC_RESPONSE","scoring","RESPONDS",certificate.expected(),"",true,source);
+            if(!certificates.isEmpty())return;
         }
         if(line.matches(".*(?:方案|施工组织设计).*" ) && line.matches(".*(?:提供|提交|编制|制定|包括|包含|完整性|建设目标|人员构成).*")) {
             List<String> parts=new ArrayList<>(scoringParts(line));
@@ -193,29 +184,18 @@ public final class CheckpointExtractor {
                 parts.addAll(additions); consumed.addAll(following.anchors());
                 foundBand|=hasBand; last=following.end(); next=last+1;
             }
-            StringBuilder requirement=new StringBuilder();
-            List<String> best=new ArrayList<>(); double bestScore=-1;
-            for(String part:parts) {
-                if(band(part)) {
-                    double value=score(part);
-                    if(value>bestScore) { best.clear(); bestScore=value; }
-                    if(value==bestScore) best.add(part);
-                } else if(!rubricIntro(part)) requirement.append(part);
-            }
-            if(!best.isEmpty()) {
-                if(!requirement.toString().matches(".*[。；;]$")) requirement.append("。");
-                List<String> standards=best.stream().map(part->stripNumber(part).replaceFirst("(?:的?为[优良中差]|[，,]?\\s*(?:可?得|计|获)).*$","").replaceFirst("[，,。；;]+$","")).toList();
-                requirement.append(String.join("；或",standards)).append("。");
-            }
             source=spanEvidence(doc,located,clause.start(),last);
-            put(rules,doc,(best.isEmpty()?"方案响应（最高档待确认）：":"方案最高档要求：")+shorten(line),"响应检查","MEDIUM","SEMANTIC_RESPONSE","scoring","RESPONDS",requirement.toString(),"",true,source);
+            // Preserve all tiers and every exact block. Source is a navigable first anchor;
+            // compilation verifies the ordered additional block texts against the frozen document.
+            String requirement=sourceTexts(doc,located,clause.start(),last);
+            put(rules,doc,"方案评分核查："+shorten(line),"响应检查","MEDIUM","SEMANTIC_RESPONSE","scoring","RESPONDS",requirement,"",true,source);
             return;
         }
         // A score total or tier label alone is not an actionable response requirement.
         if(line.matches(".*(?:本项|该项|此项)满分\\s*[0-9一二三四五六七八九十]+.*")
             && !line.matches(".*(?:提供|提交|具备|具有|须|应当|至少|不少于|满足|符合).*")) return;
         if(actionable(line) || line.matches(".*(?:业绩|合同|方案).*"))
-            put(rules,doc,"响应评分："+shorten(line),"响应检查","MEDIUM","SEMANTIC_RESPONSE","scoring","RESPONDS",highestDiscreteBand(line),"",true,source);
+            put(rules,doc,"响应评分："+shorten(line),"响应检查","MEDIUM","SEMANTIC_RESPONSE","scoring","RESPONDS",sourceTexts(doc,located,clause.start(),clause.end()),"",true,source);
     }
     private double score(String line) {
         Matcher clause=Pattern.compile("(?:得|计|获)([^分]*)分").matcher(line);
@@ -230,15 +210,6 @@ public final class CheckpointExtractor {
     }
     private String scoringBody(String text) { return text.replaceFirst("\\t\\s*-?[0-9]+(?:\\.[0-9]+)?\\s*$","").replaceAll("\\s+/\\s+"," "); }
     private boolean rubricIntro(String text) { return text.matches("^(?:以上|根据|按|分为|评分档次|评分标准).*(?:档次|评分|档).*" ); }
-    private String highestDiscreteBand(String text) {
-        if(text.matches(".*(?:每有|每增加|每提供|每项|最高|扣|价格得分).*")) return text;
-        String[] proof=text.split("(?=(?:证明材料|证明文件要求)[:：])",2);
-        Matcher award=Pattern.compile("([^，,。；;]*(?:得|计|获)\\s*[0-9]+(?:\\.[0-9]+)?\\s*分)").matcher(proof[0]);
-        String best=""; double maximum=-1; int count=0;
-        while(award.find()) { count++; double value=score(award.group()); if(value>maximum) { maximum=value; best=award.group(); } }
-        if(count<2) return text;
-        return best.replaceFirst("[，,]?\\s*(?:得|计|获)[^分]*分$","")+"。"+(proof.length>1?proof[1]:"");
-    }
     private boolean newScoringItem(String line) {
         if(band(line)) return false;
         String clean=stripNumber(line);
@@ -295,17 +266,19 @@ public final class CheckpointExtractor {
         }
         return references;
     }
-    private String materialCondition(String material,List<LocatedLine> lines) {
-        String name=material.replaceAll("[（(][^）)]*[）)]","").replaceAll("\\s+","");
+    private record MaterialCondition(String condition,Evidence source) {}
+    private MaterialCondition materialCondition(String material,List<LocatedLine> lines,Document doc) {
+        String name=material.replaceAll("[（(]负责人[）)]","").replaceAll("\\s+","");
         Pattern associated=Pattern.compile("《([^》]+)》\\s*[（(]([^）)]*(?:无需|无须|不需|免于)[^）)]*)[）)]");
+        List<MaterialCondition> matches=new ArrayList<>();
         for(LocatedLine line:lines) {
             Matcher matcher=associated.matcher(line.text());
             while(matcher.find()) {
                 String referenced=matcher.group(1).replaceAll("\\s+","");
-                if(referenced.equals(name) || referenced.endsWith(name) && name.length()>=5) return matcher.group(2);
+                if(referenced.replaceAll("[（(]负责人[）)]","").equals(name))matches.add(new MaterialCondition(matcher.group(2),EngineText.evidence(doc,line.page(),line.line(),matcher.group())));
             }
         }
-        return "";
+        return matches.size()==1?matches.get(0):null;
     }
     private boolean independentRequirement(String text) {
         return text.matches("^(?:[（(]?[0-9一二三四五六七八九十]+[）)、.．]\\s*)?(?:若|如果|如为|如系|投标人|应答人|供应商|申请人|提供|提交|具有|具备|不得|未被|不接受).*" );
@@ -353,6 +326,9 @@ public final class CheckpointExtractor {
             if(lineNumber==last.line()) { to=matcher.start()+matcher.group().lastIndexOf(last.text())+last.text().length(); break; }
         }
         return EngineText.evidence(doc,first.page(),first.line(),to>from?pageText.substring(from,to):first.text());
+    }
+    private String sourceTexts(Document doc,List<LocatedLine> lines,int start,int end){
+        List<String> sources=new ArrayList<>();for(int at=start;at<=end;){int last=at;while(last<end&&lines.get(last+1).page()==lines.get(at).page())last++;sources.add(spanEvidence(doc,lines,at,last).quote());at=last+1;}return String.join("\n",sources);
     }
     private List<String> physicalLines(Page page) { return Arrays.stream((page.text()==null?"":page.text()).split("\\R",-1)).map(String::trim).toList(); }
     private String shorten(String text) { return text.substring(0,Math.min(text.length(),45)); }
