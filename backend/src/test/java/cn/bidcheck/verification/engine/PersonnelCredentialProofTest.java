@@ -36,7 +36,10 @@ class PersonnelCredentialProofTest {
     }
     @Test void samePersonFullPeriodComputesWithoutModel(){assertEquals("PASS",safety("京建安B(2099)9990001","有效期：2024年1月1日至2027年1月1日",true,"B").status());}
     @Test void cutoffBeforeValidityIsSourcedRisk(){assertEquals("FAIL",safety("京建安B(2099)9990001","有效期：2026年1月1日至2027年1月1日",true,"B").status());}
-    @Test void endOnlyCannotBecomeFullValidity(){assertEquals("UNDETERMINED",safety("京建安B(2099)9990001","有效期至：2027年1月1日",true,"B").status());}
+    @Test void explicitExpiryOnlyCanBeComparedWithoutInventingAStart(){
+        assertEquals("PASS",safety("京建安B(2099)9990001","有效期至：2027年1月1日",true,"B").status());
+        assertEquals("FAIL",safety("京建安B(2099)9990001","有效期至：2025年1月1日",true,"B").status());
+    }
     @Test void sameNameWithoutStrongIdentityCannotAttachCertificate(){Decision d=safety("京建安B(2099)9990001","有效期：2024年1月1日至2027年1月1日",false,"B");assertEquals("UNDETERMINED",d.status());assertTrue(d.gaps().stream().anyMatch(g->g.code().equals("ENTITY_IDENTITY_AMBIGUOUS")));}
     @Test void typeMismatchDoesNotBecomeBroadSafetyPass(){assertEquals("UNDETERMINED",safety("京建安B(2099)9990001","CATEGORY",true,"A").status());}
     @Test void openingValidityNeverFallsBackToBidDeadline(){Decision missing=safety("京建安B(2099)9990001","有效期：2024年1月1日至2027年1月1日",true,"B","OPENING_DATE",Map.of());assertEquals("UNDETERMINED",missing.status());assertTrue(missing.gaps().stream().anyMatch(g->g.code().equals("REFERENCE_TIME_UNCONFIRMED")));Map<String,Object> opening=linked("referenceDate","2028-08-05","referenceDateSourceVerified",true,"referenceDateEvidence",Map.of("documentId","t","quote","开标日期：2028年8月5日","confirmation","SOURCE_UNAMBIGUOUS","confirmed",true));Decision actual=safety("京建安B(2099)9990001","有效期：2024年1月1日至2027年1月1日",true,"B","OPENING_DATE",Map.of("OPENING_DATE",opening));assertEquals("FAIL",actual.status(),actual.toString());assertEquals("2028-08-05",actual.proof().get("referenceDate"));}

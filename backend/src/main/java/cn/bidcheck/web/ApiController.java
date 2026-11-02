@@ -101,7 +101,13 @@ public class ApiController {
     @PostMapping("/projects/{projectId}/check-sets/{setId}/confirm") public Object confirmCheckSet(@PathVariable String projectId,@PathVariable String setId,@RequestBody Map<String,Object> body) { return specifications().confirmCheckSet(projectId,setId,body); }
     @PostMapping("/projects/{id}/runs") public Object run(@PathVariable String id,@RequestBody Map<String,Object> body) {
         Integer manifest=body.get("manifestRevision") instanceof Number number?number.intValue():null;
-        return service.startRun(id,BidService.text(body,"documentId"),Boolean.TRUE.equals(body.get("force")),BidService.text(body,"checkSetId"),manifest,BidService.text(body,"idempotencyKey"),BidService.text(body,"reviewMode"));
+        List<String> checkpointIds=null;
+        if(body.containsKey("checkpointIds")){
+            if(!(body.get("checkpointIds") instanceof List<?> values)||values.isEmpty()||values.stream().anyMatch(v->!(v instanceof String)))throw BidService.bad("checkpointIds 必须是非空的检查项编号数组");
+            checkpointIds=((List<?>)body.get("checkpointIds")).stream().map(String.class::cast).toList();
+        }
+        if(checkpointIds==null)return service.startRun(id,BidService.text(body,"documentId"),Boolean.TRUE.equals(body.get("force")),BidService.text(body,"checkSetId"),manifest,BidService.text(body,"idempotencyKey"),BidService.text(body,"reviewMode"));
+        return service.startRun(id,BidService.text(body,"documentId"),Boolean.TRUE.equals(body.get("force")),BidService.text(body,"checkSetId"),manifest,BidService.text(body,"idempotencyKey"),BidService.text(body,"reviewMode"),checkpointIds);
     }
     @GetMapping("/runs/{id}") public Object run(@PathVariable String id,@RequestParam(defaultValue="true") boolean includeContent) { return service.run(id,includeContent); }
     @GetMapping("/runs/{id}/evidence-graph") public Object evidenceGraph(@PathVariable String id,

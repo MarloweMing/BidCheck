@@ -42,7 +42,7 @@ public final class LayoutEvidenceIndex implements Function<Map<String,Object>,Li
             Map<String,Object> row=new LinkedHashMap<>();row.put("documentId",docId);row.put("spanId",span.get("id"));row.put("text",text);
             row.put("locationType",locationType(span));row.put("location",location(span));
             Map<String,Object> identity=identities.getOrDefault(docId,Map.of());row.put("documentHash",span.getOrDefault("documentHash",identity.get("documentHash")));row.put("documentVersion",span.getOrDefault("documentVersion",identity.get("documentVersion")));
-            for(String key:List.of("kind","tableId","row","column","columnSpan","rowSpan","mergeContinuationOf","mergeUnresolved","bbox","coordinateSpace","source","ooxml","revision","frameId","imageHash","imageWidth","imageHeight","crop","headerCellIds","headerText","columnHeader","header","renderedMapping")) if(span.containsKey(key)) row.put(key,span.get(key));
+            for(String key:List.of("kind","tableId","tableType","row","column","columnSpan","rowSpan","mergeContinuationOf","mergeUnresolved","bbox","coordinateSpace","source","sourceFragments","pageWidth","pageHeight","ooxml","revision","frameId","imageHash","imageWidth","imageHeight","crop","headerCellIds","headerText","columnHeader","header","renderedMapping")) if(span.containsKey(key)) row.put(key,span.get(key));
             row.put("cellId","TABLE_CELL".equals(span.get("kind"))?span.get("id"):null);output.add(row);
         }
         return output;

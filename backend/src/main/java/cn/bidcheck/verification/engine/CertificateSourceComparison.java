@@ -8,10 +8,11 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 
 /** Local, typed two-document comparison. Every field is read again from immutable original text. */
 final class CertificateSourceComparison {
-    static final String VERSION="certificate-source-comparison-2-typed-query-rows";
+    static final String VERSION="certificate-source-comparison-3-profession-date-scope";
+    private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(CertificateSourceComparison.class);
     private static final String DATE="(?:19|20)[0-9]{2}[年./-][0-9]{1,2}[月./-][0-9]{1,2}日?";
     private static final Pattern CATEGORY=Pattern.compile("([一二壹贰]级注册建筑师|[一二壹贰]级注册建造师|注册监理工程师|注册造价工程师|安全生产考核合格证书)");
-    private static final Pattern OWNER=Pattern.compile("(?:姓名[:：]?|持证人[:：])([\\p{IsHan}·]{2,12}?)(?=性别|年龄|身份证|证件|出生|注册|证书|聘用|执业|[|│]|$)");
+    private static final Pattern OWNER=Pattern.compile("(?:姓名[:：]?|持证人[:：])([\\p{IsHan}·*＊×●]{2,12}?)(?=性别|年龄|身份证|证件|出生|注册|证书|聘用|执业|[|│]|$)");
     private static final Pattern PROFILE_OWNER=Pattern.compile("(?:手机查看器?|人员详情|个人信息)[:：]?([\\p{IsHan}·]{2,12}?)(?=证件类型|证件号码|性别|注册证书)");
     private static final Pattern NUMBER=Pattern.compile("(电子证书编号|注册编号/执业印章号|执业印章号|证书编号|注册证号|注册编号|资格证号|证件号码|身份证号)[:：]?([A-Za-z0-9()（）-]{4,80})(?![A-Za-z0-9])");
     private static final Pattern EMPLOYER=Pattern.compile("(注册证书所在单位名称|注册单位|聘用单位)[:：]?([^:：|│]{2,100}?)(?=电子证书编号|注册编号|执业印章号|注册专业|注册有效期|有效期|执业注册信息|证书编号|签名|发证日期|$)");
@@ -46,7 +47,7 @@ final class CertificateSourceComparison {
         List<Fact> roles=evaluator.facts.stream().filter(f->Set.of("PERSON_ROLE","RELATION").contains(f.kind())&&"CURRENT_PROJECT".equals(f.scope())&&DomainBindings.currentRoleSource(f,evaluator.corpus.byId))
             .filter(f->name.equals(f.kind().equals("PERSON_ROLE")?f.value():DomainBindings.roleTarget(f,DomainBindings.sourceRole(f))))
             .filter(f->new ProofVerifier().issue(f,evaluator.corpus.byId)==null&&DomainBindings.issue(f,evaluator.corpus.byId,List.of())==null).toList();
-        List<Record> candidates=records.stream().filter(r->r.owner().equals(name)).toList();
+        List<Record> candidates=records.stream().filter(r->ConfirmedSubjectBindings.recordMatches(name,r,evaluator)).toList();
         if(candidates.isEmpty())return SameFieldComparisonTarget.unresolved(rule,evaluator.match(rule),evaluator);
         if(roles.isEmpty())return pending(rule,evaluator,"SUBJECT_RELATION_UNPROVEN","已发现同名证书候选，但尚无已核源的本次岗位任职，不能以同名材料替代当前人员",roles,candidates,Map.of());
         SubjectIdentity.Problem identity=evaluator.identities.issue(new Rule(rule.id(),rule.description(),"CERTIFICATE",rule.subject(),rule.field(),rule.operator(),rule.expected(),rule.unit(),rule.parameters(),rule.sourceQuote(),rule.logic(),List.of()),List.of());
@@ -64,7 +65,7 @@ final class CertificateSourceComparison {
         if(!certificate.issues().isEmpty()||!query.issues().isEmpty())return pending(rule,evaluator,"COMPARISON_FIELD_MAPPING_REQUIRED","同一记录内字段缺少明确边界或出现多个取值，不能取第一个值作比较",roles,candidates,Map.of());
         Field selectedNumber=certificate.fields().get("CERTIFICATE_NUMBER");if(selectedNumber==null)selectedNumber=certificate.fields().get("REGISTRATION_NUMBER");
         if(selectedNumber==null)return pending(rule,evaluator,"COMPARISON_RECORD_IDENTITY_UNPROVEN","证书一端没有明确类型的编号，不能只凭姓名关联查询记录",roles,candidates,Map.of());
-        Fact selected=new Fact("source-comparison:"+certificate.id(),"CERTIFICATE",name,"证书",selectedNumber.raw(),selectedNumber.value(),"","","UNRESOLVED",certificate.sources().stream().map(Source::id).toList(),Map.of("category",category,"number",selectedNumber.value(),"numberField",selectedNumber.label()));
+        Fact selected=ConfirmedSubjectBindings.recordIdentity(certificate);
         Rule identityRule=new Rule(rule.id(),rule.description(),"CERTIFICATE",rule.subject(),rule.field(),rule.operator(),rule.expected(),rule.unit(),rule.parameters(),rule.sourceQuote(),"",List.of());
         SubjectIdentity.Problem roleIdentity=evaluator.identities.issue(identityRule,List.of(selected));
         if(roleIdentity!=null)return pending(rule,evaluator,roleIdentity.code(),roleIdentity.reason(),roles,candidates,Map.of("comparisonIdentityScope","CURRENT_ROLE_TO_SELECTED_CERTIFICATE"));
@@ -79,19 +80,42 @@ final class CertificateSourceComparison {
         if(generic&&typedRegistration&&certNumber.isBlank()&&queryNumber.isBlank()){requiredFields.remove("CERTIFICATE_NUMBER");requiredFields.add("REGISTRATION_NUMBER");}
         if(clean(rule.sourceQuote()).matches(".*(?:查询截图|查询结果).*(?:信息|内容).*一致.*"))for(String field:List.of("PERSON_ID","GENDER","BIRTH_DATE","PROFESSION","VALIDITY_START"))if(certificate.fields().containsKey(field)&&query.fields().containsKey(field))requiredFields.add(field);
         List<Map<String,Object>> fieldResults=new ArrayList<>();boolean mismatch=false,missing=false;
-        for(String field:requiredFields){Field a=certificate.fields().get(field),b=query.fields().get(field);String status=a==null||b==null?"UNDETERMINED":a.value().equals(b.value())?"PASS":"FAIL";missing|=status.equals("UNDETERMINED");mismatch|=status.equals("FAIL");fieldResults.add(linked("field",field,"status",status,"certificate",a==null?Map.of():a.audit(),"query",b==null?Map.of():b.audit()));}
+        String requiredProfession=requiredProfession(rule,evaluator.context);
+        for(String field:requiredFields){
+            Field a=certificate.fields().get(field),b=query.fields().get(field);Map<String,Object> dateScope=Map.of();
+            if(Set.of("VALIDITY_START","VALIDITY_END").contains(field)){
+                DatePair pair=datePair(field,certificate,query,requiredProfession);a=pair.certificate();b=pair.query();dateScope=pair.audit();
+                LOG.info("bidcheck.certificate_comparison_date ruleId={} field={} profession={} certificateRecord={} queryRecord={} certificateField={} queryField={} resolution={}",rule.id(),field,requiredProfession,certificate.id(),query.id(),a==null?"":a.key(),b==null?"":b.key(),str(dateScope,"resolution"));
+            }
+            Map<String,Object> confirmation=Map.of();if(field.equals("NAME")&&a!=null&&b!=null&&!a.value().equals(b.value())){Fact queried=ConfirmedSubjectBindings.recordIdentity(query);if(queried!=null)confirmation=ConfirmedSubjectBindings.edge(name,queried,evaluator.facts,evaluator.corpus);if(confirmation.isEmpty())confirmation=ConfirmedSubjectBindings.edge(name,selected,evaluator.facts,evaluator.corpus);}
+            boolean sameValue=a!=null&&b!=null&&equivalentFieldValue(category,field,a.value(),b.value());
+            String status=a==null||b==null?"UNDETERMINED":sameValue||!confirmation.isEmpty()?"PASS":"FAIL";
+            missing|=status.equals("UNDETERMINED");mismatch|=status.equals("FAIL");
+            Map<String,Object> compared=linked("field",field,"status",status,"certificate",a==null?Map.of():a.audit(),"query",b==null?Map.of():b.audit(),"identityConfirmation",confirmation);
+            if(sameValue&&!a.value().equals(b.value()))compared.put("normalization","REGISTERED_BUILDER_BUILDING_PROFESSION_ALIAS");
+            if(!dateScope.isEmpty())compared.put("dateScope",dateScope);fieldResults.add(compared);
+        }
         Map<String,Object> proof=proof(rule,roles,candidates);proof.putAll(linked("subject",name,"category",category,"requiredFields",requiredFields,"fieldComparisons",fieldResults,"recordBinding",typedNumber?"CURRENT_APPOINTMENT_AND_NAME_CATEGORY_TYPED_CERTIFICATE_NUMBER":typedRegistration?"CURRENT_APPOINTMENT_AND_NAME_CATEGORY_TYPED_REGISTRATION_NUMBER":"CURRENT_APPOINTMENT_AND_NAME_CATEGORY_PERSON_ID","comparisonComplete",!missing,"proofScope","REFERENCED_CERTIFICATE_FIELDS","comparedRecordCount",2,"doesNotProveCurrentOnlineStatus",true,"identityBindings",evaluator.identities.bindings(List.of(selected))));
         List<Evidence> evidence=evidences(roles,candidates,evaluator);String status=mismatch?"FAIL":missing?"UNDETERMINED":"PASS";
         String reason=mismatch?"已绑定的同类证照与查询记录存在有原文的字段差异":missing?"已保留完成的字段比较；仍有必需字段缺失或不能对齐":"已按原文逐字段核对本人员的证照与查询记录，所要求字段一致";
         return new Decision(rule.id(),rule.description(),status,reason,evidence,missing?List.of(gap("COMPARISON_FIELD_MAPPING_REQUIRED",reason)):List.of(),proof);
     }
 
-    private static Set<String> requiredCategories(Rule rule,List<Record> records,Map<String,Object> context){
+    static boolean equivalentFieldValue(String category,String field,String left,String right){
+        if(left.equals(right))return true;
+        if(!"PROFESSION".equals(field)||!category.matches("[一二]级注册建造师"))return false;
+        return Set.of("建筑","建筑工程").contains(left)&&Set.of("建筑","建筑工程").contains(right);
+    }
+
+    static String requirementQuote(Rule rule,Map<String,Object> context){
         String quote=rule.sourceQuote();Object bindings=rule.parameters().get("requirementBindings");
         if(bindings instanceof Map<?,?> all&&all.get("subject") instanceof Map<?,?> subject){String full=Objects.toString(subject.get("sourceQuote"),"");if(full.contains(rule.sourceQuote())&&clean(full).contains(clean(rule.subject())))quote=full;}
         String compiledRequirement=str(rule.parameters(),"certificateRequirementQuote"),originalRequirement=str(context,"originalRequirement");
         if(!compiledRequirement.isBlank()&&compiledRequirement.contains(rule.sourceQuote())&&originalRequirement.contains(compiledRequirement))quote=compiledRequirement;
-        String original=clean(quote);Set<String> required=new LinkedHashSet<>();boolean scoped=false;
+        return quote;
+    }
+    static Set<String> requiredCategories(Rule rule,List<Record> records,Map<String,Object> context){
+        String original=clean(requirementQuote(rule,context));Set<String> required=new LinkedHashSet<>();boolean scoped=false;
         for(String family:List.of("建造师","建筑师","监理工程师","造价工程师"))if(original.contains(family)){
             scoped=true;Set<String> found=new LinkedHashSet<>();records.stream().filter(r->r.category().contains(family)).forEach(r->found.add(r.category()));
             if(found.size()!=1)return Set.of();required.addAll(found);
@@ -104,6 +128,37 @@ final class CertificateSourceComparison {
         if(!scoped){records.forEach(r->required.add(r.category()));if(required.size()!=1)return Set.of();}
         return required;
     }
+
+    private record DatePair(Field certificate,Field query,Map<String,Object> audit){}
+    private static DatePair datePair(String field,Record certificate,Record query,String required){
+        boolean scoped=certificate.fields().keySet().stream().anyMatch(k->k.startsWith(field+":"))
+            ||query.fields().keySet().stream().anyMatch(k->k.startsWith(field+":"));
+        if(!scoped)return new DatePair(certificate.fields().get(field),query.fields().get(field),Map.of("resolution","SAME_UNQUALIFIED_DATE_FIELD"));
+        Field left=null,right=null;
+        if(!required.isBlank()){
+            left=professionalDate(certificate,field,required);right=professionalDate(query,field,required);
+        }
+        return new DatePair(left,right,linked("resolution",required.isBlank()?"REQUIREMENT_PROFESSION_UNRESOLVED":left==null||right==null?"PROFESSION_DATE_SCOPE_NOT_ALIGNED":"SAME_SOURCE_BOUND_PROFESSION",
+            "requiredProfession",required,"certificateAvailableFields",certificate.fields().keySet().stream().filter(k->k.startsWith(field)).toList(),
+            "queryAvailableFields",query.fields().keySet().stream().filter(k->k.startsWith(field)).toList(),"certificateProfession",certificate.value("PROFESSION"),"queryProfession",query.value("PROFESSION"),
+            "unqualifiedCertificateDate",certificate.fields().containsKey(field)?certificate.fields().get(field).audit():Map.of(),
+            "unqualifiedQueryDate",query.fields().containsKey(field)?query.fields().get(field).audit():Map.of(),
+            "noCrossProfessionDateSubstitution",true));
+    }
+    private static Field professionalDate(Record record,String field,String required){
+        Field explicit=record.fields().get(field+":"+required);if(explicit!=null)return explicit;
+        // A generic date belongs to a profession only when that record explicitly names one
+        // profession. “建筑,机电” plus one date is not proof of either individual expiry.
+        if(canonicalProfession(record.value("PROFESSION")).equals(required))return record.fields().get(field);
+        return null;
+    }
+    private static String requiredProfession(Rule rule,Map<String,Object> context){
+        String quote=clean(requirementQuote(rule,context));Set<String> values=new LinkedHashSet<>();
+        Matcher matcher=Pattern.compile("(?:注册建造师[^。；;（）()]{0,24})[（(]([^（）()]{1,30})专业[）)]").matcher(quote);
+        while(matcher.find())values.add(canonicalProfession(matcher.group(1)));
+        return values.size()==1?values.iterator().next():"";
+    }
+    private static String canonicalProfession(String value){return switch(clean(value)){case "房屋建筑工程","建筑"->"建筑工程";case "机电"->"机电工程";default->clean(value);};}
 
     static Set<String> requiredFields(Rule rule){
         // Only original comparison wording can narrow the set; model parameters cannot drop fields.

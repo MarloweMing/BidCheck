@@ -26,14 +26,59 @@ public class EvidenceLayoutService {
     private static final int MAX_SPANS=50_000,MAX_CHARS=2_000_000;
     private static final Semaphore CAPACITY=new Semaphore(1,true);
     private final WordRenderingService wordRenderer;
-    public EvidenceLayoutService(){this(null);}
-    @Autowired public EvidenceLayoutService(WordRenderingService wordRenderer){this.wordRenderer=wordRenderer;}
-    public String identity(){return VERSION+":"+(wordRenderer==null?"WORD_RENDERER_ABSENT":wordRenderer.identity());}
+    private final ScanPageLayoutService scanPages;
+    public EvidenceLayoutService(){this(null,null);}
+    public EvidenceLayoutService(WordRenderingService wordRenderer){this(wordRenderer,null);}
+    @Autowired public EvidenceLayoutService(WordRenderingService wordRenderer,ScanPageLayoutService scanPages){this.wordRenderer=wordRenderer;this.scanPages=scanPages;}
+    public String observationIdentity(){return VERSION+":"+(wordRenderer==null?"WORD_RENDERER_ABSENT":wordRenderer.identity());}
+    public String identity(){return observationIdentity()+":"+(scanPages==null?"SCAN_LAYOUT_ABSENT":scanPages.identity());}
     /** Already transcribed page structures only. Does not render, OCR, or rescan the original PDF. */
     public Map<String,Object> transcribedLayout(Document doc,Set<Integer> locations){
         List<Map<String,Object>> spans=new ArrayList<>();List<String> limitations=new ArrayList<>();
         for(Page page:doc.pages())if(locations.contains(page.number()))spans.addAll(StructuredLayoutAdapter.spans(doc,page,limitations));
         return map("status","COMPLETE","version",VERSION,"documentId",doc.id(),"documentHash",doc.sha256(),"documentVersion",doc.version(),"spans",spans,"limitations",limitations);
+    }
+    @FunctionalInterface public interface NativePdfSource { Path get() throws IOException; }
+    /** One frozen run owns this lazy cache. Hash the original once, then verify file attributes
+     * on every access; native extraction reads only the explicitly requested physical page. */
+    public java.util.function.Function<Integer,Map<String,Object>> nativePdfLayouts(Document doc,NativePdfSource source){
+        return documentPageLayouts(doc,source,false);
+    }
+    /** Prefer existing/native structures; locate scanned table geometry only for requested pages. */
+    public java.util.function.Function<Integer,Map<String,Object>> documentPageLayouts(Document doc,NativePdfSource source){
+        return documentPageLayouts(doc,source,true);
+    }
+    /** allowScan is an explicit tool permission, never inferred from a failed native preload. */
+    public java.util.function.Function<Integer,Map<String,Object>> documentPageLayouts(Document doc,NativePdfSource source,boolean allowScan){
+        return new java.util.function.Function<>(){
+            private Path path;private java.nio.file.attribute.BasicFileAttributes stamp;
+            private final Map<Integer,Map<String,Object>> pages=Collections.synchronizedMap(new LinkedHashMap<>(32,.75f,true){@Override protected boolean removeEldestEntry(Map.Entry<Integer,Map<String,Object>> entry){return size()>128;}});
+            private final ConcurrentMap<Integer,CompletableFuture<Map<String,Object>>> active=new ConcurrentHashMap<>();
+            private synchronized Path current()throws IOException{
+                if(path==null){Path candidate=source.get();var before=java.nio.file.Files.readAttributes(candidate,java.nio.file.attribute.BasicFileAttributes.class);SourceSafety.verify(doc,candidate);var after=java.nio.file.Files.readAttributes(candidate,java.nio.file.attribute.BasicFileAttributes.class);if(!same(before,after))throw new IOException("NATIVE_TABLE_SOURCE_CHANGED");path=candidate;stamp=after;}
+                var now=java.nio.file.Files.readAttributes(path,java.nio.file.attribute.BasicFileAttributes.class);if(!same(stamp,now))throw new IOException("NATIVE_TABLE_SOURCE_CHANGED");return path;
+            }
+            private boolean same(java.nio.file.attribute.BasicFileAttributes a,java.nio.file.attribute.BasicFileAttributes b){return a.size()==b.size()&&a.lastModifiedTime().equals(b.lastModifiedTime())&&Objects.equals(a.fileKey(),b.fileKey());}
+            @Override public Map<String,Object> apply(Integer number){
+                Page page=doc.pages().stream().filter(p->p.number()==number&&"PAGE".equals(p.locationType())).findFirst().orElse(null);if(page==null)return error("NATIVE_TABLE_LOCATION_INVALID");
+                if(!"pdf".equals(SourceSafety.extension(doc)))return PdfNativeTableLayout.unavailable(doc,page,"NATIVE_TABLE_REQUIRES_PDF");
+                try{
+                    Path verified=current();Map<String,Object> hit=pages.get(number);if(hit!=null)return hit;
+                    var mine=new CompletableFuture<Map<String,Object>>();var previous=active.putIfAbsent(number,mine);
+                    if(previous!=null){try{return previous.get();}catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new CancellationException("页面结构等待已中断");}catch(ExecutionException failed){throw new IOException("PAGE_LAYOUT_SHARED_REQUEST_FAILED");}}
+                    try{
+                        Map<String,Object> value=transcribedLayout(doc,Set.of(number));
+                        if(asMaps(value.get("spans")).stream().noneMatch(s->"TABLE_CELL".equals(s.get("kind")))){
+                            value=Objects.toString(page.parser(),"").contains("NATIVE")?PdfNativeTableLayout.extract(doc,page,verified):PdfNativeTableLayout.unavailable(doc,page,"NATIVE_TABLE_REQUIRES_NATIVE_TEXT");
+                            if(allowScan&&asMaps(value.get("spans")).stream().noneMatch(s->"TABLE_CELL".equals(s.get("kind")))&&scanPages!=null&&scanPages.enabled())value=scanPages.extractVerified(doc,page,verified,Objects.toString(value.get("diagnosticCode"),Objects.toString(value.get("errorCode"),"NATIVE_TABLE_NOT_AVAILABLE")));
+                        }
+                        current();pages.put(number,value);mine.complete(value);return value;
+                    }catch(IOException|RuntimeException failure){mine.completeExceptionally(failure);throw failure;}finally{active.remove(number,mine);}
+                }
+                catch(CancellationException interrupted){throw interrupted;}
+                catch(IOException|RuntimeException failure){String code=Objects.toString(failure.getMessage(),"");if(!code.matches("[A-Z_]{1,100}"))code="NATIVE_TABLE_EXTRACTION_FAILED";return PdfNativeTableLayout.unavailable(doc,page,code);}
+            }
+        };
     }
     public String cacheIdentity(Document doc){return SourceSafety.digest((identity()+":"+doc.id()+":"+doc.sha256()+":"+doc.version()+":"+doc.pages().stream().map(FactLedgerService::parserFingerprint).toList()).getBytes(StandardCharsets.UTF_8));}
     public Map<String,Object> wordConfiguration(){return wordRenderer==null?map("enabled",false,"licensed",false,"status","DISABLED"):wordRenderer.configuration();}

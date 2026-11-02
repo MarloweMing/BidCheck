@@ -68,6 +68,7 @@ public final class VerificationModelClient implements ModelGateway {
     private final HttpClient client=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NEVER).build();
     private final ObjectMapper json=new ObjectMapper(JsonFactory.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).streamReadConstraints(StreamReadConstraints.builder().maxNestingDepth(32).maxStringLength(256_000).build()).build()).enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     private final Semaphore capacity=new Semaphore(3,true);
+    @Value("${bidcheck.agent.audit-directory:}") private String auditDirectory="";
     /** Safe transport diagnostics only; never retains provider text, URLs, credentials or causes.
      * Retries belong to the caller so each paid attempt is charged to its persistent budget. */
     public static final class ModelRequestException extends IOException {
@@ -151,6 +152,19 @@ public final class VerificationModelClient implements ModelGateway {
         return requestWithFeedback(operation,input,Map.of());
     }
     @Override public JsonNode requestWithFeedback(String operation,Map<String,Object> input,Map<String,Object> feedback)throws IOException {
+        var audit=VerificationModelAudit.begin(auditDirectory,key,operation);
+        try{JsonNode output=requestAudited(operation,input,feedback,audit);audit.result("COMPLETED","",200,"","");return output;}
+        catch(ModelRequestException failure){audit.result("FAILED",failure.code(),failure.httpStatus(),failure.schemaIssue(),failure.schemaPath());throw failure;}
+        catch(InterruptedIOException interrupted){audit.result("FAILED","INTERRUPTED",0,"","");throw interrupted;}
+        catch(IOException failure){audit.result("FAILED","MODEL_UNAVAILABLE",0,"","");throw failure;}
+        catch(CancellationException cancelled){audit.result("CANCELLED","CANCELLED",0,"","");throw cancelled;}
+        catch(RuntimeException failure){audit.result("FAILED","CLIENT_FAILURE",0,"","");throw failure;}
+        finally{if(audit.enabled()){
+            Map<String,Object> receipt=audit.finish(input,feedback);
+            LOG.info("verification_model_audit sourceRunId={} checkpointId={} requestId={} stepId={} trace={} stage={} audit={}",MDC.get("verification.sourceRunId"),MDC.get("verification.checkpointId"),MDC.get("verification.requestId"),MDC.get("verification.stepId"),audit.traceId,operation,receipt);
+        }}
+    }
+    private JsonNode requestAudited(String operation,Map<String,Object> input,Map<String,Object> feedback,VerificationModelAudit.Call audit)throws IOException {
         boolean review=AgentReviewContracts.supports(operation);
         if(!"EXTRACT".equals(operation)&&!review)throw new ModelRequestException("OPERATION_NOT_ALLOWED",0,false,false);
         if(review)AgentReviewContracts.validateInput(operation,input);
@@ -164,7 +178,9 @@ public final class VerificationModelClient implements ModelGateway {
         CompletableFuture<HttpResponse<byte[]>> pending=null;boolean held=false;
         int responseStatus=0,payloadChars=0,systemChars=0,requestChars=0,responseBytes=0;String outcome="FAILED",errorCode="",schemaIssue="",schemaPath="";
         long started=System.nanoTime(),queueMs=0;
-        long deadline=started+selectedTimeout.toNanos();String trace=UUID.randomUUID().toString();
+        long deadline=started+selectedTimeout.toNanos();String trace=audit.traceId;
+        LimitedBody observed=new LimitedBody(audit.enabled());java.util.concurrent.atomic.AtomicInteger observedStatus=new java.util.concurrent.atomic.AtomicInteger();
+        audit.route(dedicated?extractionModel:model,protocol(selectedEndpoint),review?"INDEPENDENT_REVIEW":dedicated?"CONSISTENCY":"FACTS");
         try {
             String payload=review?json.writeValueAsString(Map.of("operation",operation,"input",input)):ModelWirePayload.serialize(operation,input);payloadChars=payload.length();if(payloadChars>ExtractionBatches.MAX_PAYLOAD_CHARS)throw new ModelRequestException("INPUT_LIMIT",0,false,true);
             held=capacity.tryAcquire(selectedTimeout.toMillis(),TimeUnit.MILLISECONDS);if(!held)throw new ModelRequestException("CAPACITY_TIMEOUT",0,true,false);
@@ -183,15 +199,16 @@ public final class VerificationModelClient implements ModelGateway {
                     :Map.of("model",selectedModel,"input",Map.of("messages",messages),"parameters",Map.of("result_format","message","temperature",0,"enable_thinking",false,"max_tokens",8192,"response_format",responseFormat));
             String bodyJson=json.writeValueAsString(body);requestChars=bodyJson.length();
             HttpRequest request=HttpRequest.newBuilder(selectedEndpoint).timeout(selectedTimeout).header("Authorization","Bearer "+key).header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(bodyJson)).build();
-            pending=client.sendAsync(request,info->new LimitedBody());
+            audit.requestPrepared(bodyJson);
+            pending=client.sendAsync(request,info->{observedStatus.set(info.statusCode());return observed;});audit.dispatched();
             var response=pending.get(Math.max(1,deadline-System.nanoTime()),TimeUnit.NANOSECONDS);
             responseStatus=response.statusCode();
+            byte[] bytes=response.body();responseBytes=bytes.length;audit.received(bytes,responseStatus);
             if(response.statusCode()!=200) {
                 int status=response.statusCode();
                 boolean transientStatus=Set.of(408,425,429,500,502,503,504).contains(status);
                 throw new ModelRequestException("HTTP_"+status,status,transientStatus,status==413);
             }
-            byte[] bytes=response.body();responseBytes=bytes.length;
             if(bytes.length>256_000)throw new ModelRequestException("OUTPUT_LIMIT",200,false,true);
             JsonNode envelope=json.readTree(bytes);JsonNode choice=(compatible?envelope:envelope.path("output")).path("choices").path(0);
             if(!"stop".equals(choice.path("finish_reason").asText()))throw new ModelRequestException("OUTPUT_INCOMPLETE",200,true,true);
@@ -214,6 +231,7 @@ public final class VerificationModelClient implements ModelGateway {
         catch(CancellationException cancelled){throw cancelled;}
         catch(RuntimeException error){errorCode="CLIENT_FAILURE";throw new ModelRequestException(errorCode,0,false,false);}
         finally{if(pending!=null&&!pending.isDone())pending.cancel(true);if(held)capacity.release();
+            if(audit.enabled())audit.partial(observed.snapshot(),observed.observedBytes(),observedStatus.get());
             LOG.info("verification_model sourceRunId={} checkpointId={} requestId={} stepId={} trace={} stage={} route={} protocol={} state={} sources={} payloadChars={} systemChars={} requestChars={} responseBytes={} queueMs={} durationMs={} httpStatus={} errorCode={} schemaIssue={} schemaPath={}",
                 MDC.get("verification.sourceRunId"),MDC.get("verification.checkpointId"),MDC.get("verification.requestId"),MDC.get("verification.stepId"),trace,operation,review?"INDEPENDENT_REVIEW":dedicated?"CONSISTENCY":"FACTS",protocol(selectedEndpoint),outcome,review?values(input,"requirementSources").size()+values(input,"bidSources").size():values(input,"sources").size(),payloadChars,systemChars,requestChars,responseBytes,queueMs,(System.nanoTime()-started)/1_000_000,responseStatus,errorCode,schemaIssue,schemaPath);
         }
@@ -350,10 +368,14 @@ public final class VerificationModelClient implements ModelGateway {
     }
     private static final class LimitedBody implements HttpResponse.BodySubscriber<byte[]> {
         final CompletableFuture<byte[]> result=new CompletableFuture<>();final ByteArrayOutputStream out=new ByteArrayOutputStream();java.util.concurrent.Flow.Subscription subscription;
+        final boolean retainAuditPrefix;private long observedBytes;
+        LimitedBody(boolean retainAuditPrefix){this.retainAuditPrefix=retainAuditPrefix;}
         public CompletionStage<byte[]> getBody(){return result;}
         public void onSubscribe(java.util.concurrent.Flow.Subscription s){subscription=s;s.request(1);result.whenComplete((v,e)->{if(result.isCancelled())s.cancel();});}
-        public void onNext(List<ByteBuffer> buffers){for(ByteBuffer b:buffers){if(out.size()+b.remaining()>256_000){subscription.cancel();result.completeExceptionally(new ModelRequestException("OUTPUT_LIMIT",0,false,true));return;}byte[] data=new byte[b.remaining()];b.get(data);out.writeBytes(data);}subscription.request(1);}
+        public synchronized void onNext(List<ByteBuffer> buffers){for(ByteBuffer b:buffers){observedBytes+=b.remaining();if(out.size()+b.remaining()>256_000){if(retainAuditPrefix){byte[] prefix=new byte[Math.max(0,256_000-out.size())];b.get(prefix);out.writeBytes(prefix);}subscription.cancel();result.completeExceptionally(new ModelRequestException("OUTPUT_LIMIT",0,false,true));return;}byte[] data=new byte[b.remaining()];b.get(data);out.writeBytes(data);}subscription.request(1);}
+        synchronized byte[] snapshot(){return out.toByteArray();}
+        synchronized long observedBytes(){return observedBytes;}
         public void onError(Throwable t){result.completeExceptionally(t);}
-        public void onComplete(){result.complete(out.toByteArray());}
+        public synchronized void onComplete(){result.complete(out.toByteArray());}
     }
 }

@@ -6,6 +6,11 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class BusinessResultPresentationTest {
+    @Test void unimplementedSupplementAdapterIsSystemWorkNotASecondUploadRequest(){
+        var evaluation=new Evaluation("UNDETERMINED","补证解析完成，当前判定器尚未消费附件","",List.of(),0,"SUPPLEMENT_ANALYSIS_REQUIRED");
+        var p=BusinessResultPresentation.describe(evaluation,Map.of("publicationGuard",Map.of("code","SUPPLEMENT_EVALUATOR_UNAVAILABLE")));
+        assertEquals("SYSTEM_INCOMPLETE",p.get("state"));
+    }
     @Test void rejectedFieldEvidenceIsNotAnUnreadOrFailedRequestButExplicitMappingStillNeedsSystemWork(){
         var field=Map.of("status","FAILED","errorCode","FIELD_VALIDATION_FAILED");
         var atomic=new LinkedHashMap<String,Object>(Map.of("fieldCoverage",List.of(field)));

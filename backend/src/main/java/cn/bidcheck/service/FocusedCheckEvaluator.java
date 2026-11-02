@@ -18,7 +18,7 @@ public final class FocusedCheckEvaluator {
     private static final ObjectMapper JSON=new ObjectMapper();
     private static final TypeReference<Map<String,Object>> OBJECT=new TypeReference<>() {};
     private static final Set<String> TYPES=Set.of("SEMANTIC_RESPONSE","DATE_VALIDITY","VALUE_COMPARE","SIGNATURE_SEAL");
-    private static final Set<String> STATUSES=Set.of("PASS","FAIL","WARNING","UNDETERMINED","NOT_APPLICABLE");
+    private static final Set<String> STATUSES=Set.of("PASS","FAIL","WARNING","UNDETERMINED","NOT_APPLICABLE","NEEDS_CONFIRMATION");
     private static final Pattern PERSONNEL=Pattern.compile("联合体|牵头(?:人|单位|成员)|(?:施工|设计)成员|项目(?:经理|负责人)|(?:施工|设计|技术|质量|安全)负责人|专职安全员|企业(?:主要)?负责人|法定代表人|授权(?:代表|委托)|委托代理人|拟派.{0,12}人员|人员.{0,12}(?:任职|归属|聘用|劳动关系|社保)|任职|劳动关系|社会保险|社保");
     private static final Pattern CERTIFICATE=Pattern.compile("证书|证照|营业执照|资格证|资质证|安全生产许可|执业证|注册证|考核合格证|[ABC]证");
     private static final Pattern VALIDITY=Pattern.compile("有效|效期|到期|过期|失效|有效截止|截止日|截止时间");
@@ -58,7 +58,9 @@ public final class FocusedCheckEvaluator {
         input.put("reviewMode",reviewMode);
         input.put("atomicDomains",selectedDomains);input.put("unlimitedModelCalls",true);
         if(input.get("referenceDateEvidence") instanceof Evidence evidence)input.put("referenceDateEvidence",JSON.convertValue(evidence,OBJECT));
-        Map<String,Object> output=engine.evaluate(checkpoint,bid==null?List.of():List.of(bid),tender,input);
+        List<Document> evidenceDocuments=new ArrayList<>();if(bid!=null)evidenceDocuments.add(bid);
+        if(input.get("supplementDocuments") instanceof List<?> extras)for(Object extra:extras)if(extra instanceof Document doc&&bid!=null&&bid.projectId().equals(doc.projectId())&&"SUPPLEMENT".equals(doc.role()))evidenceDocuments.add(doc);
+        Map<String,Object> output=engine.evaluate(checkpoint,evidenceDocuments,tender,input);
         Map<String,Object> plan=map(output.get("plan"));
         Map<String,Map<String,Object>> decisions=new LinkedHashMap<>();
         for(Map<String,Object> decision:maps(output.get("obligations")))decisions.put(text(decision,"id"),decision);
@@ -100,11 +102,11 @@ public final class FocusedCheckEvaluator {
             "workflowState",output.getOrDefault("workflowState","NEEDS_REVIEW"),"complete",Boolean.TRUE.equals(output.get("complete")),
             "reason",text(output,"reason"),"conditions",conditions,"summary",summary,"gaps",gaps,"metrics",map(output.get("metrics")),
             "plan",plan,"proof",map(output.get("proof")),"evidences",evidence,"rejectedFacts",maps(output.get("rejectedFacts")),
-            "visualRequests",maps(output.get("visualRequests")),"externalRequests",maps(output.get("externalRequests")),
+            "visualRequests",maps(output.get("visualRequests")),"externalRequests",maps(output.get("externalRequests")),"inferredFacts",maps(output.get("inferredFacts")),
             "modelDiagnostics",map(output.get("modelDiagnostics")),"agentInvestigation",effectiveAgent,"agentAttempts",durableAgentAttempts,
             "compilationAudit",map(output.get("compilationAudit")),"recoveryDependencies",map(output.get("recoveryDependencies")),"coverageDependencies",maps(output.get("coverageDependencies")),"recoveryEvidenceDependencies",maps(output.get("recoveryEvidenceDependencies")),"recoveryActions",maps(output.get("recoveryActions")),"fieldCoverage",maps(output.get("fieldCoverage")),
             "boundary","按本条款的独立义务分派核验，保留完整复合要求与尚未完成条件。未召回不表示材料缺失，来源校验不代表原图识别准确。");
-        atomic.put("documentIdentities",java.util.stream.Stream.of(bid,tender).filter(Objects::nonNull)
+        atomic.put("documentIdentities",java.util.stream.Stream.concat(evidenceDocuments.stream(),java.util.stream.Stream.ofNullable(tender))
             .map(d->values("id",d.id(),"version",d.version(),"sha256",d.sha256())).toList());
         atomic.put("reviewMode",reviewMode);atomic.put("agentReview",map(output.get("agentReview")));
         if(input.get("agentEvidenceReuse") instanceof Map<?,?>)atomic.put("agentEvidenceReuse",map(input.get("agentEvidenceReuse")));
@@ -202,7 +204,7 @@ public final class FocusedCheckEvaluator {
             issues.add(values("category","REQUIREMENT_UNPARSED","label","整项要求尚未证明","description","辅助条件的完成不足以证明整项要求；以守卫后的业务结论为准。","nextStep","需补齐主条件及其证据，不能用参考日期或处理完成替代业务证明。"));
         if(Set.of("ENGINE_FAILURE","ERROR").contains(workflow)||"FAILED".equals(text(map(check.get("agentInvestigation")),"status"))||map(check.get("modelDiagnostics")).get("unresolvedFailures") instanceof Number n&&n.longValue()>0)
             issues.add(values("category","PROCESSING_FAILED","label",businessCompleted?"候选处理记录":stateLabel("PROCESSING_FAILED"),"description",businessCompleted?"部分候选处理曾未完成；其他证据已支持当前完整结论，详见处理记录。":stateReason("PROCESSING_FAILED"),"nextStep",stateNext("PROCESSING_FAILED")));
-        List<String> order=List.of("PROCESSING_FAILED","REQUIREMENT_UNPARSED","RELATION_UNCONFIRMED","EVIDENCE_NOT_FOUND","NEEDS_REVIEW");
+        List<String> order=List.of("PROCESSING_FAILED","REQUIREMENT_UNPARSED","RELATION_UNCONFIRMED","EVIDENCE_NOT_FOUND","NEEDS_CONFIRMATION","NEEDS_REVIEW");
         issues.sort(Comparator.comparingInt(issue->order.indexOf(text(issue,"category"))));
         String state=businessCompleted?"COMPLETED":order.stream().filter(value->issues.stream().anyMatch(issue->value.equals(issue.get("category")))).findFirst().orElse(
             "WAIT_STAGE".equals(workflow)?"WAIT_STAGE":!publishedPending&&Set.of("PASS","FAIL","NOT_APPLICABLE").contains(text(check,"status"))?"COMPLETED":"NEEDS_REVIEW");
@@ -210,6 +212,7 @@ public final class FocusedCheckEvaluator {
         return values("version","focused-presentation-2","state",state,"label",stateLabel(state),"reason",stateReason(state),"nextSteps",next,"issues",issues);
     }
     private static String category(String code){
+        if("INFERENCE_CONFIRMATION_REQUIRED".equals(code))return "NEEDS_CONFIRMATION";
         if(mappingPending(code))return "RELATION_UNCONFIRMED";
         if(code.startsWith("MODEL_")||code.startsWith("HTTP_")||Set.of("AGENT_INVESTIGATION_FAILED","AGENT_INVESTIGATION_STALLED","RULE_COMPILATION_UNAVAILABLE","FACT_EXTRACTION_UNAVAILABLE","TRANSPORT_FAILURE","REQUEST_TIMEOUT","CAPACITY_TIMEOUT","OUTPUT_JSON_INVALID","OUTPUT_SCHEMA_INVALID","OUTPUT_INCOMPLETE","OUTPUT_LIMIT","INPUT_LIMIT").contains(code))return "PROCESSING_FAILED";
         if(code.contains("COMPILATION")||code.startsWith("REQUIREMENT_")||Set.of("UNSUPPORTED_RULE","OPERATOR_UNSUPPORTED","SUBJECT_REQUIRED","ATOMIC_CONDITION_NOT_EVALUATED","PRICE_REQUIREMENT_DIMENSIONS_REQUIRED","PERSON_COUNT_ROLE_REQUIRED","PERSON_COUNT_COMPARISON_REQUIRED").contains(code))return "REQUIREMENT_UNPARSED";
@@ -220,8 +223,9 @@ public final class FocusedCheckEvaluator {
     static boolean mappingPending(String code){return Set.of("COMPARISON_FIELD_MAPPING_REQUIRED","COMPARISON_RECORD_IDENTITY_UNPROVEN","REGISTRATION_EMPLOYER_BINDING_REQUIRED",
         "FORM_TEMPLATE_REFERENCE_REQUIRED","FORM_REQUIREMENT_SOURCE_REQUIRED","FORM_PROJECT_BINDING_REQUIRED","FORM_INSTANCE_AMBIGUOUS","FORM_CONTENT_COVERAGE_REQUIRED","FORM_CONDITION_COVERAGE_REQUIRED",
         "DURATION_REQUIREMENT_SOURCE_REQUIRED","DURATION_REQUIREMENT_FIELD_UNBOUND","DURATION_RESPONSE_FORMAT_REQUIRED").contains(code);}
-    private static String stateLabel(String state){return switch(state){case "PROCESSING_FAILED"->"处理失败";case "REQUIREMENT_UNPARSED"->"条款未解析完整";case "RELATION_UNCONFIRMED"->"对应关系待确认";case "EVIDENCE_NOT_FOUND"->"证据未找到";case "WAIT_STAGE"->"等待适用时点";case "COMPLETED"->"条件计算已结束";default->"尚未形成结论";};}
+    private static String stateLabel(String state){return switch(state){case "NEEDS_CONFIRMATION"->"推断待你确认";case "PROCESSING_FAILED"->"处理失败";case "REQUIREMENT_UNPARSED"->"条款未解析完整";case "RELATION_UNCONFIRMED"->"对应关系待确认";case "EVIDENCE_NOT_FOUND"->"证据未找到";case "WAIT_STAGE"->"等待适用时点";case "COMPLETED"->"条件计算已结束";default->"尚未形成结论";};}
     private static String stateReason(String state){return switch(state){
+        case "NEEDS_CONFIRMATION"->"已有带原文引用的推断；确认前不作为已采纳事实，也不代表满足要求。";
         case "PROCESSING_FAILED"->"本项处理未完成，已得到的条件和依据予以保留；不能据此判断材料缺失或不符合。";
         case "REQUIREMENT_UNPARSED"->"尚未完整明确本条款的核验要求，暂不能据此判断投标是否符合。";
         case "RELATION_UNCONFIRMED"->"要求对象与文件中的单位、人员、证件或报价口径尚未完整对应，需要结合原文确认。";
@@ -229,6 +233,7 @@ public final class FocusedCheckEvaluator {
         case "WAIT_STAGE"->"本条件尚未到适用的核验时点。";case "COMPLETED"->"条件处理已完成，整项结论及原图复核要求以上方结果为准。";
         default->"仍有需要人工确认的范围，请结合条件说明和原文核对。";};}
     private static String stateNext(String state){return switch(state){
+        case "NEEDS_CONFIRMATION"->"核对推断卡片中的主体、取值和原文，确认或否定后重新计算业务结论。";
         case "PROCESSING_FAILED"->"查看处理说明；系统需继续处理失败请求，本提示不要求补交材料，不计入人工核对待办。";
         case "REQUIREMENT_UNPARSED"->"先对照招标原句明确要求对象、比较条件与适用范围。";
         case "RELATION_UNCONFIRMED"->"核对相关原文中的人员、单位、证件及项目口径，确认它们是否对应同一要求。";

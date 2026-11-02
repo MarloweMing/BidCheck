@@ -107,12 +107,16 @@ final class CertificateEvidenceRecords {
     }
 
     static List<QualificationProofAssociation.Record> qualificationQueries(EvidenceCorpus corpus,String company,String requiredCategory){
+        return qualificationQueries(corpus,company,requiredCategory,List.of());
+    }
+    static List<QualificationProofAssociation.Record> qualificationQueries(EvidenceCorpus corpus,String company,String requiredCategory,List<Map<String,Object>> layout){
         Map<String,ScopeResolver> resolvers=new HashMap<>();Map<String,List<Source>> pages=new LinkedHashMap<>();for(Source source:corpus.all)if(usable(source,corpus,resolvers))pages.computeIfAbsent(EvidenceCorpus.pageKey(source.evidence().documentId(),source.evidence().page(),source.evidence().locationType()),k->new ArrayList<>()).add(source);
         List<QualificationProofAssociation.Record> result=new ArrayList<>();
         for(var entry:pages.entrySet()){
             var page=corpus.pages.get(entry.getKey());if(page==null)continue;String text=page.text();
             if(!text.matches("(?s).*(?:查询截图|查询结果|资质查询|资质详情).*"))continue;
             Field owner=owner(text,company,entry.getValue());if(owner==null)continue;
+            result.addAll(structuredQueries(corpus,entry.getValue(),text,owner,company,requiredCategory,layout));
             List<Field> urls=urls(text,entry.getValue());List<Cell> header=List.of();int number=-1,name=-1,rank=-1,offset=0;
             for(String line:text.split("\\n",-1)){
                 List<Cell> cells=cells(line,offset);offset+=line.length()+1;
@@ -133,6 +137,60 @@ final class CertificateEvidenceRecords {
                 result.add(new QualificationProofAssociation.Record(num.source(),clean(company),actualCategory,certificateNumber,actualGrade,true,urls.stream().map(Field::value).toList(),evidence.stream().distinct().toList(),linked("SUBJECT",owner.audit(),"CATEGORY",cat.audit(),"CERTIFICATE_NUMBER",num.audit(),"GRADE",grade.audit(),"URL",urls.stream().map(Field::audit).toList(),"binding","EXPLICIT_QUERY_TABLE_ROW_AND_UNIQUE_PAGE_OWNER")));
             }
         }return result;
+    }
+
+    /** A source-bound navigation request, not evidence that a blank cell inherits another row.
+     * The host must read this frozen page's image/geometry before the query can become a fact. */
+    static List<Map<String,Object>> qualificationLayoutActions(EvidenceCorpus corpus,String company,String requiredCategory,String requiredNumber,String targetId){
+        Map<String,ScopeResolver> resolvers=new HashMap<>();Map<String,List<Source>> pages=new LinkedHashMap<>();
+        for(Source source:corpus.all)if(usable(source,corpus,resolvers))pages.computeIfAbsent(EvidenceCorpus.pageKey(source.evidence().documentId(),source.evidence().page(),source.evidence().locationType()),k->new ArrayList<>()).add(source);
+        List<Map<String,Object>> actions=new ArrayList<>();String expectedNumber=normalizeCertificateNumber(requiredNumber);
+        for(var entry:pages.entrySet()){
+            var page=corpus.pages.get(entry.getKey());if(page==null)continue;String text=page.text();
+            if(!text.matches("(?s).*(?:查询截图|查询结果|资质查询|资质详情).*"))continue;
+            Field owner=owner(text,company,entry.getValue());if(owner==null)continue;
+            List<Field> numberFields=new ArrayList<>(),categoryFields=new ArrayList<>();List<Cell> header=List.of();int number=-1,name=-1,offset=0;
+            for(String line:text.split("\\n",-1)){
+                List<Cell> row=cells(line,offset);offset+=line.length()+1;if(row.isEmpty()){header=List.of();continue;}
+                int n=column(row,Set.of("资质证书号","资质证书编号","证书编号","证书号码")),c=column(row,Set.of("资质名称","资质类别及等级"));
+                if(c<0)c=column(row,Set.of("资质类别","证书类别"));
+                if(n>=0&&c>=0){header=row;number=n;name=c;continue;}
+                if(header.isEmpty()||row.size()!=header.size())continue;
+                if(normalizeCertificateNumber(row.get(number).value()).equals(expectedNumber)){Field value=field(expectedNumber,row.get(number),text,entry.getValue());if(value!=null)numberFields.add(value);}
+                if(row.get(number).value().isBlank()&&DomainBindings.sameCertificateCategory(categoryWithoutGrade(row.get(name).value()),category(requiredCategory))){Field value=field(row.get(name).value(),row.get(name),text,entry.getValue());if(value!=null)categoryFields.add(value);}
+            }
+            if(numberFields.isEmpty()||categoryFields.isEmpty())continue;
+            Source source=categoryFields.get(0).source();Evidence e=source.evidence();
+            actions.add(linked("actionId","qualification-layout-"+identity(targetId+entry.getKey()+expectedNumber+source.documentHash()+source.documentVersion()).substring(0,24),
+                    "tool","read_table_record","targetId",targetId,"sourceId",source.id(),"sourceIds",entry.getValue().stream().map(Source::id).distinct().toList(),
+                    "arguments",linked("targetId",targetId,"sourceId",source.id()),"reasonCode","QUALIFICATION_QUERY_MERGED_CELL_UNVERIFIED",
+                    "documentId",e.documentId(),"documentHash",source.documentHash(),"documentVersion",source.documentVersion(),"page",e.page(),"locationType",e.locationType(),
+                    "certificateNumber",expectedNumber,"category",requiredCategory,"evidenceDiscovery",linked("owner",owner.audit(),"category",categoryFields.stream().map(Field::audit).toList(),"numberOnPage",numberFields.stream().map(Field::audit).toList(),"establishesMergedRelation",false)));
+        }
+        return List.copyOf(actions);
+    }
+
+    private static List<QualificationProofAssociation.Record> structuredQueries(EvidenceCorpus corpus,List<Source> sources,String text,Field owner,String company,String category,List<Map<String,Object>> layout){
+        if(layout.isEmpty())return List.of();Fact origin=new Fact("query-layout","FIELD",company,"","","","","","CURRENT_PROJECT",sources.stream().map(Source::id).toList(),Map.of());
+        var cells=cn.bidcheck.verification.facts.TableStructure.validatedCells(layout,LayoutBinding.sources(origin,corpus.byId));List<QualificationProofAssociation.Record> result=new ArrayList<>();
+        for(Map<String,Object> categoryCell:cells){if(!Set.of("资质名称","资质类别及等级","资质类别","证书类别").contains(cellLabel(categoryCell,cells)))continue;
+            String rawCategory=str(categoryCell,"text"),actualCategory=categoryWithoutGrade(rawCategory);if(!DomainBindings.sameCertificateCategory(actualCategory,category(category)))continue;
+            int row=RunSession.number(categoryCell.get("row"),0);List<Map<String,Object>> members=cells.stream().filter(c->sameGrid(categoryCell,c)&&!Boolean.TRUE.equals(c.get("header"))&&RunSession.number(c.get("row"),0)<=row&&RunSession.number(c.get("row"),0)+RunSession.number(c.get("rowSpan"),1)>row).toList();
+            var numbers=members.stream().filter(c->Set.of("资质证书号","资质证书编号","证书编号","证书号码").contains(cellLabel(c,cells))).toList();
+            if(numbers.size()!=1)continue;var numberCell=numbers.get(0);String number=normalizeCertificateNumber(str(numberCell,"text"));if(!number.matches("[A-Z0-9][A-Z0-9()/\\[\\]-]{3,79}"))continue;
+            var ranks=members.stream().filter(c->Set.of("等级","资质等级").contains(cellLabel(c,cells))).toList();if(ranks.size()>1)continue;var rankCell=ranks.isEmpty()?categoryCell:ranks.get(0);String rank=grade(str(rankCell,"text"));if(rank.isBlank())continue;
+            List<String> refs=new ArrayList<>();for(var cell:List.of(categoryCell,numberCell,rankCell))refs.addAll(ProofVerifier.strings(cell.get("_sourceIds")));
+            List<Source> used=refs.stream().distinct().map(corpus.byId::get).filter(Objects::nonNull).toList();if(used.isEmpty())continue;List<Field> urls=urls(text,sources);
+            List<Evidence> evidence=new ArrayList<>(List.of(owner.evidence()));used.forEach(s->evidence.add(s.evidence()));urls.forEach(u->evidence.add(u.evidence()));
+            result.add(new QualificationProofAssociation.Record(used.get(0),clean(company),actualCategory,number,rank,true,urls.stream().map(Field::value).toList(),evidence.stream().distinct().toList(),
+                linked("SUBJECT",owner.audit(),"CATEGORY",categoryCell,"CERTIFICATE_NUMBER",numberCell,"GRADE",rankCell,"binding","SOURCE_BOUND_TABLE_ROW_WITH_EXPLICIT_SPAN","row",row,"inheritedCertificateNumber",RunSession.number(numberCell.get("row"),0)<row,"crossPageInheritance",false)));
+        }return result;
+    }
+    private static boolean sameGrid(Map<String,Object> left,Map<String,Object> right){return List.of("documentId","documentHash","documentVersion","locationType","location","tableId","frameId").stream().allMatch(k->Objects.equals(left.get(k),right.get(k)));}
+    private static String cellLabel(Map<String,Object> cell,List<Map<String,Object>> cells){
+        if(Boolean.TRUE.equals(cell.get("header"))||RunSession.number(cell.get("columnSpan"),1)!=1)return "";List<String> refs=ProofVerifier.strings(cell.get("headerCellIds"));if(refs.isEmpty())return "";
+        List<Map<String,Object>> headers=cells.stream().filter(h->sameGrid(cell,h)&&Boolean.TRUE.equals(h.get("header"))&&refs.contains(str(h,"cellId"))&&RunSession.number(h.get("row"),0)+RunSession.number(h.get("rowSpan"),1)<=RunSession.number(cell.get("row"),0)&&RunSession.number(h.get("column"),0)<=RunSession.number(cell.get("column"),0)&&RunSession.number(h.get("column"),0)+RunSession.number(h.get("columnSpan"),1)>RunSession.number(cell.get("column"),0)).toList();
+        return headers.size()==1?clean(str(headers.get(0),"text")):"";
     }
 
     private static Field owner(String text,String expected,List<Source> sources){

@@ -86,6 +86,39 @@ class SdkAgentInvestigatorTest {
             """,(n,a)->Map.of("status","COMPLETED","acceptedFactIds",List.of("trusted"),"targetEvidenceRevision","revision-1","computationReceipt",receipt));
         assertEquals("COMPLETED",result.get("status"),result.toString());assertEquals(true,result.get("targetCheckCompleted"));assertEquals(false,result.get("businessCheckCompleted"));assertEquals(1,result.get("automaticRecomputations"));
     }
+    @Test void tableLayoutRecomputeReceiptAndRawSourceAuditCrossRealProcessBoundary()throws Exception{
+        var receipt=Map.of("kind","HOST_RULE_RECOMPUTE","status","COMPLETED","targetEvidenceRevision","table-v2","targetCheckCompleted",true,"businessCheckCompleted",false);
+        Map<String,Object> layoutAudit=Map.of("traceId","layout-call","cacheHit",true,"inputAudit",Map.of("file","layout-input.json","sha256","a".repeat(64)),"outputAudit",Map.of("file","layout-output.json","sha256","b".repeat(64)));
+        Map<String,Object> response=Map.of("status","COMPLETED","layoutChanged",true,"acceptedFactIds",List.of("table-derived-fact"),"targetEvidenceRevision","table-v2","computationReceipt",receipt,
+            "pageLayoutAudit",layoutAudit,"sources",List.of(Map.of("id","source-tail","quote","末行证书编号：TAIL-99")));
+        Path script=script("""
+            emit('tool_call',id='table-1',name='read_table_record',arguments={'sourceId':'source-tail'})
+            result=json.loads(sys.stdin.readline())['result']
+            assert result['sources'][0]['quote']=='末行证书编号：TAIL-99'
+            assert result['pageLayoutAudit']['inputAudit']['sha256']=='a'*64
+            assert result['pageLayoutAudit']['outputAudit']['sha256']=='b'*64
+            done('COMPLETED',targetCheckCompleted=True,businessCheckCompleted=False,acceptedFactIds=['table-derived-fact'])
+            """);
+        var investigator=bridge(script,5,1);Path auditDirectory=temp.resolve("table-audit");org.springframework.test.util.ReflectionTestUtils.setField(investigator,"auditDirectory",auditDirectory.toString());
+        List<Map<String,Object>> events=new ArrayList<>();Map<String,Object> result=investigator.investigate(start("table-auto","read_table_record"),(name,args)->response,events::add);
+        assertEquals("COMPLETED",result.get("status"),result.toString());assertEquals(true,result.get("targetCheckCompleted"));assertEquals(false,result.get("businessCheckCompleted"));
+        assertEquals(1,result.get("automaticRecomputations"));assertEquals(List.of("table-derived-fact"),result.get("acceptedFactIds"));assertEquals(2,events.size());
+        var json=new com.fasterxml.jackson.databind.ObjectMapper();
+        for(Map<String,Object> event:events){
+            assertEquals("tool_payload_audit",event.get("event"));Map<?,?> audit=(Map<?,?>)event.get("toolAudit");assertEquals("SAVED",audit.get("status"));
+            byte[] bytes=Files.readAllBytes(auditDirectory.resolve(audit.get("file").toString()));
+            assertEquals(audit.get("sha256"),HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes)));
+            var payload=json.readTree(bytes).path("payload");
+            if("input".equals(event.get("direction")))assertEquals("source-tail",payload.path("sourceId").asText());
+            else assertEquals(json.valueToTree(response),payload,"full source bodies and original layout audit references must be retained before worker compaction");
+        }
+    }
+    @Test void tableReceiptWithStaleEvidenceRevisionCannotCompleteWorkerInvestigation()throws Exception{
+        var stale=Map.of("kind","HOST_RULE_RECOMPUTE","status","COMPLETED","targetEvidenceRevision","table-v1","targetCheckCompleted",true,"businessCheckCompleted",true);
+        Map<String,Object> result=bridge(script("emit('tool_call',id='table-1',name='read_table_record',arguments={})\njson.loads(sys.stdin.readline())\ndone('COMPLETED',targetCheckCompleted=True,businessCheckCompleted=True)\n"),5,1)
+            .investigate(start("table-stale","read_table_record"),(name,args)->Map.of("status","COMPLETED","layoutChanged",true,"targetEvidenceRevision","table-v2","computationReceipt",stale),null);
+        code("WORKER_RESULT_STATE_MISMATCH",result);
+    }
     @Test void layoutRevisionInvalidatesEarlierAutomaticCompletion()throws Exception{
         var receipt=Map.of("kind","HOST_RULE_RECOMPUTE","status","COMPLETED","targetEvidenceRevision","revision-1","targetCheckCompleted",true,"businessCheckCompleted",false);
         Path script=script("""
@@ -178,10 +211,20 @@ class SdkAgentInvestigatorTest {
             """,(name,args)->name.equals("recompute_check")?Map.of("businessCheckCompleted",true):Map.of("acceptedFactIds",List.of("native-new")));
         code("WORKER_RESULT_STATE_MISMATCH",result);assertEquals(List.of("native-new"),result.get("acceptedFactIds"));
     }
-    @Test void otherReadToolsCannotClaimAcceptedFacts()throws Exception{
+    @Test void trustedTableReadCanAdoptNativeFacts()throws Exception{
         Map<String,Object> result=bridge(script("emit('tool_call',id='1',name='read_table_record',arguments={})\njson.loads(sys.stdin.readline())\ndone('EVIDENCE_UPDATED')\n"),5,1)
-            .investigate(start("not-adopted","read_table_record"),(n,a)->Map.of("acceptedFactIds",List.of("not-accepted")),null);
+            .investigate(start("table-adopted","read_table_record"),(n,a)->Map.of("status","COMPLETED","acceptedFactIds",List.of("host-verified-native-fact")),null);
+        assertEquals("EVIDENCE_UPDATED",result.get("status"));assertEquals(List.of("host-verified-native-fact"),result.get("acceptedFactIds"));
+    }
+    @Test void externalQueryCannotClaimAcceptedFacts()throws Exception{
+        Map<String,Object> result=bridge(script("emit('tool_call',id='1',name='query_external',arguments={})\njson.loads(sys.stdin.readline())\ndone('EVIDENCE_UPDATED')\n"),5,1)
+            .investigate(start("external-not-adopted","query_external"),(n,a)->Map.of("status","COMPLETED","acceptedFactIds",List.of("not-accepted")),null);
         code("WORKER_RESULT_STATE_MISMATCH",result);assertEquals(List.of(),result.get("acceptedFactIds"));
+    }
+    @Test void failedTableReadCannotClaimAcceptedFacts()throws Exception{
+        Map<String,Object> result=bridge(script("emit('tool_call',id='1',name='read_table_record',arguments={})\njson.loads(sys.stdin.readline())\ndone()\n"),5,1)
+            .investigate(start("failed-table","read_table_record"),(n,a)->Map.of("status","FAILED","acceptedFactIds",List.of("not-accepted")),null);
+        code("TOOL_OPERATION_FAILED",result);assertEquals(List.of(),result.get("acceptedFactIds"));
     }
     @Test void failedNativeReadCannotClaimAcceptedFacts()throws Exception{
         Map<String,Object> result=run("emit('tool_call',id='1',name='search_evidence',arguments={})\njson.loads(sys.stdin.readline())\ndone()\n",
@@ -293,7 +336,9 @@ class SdkAgentInvestigatorTest {
         Path script=script("open('"+quoted+"','w').write(str(os.getpid()))\ntime.sleep(30)\n");
         long start=System.nanoTime();Map<String,Object> result=bridge(script,1,1).investigate(start("timeout","search_evidence"),(n,a)->Map.of(),null);code("INVESTIGATION_TIMEOUT",result);assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-start)<4000);
         long pid=Long.parseLong(Files.readString(pidFile));for(int i=0;i<20&&ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false);i++)Thread.sleep(25);assertFalse(ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false));
-        AtomicBoolean interrupted=new AtomicBoolean();Map<String,Object> handler=bridge(script("emit('tool_call',id='1',name='search_evidence',arguments={})\ntime.sleep(30)\n"),1,1).investigate(start("handler-timeout","search_evidence"),(n,a)->{try{Thread.sleep(30000);}catch(InterruptedException e){interrupted.set(true);Thread.currentThread().interrupt();}return Map.of();},null);code("INVESTIGATION_TIMEOUT",handler);for(int i=0;i<20&&!interrupted.get();i++)Thread.sleep(25);assertTrue(interrupted.get());
+        AtomicBoolean entered=new AtomicBoolean(),interrupted=new AtomicBoolean();Map<String,Object> handler=bridge(script("emit('tool_call',id='1',name='search_evidence',arguments={})\ntime.sleep(30)\n"),1,1).investigate(start("handler-timeout","search_evidence"),(n,a)->{entered.set(true);try{Thread.sleep(30000);}catch(InterruptedException e){interrupted.set(true);Thread.currentThread().interrupt();}return Map.of();},null);
+        code("INVESTIGATION_TIMEOUT",handler);assertTrue(entered.get(),"fixture worker did not reach handler before the unchanged one-second deadline; inspect process startup separately from callback cancellation");
+        for(int i=0;i<20&&!interrupted.get();i++)Thread.sleep(25);assertTrue(interrupted.get(),"an entered blocked handler must observe cancellation");
     }
     @Test void callerCancellationStopsInvestigationAndRestoresInterruptFlag()throws Exception{
         CountDownLatch entered=new CountDownLatch(1);AtomicReference<Map<String,Object>> result=new AtomicReference<>();AtomicBoolean flag=new AtomicBoolean();SdkAgentInvestigator bridge=bridge(script("emit('event',event='model_started',id='permit-1',modelIndex=1)\ntime.sleep(30)\n"),20,1);
@@ -340,8 +385,23 @@ class SdkAgentInvestigatorTest {
         Path script=script("done()\n");SdkAgentInvestigator first=bridge(script,5,1),otherKey=new SdkAgentInvestigator(true,python().toString(),script.toString(),BASE,"a-different-secret","qwen-plus",5,1);
         assertEquals(first.identity(),otherKey.identity());assertFalse(first.identity().contains(KEY));
         String beforeLock=first.identity();Files.writeString(script.getParent().resolve("requirements.lock"),"openai-agents==0.24.0\n");assertNotEquals(beforeLock,first.identity());
+        String beforeAudit=first.identity();Files.writeString(script.getParent().resolve("model_audit.py"),"# changed local auditing\n");assertNotEquals(beforeAudit,first.identity());
         String previous=first.identity();Files.writeString(script,"\n# changed worker\n",StandardOpenOption.APPEND);assertNotEquals(previous,first.identity());
         assertNotEquals(first.identity(),new SdkAgentInvestigator(true,python().toString(),script.toString(),BASE,KEY,"different-model",5,1).identity());
+    }
+
+    @Test void localAuditEmitsOnlySafeReferencesNeverPayloadOrArbitraryPaths()throws Exception{
+        List<Map<String,Object>> events=new ArrayList<>();Path script=script("""
+            assert os.environ['BIDCHECK_AGENT_AUDIT_DIRECTORY']
+            emit('event',event='model_finished',modelAudit={'status':'SAVED','file':'a'*32+'-00001-output.json','sha256':'b'*64,'bytes':17,'payload':'private model text','apiKey':'sensitive'})
+            emit('event',event='model_finished',modelAudit={'status':'SAVED','file':'../private.json','sha256':'malformed','bytes':-1})
+            done()
+            """);
+        var investigator=bridge(script,5,1);org.springframework.test.util.ReflectionTestUtils.setField(investigator,"auditDirectory",temp.resolve("audit").toString());
+        var result=investigator.investigate(start("audit","search_evidence"),(n,a)->Map.of(),events::add);
+        assertEquals("NO_PROGRESS",result.get("status"));assertEquals(2,events.size());
+        assertEquals("a".repeat(32)+"-00001-output.json",((Map<?,?>)events.get(0).get("modelAudit")).get("file"));
+        assertFalse(events.toString().contains("private model text"));assertFalse(events.toString().contains("sensitive"));assertFalse(events.toString().contains("../private.json"));
     }
 
     private Map<String,Object> reviewStart(String id,String... tools){
@@ -599,6 +659,32 @@ class SdkAgentInvestigatorTest {
         var result=bridge(script("emit('event',event='no_evidence_progress',eventId=rid+':1',targetObligationId='A')\nemit('event',event='target_tool_failed',eventId=rid+':2',targetObligationId='C',rejectionCode='SOURCE_NOT_CURRENT')\ndone(firstFailureEventId=rid+':1')\n"),5,1)
             .investigate(targetStart("proof-before-failure","search_evidence"),(n,a)->Map.of(),null);
         assertEquals("proof-before-failure:2",result.get("firstFailureEventId"));
+    }
+
+    @Test void inferenceValidationRejectionIsNotAnUnresolvedServiceFailure()throws Exception{
+        for(String error:List.of("INFERENCE_PROTOCOL_INVALID","INFERENCE_CITATION_UNGROUNDED","INFERENCE_TYPED_FACT_REQUIRED","INFERENCE_PREVIOUSLY_REJECTED","INFERENCE_CURRENT_SCOPE_CONFLICT")){
+            var result=bridge(script("emit('tool_call',id='1',name='submit_candidate_fact',arguments={'targetObligationId':'A','fact':{}})\njson.loads(sys.stdin.readline())\ndone()\n"),5,1)
+                .investigate(targetStart("inference-rejection","submit_candidate_fact"),(n,a)->Map.of("status","REJECTED","error",error,"acceptedFactIds",List.of()),null);
+            assertEquals("NO_PROGRESS",result.get("status"),result.toString());
+            assertEquals(0,((Number)result.get("failedToolCount")).intValue());assertEquals(1,((Number)result.get("validationRejectionCount")).intValue());
+            assertEquals(false,result.get("businessCheckCompleted"));
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test void pendingConfirmationSurvivesDiagnosticsButNeverCertifiesCompletion()throws Exception{
+        List<Map<String,Object>> events=new ArrayList<>();
+        var result=bridge(script("""
+            emit('tool_call',id='1',name='submit_candidate_fact',arguments={'targetObligationId':'A','fact':{}})
+            json.loads(sys.stdin.readline())
+            emit('event',event='evidence_pending',targetObligationId='A',stateAfter='NEEDS_CONFIRMATION')
+            row=dict(targetObligationId='A',progressScope='a'*64,ruleVersion='rule-1',relevantEvidenceRevision='A-1',state='NEEDS_CONFIRMATION',visited=True)
+            done(pendingConfirmationTargetObligationIds=['A','forged'],targetProgressLedger=[row])
+            """),5,1).investigate(targetStart("pending-confirmation","submit_candidate_fact"),(n,a)->Map.of("status","NEEDS_CONFIRMATION","acceptedFactIds",List.of(),"confirmationId","claim"),events::add);
+        assertEquals("NO_PROGRESS",result.get("status"),result.toString());assertEquals(List.of("A"),result.get("pendingConfirmationTargetObligationIds"));
+        assertEquals(List.of(),result.get("completedTargetObligationIds"));assertEquals(false,result.get("businessCheckCompleted"));
+        assertEquals("NEEDS_CONFIRMATION",((List<Map<String,Object>>)result.get("targetProgressLedger")).get(0).get("state"));
+        assertTrue(events.stream().anyMatch(e->"NEEDS_CONFIRMATION".equals(e.get("stateAfter"))));
     }
 
 }

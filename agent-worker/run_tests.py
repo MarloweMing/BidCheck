@@ -13,7 +13,7 @@ import unittest
 if __name__ == "__main__":
     root = Path(__file__).resolve().parent
     started = time.monotonic()
-    suite = unittest.defaultTestLoader.discover(str(root), pattern="test_worker.py")
+    suite = unittest.defaultTestLoader.discover(str(root), pattern="test_*.py")
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     receipt = {
         "scope": "offline-real-agents-sdk-and-chat-completions-wire-tests",
@@ -30,7 +30,7 @@ if __name__ == "__main__":
         "externalModelRequests": 0,
         "documentsSentExternally": False,
         "sourceHashes": {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
-                         for name in ("worker.py", "probe.py", "test_worker.py", "requirements.lock")},
+                         for name in ("worker.py", "probe.py", "test_worker.py", "test_context_projection.py", "requirements.lock")},
     }
     (root / "test-results.json").write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     raise SystemExit(0 if result.wasSuccessful() else 1)

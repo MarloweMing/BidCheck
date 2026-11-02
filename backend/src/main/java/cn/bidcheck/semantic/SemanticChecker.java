@@ -51,6 +51,7 @@ import java.util.concurrent.TimeoutException;
 /** Optional DashScope text-generation adapter. It never invents source locations or citations. */
 @Service
 public class SemanticChecker {
+    @Value("${bidcheck.agent.audit-directory:}") private String auditDirectory="";
     private static final int MAX_CANDIDATES = 8;
     private static final int MAX_QUOTE_CHARACTERS = 1800;
     private static final int MAX_INPUT_CHARACTERS = 18_000;
@@ -271,6 +272,7 @@ public class SemanticChecker {
             return rejected(trace, "CONTEXT_BUDGET_EXCEEDED", "检查点要求超过语义上下文限制，不能截断要求后判定；请拆分检查点再核对。");
         }
         CompletableFuture<HttpResponse<byte[]>> requestFuture = null;
+        cn.bidcheck.verification.engine.VerificationModelAudit.Call transportAudit=null;
         try {
             var declared=cn.bidcheck.engine.BidLetterResponseProof.evaluate(checkpoint,document,tender);
             if(declared.isPresent()) {
@@ -409,8 +411,15 @@ public class SemanticChecker {
                 if (memberRepair) trace.memberScopeRepair.put("requested", true);
                 attempt.put("requestStartedAt", java.time.Instant.now().toString());
                 long attemptStarted = System.nanoTime();
+                transportAudit=cn.bidcheck.verification.engine.VerificationModelAudit.begin(auditDirectory,key,"LEGACY_SEMANTIC_TRANSPORT");
+                transportAudit.correlate(org.slf4j.MDC.get("verification.sourceRunId"),checkpoint.id());
+                transportAudit.route(model,compatible?"OPENAI_COMPATIBLE":"DASHSCOPE","configured-semantic-endpoint");
+                transportAudit.requestPrepared(requestBody);transportAudit.dispatched();
                 requestFuture = client.sendAsync(request, ignored -> new LimitedBodySubscriber(MAX_RESPONSE_BYTES));
                 HttpResponse<byte[]> response = requestFuture.get(timeout.toMillis() + 1000, TimeUnit.MILLISECONDS);
+                transportAudit.received(response.body(),response.statusCode());
+                transportAudit.result(response.statusCode()==200?"TRANSPORT_COMPLETED":"HTTP_ERROR",response.statusCode()==200?"":"MODEL_HTTP_ERROR",response.statusCode(),"BUSINESS_VALIDATION_RECORDED_SEPARATELY","");
+                attempt.put("transportAudit",transportAudit.finish(Map.of(),Map.of()));transportAudit=null;
                 attempt.put("elapsedMillis", (System.nanoTime()-attemptStarted)/1_000_000);
                 attempt.put("httpStatus", response.statusCode());
                 if (response.statusCode() != 200) { attempt.put("state", "HTTP_ERROR"); return rejected(trace, "MODEL_HTTP_ERROR", "语义模型接口返回 HTTP " + response.statusCode() + "，本检查点暂无法判定。"); }
@@ -484,6 +493,7 @@ public class SemanticChecker {
             return rejected(trace, "MODEL_COMMUNICATION_ERROR", "检索或语义模型通信失败、响应过大或返回无效数据，暂无法判定。");
         } finally {
             if (requestFuture != null && !requestFuture.isDone()) requestFuture.cancel(true);
+            if(transportAudit!=null){transportAudit.result("FAILED","NO_COMPLETE_RESPONSE",0,"SEE_SEMANTIC_ATTEMPT_DECISION","");trace.model.put("lastTransportFailureAudit",transportAudit.finish(Map.of(),Map.of()));}
         }
     }
 

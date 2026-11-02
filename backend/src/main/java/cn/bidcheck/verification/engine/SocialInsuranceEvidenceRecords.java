@@ -8,11 +8,14 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 
 /**
  * Reads payment records from the frozen original HTML table transcription. It never treats a
- * query period as payment, invents a continuous quotation, or imports an employer from proximity.
+ * query period as payment or imports an employer from proximity alone. A selected-page report
+ * may use its adjacent cover only inside the same explicit personnel attachment, with matching
+ * report title and printed pagination; every structural witness is retained for re-admission.
  * Values and row/column membership are re-derived at admission; serialized proof is audit only.
  */
 final class SocialInsuranceEvidenceRecords {
-    static final String VERSION="social-payment-table-records-2-explicit-report-reference";
+    static final String VERSION="social-payment-table-records-3-paginated-attachment";
+    private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(SocialInsuranceEvidenceRecords.class);
     private static final Pattern RANGE=Pattern.compile("chars:(\\d+)-(\\d+)");
     private static final Pattern TABLE=Pattern.compile("(?is)<table\\b[^>]*>(.*?)</table\\s*>");
     private static final Pattern ROW=Pattern.compile("(?is)<tr\\b[^>]*>(.*?)</tr\\s*>");
@@ -22,7 +25,7 @@ final class SocialInsuranceEvidenceRecords {
     private SocialInsuranceEvidenceRecords(){}
 
     record Field(String text,int start,int end,String pageKey){Field(String text,int start,int end){this(text,start,end,"");}}
-    private record ReportPage(Original original,String reportKey,Field reportId,Field employer){}
+    private record ReportPage(Original original,String reportKey,Field reportId,Field employer,Field title,Field pagination,int printedPage,int totalPages){}
     private record Cell(Field field,int row,int column,int rowSpan,int columnSpan){}
     private record Original(String text,int start,List<Source> sources){}
     record Record(String id,String person,String employer,String identifierFingerprint,List<String> months,
@@ -31,7 +34,7 @@ final class SocialInsuranceEvidenceRecords {
             Map<String,Object> attrs=linked("person",person,"employer",employer,"months",months,"recordId",id,
                     "bindingMethod",VERSION,"insuranceType",insurance,"monthDerivation",derivation,
                     "sourceFieldSpans",spans(),"identifierFingerprint",identifierFingerprint,
-                    "employerBinding",employer.isBlank()?"UNPROVEN":fields.containsKey("header:reportId")?"SAME_EXPLICIT_REPORT_REFERENCE":"SAME_ORIGINAL_RECORD",
+                    "employerBinding",employer.isBlank()?"UNPROVEN":fields.containsKey("row:pagination")?"SAME_PAGINATED_REPORT_IN_EXPLICIT_ATTACHMENT":fields.containsKey("header:reportId")?"SAME_EXPLICIT_REPORT_REFERENCE":"SAME_ORIGINAL_RECORD",
                     "structureOrigin","FROZEN_HTML_TRANSCRIPTION","originalImageVerified",false);
             return new Fact("N"+identity(VERSION+id+person+employer+months).substring(0,20),"MONTHS",person,
                     "socialInsurance",person,Integer.toString(months.size()),"月","实际缴费记录",scope,
@@ -60,14 +63,39 @@ final class SocialInsuranceEvidenceRecords {
         if(rules.stream().noneMatch(r->r.predicate().equals("MONTHS")))return List.of();
         Set<String> pages=new HashSet<>();for(Source source:selected)pages.add(pageKey(source));
         Map<String,List<Source>> pageSources=new LinkedHashMap<>();for(Source source:corpus.all)if(!source.index()&&!source.id().startsWith("V"))pageSources.computeIfAbsent(pageKey(source),key->new ArrayList<>()).add(source);
-        Set<String> keys=new HashSet<>();for(String page:pages){Original original=reconstruct(pageSources.getOrDefault(page,List.of()));if(original!=null){ReportPage report=report(original);if(report!=null)keys.add(report.reportKey());}}
+        // The report cover is a structural dependency, not another free-text search. It is
+        // admitted only after records() proves the same packet/title/pagination below.
+        Set<String> selectedPages=new HashSet<>(pages);
+        for(Source source:selected){String previous=EvidenceCorpus.pageKey(source.evidence().documentId(),source.evidence().page()-1,source.evidence().locationType());
+            var prev=pageSources.get(previous);if(prev!=null&&prev.stream().anyMatch(s->s.evidence().quote().contains("社会保险个人权益记录")))pages.add(previous);}
+        Set<String> keys=new HashSet<>();for(String page:pages){Original original=reconstruct(pageSources.getOrDefault(page,List.of()));if(original!=null){ReportPage report=report(original);if(report!=null&&!report.reportKey().isBlank())keys.add(report.reportKey());}}
         if(!keys.isEmpty())for(var entry:pageSources.entrySet()){
             if(pages.contains(entry.getKey())||entry.getValue().stream().noneMatch(s->s.evidence().quote().matches("(?s).*(?:查询流水号|社保权益记录编号|参保记录编号).*")))continue;
             Original original=reconstruct(entry.getValue());if(original==null)continue;ReportPage report=report(original);
             if(report!=null&&keys.contains(report.reportKey()))pages.add(entry.getKey());
         }
-        return records(corpus.all.stream().filter(s->pages.contains(pageKey(s))).toList()).stream().map(Record::fact).toList();
+        return records(corpus.all.stream().filter(s->pages.contains(pageKey(s))).toList()).stream()
+            .filter(r->r.fields().get("person")!=null&&r.sources().stream().anyMatch(s->selectedPages.contains(pageKey(s))&&s.evidence().quote().contains(r.person())))
+            .map(Record::fact).toList();
     }
+    /** Deterministic locator for the typed MONTHS obligation. Names only locate candidate
+     * records; neither name search nor attachment proximity establishes personal identity. */
+    static List<Source> targetedSources(List<Rule> rules,List<Fact> facts,EvidenceCorpus corpus){
+        List<Rule> months=new ArrayList<>();for(Rule rule:rules)collectMonths(rule,months);if(months.isEmpty())return List.of();
+        Set<String> names=new LinkedHashSet<>();
+        for(Rule rule:months){String selector=rule.subject();if(!DomainBindings.role(selector)&&selector.matches("[\\p{IsHan}·]{2,12}")&&!selector.matches(".*(?:上述|拟派|项目组|所有|全部|人员).*"))names.add(selector);
+            for(Fact role:facts)if(role.kind().equals("PERSON_ROLE")&&role.scope().equals("CURRENT_PROJECT")&&DomainBindings.currentRoleSource(role,corpus.byId)
+                    &&(selector.matches(".*(?:上述|拟派|项目组|所有|全部|人员).*" )||DomainBindings.roleMatches(selector,role.subject(),role,corpus)))names.add(role.value());}
+        Set<String> pages=new LinkedHashSet<>();
+        for(var entry:corpus.pages.entrySet()){String text=Objects.toString(entry.getValue().text(),"");
+            if(text.contains("社会保险个人权益记录")&&text.contains("本单位实际缴费月数")&&text.toLowerCase(Locale.ROOT).contains("<table")&&names.stream().anyMatch(text::contains))pages.add(entry.getKey());}
+        List<Source> selected=corpus.all.stream().filter(s->pages.contains(pageKey(s))&&!s.index()&&!s.historical()&&!s.scopeContext().blocked()&&!s.id().startsWith("V")).toList();
+        LinkedHashMap<String,Source> exposed=new LinkedHashMap<>();selected.forEach(s->exposed.put(s.id(),s));
+        for(Fact fact:extract(months,corpus,selected))for(String id:fact.sourceIds()){Source source=corpus.byId.get(id);if(source!=null)exposed.put(id,source);}
+        LOG.info("bidcheck.social_record_locator ruleIds={} personSelectors={} dataSourceCount={} dependencySourceCount={} pages={} policy=TYPED_MONTHS_ORIGINAL_TABLE",months.stream().map(Rule::id).toList(),names,selected.size(),exposed.size()-selected.size(),pages);
+        return List.copyOf(exposed.values());
+    }
+    private static void collectMonths(Rule rule,List<Rule> out){if(rule.predicate().equals("MONTHS"))out.add(rule);for(Rule child:rule.children())collectMonths(child,out);}
     private static String pageKey(Source source){return source.evidence().documentId()+":"+source.evidence().locationType()+":"+source.evidence().page();}
     static boolean claims(Fact fact){return fact.kind().equals("MONTHS")&&VERSION.equals(str(fact.attributes(),"bindingMethod"));}
     static String issue(Fact fact,Map<String,Source> sources){
@@ -110,7 +138,8 @@ final class SocialInsuranceEvidenceRecords {
         for(Record record:out){
             ReportPage current=reports.get(pageKey(record.sources().get(0)));
             if(!record.employer().isBlank()||current==null||!record.scope().equals("CURRENT_PROJECT")){linkedRecords.add(record);continue;}
-            List<ReportPage> headers=reports.values().stream().filter(p->p.reportKey().equals(current.reportKey())&&p.employer()!=null).toList();
+            if(current.reportId()==null){Record linked=paginated(record,current,reports);linkedRecords.add(linked==null?record:linked);continue;}
+            List<ReportPage> headers=reports.values().stream().filter(p->!p.reportKey().isBlank()&&p.reportKey().equals(current.reportKey())&&p.employer()!=null).toList();
             Set<String> owners=new LinkedHashSet<>();headers.forEach(h->owners.add(h.employer().text()));
             if(owners.size()!=1){linkedRecords.add(record);continue;}
             ReportPage header=headers.get(0);Map<String,Field> fields=new LinkedHashMap<>();String rowPage=pageKey(record.sources().get(0));
@@ -121,6 +150,31 @@ final class SocialInsuranceEvidenceRecords {
         }
         return List.copyOf(linkedRecords);
     }
+    private static Record paginated(Record record,ReportPage row,Map<String,ReportPage> reports){
+        if(row.pagination()==null||row.printedPage()<=1)return null;
+        Source rowSource=row.original().sources().get(0);String previous=EvidenceCorpus.pageKey(rowSource.evidence().documentId(),rowSource.evidence().page()-1,rowSource.evidence().locationType());
+        ReportPage header=reports.get(previous);if(header==null||header.employer()==null||header.reportId()==null||!header.title().text().equals(row.title().text())||!samePacket(header,row))return null;
+        // An OCR omission on the duplicate cover may be repaired only from the identical
+        // explicit report ID AND employer, never from a similar title or a nearby company.
+        ReportPage pageWitness=header;
+        if(header.pagination()==null){List<ReportPage> copies=reports.values().stream().filter(h->h.reportKey().equals(header.reportKey())&&h.employer()!=null&&h.employer().text().equals(header.employer().text())&&h.title().text().equals(header.title().text())&&h.pagination()!=null).toList();
+            Set<String> versions=new HashSet<>();copies.forEach(h->versions.add(h.printedPage()+":"+h.totalPages()));if(versions.size()!=1||copies.isEmpty())return null;pageWitness=copies.get(0);}
+        if(pageWitness.printedPage()!=1||pageWitness.totalPages()!=row.totalPages()||row.printedPage()>row.totalPages())return null;
+        Set<String> owners=new HashSet<>();for(ReportPage h:reports.values())if(h.reportKey().equals(header.reportKey())&&h.employer()!=null)owners.add(h.employer().text());if(owners.size()!=1)return null;
+        Map<String,Field> fields=new LinkedHashMap<>();String rowKey=pageKey(rowSource);
+        record.fields().forEach((key,value)->fields.put(key,new Field(value.text(),value.start(),value.end(),rowKey)));
+        fields.put("employer",header.employer());fields.put("header:reportId",header.reportId());fields.put("header:title",header.title());fields.put("row:title",row.title());fields.put("header:pagination",pageWitness.pagination());fields.put("row:pagination",row.pagination());
+        if(pageWitness!=header)fields.put("duplicateHeader:reportId",pageWitness.reportId());
+        List<Source> sources=new ArrayList<>(record.sources());sources.addAll(header.original().sources());sources.addAll(pageWitness.original().sources());
+        LOG.debug("bidcheck.social_report_binding recordId={} person={} employer={} headerPage={} rowPage={} printedPage={} totalPages={} dependencySourceIds={} policy=SAME_PAGINATED_REPORT_IN_EXPLICIT_ATTACHMENT",record.id(),record.person(),header.employer().text(),header.original().sources().get(0).evidence().page(),rowSource.evidence().page(),row.printedPage(),row.totalPages(),sources.stream().map(Source::id).distinct().toList());
+        return new Record(record.id(),record.person(),header.employer().text(),record.identifierFingerprint(),record.months(),record.insurance(),Map.copyOf(fields),sources.stream().distinct().toList(),record.derivation(),record.scope());
+    }
+    private static boolean samePacket(ReportPage header,ReportPage row){
+        Source a=header.original().sources().get(0),b=row.original().sources().get(0);
+        return a.documentHash().equals(b.documentHash())&&a.documentVersion()==b.documentVersion()
+            &&a.scopeContext().status().equals("CURRENT_BID_ATTACHMENT")&&b.scopeContext().status().equals("CURRENT_BID_ATTACHMENT")
+            &&a.scopeContext().anchor().equals(b.scopeContext().anchor())&&!a.scopeContext().anchor().isBlank();
+    }
     private static ReportPage report(Original original){
         if(original.sources().isEmpty()||original.sources().stream().anyMatch(s->s.historical()||s.scopeContext().blocked())||!original.text().contains("社会保险个人权益记录"))return null;
         Matcher ids=Pattern.compile("(?:查询流水号|社保权益记录编号|参保记录编号)\\s*[:：]\\s*([A-Za-z0-9-]{8,80})").matcher(original.text());
@@ -128,7 +182,12 @@ final class SocialInsuranceEvidenceRecords {
             if(id!=null&&!id.text().equals(ids.group(1)))return null;
             id=new Field(ids.group(1),original.start()+ids.start(1),original.start()+ids.end(1),page);
         }
-        if(id==null)return null;
+        Matcher titleMatch=Pattern.compile("[\\p{IsHan}]{0,12}社会保险个人权益记录[（(]单位职工缴费信息[）)]").matcher(original.text());
+        Field title=null;if(titleMatch.find())title=new Field(titleMatch.group().replace('（','(').replace('）',')'),original.start()+titleMatch.start(),original.start()+titleMatch.end(),page);
+        if(title==null){String label="社会保险个人权益记录";int at=original.text().indexOf(label);title=new Field(label,original.start()+at,original.start()+at+label.length(),page);}
+        Matcher pagination=Pattern.compile("第\\s*([1-9][0-9]{0,3})\\s*页\\s*[（(]\\s*共\\s*([1-9][0-9]{0,3})\\s*页\\s*[）)]").matcher(original.text());Field printed=null;int printedPage=0,total=0;
+        while(pagination.find()){int p=Integer.parseInt(pagination.group(1)),n=Integer.parseInt(pagination.group(2));if(printed!=null&&(p!=printedPage||n!=total))return null;printedPage=p;total=n;printed=new Field(pagination.group(),original.start()+pagination.start(),original.start()+pagination.end(),page);}
+        if(id==null&&printed==null)return null;
         String prefix=original.text();int table=prefix.toLowerCase(Locale.ROOT).indexOf("<table");if(table>=0)prefix=prefix.substring(0,table);
         Matcher companies=EMPLOYER.matcher(prefix);Field company=null;boolean multiple=false;
         while(companies.find()){
@@ -137,7 +196,7 @@ final class SocialInsuranceEvidenceRecords {
             company=new Field(name,original.start()+companies.start(1),original.start()+companies.start(1)+name.length(),page);
         }
         if(multiple)company=null;Source first=original.sources().get(0);
-        return new ReportPage(original,first.evidence().documentId()+"|"+first.documentHash()+"|"+first.documentVersion()+"|"+identity(id.text()),id,company);
+        return new ReportPage(original,id==null?"":first.evidence().documentId()+"|"+first.documentHash()+"|"+first.documentVersion()+"|"+identity(id.text()),id,company,title,printed,printedPage,total);
     }
     private static Original reconstruct(List<Source> sources){
         List<Source> ordered=sources.stream().distinct().sorted(Comparator.comparingInt(s->{Matcher m=RANGE.matcher(s.evidence().anchor());return m.matches()?Integer.parseInt(m.group(1)):Integer.MAX_VALUE;})).toList();

@@ -22,17 +22,18 @@ import org.springframework.stereotype.Component;
 /** Local UTF-8 JSONL process boundary. No model prose, source payload or credential is logged. */
 @Component
 public final class SdkAgentInvestigator implements AgentInvestigator {
-    static final String PROTOCOL="bidcheck-agent-1",POLICY="java-sdk-bridge-9-initial-target-receipt";
+    static final String PROTOCOL="bidcheck-agent-1",POLICY="java-sdk-bridge-10-local-tool-audit";
     static final int MAX_LINE_BYTES=4*1024*1024,MAX_ARGUMENT_BYTES=64*1024;
     private static final Set<String> HOSTS=Set.of("dashscope.aliyuncs.com","dashscope-intl.aliyuncs.com","dashscope-us.aliyuncs.com");
     private static final Set<String> TOOLS=Set.of("search_evidence","read_section","read_table_record","inspect_page_region","query_external","submit_candidate_fact","recompute_check");
     private static final Set<String> REVIEW_TOOLS=Set.of("submit_review_plan","submit_review_judgment");
     private static final Set<String> REVIEW_TARGET_READS=Set.of("search_evidence","read_section","read_table_record");
-    private static final Set<String> VALIDATION_REJECTIONS=Set.of("QUERY_INVALID","SOURCE_NOT_DISCLOSED","SOURCE_NOT_CURRENT","ROW_OFFSET_INVALID","FIELD_INVALID","FACT_PROTOCOL_INVALID","FACT_OUTSIDE_TARGET");
+    private static final Set<String> VALIDATION_REJECTIONS=Set.of("QUERY_INVALID","SOURCE_NOT_DISCLOSED","SOURCE_NOT_CURRENT","ROW_OFFSET_INVALID","FIELD_INVALID","FACT_PROTOCOL_INVALID","FACT_OUTSIDE_TARGET",
+        "INFERENCE_PROTOCOL_INVALID","INFERENCE_CITATION_UNGROUNDED","INFERENCE_TYPED_FACT_REQUIRED","INFERENCE_PREVIOUSLY_REJECTED","INFERENCE_CURRENT_SCOPE_CONFLICT");
     private static final Set<String> REVIEW_VALIDATION_REJECTIONS=Set.of("PLAN_APPROVAL_REQUIRED","REVIEW_INPUT_INVALID","REQUIREMENT_SOURCE_INCOMPLETE","PLAN_SCHEMA_INVALID","PLAN_SIZE_INVALID","PLAN_SOURCE_INVALID","PLAN_METHOD_INVALID","DETERMINISTIC_REVIEW_REQUIRED","PREDICATE_NOT_SUPPORTED","RULE_NOT_EXECUTABLE","PRIOR_PLAN_REVIEW_MISSING","PLAN_COVERAGE_REJECTED","REVIEW_PLAN_REVISION_MISMATCH","JUDGMENT_SCHEMA_INVALID","SEMANTIC_EVIDENCE_INCOMPLETE","SEMANTIC_SOURCE_INVALID","SEMANTIC_SOURCE_SCOPE_INVALID","TITLE_ONLY_EVIDENCE","CONDITION_EVIDENCE_INVALID","SEMANTIC_REVIEW_REJECTED");
-    private static final Set<String> EVENTS=Set.of("investigation_started","model_started","model_request_authorized","model_finished","tool_started","tool_finished","duplicate_tool_avoided","investigation_error","host_recomputed","semantic_path_exhausted","investigation_stalled","context_compacted","target_tool_blocked","source_body_replayed","review_plan_approved","review_stage_tool_blocked","review_plan_rejection_reused","review_plan_rejection_remembered","tool_arguments_rejected","no_evidence_progress","evidence_pending","target_navigation_progress","target_proof_progress","target_tool_failed","investigation_failed");
+    private static final Set<String> EVENTS=Set.of("investigation_started","model_started","model_request_authorized","model_finished","tool_started","tool_finished","duplicate_tool_avoided","investigation_error","host_recomputed","semantic_path_exhausted","investigation_stalled","context_compacted","context_rebuilt","target_tool_blocked","source_body_replayed","review_plan_approved","review_stage_tool_blocked","review_plan_rejection_reused","review_plan_rejection_remembered","tool_arguments_rejected","no_evidence_progress","evidence_pending","target_navigation_progress","target_proof_progress","target_tool_failed","investigation_failed");
     private static final int MAX_TARGET_DIAGNOSTICS=256;
-    private static final Set<String> TARGET_STATES=Set.of("UNVISITED","RUNNING","PROVEN","NO_MORE_EVIDENCE","FAILED");
+    private static final Set<String> TARGET_STATES=Set.of("UNVISITED","RUNNING","PROVEN","NO_MORE_EVIDENCE","NEEDS_CONFIRMATION","FAILED");
     private static final Set<String> WORKER_ERRORS=Set.of("MODEL_PERMISSION_TIMEOUT","MODEL_PERMISSION_PROTOCOL_ERROR","MODEL_REQUEST_DENIED","MODEL_ENDPOINT_NOT_ALLOWED","MODEL_CONFIGURATION_MISSING","INVALID_TIMEOUT_CONFIGURATION","PROTOCOL_MESSAGE_TOO_LARGE","PROTOCOL_QUEUE_OVERFLOW","HOST_DISCONNECTED","PROTOCOL_READ_FAILED","PROTOCOL_OBJECT_REQUIRED","PROTOCOL_VERSION_MISMATCH","INVALID_REQUEST_ID","INVALID_CONTEXT","NO_TOOLS_PROVIDED","TOOL_NOT_ALLOWED","DUPLICATE_TOOL","INVALID_TOOL_DESCRIPTION","INVALID_TOOL_SCHEMA","REMOTE_SCHEMA_REFERENCE_NOT_ALLOWED","TOOL_ARGUMENTS_TOO_LARGE","TOOL_ARGUMENTS_OBJECT_REQUIRED","TOOL_ARGUMENT_SCHEMA_MISMATCH","HOST_CANCELLED","TOOL_RESPONSE_ID_MISMATCH","TOOL_RESPONSE_REQUEST_MISMATCH","TOOL_RESULT_OBJECT_REQUIRED","TOOL_RESULT_TOO_LARGE","TOOL_RESPONSE_TIMEOUT","TOOL_OPERATION_FAILED","REPEATED_ACTION_WITHOUT_NEW_EVIDENCE","INVESTIGATION_TIMEOUT","RUNAWAY_LOOP_PROTECTION","REVIEW_PLAN_TOOL_MISSING","MODEL_PROTOCOL_ERROR","MODEL_OR_SDK_ERROR","WORKER_INTERNAL_ERROR","INVALID_JSON_NUMBER","DUPLICATE_JSON_KEY","INVALID_JSON");
     private static final Logger LOG=LoggerFactory.getLogger(SdkAgentInvestigator.class);
     private static final ThreadLocal<AtomicBoolean> CALL_FENCE=new ThreadLocal<>();
@@ -41,6 +42,7 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
     private final int timeoutSeconds;
     private final Semaphore slots;
     private final ObjectMapper json;
+    @Value("${bidcheck.agent.audit-directory:}") private String auditDirectory="";
 
     public SdkAgentInvestigator(
             @Value("${bidcheck.agent.enabled:false}") boolean enabled,
@@ -63,14 +65,16 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
     public static boolean currentCallActive(){AtomicBoolean fence=CALL_FENCE.get();return (fence==null||fence.get())&&!Thread.currentThread().isInterrupted();}
     @Override public String identity(){
         String endpoint;try{endpoint=normalizedEndpoint(baseUrl);}catch(BridgeFailure e){endpoint="INVALID_ENDPOINT";}
-        String workerHash="UNAVAILABLE",lockHash="UNAVAILABLE";try{
+        String workerHash="UNAVAILABLE",lockHash="UNAVAILABLE",auditHash="UNAVAILABLE";try{
             Path path=Path.of(worker).toAbsolutePath().normalize();
             if(Files.isRegularFile(path)&&Files.size(path)<=MAX_LINE_BYTES)workerHash=sha(Files.readAllBytes(path));
             Path lock=path.getParent()==null?Path.of("requirements.lock"):path.getParent().resolve("requirements.lock");
             if(Files.isRegularFile(lock)&&Files.size(lock)<=MAX_LINE_BYTES)lockHash=sha(Files.readAllBytes(lock));
+            Path audit=path.resolveSibling("model_audit.py");
+            if(Files.isRegularFile(audit)&&Files.size(audit)<=MAX_LINE_BYTES)auditHash=sha(Files.readAllBytes(audit));
         }catch(Exception ignored){}
         // The credential and its hash are deliberately excluded from exported identity.
-        return POLICY+":"+sha((workerHash+"\n"+lockHash+"\n"+endpoint+"\n"+model+"\nopenai-agents:tracing-disabled").getBytes(StandardCharsets.UTF_8));
+        return POLICY+":"+sha((workerHash+"\n"+lockHash+"\n"+auditHash+"\n"+endpoint+"\n"+model+"\nopenai-agents:tracing-disabled").getBytes(StandardCharsets.UTF_8));
     }
 
     @Override public Map<String,Object> investigate(Map<String,Object> start,ToolHandler handler,Consumer<Map<String,Object>> event){
@@ -100,6 +104,7 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
             environment.put("PYTHONIOENCODING","utf-8");environment.put("PYTHONUTF8","1");
             environment.put("BIDCHECK_AGENT_API_KEY",apiKey);environment.put("BIDCHECK_AGENT_BASE_URL",endpoint);environment.put("BIDCHECK_AGENT_MODEL",model);
             environment.put("BIDCHECK_AGENT_RUN_TIMEOUT_SECONDS",Integer.toString(timeoutSeconds));
+            if(!trim(auditDirectory).isBlank())environment.put("BIDCHECK_AGENT_AUDIT_DIRECTORY",Path.of(auditDirectory).toAbsolutePath().normalize().toString());
             // Java owns the absolute deadline and invalidates host callbacks first. Avoid
             // the worker's shorter default expiring while a host mutation is still active.
             environment.put("BIDCHECK_AGENT_TOOL_TIMEOUT_SECONDS",Integer.toString(timeoutSeconds));
@@ -111,7 +116,7 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
             BufferedOutputStream output=new BufferedOutputStream(process.getOutputStream());
             // Pipe writes can block too when a crashed or malicious child stops reading.
             invoke(executor,()->{send(output,start);return null;},deadline,"PROTOCOL_WRITE_FAILED",callActive);
-            Set<String> callIds=new HashSet<>();long actualToolCalls=0;
+            Set<String> callIds=new HashSet<>();long actualToolCalls=0,toolAuditIndex=0;ToolPayloadAudit toolAudit=new ToolPayloadAudit(auditDirectory,apiKey);
             while(true){
                 Object message=messages.poll(remaining(deadline),TimeUnit.NANOSECONDS);
                 if(message==null)throw new BridgeFailure("INVESTIGATION_TIMEOUT");
@@ -135,11 +140,19 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
                     if(!offered.contains(name)||!toolAllowed(name,receipts.review))throw new BridgeFailure("TOOL_NOT_ALLOWED");
                     Map<String,Object> arguments=object(frame.get("arguments"),"TOOL_ARGUMENTS_OBJECT_REQUIRED");
                     if(json.writeValueAsBytes(arguments).length>MAX_ARGUMENT_BYTES)throw new BridgeFailure("TOOL_ARGUMENTS_TOO_LARGE");
-                    receipts.validateCall(name,arguments);
-                    Map<String,Object> result=invoke(executor,()->handler.call(name,arguments),deadline,"TOOL_HANDLER_FAILED",callActive);
-                    if(result==null)throw new BridgeFailure("TOOL_RESULT_OBJECT_REQUIRED");
-                    receipts.accept(name,arguments,result);actualToolCalls++;
-                    invoke(executor,()->{send(output,map("type","tool_result","requestId",requestId,"id",callId,"result",result));return null;},deadline,"PROTOCOL_WRITE_FAILED",callActive);
+                    long auditIndex=++toolAuditIndex;
+                    toolAuditEvent(toolAudit,start,event,requestId,auditIndex,callId,name,"input",arguments);
+                    try{
+                        receipts.validateCall(name,arguments);
+                        Map<String,Object> result=invoke(executor,()->handler.call(name,arguments),deadline,"TOOL_HANDLER_FAILED",callActive);
+                        if(result==null)throw new BridgeFailure("TOOL_RESULT_OBJECT_REQUIRED");
+                        toolAuditEvent(toolAudit,start,event,requestId,auditIndex,callId,name,"output",result);
+                        receipts.accept(name,arguments,result);actualToolCalls++;
+                        invoke(executor,()->{send(output,map("type","tool_result","requestId",requestId,"id",callId,"result",result));return null;},deadline,"PROTOCOL_WRITE_FAILED",callActive);
+                    }catch(Exception failed){
+                        toolAuditEvent(toolAudit,start,event,requestId,auditIndex,callId,name,"error",map("errorCode",failed instanceof BridgeFailure known?known.code:failed instanceof InterruptedException?"HOST_CANCELLED":"TOOL_BOUNDARY_FAILED","errorType",failed.getClass().getSimpleName()));
+                        throw failed;
+                    }
                 }else if(type.equals("result")){
                     Map<String,Object> result=safeResult(frame,receipts,actualToolCalls,requestId,began);
                     LOG.info("bidcheck.agent_bridge requestId={} policy={} status={} code={} toolCalls={} targetCompleted={} businessCompleted={} unresolvedToolFailures={} recoveredTools={} validationRejections={} elapsedMs={}",
@@ -163,6 +176,18 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
             }
             if(acquired)slots.release();
         }
+    }
+
+    /** Audit failures are visible but cannot turn successful business work into a failed tool. */
+    private void toolAuditEvent(ToolPayloadAudit audit,Map<String,Object> start,Consumer<Map<String,Object>> event,String requestId,long index,String callId,String tool,String direction,Object payload){
+        if(!audit.enabled())return;
+        Map<String,Object> stored=audit.record(start,requestId,index,callId,tool,direction,payload);
+        Map<?,?> context=start!=null&&start.get("auditContext") instanceof Map<?,?> c?c:Map.of();
+        String runId=Objects.toString(context.get("runId"),""),checkpointId=Objects.toString(context.get("checkpointId"),"");
+        if(!runId.matches("[a-fA-F0-9-]{36}"))runId="";if(!checkpointId.matches("[a-fA-F0-9-]{36}"))checkpointId="";
+        LOG.info("bidcheck.agent_tool_audit runId={} checkpointId={} requestId={} toolIndex={} callId={} tool={} direction={} status={} file={} bytes={} sha256={}",runId,checkpointId,requestId,index,callId,tool,direction,stored.get("status"),stored.getOrDefault("file",""),stored.getOrDefault("bytes",0),stored.getOrDefault("sha256",""));
+        if(event!=null)try{event.accept(map("type","event","protocol",PROTOCOL,"requestId",requestId,"event","tool_payload_audit","toolIndex",index,"callId",callId,"tool",tool,"direction",direction,"toolAudit",stored));}
+        catch(RuntimeException failure){LOG.warn("bidcheck.agent_tool_audit_event requestId={} toolIndex={} direction={} status=EVENT_PUBLISH_FAILED errorType={}",requestId,index,direction,failure.getClass().getSimpleName());}
     }
 
     private Set<String> validateStart(Map<String,Object> start,String requestId)throws BridgeFailure,IOException{
@@ -204,7 +229,18 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
         if(!observedEvent.isBlank()&&Set.of("target_tool_failed","investigation_failed","tool_arguments_rejected","investigation_error").contains(name)&&receipts.observedFailureEventIds.size()<4096)receipts.observedFailureEventIds.add(observedEvent);
         for(String key:List.of("eventId","firstFailureEventId")){String id=key.equals("eventId")?safeEventId(frame.get(key),requestId):receipts.failureEventId(frame.get(key),requestId);if(!id.isBlank())safe.put(key,id);}
         if(name.equals("model_started"))safe.put("id",safeId(frame.get("id")));
-        for(String key:List.of("elapsedMs","modelIndex","toolIndex","durationMs","acceptedFactCount","duplicateCalls","inputChars","removedChars","retainedToolBatches","disclosedSourceCount","sourceCount","targetCount","attemptForTargetGap","maxAttemptsForTargetGap","inputTokens","outputTokens","newSourceCount","acceptedFactDelta","closedTargetDelta","noEvidenceProgressRounds"))if(frame.containsKey(key))safe.put(key,nonnegative(frame.get(key)));
+        if(frame.get("modelAudit") instanceof Map<?,?> audit){
+            String status=Objects.toString(audit.get("status"),"");
+            if(Set.of("DISABLED","SAVED","PAYLOAD_OMITTED","WRITE_FAILED","INVALID_METADATA").contains(status)){
+                Map<String,Object> metadata=map("status",status);
+                String file=Objects.toString(audit.get("file"),""),hash=Objects.toString(audit.get("sha256"),"");
+                if(file.matches("[a-f0-9]{32}-[0-9]{5,10}-(input|output|error)\\.json")&&hash.matches("[a-f0-9]{64}")){
+                    metadata.put("file",file);metadata.put("sha256",hash);metadata.put("bytes",nonnegative(audit.get("bytes")));
+                }
+                safe.put("modelAudit",metadata);
+            }
+        }
+        for(String key:List.of("elapsedMs","modelIndex","toolIndex","durationMs","acceptedFactCount","duplicateCalls","inputChars","removedChars","retainedToolBatches","retainedFunctionCalls","receiptInputChars","receiptOutputChars","receiptRemovedChars","disclosedSourceCount","sourceCount","targetCount","attemptForTargetGap","maxAttemptsForTargetGap","inputTokens","outputTokens","newSourceCount","acceptedFactDelta","closedTargetDelta","noEvidenceProgressRounds"))if(frame.containsKey(key))safe.put(key,nonnegative(frame.get(key)));
         for(String key:List.of("businessCheckCompleted","targetCheckCompleted","toolFailed","correctable"))if(frame.get(key) instanceof Boolean)safe.put(key,frame.get(key));
         if(safe.containsKey("businessCheckCompleted"))safe.put("businessCheckCompleted",receipts.completed);
         if(safe.containsKey("targetCheckCompleted"))safe.put("targetCheckCompleted",receipts.targetCompleted);
@@ -224,7 +260,7 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
         if(frame.get("fieldPath") instanceof String path&&path.matches("/[A-Za-z0-9_~./@\\[\\]-]{0,255}"))safe.put("fieldPath",path);
         if(frame.get("reason") instanceof String reason&&reason.matches("[A-Z][A-Z0-9_]{0,95}"))safe.put("reason",reason);
         if(frame.get("remainingRepairActions") instanceof Collection<?> actions)safe.put("remainingRepairActions",actions.stream().filter(String.class::isInstance).map(String.class::cast).filter(action->action.matches("[A-Z][A-Z0-9_]{0,63}")).distinct().limit(12).toList());
-        for(String key:List.of("affectedTargetObligationIds","blockedTargetObligationIds","remainingTargetObligationIds","exhaustedTargetObligationIds","businessUnclosedTargetObligationIds"))if(frame.get(key) instanceof Collection<?> values)safe.put(key,knownTargets(values,receipts));
+        for(String key:List.of("affectedTargetObligationIds","blockedTargetObligationIds","remainingTargetObligationIds","exhaustedTargetObligationIds","businessUnclosedTargetObligationIds","pendingConfirmationTargetObligationIds"))if(frame.get(key) instanceof Collection<?> values)safe.put(key,knownTargets(values,receipts));
         if(Set.of("target_navigation_progress","target_proof_progress","target_tool_failed","investigation_failed","no_evidence_progress","evidence_pending").contains(name)){safe.put("diagnosticOnly",true);safe.put("businessProof",false);}
         if(frame.containsKey("tool")){String tool=Objects.toString(frame.get("tool"),"");if(!toolAllowed(tool,receipts.review))throw new BridgeFailure("TOOL_NOT_ALLOWED");safe.put("tool",tool);}
         if(name.equals("investigation_error"))safe.put("errorCategory",switch(Objects.toString(frame.get("errorType"),"")){
@@ -247,7 +283,7 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
         String status=Objects.toString(frame.get("status"),"");if(!Set.of("COMPLETED","EVIDENCE_UPDATED","NO_PROGRESS","FAILED").contains(status))throw new BridgeFailure("WORKER_RESULT_STATUS_INVALID");
         if(!Boolean.FALSE.equals(frame.get("tracingExportEnabled")))throw new BridgeFailure("WORKER_TRACING_POLICY_VIOLATION");
         if(status.equals("COMPLETED")&&!receipts.targetCompleted&&!receipts.completed||status.equals("EVIDENCE_UPDATED")&&receipts.accepted.isEmpty())throw new BridgeFailure("WORKER_RESULT_STATE_MISMATCH");
-        String code=Objects.toString(frame.get("code"),"");if(!code.isBlank()&&!WORKER_ERRORS.contains(code)&&!Set.of("MODEL_PERMISSION_TIMEOUT","MODEL_PERMISSION_PROTOCOL_ERROR","MODEL_REQUEST_DENIED","SEMANTIC_REJECTION_WITHOUT_NEW_EVIDENCE","EVIDENCE_PENDING","AGENT_STALLED_WITH_REMAINING_TARGETS","TARGET_CONTRACT_MISSING","TARGET_WORK_RECEIPT_MISSING","TARGET_WORK_RECEIPT_INVALID","INVALID_TARGET_RECEIPT","CANDIDATE_TARGET_REQUIRED","REVIEW_PLAN_REQUIRED","REVIEW_PLAN_RECEIPT_INVALID","REVIEW_PLAN_REVISION_MISMATCH","TARGET_STATE_UNCHANGED","HOST_TARGET_RECEIPT_INVALID").contains(code))code="WORKER_REPORTED_FAILURE";
+        String code=Objects.toString(frame.get("code"),"");if(!code.isBlank()&&!WORKER_ERRORS.contains(code)&&!Set.of("MODEL_PERMISSION_TIMEOUT","MODEL_PERMISSION_PROTOCOL_ERROR","MODEL_REQUEST_DENIED","SEMANTIC_REJECTION_WITHOUT_NEW_EVIDENCE","EVIDENCE_PENDING","AGENT_STALLED_WITH_REMAINING_TARGETS","TARGET_CONTRACT_MISSING","TARGET_WORK_RECEIPT_MISSING","TARGET_WORK_RECEIPT_INVALID","INVALID_TARGET_RECEIPT","CANDIDATE_TARGET_REQUIRED","REVIEW_PLAN_REQUIRED","REVIEW_PLAN_RECEIPT_INVALID","REVIEW_PLAN_REVISION_MISMATCH","TARGET_STATE_UNCHANGED","HOST_TARGET_RECEIPT_INVALID","WAIT_CONFIRMATION","HOST_CONFIRMATION_RECEIPT_INVALID").contains(code))code="WORKER_REPORTED_FAILURE";
         if(status.equals("FAILED")&&code.isBlank())code="WORKER_REPORTED_FAILURE";
         // A worker's historical tool error cannot override the host's current
         // operation receipts. Transport/model failures remain fail-closed.
@@ -260,9 +296,9 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
             "acceptedFactIds",List.copyOf(receipts.accepted),"businessCheckCompleted",receipts.completed,"targetCheckCompleted",receipts.targetCompleted,
             "failedToolCount",receipts.unresolved.size(),"recoveredToolCount",receipts.recovered,"validationRejectionCount",receipts.rejections,
             "toolCalls",toolCalls,"elapsedMs",elapsed(began),"sdk","openai-agents","tracingExportEnabled",false);
-        for(String key:List.of("modelCalls","modelPermissionRequests","duplicateCallsAvoided","inputTokens","outputTokens","contextCompactions","contextInputChars","contextRemovedChars","targetGateBlocks","correctableToolRejectionCount","maxNoEvidenceProgressRounds"))safe.put(key,nonnegative(frame.getOrDefault(key,0)));
+        for(String key:List.of("modelCalls","modelPermissionRequests","duplicateCallsAvoided","inputTokens","outputTokens","contextCompactions","contextRebuilds","contextRetainedToolBatches","contextReceiptInputChars","contextReceiptOutputChars","contextReceiptRemovedChars","contextInputChars","contextRemovedChars","targetGateBlocks","correctableToolRejectionCount","maxNoEvidenceProgressRounds"))safe.put(key,nonnegative(frame.getOrDefault(key,0)));
         safe.put("workflowPolicy",receipts.workflowPolicy);safe.put("approvedPlanRevision",receipts.planRevision);
-        for(String key:List.of("blockedTargetObligationIds","remainingTargetObligationIds","exhaustedTargetObligationIds"))if(frame.get(key) instanceof Collection<?> values)safe.put(key,knownTargets(values,receipts).stream().filter(id->!receipts.closedTargets.contains(id)).toList());
+        for(String key:List.of("blockedTargetObligationIds","remainingTargetObligationIds","exhaustedTargetObligationIds","pendingConfirmationTargetObligationIds"))if(frame.get(key) instanceof Collection<?> values)safe.put(key,knownTargets(values,receipts).stream().filter(id->!receipts.closedTargets.contains(id)).toList());
         safe.put("businessUnclosedTargetObligationIds",receipts.targets.stream().filter(id->!receipts.closedTargets.contains(id)).toList());
         String firstFailure=receipts.firstFailureEventId.isBlank()?receipts.failureEventId(frame.get("firstFailureEventId"),requestId):receipts.firstFailureEventId;if(!firstFailure.isBlank())safe.put("firstFailureEventId",firstFailure);
         if(frame.containsKey("targetProgressLedger")){
@@ -412,13 +448,13 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
             if(bad)unresolved.add(operation);
             else if(rejected)rejections++;
             else if((status.isBlank()||Set.of("COMPLETED","NO_RECORD").contains(status))&&unresolved.remove(operation))recovered++;
-            if(Set.of("search_evidence","read_section","submit_candidate_fact").contains(name)&&!bad&&!Set.of("FAILED","ERROR","UNAVAILABLE").contains(status)&&result.get("acceptedFactIds") instanceof List<?> ids){int before=accepted.size();for(Object id:ids)if(id instanceof String value&&value.length()<=256&&!value.isBlank())accepted.add(value);if(before!=accepted.size()){completed=false;if(!typed){targetCompleted=false;closedTargets.clear();}}}
+            if(Set.of("search_evidence","read_section","read_table_record","submit_candidate_fact").contains(name)&&!bad&&!Set.of("FAILED","ERROR","UNAVAILABLE").contains(status)&&result.get("acceptedFactIds") instanceof List<?> ids){int before=accepted.size();for(Object id:ids)if(id instanceof String value&&value.length()<=256&&!value.isBlank())accepted.add(value);if(before!=accepted.size()){completed=false;if(!typed){targetCompleted=false;closedTargets.clear();}}}
             if(name.equals("recompute_check")){
                 completed=!bad&&!rejected&&currentPlan(result)&&Boolean.TRUE.equals(result.get("businessCheckCompleted"));
                 targetCompleted=!bad&&!rejected&&currentPlan(result)&&(completed||Boolean.TRUE.equals(result.get("targetCheckCompleted")));
                 if(!bad&&!rejected&&currentPlan(result))observeTargets(result);
             }
-            if((Set.of("search_evidence","read_section","submit_candidate_fact").contains(name)||review&&name.equals("submit_review_judgment"))&&!bad&&result.get("computationReceipt") instanceof Map<?,?> receipt
+            if((Set.of("search_evidence","read_section","read_table_record","submit_candidate_fact").contains(name)||review&&name.equals("submit_review_judgment"))&&!bad&&result.get("computationReceipt") instanceof Map<?,?> receipt
                     &&"HOST_RULE_RECOMPUTE".equals(receipt.get("kind"))&&"COMPLETED".equals(receipt.get("status"))&&!revision.isBlank()&&revision.equals(receipt.get("targetEvidenceRevision"))
                     &&receipt.get("businessCheckCompleted") instanceof Boolean&&receipt.get("targetCheckCompleted") instanceof Boolean&&currentPlan(receipt)){
                 completed=Boolean.TRUE.equals(receipt.get("businessCheckCompleted"));targetCompleted=completed||Boolean.TRUE.equals(receipt.get("targetCheckCompleted"));automaticRecomputations++;observeTargets(receipt);

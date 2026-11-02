@@ -41,7 +41,7 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
  * discarded. It is retained as a source-bound pending condition for an explicit rule update.</p>
  */
 final class DeterministicRequirementCompiler {
-    static final String VERSION = "deterministic-requirement-compiler-13-preserved-duration-intent";
+    static final String VERSION = "deterministic-requirement-compiler-14-typed-social-proof";
 
     /** All registered mapping templates have a server-owned conversion. */
     static final Set<String> SUPPORTED_TEMPLATE_IDS = Set.of(
@@ -147,6 +147,9 @@ final class DeterministicRequirementCompiler {
                     templates.add(candidate.templateId());
                     if(submissionException(draft.text()))continue;
                     if("MATERIAL_PRESENT".equals(candidate.templateId())&&!certificateProofRules("probe",draft.text(),"",source).isEmpty())continue;
+                    // This material phrase names the evidence for the same closed MONTHS
+                    // predicate; it is not an additional verbatim document-content duty.
+                    if("MATERIAL_PRESENT".equals(candidate.templateId())&&socialMonthProofOnly(draft.text()))continue;
                     if("MATERIAL_PRESENT".equals(candidate.templateId())
                             &&!text(candidate.parameters(),"materialType").isBlank()
                             &&namedMaterialRules("probe",draft.text(),"").stream()
@@ -530,6 +533,18 @@ final class DeterministicRequirementCompiler {
         return result;
     }
 
+    /** Only a closed payment-evidence sentence can be subsumed. Other requested documents,
+     * signatures, insurance types or alternative duties remain independent obligations. */
+    static boolean socialMonthProofOnly(String text){
+        String q=text.replaceAll("\\s+","").replace('（','(').replace('）',')');
+        if(!MONTHS.matcher(q).find()&&!MONTHS_WITHOUT_START.matcher(q).find())return false;
+        String time="(?:(?:20)?[0-9]{2}年[0-9]{1,2}月(?:\\(含\\))?(?:至|起至)(?:投标|应答|文件递交|投标文件递交|应答文件递交)?截止(?:时间|日|日期)?)?";
+        String count="[0-9一二三四五六七八九十两]+";
+        String ordinary="(?:须|应|必须|需)?(?:提交|提供)(?:有效(?:的)?证明文件及)?"+time+"(?:任意)?连续"+count+"个月在本单位缴纳社保(?:证明材料|证明)";
+        String exception="(?:[，,]特殊情况(?:提交|提供)说明文件(?:\\(格式自拟\\))?及有效的证明文件\\((?:如)?(?:单位设立时间不足|人员新入职|离退休|转业)(?:[、，,](?:单位设立时间不足|人员新入职|离退休|转业))*(?:等)?\\))?";
+        return q.matches(ordinary+exception+"[。；;]?");
+    }
+
     /** Additional closed primitives for the recurrent tender clauses that are not one-template rows. */
     private List<Rule> nativeRules(CoverageItem item, Checkpoint checkpoint, String requirementSource) {
         String quote = exactQuote(requirementSource, item.text());String subject = explicitSubject(quote);
@@ -545,6 +560,7 @@ final class DeterministicRequirementCompiler {
             p.put("earliestMonth", fourDigitYear(months.group(1)) + "-" + String.format(Locale.ROOT, "%02d", Integer.parseInt(months.group(2))));
             p.put("requiresReferenceDate", quote.matches("(?s).*(?:截止|截至).*"));
             if (quote.contains("本单位")) p.put("employer", "本单位");
+            if(socialMonthProofOnly(quote)&&quote.contains("特殊情况")){p.put("exceptionProofPermitted",true);p.put("exceptionSourceQuote",quote);}
             rules.add(rule(base + "-MONTHS", "连续社保", "MONTHS", subject.isBlank() ? "上述人员" : subject,
                     "socialInsurance", "", "", "月", p, quote));
         } else {
@@ -552,6 +568,7 @@ final class DeterministicRequirementCompiler {
             if (plainMonths.find() && quote.contains("社保")) {
                 Map<String, Object> p = nativeParams("SOCIAL_MONTHS");p.put("count", chineseNumber(plainMonths.group(1)));
                 p.put("requiresReferenceDate", quote.matches("(?s).*(?:截止|截至).*"));
+                if(quote.contains("本单位"))p.put("employer","本单位");
                 rules.add(rule(base + "-MONTHS", "连续社保", "MONTHS", subject.isBlank() ? "上述人员" : subject,
                         "socialInsurance", "", "", "月", p, quote));
             }

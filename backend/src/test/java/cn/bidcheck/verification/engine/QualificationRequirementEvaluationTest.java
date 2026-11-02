@@ -117,4 +117,15 @@ class QualificationRequirementEvaluationTest {
         assertEquals(List.of(),DomainBindings.subjects("设计单位",data.facts(),data.corpus()));
         assertEquals("UNDETERMINED",evaluate(plan,new RuleEvaluator(data.facts(),data.corpus(),Map.of())).status());
     }
+    @Test void commonValidityResolvesOriginalHeaderAndKeepsAllUseRestrictions()throws Exception{
+        String original="# 工程设计资质证书\n企业名称："+COMPANY+"\n证书编号：D3001 有效期：2028年12月24日\n资质类别及等级：\n工程设计建筑行业甲级 2009/07/07;\n使用期限：2025-08-14 至 2025-11-13\n备注：上述部分资质有效期至2025年11月05日";
+        EvidenceCorpus corpus=new EvidenceCorpus(List.of(new Document("bid","p","BID","投标原件",1,"hash","",List.of(
+                new Page(1,"本项目联合体协议书\n设计单位："+COMPANY,"PAGE","NATIVE",""),new Page(2,original,"PAGE","OCR",""),new Page(3,query("D3001","甲级",true),"PAGE","OCR","")),List.of())));
+        List<Fact> facts=List.of(new Fact("role","RELATION","设计单位","：",COMPANY,COMPANY,"","","CURRENT_PROJECT",List.of(source(corpus,1).id()),Map.of("object",COMPANY)),
+                new Fact("cert","CERTIFICATE",COMPANY,"certificate","工程设计建筑行业","工程设计建筑行业","","","CURRENT_PROJECT",List.of(source(corpus,2).id()),Map.of("category","工程设计建筑行业","grade","甲级","number","D3001","numberField","证书编号")));
+        Plan plan=plan(DESIGN+PROOF);
+        Decision beforeUse=evaluate(plan,new RuleEvaluator(facts,corpus,deadline("2025-08-05")));assertEquals("FAIL",beforeUse.status(),beforeUse.toString());assertTrue(beforeUse.gaps().stream().noneMatch(g->g.code().equals("VALIDITY_FIELD_REQUIRED")));
+        Decision inAllPeriods=evaluate(plan,new RuleEvaluator(facts,corpus,deadline("2025-10-05")));assertEquals("PASS",inAllPeriods.status(),inAllPeriods.toString());assertTrue(inAllPeriods.proof().toString().contains("SELECTED_ORIGINAL_CERTIFICATE_HEADER"));
+        Decision unresolvedCategory=evaluate(plan,new RuleEvaluator(facts,corpus,deadline("2025-11-06")));assertEquals("UNDETERMINED",unresolvedCategory.status(),unresolvedCategory.toString());assertTrue(unresolvedCategory.gaps().stream().anyMatch(g->g.code().equals("CATEGORY_SPECIFIC_PERIOD_REQUIRED")));
+    }
 }

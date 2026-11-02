@@ -7,9 +7,9 @@ import java.util.regex.*;
 /** Reads a labelled date cell/phrase, stopping before another field or certificate.
  * Dates merely occurring elsewhere on the same page are never substitute field values. */
 public final class DateFieldValues {
-    public static final String VERSION="date-field-boundary-3-certificate-validity-date";
+    public static final String VERSION="date-field-boundary-4-exact-period-label";
     private static final Pattern DATE=Pattern.compile("(?<![0-9])(\\d{4})\\s*(?:年|[-./])\\s*(\\d{1,2})\\s*(?:月|[-./])\\s*(\\d{1,2})\\s*日?(?![0-9])");
-    private static final Pattern NEXT_FIELD=Pattern.compile("注册有效期|使用有效期|证书有效日期|证书有效期|资格有效期|有效截止日期|有效期限|有效期(?:至)?|发证机关|签发机关|批准机关|发证日期|签发日期|批准日期|颁发日期|初次认证日期|注册日期|打印日期|出生日期|更新日期|证书编号|电子证书编号|注册编号|证件号码|企业名称|单位名称|持证人|姓名|备注|[。；;]");
+    private static final Pattern NEXT_FIELD=Pattern.compile("注册有效期|使用有效期|使用期限|证书有效日期|证书有效期|资格有效期|有效截止日期|有效期限|有效期(?:至)?|资质类别|资质名称|资质等级|发证机关|签发机关|批准机关|发证日期|签发日期|批准日期|颁发日期|初次认证日期|注册日期|打印日期|出生日期|更新日期|证书编号|电子证书编号|注册编号|证件号码|企业名称|单位名称|持证人|姓名|备注|[。；;]");
     private DateFieldValues(){}
 
     /** A printed signing/footer date is a document field, never proof of an actual signature.
@@ -38,6 +38,10 @@ public final class DateFieldValues {
         while(found.find()){
             // A short label must not silently name a different kind of period.
             if(field.equals("有效期")&&found.start()>=2&&text.substring(Math.max(0,found.start()-4),found.start()).matches(".*(?:注册|使用|证书|资格)$"))continue;
+            // 有效期 and 有效期至 are distinct printed labels. A later category-specific
+            // 有效期至 note must not overwrite the original certificate's 有效期 field.
+            // “有效期：至...” remains an expiry-only value of the shorter label.
+            if(field.equals("有效期")&&text.startsWith("至",found.end()))continue;
             String after=text.substring(found.end(),Math.min(text.length(),found.end()+180));Matcher next=NEXT_FIELD.matcher(after);if(next.find())after=after.substring(0,next.start());
             // A date value must begin at the field. Never search through unrelated prose for dates.
             after=after.replaceFirst("^[\\s:：|]*(?:为\\s*[:：]?|至|截止至|截至)?[\\s:：|]*","");

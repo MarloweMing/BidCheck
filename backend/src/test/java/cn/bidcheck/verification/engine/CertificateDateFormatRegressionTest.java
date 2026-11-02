@@ -28,5 +28,5 @@ class CertificateDateFormatRegressionTest {
 
     @Test void sameExpiryDoesNotEraseDifferentValidFromDates(){EvidenceCorpus c=corpus(certificate("2024年01月01日至2027年06月04日"),certificate("2025年09月01日至2027年06月04日"));List<Fact> facts=List.of(fact(c,"current",1,"2024年01月01日","2027年06月04日"),fact(c,"future",2,"2025-09-01","2027-06-04"));for(boolean coverage:List.of(false,true)){Decision d=check(c,facts,coverage);assertEquals("UNDETERMINED",d.status());assertTrue(d.gaps().stream().anyMatch(g->g.code().equals("CERTIFICATE_VERSION_REQUIRED")));}}
 
-    @Test void normalizingAnExpiryDoesNotSupplyMissingIssuance(){EvidenceCorpus c=corpus(certificate("至2026年06月04日").replace("发证日期：2021年06月16日",""));List<Fact> facts=List.of(fact(c,"shared",1,"","2026年06月04日"),fact(c,"native",1,"","2026-06-04"));assertEquals("UNDETERMINED",check(c,facts,false).status());}
+    @Test void expiryOnlyComparisonDoesNotInventIssuance(){EvidenceCorpus c=corpus(certificate("至2026年06月04日").replace("发证日期：2021年06月16日",""));List<Fact> facts=List.of(fact(c,"shared",1,"","2026年06月04日"),fact(c,"native",1,"","2026-06-04"));Decision result=check(c,facts,false);assertEquals("PASS",result.status());assertTrue(result.proof().toString().contains("EXPIRY_AT_REFERENCE_DATE_ONLY"));assertFalse(result.proof().toString().contains("issuedOn"));}
 }

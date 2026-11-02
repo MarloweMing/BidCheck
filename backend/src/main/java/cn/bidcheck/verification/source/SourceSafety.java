@@ -46,6 +46,14 @@ final class SourceSafety {
             resources(page.getResources(),0,total,visited);
         }
     }
+    /** Same resource bounds, limited to the explicitly requested page for lazy sidecars. */
+    static void pdfPage(PDDocument doc,int pageNumber)throws IOException{
+        if(doc.isEncrypted()||doc.getNumberOfPages()<1||doc.getNumberOfPages()>1000||pageNumber<1||pageNumber>doc.getNumberOfPages())throw new IOException("PDF_PAGE_OR_ENCRYPTION_LIMIT");
+        interrupted();PDPage page=doc.getPage(pageNumber-1);double w=page.getCropBox().getWidth(),h=page.getCropBox().getHeight();
+        if(!Double.isFinite(w)||!Double.isFinite(h)||w<1||h<1||w>20000||h>20000)throw new IOException("PDF_PAGE_SIZE_LIMIT");
+        Set<COSBase> visited=Collections.newSetFromMap(new IdentityHashMap<>());long[] total={0};Iterator<PDStream> streams=page.getContentStreams();
+        while(streams.hasNext())boundedStream(streams.next().getCOSObject(),4_000_000,total,visited);resources(page.getResources(),0,total,visited);
+    }
     private static void resources(PDResources resources,int depth,long[] total,Set<COSBase> visited)throws IOException{
         if(resources==null || visited.contains(resources.getCOSObject()))return;
         if(depth>20||visited.size()>12000)throw new IOException("PDF_RESOURCE_LIMIT");visited.add(resources.getCOSObject());

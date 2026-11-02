@@ -13,7 +13,7 @@ final class PersonnelCertificateRecords {
     private static final Pattern PROFESSIONAL_PERIOD=Pattern.compile("^[\\t ]*(?:注册专业[：:][\\t ]*)?([\\p{IsHan}]{2,20})[（(]有效期[：:]\\s*("+DATE+")\\s*[-至—~～]\\s*("+DATE+")[）)][\\t ]*$");
     private static final Pattern SAFETY_NUMBER=Pattern.compile("[\\p{IsHan}]{1,8}安([AB]|C[123]?)\\s*[（(][0-9]{4}[）)][0-9]{4,}");
     private static final Pattern LABEL=Pattern.compile("^[\\t ]*(?:#{1,6}[\\t ]*)?(姓名|姓\\s+名|持证人|证件号码|身份证号|出生日期|出生年月|企业名称|聘用企业|聘用单位|注册单位|电子证书编号|证书编号|编号|注册编号|注册证号|执业印章号|性别|性\\s+别|注册专业)\\s*[:：]\\s*(.+?)\\s*$");
-    private record Cell(String raw,int start,int end){String text(){return clean(raw.replace("*","").replace("`",""));}}
+    private record Cell(String raw,int start,int end){String text(){String value=raw.strip();if(value.startsWith("**")&&value.endsWith("**")&&value.length()>4)value=value.substring(2,value.length()-2);if(value.startsWith("`")&&value.endsWith("`")&&value.length()>2)value=value.substring(1,value.length()-1);return clean(value);}}
     private PersonnelCertificateRecords(){}
 
     static List<CertificateSourceComparison.Record> read(List<Source> sources,String original){
@@ -92,7 +92,9 @@ final class PersonnelCertificateRecords {
     private static void add(Map<String,CertificateSourceComparison.Field> fields,List<String> issues,CertificateSourceComparison.Field f){if(f==null)return;var old=fields.putIfAbsent(f.key(),f);if(old!=null&&!old.value().equals(f.value()))issues.add("MULTIPLE_VALUES:"+f.key());}
     private static CertificateSourceComparison.Field field(String key,String label,Cell cell,List<Source> sources,String original){
         String value=cell.text();if(value.isBlank()||value.matches("[-—_/]+"))return null;
-        if(key.equals("NAME")&&!value.matches("[\\p{IsHan}·]{2,12}"))return null;
+        // Preserve a masked holder as its literal source value; only an explicit confirmed
+        // identity edge can connect that record to a fully named current person.
+        if(key.equals("NAME")&&!value.matches("[\\p{IsHan}·*＊×●]{2,12}"))return null;
         if(key.equals("PERSON_ID")&&!value.matches("[0-9]{17}[0-9Xx]"))return null;
         if(key.contains("NUMBER")){value=normalNumber(value);if(!value.matches("[\\p{IsHan}A-Z0-9()/-]{4,80}"))return null;}
         if(key.startsWith("VALIDITY_")||key.equals("BIRTH_DATE")||key.equals("ISSUE_DATE")){Matcher date=Pattern.compile("([0-9]{4})[年./-]([0-9]{1,2})[月./-]([0-9]{1,2})日?").matcher(value);if(!date.matches())return null;try{value=LocalDate.of(Integer.parseInt(date.group(1)),Integer.parseInt(date.group(2)),Integer.parseInt(date.group(3))).toString();}catch(Exception ignored){return null;}}

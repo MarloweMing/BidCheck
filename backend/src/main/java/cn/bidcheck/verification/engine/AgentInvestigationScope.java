@@ -7,6 +7,25 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 final class AgentInvestigationScope {
     private AgentInvestigationScope() {}
     static boolean closed(Decision d){return d!=null&&d.gaps().isEmpty()&&Set.of("PASS","FAIL","NOT_APPLICABLE").contains(d.status());}
+    /** Explicit acquisition prerequisites are separate from the business plan. Binding a person
+     * never proves their credential, social insurance or performance. */
+    static List<Rule> withIdentityPrerequisites(List<Rule> rules){
+        Map<String,List<Rule>> dependent=new LinkedHashMap<>();
+        for(Rule rule:rules)if(!rule.predicate().equals("PERSON_ROLE"))for(String selector:AgentRuleSubjects.selectors(rule))
+            if(PersonnelRoles.personRole(selector))dependent.computeIfAbsent(PersonnelRoles.canonical(selector),k->new ArrayList<>()).add(rule);
+        List<Rule> result=new ArrayList<>();Set<String> existing=new HashSet<>();rules.stream().filter(r->r.predicate().equals("PERSON_ROLE")).forEach(r->existing.add(PersonnelRoles.canonical(r.subject())));
+        dependent.forEach((role,parents)->{if(!existing.add(PersonnelRoles.canonical(role)))return;
+            result.add(new Rule("BINDING-"+identity(PersonnelRoles.canonical(role)).substring(0,16),"先确认当前岗位人员："+role,"PERSON_ROLE",role,"姓名","EXISTS","","",
+                linked("identityPrerequisite",true,"prerequisiteFor",parents.stream().map(Rule::id).toList(),"doesNotProveDependentObligations",true),parents.get(0).sourceQuote(),"",List.of()));});
+        result.addAll(rules);return List.copyOf(result);
+    }
+    private static Decision currentDecision(Rule rule,String id,RuleEvaluator evaluator){
+        return Boolean.TRUE.equals(rule.parameters().get("identityPrerequisite"))?evaluator.evaluate(rule):evaluator.decisions.get(id);
+    }
+    private static boolean prerequisiteCovered(Rule rule,Set<String> covered){
+        List<String> parents=ProofVerifier.strings(rule.parameters().get("prerequisiteFor"));
+        return Boolean.TRUE.equals(rule.parameters().get("identityPrerequisite"))&&!parents.isEmpty()&&covered.containsAll(parents);
+    }
 
     static List<Rule> pending(Plan plan,List<Rule> executable,Map<String,Object> context,RuleEvaluator evaluator){
         Map<String,String> parents=SourceScoringRules.readParents(plan.rules(),executable);
@@ -55,24 +74,29 @@ final class AgentInvestigationScope {
     static List<Decision> decisions(List<Rule> rules,Plan plan,RuleEvaluator evaluator){
         Map<String,String> parents=SourceScoringRules.readParents(plan.rules(),rules);
         Set<String> covered=coveredByCurrentTree(plan,evaluator);
-        return rules.stream().filter(r->!covered.contains(parents.getOrDefault(r.id(),r.id()))).map(r->{
-            Decision value=evaluator.decisions.get(parents.getOrDefault(r.id(),r.id()));
+        return rules.stream().filter(r->!covered.contains(parents.getOrDefault(r.id(),r.id()))&&!prerequisiteCovered(r,covered)).map(r->{
+            Decision value=currentDecision(r,parents.getOrDefault(r.id(),r.id()),evaluator);
             return value==null?new Decision(r.id(),r.description(),"UNDETERMINED","本目标的适用前提尚未闭合",List.of(),List.of(gap("TARGET_DEPENDENCY_UNRESOLVED","须先证明本目标的适用前提，不能按缺少分支计算回执认定目标完成")),Map.of()):value;
         }).distinct().toList();
     }
     static boolean completed(List<Rule> rules,Plan plan,RuleEvaluator evaluator){
         Map<String,String> parents=SourceScoringRules.readParents(plan.rules(),rules);
         Set<String> covered=coveredByCurrentTree(plan,evaluator);
-        return !rules.isEmpty()&&rules.stream().allMatch(r->covered.contains(parents.getOrDefault(r.id(),r.id()))||closed(evaluator.decisions.get(parents.getOrDefault(r.id(),r.id()))));
+        return !rules.isEmpty()&&rules.stream().allMatch(r->covered.contains(parents.getOrDefault(r.id(),r.id()))||prerequisiteCovered(r,covered)||closed(currentDecision(r,parents.getOrDefault(r.id(),r.id()),evaluator)));
     }
     static Map<String,Object> targetReceipt(List<Rule> rules,Plan plan,RuleEvaluator evaluator){
         Map<String,String> parents=SourceScoringRules.readParents(plan.rules(),rules);
         Set<String> covered=coveredByCurrentTree(plan,evaluator);
-        List<String> done=new ArrayList<>(),remaining=new ArrayList<>();
+        List<String> done=new ArrayList<>(),remaining=new ArrayList<>(),confirmation=new ArrayList<>();Map<String,Object> confirmationProofs=new LinkedHashMap<>();
         for(Rule rule:rules){String id=parents.getOrDefault(rule.id(),rule.id());
-            (covered.contains(id)||closed(evaluator.decisions.get(id))?done:remaining).add(rule.id());}
+            Decision decision=currentDecision(rule,id,evaluator);
+            if(covered.contains(id)||prerequisiteCovered(rule,covered)||closed(decision)){done.add(rule.id());continue;}
+            remaining.add(rule.id());Map<String,Object> waiting=AgentConfirmationTargets.proof(rule,decision,evaluator);
+            if(!waiting.isEmpty()){confirmation.add(rule.id());confirmationProofs.put(rule.id(),waiting);}
+        }
         return linked("completedTargetObligationIds",done,"remainingTargetObligationIds",remaining,
-            "targetReceiptAuthority","CURRENT_SERVER_PROOF");
+            "targetReceiptAuthority","CURRENT_SERVER_PROOF","pendingConfirmationTargetObligationIds",confirmation,
+            "confirmationTargetProofs",confirmationProofs,"waitingForConfirmation",!remaining.isEmpty()&&new HashSet<>(confirmation).equals(new HashSet<>(remaining)));
     }
     static Set<String> coveredByCurrentTree(Plan plan,RuleEvaluator evaluator){
         Set<String> covered=new LinkedHashSet<>();

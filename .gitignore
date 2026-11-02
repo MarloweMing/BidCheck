@@ -144,3 +144,14 @@ docs/AUTOMATED_VERIFICATION_ACCEPTANCE.md
 docs/AUTOMATED_VERIFICATION_CASES.json
 docs/AUTOMATED_VERIFICATION_DESIGN.md
 docs/WORDS_COMPATIBILITY.md
+
+# Source-bound evidence acceptance replays require private document snapshots
+# or private test helpers; keep them local with the other real-file fixtures.
+backend/src/test/java/cn/bidcheck/verification/engine/HistoricalNativePersonnelBindingReplayTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/HistoricalPage22RetrievalReplayTest.java
+backend/src/test/java/cn/bidcheck/verification/source/HistoricalNativePersonnelTableReplayTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/Target16OfflineComponentReplayTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/SocialAttachmentReportTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/PersonnelProfileSignalTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/RegistrationProfileIntegrationTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/PerformanceAmountConfirmationTest.java

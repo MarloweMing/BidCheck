@@ -66,6 +66,45 @@ class CheckRecoveryIntegrationTest {
         String other=BidService.text(service.createProject(Map.of("name","另一个项目")),"id");assertThrows(Exception.class,()->service.recoverRun(other,id));
         parent.put("status","RUNNING");store.save("run",id,p,BidService.text(parent,"documentId"),parent);assertThrows(Exception.class,()->service.recoverRun(p,id));
     }
+    @Test void scopedSupplementParsesAsIndependentDocumentAndQueuesOnlyItsBoundItem()throws Exception{
+        Map<String,Object> parent=frozenParent();String p=BidService.text(parent,"projectId"),id=BidService.text(parent,"id"),originalBid=BidService.text(parent,"documentId");
+        String immutable=store.require("run",id).body;List<Finding> previous=store.list("finding",p,id,Finding.class);Finding bound=previous.stream().filter(f->"PASS".equals(f.evaluation().status())).findFirst().orElseThrow();
+        var file=new MockMultipartFile("file","person-proof.txt","text/plain","人员身份证明 姓名王甲。".getBytes(StandardCharsets.UTF_8));
+        Map<String,Object> upload=service.uploadSupplement(id,bound.checkpoint().id(),"",file,"补充人员姓名对应证明");
+        assertEquals("PENDING",upload.get("status"));assertEquals("WAITING_PARSE",upload.get("recomputeStatus"));assertEquals(originalBid,store.getMap("run",id).get("documentId"));
+        service.execute(service.task(BidService.text(upload,"taskId")));
+        Map<String,Object> ready=store.getMap("supplement_attachment",BidService.text(upload,"attachmentId"));assertEquals("READY",ready.get("status"));assertEquals("QUEUED",ready.get("recomputeStatus"));
+        Document attachment=service.document(BidService.text(ready,"documentId"));assertEquals("SUPPLEMENT",attachment.role());assertNotEquals(originalBid,attachment.id());
+        Map<String,Object> child=store.getMap("run",BidService.text(ready,"recomputeRunId"));assertEquals(originalBid,child.get("documentId"));assertEquals(true,child.get("supplementOnlyRecovery"));assertEquals(List.of(bound.checkpoint().id()),child.get("recoveryCheckpointIds"));
+        assertEquals(1,CheckResolution.maps(child.get("supplementManifest")).size());assertFalse(BidService.text(child,"supplementDigest").isBlank());
+        assertEquals("UNDETERMINED",store.get("finding",BidService.stableId(child.get("id")+":"+bound.checkpoint().id()),Finding.class).evaluation().status());
+        for(Finding other:previous)if(!other.id().equals(bound.id()))assertEquals(other.evaluation(),store.get("finding",BidService.stableId(child.get("id")+":"+other.checkpoint().id()),Finding.class).evaluation());
+        assertEquals(immutable,store.require("run",id).body);Map<String,Object> duplicate=service.uploadSupplement(id,bound.checkpoint().id(),"",file,"补充人员姓名对应证明");assertEquals(upload.get("attachmentId"),duplicate.get("attachmentId"));assertEquals(child.get("id"),duplicate.get("recomputeRunId"));
+    }
+    @Test void targetedRunFreezesOnlySelectedConfirmedItemsAndDoesNotChangeProjectManifest()throws Exception{
+        Map<String,Object> parent=frozenParent();String project=BidService.text(parent,"projectId"),bid=BidService.text(parent,"documentId"),parentId=BidService.text(parent,"id");
+        List<Checkpoint> before=(List<Checkpoint>)service.detail(project).get("checkpoints");List<Checkpoint> all=store.list("snapshot",project,parentId,Checkpoint.class);String selected=all.get(0).id();
+        Map<String,Object> targeted=service.startRun(project,bid,true,"",null,"targeted-test","FIXED_WORKFLOW",List.of(selected,selected));String runId=BidService.text(targeted,"id");
+        assertEquals(true,targeted.get("explicitTargetedRun"));assertEquals(List.of(selected),targeted.get("targetedCheckpointIds"));assertEquals(List.of(selected),store.list("snapshot",project,runId,Checkpoint.class).stream().map(Checkpoint::id).toList());
+        assertEquals(before,service.detail(project).get("checkpoints"));assertEquals(runId,service.startRun(project,bid,true,"",null,"targeted-test","FIXED_WORKFLOW",List.of(selected)).get("id"));
+        assertThrows(RuntimeException.class,()->service.startRun(project,bid,true,"",null,"invalid-target","FIXED_WORKFLOW",List.of("not-current")));
+        assertThrows(RuntimeException.class,()->service.startRun(project,bid,true,"",null,"empty-target","FIXED_WORKFLOW",List.of()));
+        service.execute(service.task(BidService.text(targeted,"taskId")));List<Finding> findings=store.list("finding",project,runId,Finding.class);assertEquals(1,findings.size());assertEquals(selected,findings.get(0).checkpoint().id());
+        assertTrue(CheckResolution.map(service.run(runId,false).get("consistency")).isEmpty());
+        Map<String,Object> normal=service.startRun(project,bid,true,"",null,"normal-after-target","FIXED_WORKFLOW");assertNotEquals(true,normal.get("explicitTargetedRun"));assertEquals(all.size(),store.list("snapshot",project,BidService.text(normal,"id"),Checkpoint.class).size());
+    }
+    @Test void newConfirmationCreatesANewRecoveryAndNeverDirectlyPassesItsItem()throws Exception{
+        Map<String,Object> parent=frozenParent();String p=BidService.text(parent,"projectId"),id=BidService.text(parent,"id");
+        Map<String,Object> first=service.recoverRun(p,id);
+        Finding originallyPassed=store.list("finding",p,id,Finding.class).stream().filter(f->"PASS".equals(f.evaluation().status())).findFirst().orElseThrow();
+        Document bid=service.document(BidService.text(parent,"documentId")),tender=service.document(BidService.text(parent,"tenderDocumentId"));
+        store.save("inference_decided","confirmation-test-"+id,p,bid.id(),BidService.fields("id","confirmation-test-"+id,"engineClaimId","claim","checkpointId",originallyPassed.checkpoint().id(),"projectId",p,"documentId",bid.id(),"documentHash",bid.sha256(),"documentVersion",bid.version(),"tenderDocumentId",tender.id(),"tenderHash",tender.sha256(),"status","CONFIRMED","revision",1));
+        Map<String,Object> next=service.recoverRun(p,id);assertNotEquals(first.get("id"),next.get("id"));
+        assertEquals(next.get("id"),service.recoverRun(p,id).get("id"));
+        Finding queued=store.get("finding",BidService.stableId(next.get("id")+":"+originallyPassed.checkpoint().id()),Finding.class);
+        assertEquals("RECOVERY_PENDING",queued.evaluation().method());assertEquals("UNDETERMINED",queued.evaluation().status());
+        assertEquals("PASS",store.get("finding",originallyPassed.id(),Finding.class).evaluation().status());
+    }
     @Test void childRecoveryReadsPersistedGroupDeltasInsteadOfTheParentsCompleteSnapshot()throws Exception{
         Map<String,Object> parent=frozenParent();String p=BidService.text(parent,"projectId"),parentId=BidService.text(parent,"id");
         Finding pending=store.list("finding",p,parentId,Finding.class).stream().filter(CheckResolution::unresolved).findFirst().orElseThrow();

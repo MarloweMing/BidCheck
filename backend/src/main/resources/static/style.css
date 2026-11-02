@@ -224,3 +224,17 @@ body{font-size:14px;line-height:1.6}input,select,textarea{border-color:#d0d5dd;b
 
 /* Frozen review-mode controls: compact in reports, full width before starting a run. */
 .run-panel .review-mode-field{margin-top:14px}.report-actions .review-mode-field{display:flex;align-items:center;gap:6px;max-width:250px}.report-actions .review-mode-field label{margin:0;white-space:nowrap;font-size:12px}.report-actions .review-mode-field select{width:185px;padding:7px 9px}.report-actions{flex-wrap:wrap}
+.inference-confirmations { margin: 18px 0; display: grid; gap: 14px; }
+.inference-card { padding: 18px; border: 1px solid #cddbf8; border-radius: 8px; background: #f8faff; }
+.inference-card-heading { color: #194ea5; margin-bottom: 14px; }
+.inference-comparison { display: grid; gap: 12px; margin: 0; }
+.inference-comparison > div { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 10px; }
+.inference-comparison dt { color: #667085; }
+.inference-comparison dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.inference-risk { color: #8a5900; }
+.inference-sources { margin: 12px 0; }
+.inference-sources .evidence-card { margin: 10px 0; background: white; }
+.inference-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.inference-fact { display: grid; gap: 4px; padding: 10px 12px; background: #eef3fd; border-radius: 5px; overflow-wrap: anywhere; }
+.inference-fact > span, .inference-fact > small { color: #667085; font-size: 12px; }
+#inference-decision-form textarea { min-height: 100px; }

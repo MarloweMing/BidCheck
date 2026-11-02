@@ -20,6 +20,7 @@ final class RuleEvaluator {
     final Set<String> incompleteSourceReview=new HashSet<>();
     private final Map<Rule,Decision> sourceReviewReceipts=new IdentityHashMap<>();
     private final Map<Decision,PersonnelCredentialProof.Selection> personnelSelections=new IdentityHashMap<>();
+    private final Map<Decision,List<Fact>> registrationSelections=new IdentityHashMap<>();
     private final Map<Rule,PersonnelCredentialProof.Selection> personnelReviewSelections=new IdentityHashMap<>();
     private List<Source> personnelRecordSources=List.of();
     private Map<String,cn.bidcheck.domain.Domain.Page> personnelRecordPages=Map.of();
@@ -44,22 +45,28 @@ final class RuleEvaluator {
             }
         }else out=leaf(r);
         PersonnelCredentialProof.Selection selection=personnelSelections.remove(out);
+        List<Fact> registrationSelection=registrationSelections.remove(out);
         if(r.children().isEmpty()&&Set.of("PASS","FAIL").contains(out.status())){
             boolean selected=selection!=null&&selection.authorizes(r,this,out);
-            List<Fact> broad=match(r),matched=selected?selection.identityFacts():broad;
+            List<Fact> broad=match(r),matched=selected?selection.identityFacts():registrationSelection!=null?registrationSelection:broad;
             SubjectIdentity.Problem identityIssue=PersonnelCredentialProof.applies(r)&&!selected
                 ?new SubjectIdentity.Problem("TYPED_SELECTION_RECEIPT_REQUIRED","人员证照终态缺少本次原文选择凭据，不能依赖缓存或模型声明") :identities.issue(r,matched);
             Map<String,Object> proof=new LinkedHashMap<>(out.proof());List<Map<String,Object>> bindings=identities.bindings(matched);if(!bindings.isEmpty())proof.put("identityBindings",bindings);
             Map<String,Object> review=selected&&identityIssue==null?SourceLocalPersonnelCredentialClosure.review(r,selection,this):Map.of();
             if(selected){proof.put("selectedEvidenceAudit",linked("authority","SERVER_MEMORY_RECEIPT","selectedRecordIds",selection.records().stream().map(CertificateSourceComparison.Record::id).toList(),"selectedSourceIds",matched.stream().flatMap(f->f.sourceIds().stream()).distinct().toList(),"broadCandidateCount",broad.size(),"selectedCount",matched.size(),"sameCredentialReview",review));
                 if(identityIssue==null&&!Boolean.TRUE.equals(review.get("complete")))identityIssue=new SubjectIdentity.Problem(str(review,"reasonCode"),"所选证件存在同编号冲突或尚未完成的原文反证复核");}
-            if(identityIssue!=null)out=new Decision(out.id(),out.description(),"UNDETERMINED",identityIssue.reason(),out.evidences(),List.of(gap(identityIssue.code(),identityIssue.reason())),proof);
+            else if(registrationSelection!=null)proof.put("selectedEvidenceAudit",linked("authority","SERVER_REGISTRATION_MEMORY_RECEIPT","selectedFactIds",matched.stream().map(Fact::id).toList(),"selectedSourceIds",matched.stream().flatMap(f->f.sourceIds().stream()).distinct().toList(),"broadCandidateCount",broad.size(),"selectedCount",matched.size(),"proofScope","REGISTRATION_UNIT_ONLY"));
+            if(identityIssue!=null){
+                List<Map<String,Object>> proposals=identities.confirmationCandidates(r,matched);
+                if(!proposals.isEmpty())proof.put("confirmationCandidates",proposals);
+                out=new Decision(out.id(),out.description(),"UNDETERMINED",identityIssue.reason(),out.evidences(),List.of(gap(identityIssue.code(),identityIssue.reason())),proof);
+            }
             else{
                 if(selected&&out.status().equals("PASS"))proof.put("sourceReviewClosure",SourceLocalPersonnelCredentialClosure.closure(r,review,this));
                 out=new Decision(out.id(),out.description(),out.status(),out.reason(),out.evidences(),out.gaps(),proof);
                 if(selected&&out.status().equals("PASS")){sourceReviewReceipts.put(r,out);personnelReviewSelections.put(r,selection);}
             }
-            if(selected||PersonnelCredentialProof.applies(r))LOG.info("bidcheck.identity_gate ruleId={} authority={} selectedCount={} broadCandidateCount={} decisionAfter={} reasonCode={}",r.id(),selected?"SERVER_MEMORY_RECEIPT":"MISSING_TYPED_RECEIPT",matched.size(),broad.size(),out.status(),identityIssue==null?"":identityIssue.code());
+            if(selected||registrationSelection!=null||PersonnelCredentialProof.applies(r))LOG.info("bidcheck.identity_gate ruleId={} authority={} selectedCount={} broadCandidateCount={} decisionAfter={} reasonCode={}",r.id(),selected?"SERVER_MEMORY_RECEIPT":registrationSelection!=null?"SERVER_REGISTRATION_MEMORY_RECEIPT":"MISSING_TYPED_RECEIPT",matched.size(),broad.size(),out.status(),identityIssue==null?"":identityIssue.code());
         }
         if(incompleteSourceReview.contains(r.id())&&Set.of("PASS","FAIL").contains(out.status())){
             Decision closed=closeSourceReview(r,out);
@@ -68,6 +75,8 @@ final class RuleEvaluator {
         }
         out=plannedCoverage(r,out);
         out=RecoveryCoverageDependencies.guard(r,out,this);
+        out=InferenceClaims.discover(r,out,facts,corpus,context);
+        out=InferenceClaims.pending(r,out,context);
         decisions.put(r.id(),out);return out;
     }
     /** Reuse parsing only while every immutable source is unchanged in this evaluator. */
@@ -88,6 +97,9 @@ final class RuleEvaluator {
             &&Objects.equals(commitmentReceipt.proof().get("factIds"),decision.proof().get("factIds"))
             &&Objects.equals(commitmentReceipt.proof().get("sourceProofs"),decision.proof().get("sourceProofs")))return decision;
         Map<String,Object> closure=SourceLocalCertificateClosure.proof(rule,decision,this);
+        if(closure.isEmpty()&&RegistrationEmployerProof.applies(rule))closure=RegistrationEmployerProof.sourceReviewClosure(rule,decision,this);
+        if(closure.isEmpty()&&PersonnelCertificateDocumentProof.proven(rule,decision,this))
+            closure=linked("basis","REVERIFIED_PERSONNEL_CERTIFICATE_RECORD","scope","CERTIFICATE_RECORD_SUBMISSION_ONLY","exhaustiveCandidateReview",false,"fullPageVisualVerification",false);
         if(closure.isEmpty()&&SourceLocalExistenceClosure.proven(rule,decision,this)){
             String basis=ConditionalMaterialEvidence.applies(rule)?"REVERIFIED_CURRENT_MATERIAL_BODY":BidLetterResponse.applies(rule)?"REVERIFIED_CURRENT_BID_LETTER_FIELD":"REVERIFIED_CURRENT_SINGLE_APPOINTMENT";
             closure=linked("basis",basis,"exhaustiveCandidateReview",false,"scope",ConditionalMaterialEvidence.applies(rule)?"MATERIAL_SUBMISSION_ONLY":BidLetterResponse.applies(rule)?"WRITTEN_FIELD_RESPONSE_ONLY":"EXISTENCE_ONLY");
@@ -95,7 +107,7 @@ final class RuleEvaluator {
         if(closure.isEmpty())return null;
         Map<String,Object> proof=new LinkedHashMap<>(decision.proof());proof.put("sourceReviewClosure",closure);
         Decision closed=new Decision(decision.id(),decision.description(),decision.status(),decision.reason(),decision.evidences(),decision.gaps(),proof);
-        sourceReviewReceipts.put(rule,closed);return closed;
+        if(!RegistrationEmployerProof.applies(rule))sourceReviewReceipts.put(rule,closed);return closed;
     }
     private Decision plannedCoverage(Rule rule,Decision decision) {
         if(!Set.of("PASS","FAIL").contains(decision.status()))return decision;
@@ -119,7 +131,8 @@ final class RuleEvaluator {
         boolean any=logic.equals("ANY"),pass=any?children.stream().anyMatch(d->d.status().equals("PASS")):children.stream().allMatch(d->Set.of("PASS","NOT_APPLICABLE").contains(d.status()));
         boolean fail=any?children.stream().allMatch(d->d.status().equals("FAIL")):children.stream().anyMatch(d->d.status().equals("FAIL"));
         boolean inactive=children.stream().allMatch(d->"NOT_APPLICABLE".equals(d.status()));
-        String status=inactive?"NOT_APPLICABLE":pass?"PASS":fail?"FAIL":"UNDETERMINED";
+        boolean confirmation=children.stream().anyMatch(d->"NEEDS_CONFIRMATION".equals(d.status()))&&children.stream().noneMatch(d->"UNDETERMINED".equals(d.status()));
+        String status=inactive?"NOT_APPLICABLE":pass?"PASS":fail?"FAIL":confirmation?"NEEDS_CONFIRMATION":"UNDETERMINED";
         List<Gap> gaps=pass&&any?List.of():children.stream().flatMap(d->d.gaps().stream()).distinct().toList();
         List<Decision> used=pass&&any?children.stream().filter(d->d.status().equals("PASS")).limit(1).toList():children;
         return new Decision(id,description,status,inactive?"全部子条件已核实不适用，本项无适用义务":pass?(any?"至少一条完整替代路径已得到证明":"全部适用原子条件已得到证明"):fail?"存在有来源的明确偏差；其他未完成条件单独列出":"尚有影响结论的条件未完成核验",union(used),gaps,linked("operator",logic,"children",children.stream().map(Decision::map).toList()));
@@ -149,10 +162,11 @@ final class RuleEvaluator {
             :unknown(r,"REQUIREMENT_APPLICABILITY_UNKNOWN","不适用分支缺少核源证明",List.of());
         if(r.predicate().equals("ENTITY_COUNT"))return EntityCountRequirement.evaluate(r,this);
         if(QualificationProofAssociation.applies(r))return QualificationProofAssociation.evaluate(r,this);
+        if(PersonnelCertificateDocumentProof.applies(r))return PersonnelCertificateDocumentProof.evaluate(r,this);
         if(r.predicate().equals("UNSUPPORTED"))return unknown(r,"UNSUPPORTED_RULE","该条件尚未编译为已验证原语："+r.description(),List.of());
         if(r.predicate().equals("PERSON_COUNT"))return PersonnelCount.evaluate(r,this);
         if(!SameFieldComparisonTarget.reference(r).isBlank()&&!EnterpriseNameComparison.applies(r))return CertificateSourceComparison.evaluate(r,this);
-        if(RegistrationEmployerProof.applies(r))return RegistrationEmployerProof.evaluate(r,this);
+        if(RegistrationEmployerProof.applies(r)){var evaluated=RegistrationEmployerProof.evaluateSelected(r,this);if(!evaluated.identityFacts().isEmpty())registrationSelections.put(evaluated.decision(),evaluated.identityFacts());return evaluated.decision();}
         if(r.subject().isBlank()&&Set.of("PERSON_ROLE","CERTIFICATE","VALIDITY","MONTHS","RELATION").contains(r.predicate())
                 &&!(r.predicate().equals("VALIDITY")&&Boolean.TRUE.equals(r.parameters().get("allApplicableCertificates"))))
             return unknown(r,"SUBJECT_REQUIRED","本条件适用的具体主体或岗位尚未明确，不能把所有人员和单位材料混在一起比较",List.of());
@@ -195,7 +209,7 @@ final class RuleEvaluator {
             memberSet=EnterpriseSubjectBindings.completeSet(subjects,corpus);
             if(memberSet.isEmpty())return unknown(r,"SUBJECT_SET_INCOMPLETE","出现多个投标主体，尚未由本次投标函或协议证明完整联合体组成，不能合并不同公司的证照",links);
         }
-        List<Decision> children=new ArrayList<>();for(String subject:subjects){Rule concrete=new Rule(r.id()+":"+identity(subject).substring(0,12),r.description(),r.predicate(),subject,r.field(),r.operator(),r.expected(),r.unit(),r.parameters(),r.sourceQuote(),r.logic(),List.of());Decision child=r.predicate().equals("VISUAL")?visual(concrete,r.id()):leaf(concrete);
+        List<Decision> children=new ArrayList<>();for(String subject:subjects){Map<String,Object> concreteParameters=new LinkedHashMap<>(r.parameters());if(PersonnelRoles.personRole(r.subject()))concreteParameters.put("personnelRoleSelector",r.subject());Rule concrete=new Rule(r.id()+":"+identity(subject).substring(0,12),r.description(),r.predicate(),subject,r.field(),r.operator(),r.expected(),r.unit(),concreteParameters,r.sourceQuote(),r.logic(),List.of());Decision child=r.predicate().equals("VISUAL")?visual(concrete,r.id()):leaf(concrete);
             if(Set.of("PASS","FAIL").contains(child.status())){List<Fact> selected=match(concrete);SubjectIdentity.Problem issue=identities.issue(r,selected);Map<String,Object> childProof=new LinkedHashMap<>(child.proof());childProof.put("identityBindings",identities.bindings(selected));
                 child=new Decision(child.id(),child.description(),issue==null?child.status():"UNDETERMINED",issue==null?child.reason():issue.reason(),child.evidences(),issue==null?child.gaps():List.of(gap(issue.code(),issue.reason())),childProof);}
             children.add(child);}
@@ -214,7 +228,7 @@ final class RuleEvaluator {
         fields.remove("");
         // PERSON_ROLE already binds role -> person. Native readers label its value 姓名,
         // while compiled/legacy rules may say role; that label is not an extra business constraint.
-        return facts.stream().filter(f->kinds.contains(f.kind())).filter(f->r.predicate().equals("PERSON_ROLE")&&DomainBindings.roleMatches(r.subject(),f.subject(),f,corpus)||subjects.isEmpty()||subjects.contains(f.subject())||subjects.contains(str(f.attributes(),"person"))).filter(f->fields.isEmpty()||fields.contains(f.field())||Set.of("PERSON_ROLE","CERTIFICATE","MONTHS","CONTRACT","SECTION","MATERIAL","DECLARATION","VALIDITY","RELATION","QUALITY").contains(r.predicate())).toList();
+        return facts.stream().filter(f->kinds.contains(f.kind())).filter(f->r.predicate().equals("PERSON_ROLE")&&DomainBindings.roleMatches(r.subject(),f.subject(),f,corpus)||subjects.isEmpty()||subjects.contains(f.subject())||subjects.contains(str(f.attributes(),"person"))||subjects.stream().anyMatch(person->ConfirmedSubjectBindings.matches(person,f,facts,corpus))).filter(f->fields.isEmpty()||fields.contains(f.field())||Set.of("PERSON_ROLE","CERTIFICATE","MONTHS","CONTRACT","SECTION","MATERIAL","DECLARATION","VALIDITY","RELATION","QUALITY").contains(r.predicate())).toList();
     }
     List<String> resolvedSubjects(Rule r){return DomainBindings.subjects(r.subject(),facts,corpus);}
     Decision presence(Rule r,List<Fact> matched){
@@ -274,7 +288,7 @@ final class RuleEvaluator {
         if(matched.isEmpty())return unknown(r,"CERTIFICATE_EVIDENCE_REQUIRED","有效期字段尚未定位",List.of());List<Fact> complete=new ArrayList<>(),invalid=new ArrayList<>();
         List<Map<String,Object>> dateProofs=new ArrayList<>();List<CertificateValidityDates.Result> dateGaps=new ArrayList<>();
         Set<String> keys=new HashSet<>(),ranges=new HashSet<>();for(Fact f:matched){String field=str(f.attributes(),f.kind().equals("CERTIFICATE")?"validityField":"field");if(!field.equals(requiredField)||!DomainBindings.certificateIdentity(f)||!certificateSelected(r,f))continue;boolean compatible=true;for(String key:List.of("category","profession","number")){String expected=str(r.parameters(),key);if(!expected.isBlank()&&!(key.equals("category")?DomainBindings.sameCertificateCategory(str(f.attributes(),key),expected):expected.equals(str(f.attributes(),key))))compatible=false;}if(!compatible)continue;
-            CertificateValidityDates.Result dates=CertificateValidityDates.fact(f,corpus,field,ref);dateProofs.add(linked("factId",f.id(),"dateSemantics",dates.proof()));
+            CertificateValidityDates.Result dates=CertificateValidityDates.fact(f,corpus,field,ref,false,maps(context.get("_validatedLayoutCells")));dateProofs.add(linked("factId",f.id(),"dateSemantics",dates.proof()));
             if(!dates.complete()){dateGaps.add(dates);continue;}complete.add(f);keys.add(DomainBindings.certificateKey(f));ranges.add(normalizedDateRange(dates));if(!Boolean.TRUE.equals(dates.valid()))invalid.add(f);}
         if(complete.isEmpty()){CertificateValidityDates.Result gap=dateGaps.isEmpty()?null:dateGaps.get(0);return unknown(r,gap==null?"VALIDITY_RANGE_REQUIRED":gap.code(),gap==null?"该有效期字段尚未形成可核验的日期记录":gap.reason(),matched,Map.of("dateSemantics",dateProofs));}
         if(keys.size()>1)return unknown(r,"CERTIFICATE_SELECTION_REQUIRED","已定位多个持有人、类别或证号，须明确本条件适用的具体证件，不能混合判断有效或过期",complete);
@@ -296,7 +310,7 @@ final class RuleEvaluator {
         List<Map<String,Object>> dateProofs=new ArrayList<>();List<CertificateValidityDates.Result> dateGaps=new ArrayList<>();
         for(Fact fact:matched){if(!"CURRENT_PROJECT".equals(fact.scope())||!DomainBindings.certificateIdentity(fact))continue;String field=str(fact.attributes(),fact.kind().equals("CERTIFICATE")?"validityField":"field");
             if(!DomainBindings.validityField(field))continue;
-            CertificateValidityDates.Result dates=CertificateValidityDates.fact(fact,corpus,field,ref);dateProofs.add(linked("factId",fact.id(),"dateSemantics",dates.proof()));
+            CertificateValidityDates.Result dates=CertificateValidityDates.fact(fact,corpus,field,ref,false,maps(context.get("_validatedLayoutCells")));dateProofs.add(linked("factId",fact.id(),"dateSemantics",dates.proof()));
             if(!dates.complete()){dateGaps.add(dates);continue;}complete.add(fact);String key=DomainBindings.certificateKey(fact)+"|"+field;
             ranges.computeIfAbsent(key,ignored->new LinkedHashSet<>()).add(normalizedDateRange(dates));if(!Boolean.TRUE.equals(dates.valid()))invalid.add(fact);}
         Map<String,Object> proof=linked("referenceDate",ref.toString(),"referenceEvent",referenceEvent(r),"referenceDateEvidence",referenceEvidence(r),
@@ -309,14 +323,15 @@ final class RuleEvaluator {
         if(!Boolean.TRUE.equals(context.get("certificateSetComplete")))return unknown(r,"CERTIFICATE_SET_COVERAGE_REQUIRED","已识别证照的有效期均覆盖核验日期，但尚未证明当前投标适用证照清单已经完整闭合",complete,proof);
         return pass(r,"当前投标适用证照清单已闭合，逐证有效期均覆盖核验日期",complete,proof);}
     Decision months(Rule r,List<Fact> matched){int required=RunSession.number(r.parameters().get("count"),0);if(required<1||required>120)return unknown(r,"REQUIREMENT_AMBIGUOUS","连续月份数量尚未明确",matched);
-        String employer=str(r.parameters(),"employer");List<String> employers=DomainBindings.subjects(employer,facts,corpus);
-        if(!employer.isBlank()&&employers.isEmpty())return unknown(r,"SOCIAL_EMPLOYER_REQUIRED","社保要求的单位角色尚未解析为具体单位",matched);
+        String employer=str(r.parameters(),"employer");PersonnelEmployerBindings.Binding binding=PersonnelEmployerBindings.resolve(r,facts,corpus,maps(context.get("_validatedLayoutCells")));List<String> employers=binding.employers();
+        if(PersonnelEmployerBindings.deictic(employer)&&!binding.resolved())return unknown(r,"SOCIAL_EMPLOYER_CONFIRMATION_REQUIRED","本单位尚未由本人员任职或联合体分工唯一确定，需确认适用成员单位",matched,binding.audit());
+        if(!employer.isBlank()&&employers.isEmpty())return unknown(r,"SOCIAL_EMPLOYER_REQUIRED","社保要求的单位角色尚未解析为具体单位",matched,binding.audit());
         List<Fact> applicable=matched.stream().filter(f->f.scope().equals("CURRENT_PROJECT")).filter(f->employer.isBlank()||employers.contains(str(f.attributes(),"employer"))).toList();
-        if(applicable.isEmpty())return unknown(r,"SOCIAL_EMPLOYER_REQUIRED","尚未取得适用当前人员和要求缴费单位的月份证明，其他成员单位或历史社保不能替代",matched);
+        if(applicable.isEmpty()){Map<String,Object> proof=new LinkedHashMap<>(binding.audit());proof.put("matchedMonthFactIds",matched.stream().map(Fact::id).toList());proof.put("observedEmployers",matched.stream().map(f->linked("factId",f.id(),"subject",f.subject(),"employer",str(f.attributes(),"employer"),"scope",f.scope(),"sourceIds",f.sourceIds())).toList());proof.put("requiredEvidenceSources",SocialInsuranceEvidenceRecords.targetedSources(List.of(r),facts,corpus).stream().map(s->linked("sourceId",s.id(),"page",s.evidence().page(),"documentId",s.evidence().documentId())).toList());return unknown(r,"SOCIAL_EMPLOYER_REQUIRED","尚未取得适用当前人员和要求缴费单位的月份证明，其他成员单位或历史社保不能替代",matched,proof);}
         LocalDate ref=referenceDate(r);if(Boolean.TRUE.equals(r.parameters().get("requiresReferenceDate"))&&ref==null)return unknown(r,"REFERENCE_TIME_UNCONFIRMED","社保适用时间窗的截止时点尚未确认",matched);
         YearMonth earliest=null;try{if(!str(r.parameters(),"earliestMonth").isBlank())earliest=YearMonth.parse(str(r.parameters(),"earliestMonth"));}catch(Exception ignored){return unknown(r,"REQUIREMENT_AMBIGUOUS","社保窗口起点无法解释",matched);}
         for(Fact f:applicable){TreeSet<YearMonth> months=new TreeSet<>();for(String value:strings(f.attributes().get("months")))try{YearMonth m=YearMonth.parse(value);if((earliest==null||!m.isBefore(earliest))&&(ref==null||!m.isAfter(YearMonth.from(ref))))months.add(m);}catch(Exception ignored){}
-            int count=0,best=0;YearMonth previous=null;for(YearMonth m:months){count=previous!=null&&previous.plusMonths(1).equals(m)?count+1:1;best=Math.max(best,count);previous=m;}if(best>=required)return pass(r,"已在允许窗口内核到连续月份；窗口起月不被强制视为必交首月",List.of(f),Map.of("requiredMonths",required,"longestConsecutive",best,"months",months.stream().map(YearMonth::toString).toList()));}
+            int count=0,best=0;YearMonth previous=null;for(YearMonth m:months){count=previous!=null&&previous.plusMonths(1).equals(m)?count+1:1;best=Math.max(best,count);previous=m;}if(best>=required){Map<String,Object> proof=new LinkedHashMap<>(binding.audit());proof.putAll(Map.of("requiredMonths",required,"longestConsecutive",best,"months",months.stream().map(YearMonth::toString).toList()));List<Fact> used=new ArrayList<>(binding.witnesses());used.add(f);return pass(r,"已按本人员适用单位核到允许窗口内的连续月份",used,proof);}}
         return unknown(r,"MONTH_COVERAGE_REQUIRED","现有逐月证据尚未证明要求的连续月份，起止月或抽页表头不证明中间月连续",matched);}
     Decision relation(Rule r,List<Fact> matched){String object=!r.expected().isBlank()?r.expected():str(r.parameters(),"object");List<String> targets=DomainBindings.subjects(object,facts,corpus);boolean employment=DomainBindings.employment(r.field())||DomainBindings.employment(r.description());List<String> path=strings(r.parameters().get("path"));
         if(DomainBindings.role(object)&&targets.isEmpty())return unknown(r,"RELATION_TARGET_UNPROVEN","关系要求的成员角色尚未绑定具体单位，不能用联合体职责替代人员聘用",matched);
@@ -338,6 +353,20 @@ final class RuleEvaluator {
         return meets?pass(r,"同口径数值满足明确比较条件",usable,Map.of("actual",value,"expected",threshold,"operator",r.operator())):fail(r,"同口径数值与明确比较条件存在偏差",usable,Map.of("actual",value,"expected",threshold,"operator",r.operator()));}
     Decision sameField(Rule r,List<Fact> matched){return PriceUniquenessScope.guard(r,sameFieldComparison(r,matched));}
     private Decision sameFieldComparison(Rule r,List<Fact> matched){
+        if("creditCode".equals(r.field())&&!Boolean.TRUE.equals(r.parameters().get("companyScopedComparison"))){
+            List<Fact> current=matched.stream().filter(f->f.scope().equals("CURRENT_PROJECT")).toList();
+            if(current.isEmpty())return unknown(r,"FIELD_EVIDENCE_REQUIRED","尚未取得本项目单位的统一社会信用代码",matched);
+            if(current.stream().anyMatch(f->clean(f.subject()).isBlank()||DomainBindings.role(f.subject())))return unknown(r,"COMPANY_IDENTITY_REQUIRED","统一社会信用代码尚未绑定到具体公司，不能跨联合体成员合并比较",current);
+            Map<String,List<Fact>> companies=current.stream().collect(java.util.stream.Collectors.groupingBy(f->clean(f.subject()),LinkedHashMap::new,java.util.stream.Collectors.toList()));
+            if(!r.expected().isBlank()&&companies.size()>1)return unknown(r,"COMPANY_IDENTITY_REQUIRED","比较基准需指明适用公司，不能将一个单位代码应用于多个联合体成员",current);
+            List<Decision> decisions=new ArrayList<>();
+            for(var company:companies.entrySet()){
+                Map<String,Object> parameters=new LinkedHashMap<>(r.parameters());parameters.put("companyScopedComparison",true);
+                Rule child=new Rule(r.id()+"-"+identity(company.getKey()).substring(0,12),r.description()+"："+company.getKey(),r.predicate(),company.getKey(),r.field(),r.operator(),r.expected(),r.unit(),parameters,r.sourceQuote(),r.logic(),r.children());
+                decisions.add(sameFieldComparison(child,company.getValue()));
+            }
+            return combine(r.id(),r.description(),"ALL",decisions);
+        }
         if(EnterpriseNameComparison.applies(r))return EnterpriseNameComparison.evaluate(r,this);
         if(!SameFieldComparisonTarget.reference(r).isBlank())return CertificateSourceComparison.evaluate(r,this);
         if(DomainBindings.money(r,matched))return price(r,matched,true);
@@ -360,7 +389,7 @@ final class RuleEvaluator {
         Map<String,String> required=new LinkedHashMap<>();for(String key:List.of("lot","amountBasis","taxBasis","currency")){String value=str(r.parameters(),key);required.put(key,switch(key){case "lot"->DomainBindings.lot(value);case "amountBasis"->DomainBindings.amountBasis(value);case "taxBasis"->DomainBindings.tax(value);case "currency"->DomainBindings.currency(value);default->value;});}
         if(!consistency&&required.values().stream().anyMatch(v->!DomainBindings.known(v)))return unknown(r,"PRICE_REQUIREMENT_DIMENSIONS_REQUIRED","比较门槛尚缺明确标段、金额类别、税口径或币种，不能将不同价格定义混用",current);
         List<Fact> selected=new ArrayList<>();Set<Map<String,String>> dimensions=new LinkedHashSet<>();List<Map<String,Object>> gaps=new ArrayList<>();
-        for(Fact f:current){Map<String,String> actual=DomainBindings.priceDimensions(f);boolean other=required.entrySet().stream().anyMatch(e->DomainBindings.known(e.getValue())&&DomainBindings.known(actual.get(e.getKey()))&&!e.getValue().equals(actual.get(e.getKey())));if(other)continue;
+        for(Fact f:current){if(InferenceClaims.numericSuperseded(f,current))continue;Map<String,String> actual=DomainBindings.priceDimensions(f);boolean other=required.entrySet().stream().anyMatch(e->DomainBindings.known(e.getValue())&&DomainBindings.known(actual.get(e.getKey()))&&!e.getValue().equals(actual.get(e.getKey())));if(other)continue;
             List<String> missing=actual.entrySet().stream().filter(e->!DomainBindings.known(e.getValue())||e.getKey().equals("subject")&&DomainBindings.role(e.getValue())).map(Map.Entry::getKey).toList();
             if(!missing.isEmpty()){gaps.add(linked("factId",f.id(),"missing",missing));continue;}selected.add(f);dimensions.add(actual);}
         if(!gaps.isEmpty())return unknown(r,"PRICE_DIMENSIONS_REQUIRED","报价的主体、标段、金额类别、税口径或币种尚未完整对齐，保留待核",current,Map.of("dimensionGaps",gaps));

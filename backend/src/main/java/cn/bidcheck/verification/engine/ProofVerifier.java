@@ -30,8 +30,10 @@ final class ProofVerifier {
                 var structured=LayoutBinding.structure(f,layout,sources);boolean requested=!strings(f.attributes().get("cellIds")).isEmpty();
                 if(requested||!structured.rows().isEmpty()){
                     String binding=LayoutBinding.structuredIssue(f,structured);
+                    boolean sectionAppointment="STRUCTURE_ROLE_UNPROVEN".equals(binding)&&LayoutBinding.sectionAppointment(f,structured,sources);
+                    if(sectionAppointment)binding=null;
                     if(issue==null||Set.of("PERSON_ROLE_BINDING_INVALID","DATE_FIELD_BINDING_INVALID","MONTH_ROW_UNPROVEN","SOCIAL_EMPLOYER_LINK_UNPROVEN","CERTIFICATE_SUBJECT_FIELD_BINDING_INVALID").contains(issue))issue=binding;
-                    if(issue==null){Map<String,Object> computed=new LinkedHashMap<>(f.attributes());computed.put("structureProof",structured.proof());f=new Fact(f.id(),f.kind(),f.subject(),f.field(),f.rawValue(),f.value(),f.unit(),f.basis(),f.scope(),f.sourceIds(),computed);}
+                    if(issue==null){Map<String,Object> computed=new LinkedHashMap<>(f.attributes());Map<String,Object> proof=new LinkedHashMap<>(structured.proof());if(sectionAppointment){proof.put("roleBindingBasis","SOURCE_VALIDATED_CURRENT_SECTION_APPOINTMENT");proof.put("roleSourceIds",f.sourceIds());}computed.put("structureProof",proof);f=new Fact(f.id(),f.kind(),f.subject(),f.field(),f.rawValue(),f.value(),f.unit(),f.basis(),f.scope(),f.sourceIds(),computed);}
                 }
             }
             if(issue==null)issue=DomainBindings.issue(f,sources,layout);

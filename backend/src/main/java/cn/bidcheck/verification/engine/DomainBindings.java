@@ -64,6 +64,7 @@ final class DomainBindings {
         return proofs;
     }
     static boolean currentRoleSource(Fact f,Map<String,Source> sources){
+        if(InferenceClaims.humanConfirmed(f)&&f.scope().equals("CURRENT_PROJECT"))return true;
         return f.sourceIds().stream().map(sources::get).filter(Objects::nonNull).anyMatch(s->EnterpriseSubjectBindings.companyRole(sourceRole(f))&&EnterpriseSubjectBindings.formalDocument(s)
             ?EnterpriseSubjectBindings.grounded(f,s):DocumentSubjectScope.appointment(s,f));
     }

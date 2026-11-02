@@ -96,7 +96,7 @@ final class AgentLedReview {
             "executionRule","只把 executableSourceIds/executableSpans 中的连续原文拆成检查条件；contextOnlySourceIds 只用于识别主体、表头和章节归属，不能新增义务或阈值。");
         Map<String,Object> planContract=linked("methods",METHODS,"deterministicPredicateValues",DETERMINISTIC_PREDICATES,"semanticPredicateValue",SEMANTIC_PREDICATE,
             "crossFieldRules",List.of("method=DETERMINISTIC 时 predicate 必须为 deterministicPredicateValues 中一项。","method=SEMANTIC 时 predicate 只能为 CONTENT。","subject、field、operator、expected、unit 必须保持 requirementQuote 的原文口径，语义条件无对应值时填写空字符串。"));
-        return linked("type","start","protocol","bidcheck-agent-1","requestId",UUID.randomUUID().toString(),"context",
+        return linked("type","start","protocol","bidcheck-agent-1","requestId",UUID.randomUUID().toString(),"auditContext",linked("runId",str(session.context,"sourceRunId"),"checkpointId",cp.id()),"context",
             linked("workflowPolicy",POLICY,"checkpointId",cp.id(),"checkpointContract",checkpointContract,"planContract",planContract,
                 "requirement",linked("title",cp.title(),"originalSources",requirements,"reviewedItem",Objects.toString(cp.expected(),""),
                     "executableSourceIds",executableIds,"executableSpans",executableSpans,"contextOnlySourceIds",contextOnlyIds),

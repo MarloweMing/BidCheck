@@ -312,7 +312,9 @@ public final class FactLedgerService {
             LOG.warn("bidcheck.fact_lookup_rejected runId={} checkpointId={} phase={} reason=FIELD_LOOKUP_IDENTITY_REQUIRED legacyFallback=false",safeLogId(req.get("runId")),safeLogId(req.get("checkpointId")),safeLogId(req.get("lookupPhase")));
             throw new IllegalArgumentException("FIELD_LOOKUP_IDENTITY_REQUIRED");
         }
-        if("CANONICAL_SOURCE".equals(text(req,"lookupMode"))&&!requestedSources.isEmpty()&&!kinds.isEmpty()){
+        boolean bySubject="CANONICAL_SUBJECT".equals(text(req,"lookupMode"));
+        if(bySubject&&(strings(req.get("subjects")).isEmpty()||strings(req.get("subjects")).size()>64||Boolean.TRUE.equals(req.get("includeFieldCoverage"))))throw new IllegalArgumentException("SUBJECT_LOOKUP_CONTRACT_INVALID");
+        if(("CANONICAL_SOURCE".equals(text(req,"lookupMode"))||bySubject)&&!requestedSources.isEmpty()&&!kinds.isEmpty()){
             CanonicalFactLookup canonicalIndex=new CanonicalFactLookup(store);
             if(canonicalIndex.ready(scope,requestedDocs.isEmpty()?scope.documents.keySet():requestedDocs)){
                 long readinessNanos=System.nanoTime()-started;
@@ -341,6 +343,7 @@ public final class FactLedgerService {
                 Map<String,Object> fact=map(entry.get("fact"));List<Map<String,Object>> refs=maps(entry.get("sources"));if(refs.isEmpty()||refs.stream().anyMatch(s->!validSource(scope,s))||!kinds.isEmpty()&&!kinds.contains(text(fact,"kind")))continue;
                 if(!requestedSources.isEmpty()&&!requestedSources.containsAll(strings(fact.get("sourceIds"))))continue;
                 if(!requestedDocs.isEmpty()&&refs.stream().anyMatch(s->!requestedDocs.contains(text(map(s.get("evidence")),"documentId"))))continue;
+                if(bySubject&&!CanonicalFactLookup.subjectMatches(fact,strings(req.get("subjects"))))continue;
                 eligible.add(entry);
             }eligibleByBatch.put(batchValue.getKey(),eligible);
         }
@@ -438,7 +441,10 @@ public final class FactLedgerService {
         }
         if(!current.keySet().equals(selected))throw new CanonicalLookupInvalid("REQUEST_SOURCE_SET_INCOMPLETE");
         Set<String> factBuckets=new LinkedHashSet<>(),fieldBuckets=new LinkedHashSet<>();
-        for(String doc:docs)for(String id:selected){Map<String,Object> source=current.get(id);
+        boolean bySubject="CANONICAL_SUBJECT".equals(text(request,"lookupMode"));
+        if(bySubject){for(String doc:docs)for(String subject:strings(request.get("subjects")))for(String kind:kinds)
+            factBuckets.add(CanonicalFactLookup.bucket(scope.documentParents.get(doc),"S:"+CanonicalFactLookup.subjectKey(subject),kind,"",""));}
+        else for(String doc:docs)for(String id:selected){Map<String,Object> source=current.get(id);
             if(source!=null&&!doc.equals(text(evidence(source.get("evidence")),"documentId")))continue;
             String token=source==null?"A:"+id:"F:"+text(source,"sourceFingerprint"),parent=scope.documentParents.get(doc);
             for(String kind:kinds)factBuckets.add(CanonicalFactLookup.bucket(parent,token,kind,"",""));
@@ -469,6 +475,7 @@ public final class FactLedgerService {
             List<Map<String,Object>> sources=currentAliases(scope,maps(item.get("sources")),current,selected,docs);if(sources.isEmpty())continue;
             Map<String,Object> entry=materializeEntry(scope,of("occurrenceId",occurrence,"sources",sources,"fact",of("id",text(item,"originalFactId"))),occurrences.get(occurrence));
             if(entry.isEmpty())throw new CanonicalLookupInvalid("LOOKUP_OCCURRENCE_INVALID");
+            if(bySubject&&!CanonicalFactLookup.subjectMatches(map(entry.get("fact")),strings(request.get("subjects"))))continue;
             Map<String,Map<String,Object>> byAlias=new LinkedHashMap<>();sources.forEach(s->byAlias.put(text(s,"id"),s));
             try{fact(map(entry.get("fact")),byAlias);}catch(IllegalArgumentException invalid){throw new CanonicalLookupInvalid("LOOKUP_FACT_UNGROUNDED");}
             itemOccurrences.put(text(item,"id"),occurrence);if(accepted.size()>=limit&&!accepted.containsKey(occurrence))continue;
@@ -495,7 +502,7 @@ public final class FactLedgerService {
         }
         List<Map<String,Object>> result=new ArrayList<>(accepted.values());result.addAll(receipts.values());boolean factTruncated=itemOccurrences.values().stream().distinct().count()>accepted.size(),fieldTruncated=candidateReceipts>fieldLimit;
         annotateLookupLimits(result,request,factTruncated,fieldTruncated);
-        LOG.info("bidcheck.fact_lookup runId={} checkpointId={} phase={} mode=CANONICAL_SOURCE durationMs={} readinessMs={} sourceValidationMs={} bucketLookupMs={} itemLookupMs={} occurrenceLookupMs={} validationAndAssemblyMs={} sourceBuckets={} candidateRefs={} uniqueItems={} occurrenceLoads={} occurrenceCacheHits={} batchLoads=0 uniqueFacts={} fieldReceipts={} factTruncated={} fieldTruncated={}",safeLogId(request.get("runId")),safeLogId(request.get("checkpointId")),safeLogId(request.get("lookupPhase")),(System.nanoTime()-started+readinessNanos)/1_000_000,readinessNanos/1_000_000,(sourceValidationDone-started)/1_000_000,(bucketLookupDone-sourceValidationDone)/1_000_000,(itemLookupDone-bucketLookupDone)/1_000_000,(occurrenceLookupDone-itemLookupDone)/1_000_000,(System.nanoTime()-occurrenceLookupDone)/1_000_000,factBuckets.size()+fieldBuckets.size(),refs.size(),items.size(),fetched.size(),ids.size()-missing.size(),accepted.size(),receipts.size(),factTruncated,fieldTruncated);
+        LOG.info("bidcheck.fact_lookup runId={} checkpointId={} phase={} mode={} durationMs={} readinessMs={} sourceValidationMs={} bucketLookupMs={} itemLookupMs={} occurrenceLookupMs={} validationAndAssemblyMs={} sourceBuckets={} candidateRefs={} uniqueItems={} occurrenceLoads={} occurrenceCacheHits={} batchLoads=0 uniqueFacts={} fieldReceipts={} factTruncated={} fieldTruncated={}",safeLogId(request.get("runId")),safeLogId(request.get("checkpointId")),safeLogId(request.get("lookupPhase")),bySubject?"CANONICAL_SUBJECT":"CANONICAL_SOURCE",(System.nanoTime()-started+readinessNanos)/1_000_000,readinessNanos/1_000_000,(sourceValidationDone-started)/1_000_000,(bucketLookupDone-sourceValidationDone)/1_000_000,(itemLookupDone-bucketLookupDone)/1_000_000,(occurrenceLookupDone-itemLookupDone)/1_000_000,(System.nanoTime()-occurrenceLookupDone)/1_000_000,factBuckets.size()+fieldBuckets.size(),refs.size(),items.size(),fetched.size(),ids.size()-missing.size(),accepted.size(),receipts.size(),factTruncated,fieldTruncated);
         return result;
     }
     private static void annotateLookupLimits(List<Map<String,Object>> rows,Map<String,Object> request,boolean factTruncated,boolean fieldTruncated){

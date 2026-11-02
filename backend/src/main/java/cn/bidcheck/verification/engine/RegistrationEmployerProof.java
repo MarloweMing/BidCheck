@@ -6,17 +6,42 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 
 /** Registration is a relation between a holder, a credential and an employer, not a declaration. */
 final class RegistrationEmployerProof {
+    private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(RegistrationEmployerProof.class);
+    record SelectedEvaluation(Decision decision,List<Fact> identityFacts){}
     private RegistrationEmployerProof() {}
     static boolean applies(Rule rule){return Set.of("DECLARATION","RELATION").contains(rule.predicate())
         &&clean(rule.sourceQuote()).matches(".*注册.{0,25}(?:本单位|投标人|投标单位).{0,12}(?:完成注册|注册).*|.*(?:本单位|投标人|投标单位).{0,12}完成注册.*")
         &&clean(rule.description()+rule.field()).matches(".*(?:完成注册|注册单位|注册关系|在本单位.*注册).* ".strip());}
 
     static Decision evaluate(Rule rule,RuleEvaluator evaluator){
+        return evaluateSelected(rule,evaluator).decision();
+    }
+    static SelectedEvaluation evaluateSelected(Rule rule,RuleEvaluator evaluator){
+        List<Fact> selected=new ArrayList<>();Decision decision=evaluate(rule,evaluator,selected);
+        return new SelectedEvaluation(decision,Set.of("PASS","FAIL").contains(decision.status())?List.copyOf(selected):List.of());
+    }
+    /** No stored PASS or selected-fact flag is authority: repeat the source selection,
+     * verify every original field and then check same-number counterevidence. */
+    static Map<String,Object> sourceReviewClosure(Rule rule,Decision decision,RuleEvaluator evaluator){
+        if(!applies(rule)||!Set.of("PASS","FAIL").contains(decision.status())||!decision.gaps().isEmpty())return Map.of();
+        SelectedEvaluation fresh=evaluateSelected(rule,evaluator);
+        if(!fresh.decision().status().equals(decision.status())||!fresh.decision().evidences().equals(decision.evidences())||fresh.identityFacts().isEmpty())return Map.of();
+        List<CertificateSourceComparison.Record> records=new ArrayList<>();
+        for(Fact selected:fresh.identityFacts()){
+            var matches=evaluator.personnelCredentialRecords().stream().filter(r->("registration-proof:"+r.id()).equals(selected.id())&&r.sources().stream().map(Source::id).toList().equals(selected.sourceIds())).toList();
+            if(matches.size()!=1)return Map.of();records.add(matches.get(0));
+        }
+        Map<String,Object> review=SourceLocalPersonnelCredentialClosure.reviewRecords(rule,records,evaluator);
+        LOG.info("bidcheck.registration_source_review ruleId={} selectedFactIds={} complete={} reasonCode={} examinedSourceIds={}",rule.id(),fresh.identityFacts().stream().map(Fact::id).toList(),review.get("complete"),review.getOrDefault("reasonCode",""),review.getOrDefault("examinedSourceIds",List.of()));
+        if(!Boolean.TRUE.equals(review.get("complete")))return Map.of();
+        return linked("basis","REVERIFIED_REGISTRATION_RECORD_AND_SAME_NUMBER_COUNTEREVIDENCE","scope","REGISTRATION_UNIT_ONLY","sameCredentialReview",review,"selectedFactIds",fresh.identityFacts().stream().map(Fact::id).toList(),"sourceReadReceipt",ProgramSourceRead.receipt(evaluator.corpus,List.of()),"provesCredentialValidity",false,"provesQueryScreenshot",false,"unreadImageCoverageProven",false);
+    }
+    private static Decision evaluate(Rule rule,RuleEvaluator evaluator,List<Fact> selected){
         List<String> subjects=evaluator.resolvedSubjects(rule);if(subjects.isEmpty())return evaluator.unknown(rule,"SUBJECT_RELATION_UNPROVEN","须先确认本次岗位人员，才能检查其证书注册单位",List.of());
-        List<Decision> decisions=new ArrayList<>();for(String person:subjects)decisions.add(person(rule,person,evaluator));
+        List<Decision> decisions=new ArrayList<>();for(String person:subjects)decisions.add(person(rule,person,evaluator,selected));
         return decisions.size()==1?decisions.get(0):RuleEvaluator.combine(rule.id(),rule.description(),"ALL",decisions);
     }
-    private static Decision person(Rule rule,String person,RuleEvaluator evaluator){
+    private static Decision person(Rule rule,String person,RuleEvaluator evaluator,List<Fact> selected){
         List<Fact> links=new ArrayList<>();Set<String> employers=new LinkedHashSet<>();
         for(Fact fact:evaluator.facts){if(!"CURRENT_PROJECT".equals(fact.scope())||new ProofVerifier().issue(fact,evaluator.corpus.byId)!=null||DomainBindings.issue(fact,evaluator.corpus.byId,List.of())!=null)continue;
             if(fact.sourceIds().stream().map(evaluator.corpus.byId::get).filter(Objects::nonNull).anyMatch(s->s.index()||s.historical()||s.scopeContext().blocked()))continue;
@@ -24,6 +49,11 @@ final class RegistrationEmployerProof {
             if(fact.kind().equals("PERSON_ROLE")&&fact.value().equals(person)&&DomainBindings.currentRoleSource(fact,evaluator.corpus.byId)&&!str(fact.attributes(),"employer").isBlank()){links.add(fact);employers.add(str(fact.attributes(),"employer"));}
         }
         List<CertificateSourceComparison.Record> records=CertificateSourceComparison.records(evaluator.corpus).stream().filter(r->r.side().equals("CERTIFICATE")&&r.owner().equals(person)&&r.issues().isEmpty()).toList();
+        // Reuse only a source-validated current person's profile. In particular, an
+        // explicit employing-unit label can prove employment; a registration label cannot.
+        List<Fact> profileFacts=new ArrayList<>(evaluator.facts);records.stream().map(ConfirmedSubjectBindings::recordIdentity).filter(Objects::nonNull).forEach(profileFacts::add);
+        var profiles=PersonEvidenceProfiles.forPerson(person,profileFacts,evaluator.corpus,RuleEvaluator.maps(evaluator.context.get("_validatedLayoutCells")));
+        for(var profile:profiles){employers.addAll(profile.employers());links.addAll(profile.employerWitnesses());}
         boolean memberRegistration=false;String requiredMemberRole=registrationMemberRole(rule);
         if(employers.isEmpty()&&!requiredMemberRole.isBlank()){
             Rule memberRule=new Rule(rule.id()+"-member","原条款对应成员单位","RELATION",requiredMemberRole,"名称","","","",Map.of(),rule.sourceQuote(),"",List.of());
@@ -44,11 +74,11 @@ final class RegistrationEmployerProof {
             }
             records=records.stream().filter(r->r.category().contains("注册")).toList();
         }
-        Map<String,Object> proof=linked("executor","REGISTRATION_EMPLOYER_RELATION","subject",person,"declarationCannotProveRegistration",true,"expectedEmployers",employers,"records",records.stream().map(CertificateSourceComparison.Record::audit).toList(),"requirementQuote",rule.sourceQuote(),"expectedUnitBasis",memberRegistration?"CURRENT_ROLE_AND_EXPLICIT_CONSORTIUM_WORK_ALLOCATION":"INDEPENDENT_EMPLOYMENT_SOURCE","requiredMemberRole",requiredMemberRole,"doesNotProveEmployment",memberRegistration);
+        Map<String,Object> proof=linked("executor","REGISTRATION_EMPLOYER_RELATION","subject",person,"declarationCannotProveRegistration",true,"expectedEmployers",employers,"records",records.stream().map(CertificateSourceComparison.Record::audit).toList(),"requirementQuote",rule.sourceQuote(),"expectedUnitBasis",memberRegistration?"CURRENT_ROLE_AND_EXPLICIT_CONSORTIUM_WORK_ALLOCATION":"INDEPENDENT_EMPLOYMENT_SOURCE","requiredMemberRole",requiredMemberRole,"doesNotProveEmployment",memberRegistration,"personProfiles",profiles.stream().map(PersonEvidenceProfiles.Profile::audit).toList());
         if(employers.size()!=1)return evaluator.unknown(rule,"REGISTRATION_EMPLOYER_BINDING_REQUIRED","本次人员所属单位尚未由独立任职原文确定，不能用证书注册单位反向证明其所属单位",links,proof);
         if(records.size()!=1||records.get(0).value("EMPLOYER").isBlank())return evaluator.unknown(rule,"REGISTRATION_CERTIFICATE_REQUIRED","人员所属单位已确定，仍需唯一适用注册证书及其中的注册或聘用单位字段",links,proof);
         var record=records.get(0);
-        if(memberRegistration){
+        {
             var number=record.fields().get("CERTIFICATE_NUMBER");
             if(number==null)number=record.fields().get("REGISTRATION_NUMBER");
             if(number==null)return evaluator.unknown(rule,"REGISTRATION_CERTIFICATE_REQUIRED","已确定应注册的成员单位，但注册证书尚缺同类型的明确证号",links,proof);
@@ -62,6 +92,7 @@ final class RegistrationEmployerProof {
             Rule identityRule=new Rule(rule.id(),rule.description(),"CERTIFICATE",rule.subject(),"证书","","","",Map.of("category",record.category()),rule.sourceQuote(),"",List.of());
             var issue=evaluator.identities.issue(identityRule,List.of(certificate));if(issue!=null)return evaluator.unknown(rule,issue.code(),issue.reason(),List.of(certificate),proof);
             links.add(certificate);
+            selected.add(certificate);proof.put("selectedIdentityFactIds",List.of(certificate.id()));proof.put("identityBindings",evaluator.identities.bindings(List.of(certificate)));
         }
         String expected=employers.iterator().next(),actual=record.value("EMPLOYER");proof.putAll(linked("expectedEmployer",expected,"registeredEmployer",actual,"comparisonField",record.fields().get("EMPLOYER").audit(),"proofScope","REGISTRATION_UNIT_ONLY","doesNotProveValidityOrOnlineStatus",true));
         List<Evidence> evidence=new ArrayList<>();links.stream().flatMap(f->f.sourceIds().stream()).distinct().map(evaluator.corpus.byId::get).filter(Objects::nonNull).map(Source::evidence).forEach(evidence::add);record.fields().values().stream().map(CertificateSourceComparison.Field::evidence).forEach(evidence::add);

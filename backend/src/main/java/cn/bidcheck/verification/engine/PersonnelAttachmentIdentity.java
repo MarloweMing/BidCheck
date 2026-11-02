@@ -8,14 +8,24 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 /** A current, navigation-backed appointment's explicit proof attachment may bind its identity
  * card to a uniquely identified certificate. Name, proximity or birth date alone never do. */
 final class PersonnelAttachmentIdentity {
-    static final String VERSION="personnel-attachment-identity-1";
-    private static final Pattern NAME=Pattern.compile("(?m)^[\\t ]*姓\\s*名[\\t :：]*([\\p{IsHan}·]{2,12})(?=\\s|$)");
-    private static final Pattern ID=Pattern.compile("(?m)^[\\t ]*公民身份号码[\\t :：]*([0-9]{17}[0-9Xx])[\\t ]*\\r?$");
-    private static final Pattern BIRTH=Pattern.compile("(?m)^[\\t ]*(?:出生|出生日期)[\\t :：]*([0-9]{4})[\\t ]*年[\\t ]*([0-9]{1,2})[\\t ]*月[\\t ]*([0-9]{1,2})[\\t ]*日[\\t ]*\\r?$");
+    static final String VERSION="personnel-attachment-identity-2-exact-markdown-fields";
+    // OCR transcriptions may retain Markdown list/emphasis/code delimiters. Match these
+    // wrappers in place so captured field offsets still refer to the untouched original.
+    private static final String FIELD_PREFIX="(?m)^[\\t ]*(?:[-*][\\t ]+)?(?:\\*\\*)?";
+    private static final String FIELD_SEPARATOR="(?:\\*\\*)?[\\t :：]*(?:\\*\\*)?`?";
+    private static final Pattern NAME=Pattern.compile(FIELD_PREFIX+"姓\\s*名"+FIELD_SEPARATOR+"([\\p{IsHan}·]{2,12})(?:`|\\*\\*)?(?=\\s|$)");
+    private static final Pattern ID=Pattern.compile(FIELD_PREFIX+"公民身份号码"+FIELD_SEPARATOR+"([0-9]{17}[0-9Xx])`?(?:\\*\\*)?[\\t ]*\\r?$");
+    private static final Pattern BIRTH=Pattern.compile(FIELD_PREFIX+"(?:出生|出生日期)"+FIELD_SEPARATOR+"([0-9]{4})[\\t ]*年[\\t ]*([0-9]{1,2})[\\t ]*月[\\t ]*([0-9]{1,2})[\\t ]*日`?(?:\\*\\*)?[\\t ]*\\r?$");
     private PersonnelAttachmentIdentity(){}
     private record Card(String number,String birth,List<Map<String,Object>> fields){}
     private record Packet(String name,String anchor,List<Source> sources,Map<String,Object> appointmentProof,Card card){}
     private record AppointmentId(List<int[]> parts,int labelStart,int labelEnd){}
+
+    /** Corroboration is scored from independent source signals; explicit conflicts veto it. */
+    static Map<String,Object> multiSignalProof(Fact appointment,Fact certificate,EvidenceCorpus corpus){
+        var assessment=EvidenceIdentitySignals.assess(appointment,certificate,corpus);
+        return assessment.accepted()?assessment.proof():Map.of();
+    }
 
     static Map<String,Object> proof(Fact appointment,Fact certificate,EvidenceCorpus corpus){
         if(!certificate.kind().equals("CERTIFICATE")||!SubjectIdentity.person(appointment).equals(certificate.subject()))return Map.of();
@@ -39,7 +49,18 @@ final class PersonnelAttachmentIdentity {
     static Map<String,Object> appointmentIdentity(Fact appointment,EvidenceCorpus corpus){
         Packet packet=packet(appointment,corpus);if(packet==null)return Map.of();
         return linked("version",VERSION,"field","CN_ID","valueFingerprint",identity(packet.card().number()),
-            "sourceIds",packet.sources().stream().map(Source::id).toList(),"appointmentIdentity",packet.appointmentProof(),"identityCardFields",packet.card().fields());
+            "birthDate",packet.card().birth(),"sourceIds",packet.sources().stream().map(Source::id).toList(),"appointmentIdentity",packet.appointmentProof(),"identityCardFields",packet.card().fields());
+    }
+
+    /** An explicit but unresolved appointment ID must not be bypassed by a weaker name score. */
+    static boolean unresolvedExplicitIdentity(Fact role,EvidenceCorpus corpus){
+        if(ConfirmedSubjectBindings.identifiers(role,corpus).size()==1)return false;
+        if(!appointmentIdentity(role,corpus).isEmpty())return false;
+        for(String id:role.sourceIds()){Source source=corpus.byId.get(id);if(source==null)continue;
+            var page=corpus.pages.get(EvidenceCorpus.pageKey(source.evidence().documentId(),source.evidence().page(),source.evidence().locationType()));
+            if(page==null)continue;String text=page.text();Matcher history=Pattern.compile("(?m)^\\s*(?:主要工作经历|工作经历|工作履历|参加过的类似项目)").matcher(text);if(history.find())text=text.substring(0,history.start());
+            if(text.contains("身份证号")&&Pattern.compile("[0-9]{8,17}").matcher(text).find())return true;
+        }return false;
     }
 
     private static Packet packet(Fact appointment,EvidenceCorpus corpus){
@@ -89,6 +110,12 @@ final class PersonnelAttachmentIdentity {
             if(band.group(1).matches(".*(?:号码|电话|备注|银行|编号|说明|证书|学历|年龄|出生|身份证|未提供|未明确).*"))continue;
             if((band.group(2)+band.group(4)).equalsIgnoreCase(expected))candidates.add(new AppointmentId(List.of(new int[]{band.start(2),band.end(2)},new int[]{band.start(4),band.end(4)}),band.start(3),band.end(3)));
         }
+        // Empty professional-title cells are printed as '/' or blank. Their identity cell
+        // still has one exact label band and two ordered fragments; accept only the full
+        // number independently verified on this person's ID card in the same proof packet.
+        Pattern emptyTitle=Pattern.compile("(?m)^[\\t ]*([0-9]{8,17})[\\t ]*\\r?\\n([\\t ]*职[\\t ]*称[\\t ]+(?:(?:/|[\\p{IsHan}]{1,12})[\\t ]+)?身份证号[\\t ]+拟在本合同任职[\\t ]+(?:[\\p{IsHan}]{2,20}|/)[\\t ]*)\\r?\\n[\\t ]*(?:/[\\t ]+)?([0-9]{1,9}[Xx]?)[\\t ]*\\r?$");
+        Matcher empty=emptyTitle.matcher(text);while(empty.find())if((empty.group(1)+empty.group(3)).equalsIgnoreCase(expected))
+            candidates.add(new AppointmentId(List.of(new int[]{empty.start(1),empty.end(1)},new int[]{empty.start(3),empty.end(3)}),empty.start(2),empty.end(2)));
         return candidates.size()==1?candidates.get(0):null;
     }
 

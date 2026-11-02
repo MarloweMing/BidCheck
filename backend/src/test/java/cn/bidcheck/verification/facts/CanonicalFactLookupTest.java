@@ -105,6 +105,22 @@ class CanonicalFactLookupTest {
         var result=lookup(d,request);assertEquals(2,result.size());assertTrue(result.stream().allMatch(row->Boolean.TRUE.equals(row.get("fieldLookupTruncated"))&&Boolean.FALSE.equals(row.get("factLookupTruncated"))));
         var legacy=ledger.lookup("project","engine",List.of(d),of("sourceIds",List.of("S"),"limit",240,"fieldCoverageLimit",1,"includeFieldCoverage",true));assertTrue(legacy.stream().allMatch(row->Boolean.TRUE.equals(row.get("fieldLookupTruncated"))&&Boolean.FALSE.equals(row.get("factLookupTruncated"))));
     }
+    @Test void subjectIndexFindsFactsBeforeTheirSourceIsSelectedAndPreservesSourceIdentity(){
+        Document d=doc();var original=List.of(data.source(d,"OLD"));publish(d,"original",List.of(data.fact("f","一级","OLD")),original,List.of(),"NATIVE");
+        Map<String,Object> request=request(d,List.of(data.source(d,"CURRENT")),false);request.put("lookupMode","CANONICAL_SUBJECT");request.put("subjects",List.of("合成甲"));
+        store.reads.clear();var rows=lookup(d,request);assertEquals(1,rows.size());assertEquals(List.of("CURRENT"),map(rows.get(0).get("fact")).get("sourceIds"));
+        assertTrue(store.reads.stream().noneMatch(v->Set.of("fact_index","fact_batch","fact_origin").contains(v)),store.reads.toString());
+        request.put("subjects",List.of("无关乙"));assertTrue(lookup(d,request).isEmpty());
+        request.put("subjects",List.of("合成甲"));var narrowed=data.source(d,"CURRENT");narrowed.put("evidence",new Evidence(d.id(),d.name(),1,"PAGE","类别：一级","chars:4",1));request.put("sources",List.of(narrowed));
+        assertTrue(lookup(d,request).isEmpty(),"Subject discovery never relaxes the exact current source dependency");
+    }
+    @Test void subjectIndexFallbackAndMigrationKeepOldFactsReadable(){
+        Document d=doc();var sources=List.of(data.source(d,"S"));publish(d,"original",List.of(data.fact("f","一级","S")),sources,List.of(),"NATIVE");store.removeLookup();
+        Map<String,Object> request=request(d,sources,false);request.put("lookupMode","CANONICAL_SUBJECT");request.put("subjects",List.of("合成甲"));
+        assertEquals(1,lookup(d,request).size());assertTrue(store.reads.contains("fact_index"));
+        ledger.migrateLookupIndex(ledger.prepareManifest("project","engine",List.of(d)),50);store.reads.clear();assertEquals(1,lookup(d,request).size());assertFalse(store.reads.contains("fact_index"));
+        request.put("subjects",List.of("其他人"));assertTrue(lookup(d,request).isEmpty());
+    }
     static class TracingStore extends Store {
         record Row(String kind,String project,String parent,Map<String,Object> value){}
         final Map<String,Row> rows=new LinkedHashMap<>();final List<String> reads=new ArrayList<>();TracingStore(){super(null,new ObjectMapper());}

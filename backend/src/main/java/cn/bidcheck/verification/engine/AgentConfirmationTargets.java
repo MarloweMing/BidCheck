@@ -1,0 +1,41 @@
+package cn.bidcheck.verification.engine;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.*;
+import static cn.bidcheck.verification.engine.VerificationTypes.*;
+
+/** A waiting target is still business-unclosed. Only current, cited server candidates may pause acquisition. */
+final class AgentConfirmationTargets {
+    private static final ObjectMapper JSON=new ObjectMapper();
+    private AgentConfirmationTargets(){}
+    static Map<String,Object> proof(Rule target,Decision decision,RuleEvaluator evaluator){
+        if(decision==null||!"NEEDS_CONFIRMATION".equals(decision.status())||decision.gaps().isEmpty()
+            ||decision.gaps().stream().anyMatch(g->!"INFERENCE_CONFIRMATION_REQUIRED".equals(g.code())))return Map.of();
+        List<Map<String,Object>> supplied=RuleEvaluator.maps(decision.proof().get("inferredFacts"));
+        List<Map<String,Object>> current=RuleEvaluator.maps(evaluator.context.get("inferredFacts"));
+        String fingerprint=identity(JSON.valueToTree(target).toString());List<String> claims=new ArrayList<>();Set<String> sources=new LinkedHashSet<>();
+        for(Map<String,Object> claim:supplied){
+            if(!target.id().equals(str(claim,"targetId"))||!fingerprint.equals(str(claim,"targetFingerprint"))
+                ||!"NEEDS_CONFIRMATION".equals(str(claim,"status"))||str(claim,"id").isBlank()
+                ||current.stream().noneMatch(c->c.equals(claim)))continue;
+            List<Map<String,Object>> evidence=RuleEvaluator.maps(claim.get("evidences"));if(evidence.isEmpty())continue;
+            Set<String> refs=new LinkedHashSet<>();boolean valid=true;
+            for(Map<String,Object> e:evidence){Source source=evaluator.corpus.byId.get(str(e,"sourceId"));String quote=str(e,"quote");
+                if(source==null||quote.isBlank()||source.index()||source.scopeContext().blocked()
+                    ||!source.evidence().quote().contains(quote)||!source.evidence().documentId().equals(str(e,"documentId"))
+                    ||!source.documentHash().equals(str(e,"documentHash"))||!(e.get("documentVersion") instanceof Number version)||source.documentVersion()!=version.intValue()
+                    ||!(e.get("page") instanceof Number page)||source.evidence().page()!=page.intValue()
+                    ||!source.evidence().locationType().equals(str(e,"locationType"))){valid=false;break;}
+                refs.add(source.id());
+            }
+            Map<String,Object> proposed=map(claim.get("proposedFact"));
+            if(!refs.equals(new LinkedHashSet<>(ProofVerifier.strings(proposed.get("sourceIds")))))valid=false;
+            if(valid){claims.add(str(claim,"id"));sources.addAll(refs);}
+        }
+        if(claims.isEmpty())return Map.of();
+        return linked("authority","SOURCE_VALIDATED_PENDING_CONFIRMATION","targetObligationId",target.id(),"conditionStatus","NEEDS_CONFIRMATION",
+            "gapCodes",List.of("INFERENCE_CONFIRMATION_REQUIRED"),"claimIds",claims.stream().distinct().toList(),"sourceIds",List.copyOf(sources),
+            "targetFingerprint",fingerprint,"businessProof",false,"sourceValidation","CURRENT_DOCUMENT_HASH_VERSION_PAGE_AND_EXACT_QUOTE");
+    }
+    private static Map<String,Object> map(Object raw){Map<String,Object> out=new LinkedHashMap<>();if(raw instanceof Map<?,?> m)m.forEach((k,v)->out.put(String.valueOf(k),v));return out;}
+}

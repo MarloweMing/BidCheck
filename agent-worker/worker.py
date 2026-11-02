@@ -51,13 +51,16 @@ TOOL_WHITELIST = frozenset({
 })
 REVIEW_TOOLS = frozenset({"submit_review_plan", "submit_review_judgment"})
 REVIEW_TARGET_READS = frozenset({"search_evidence", "read_section", "read_table_record"})
-FACT_RECEIPT_TOOLS = frozenset({"search_evidence", "read_section", "submit_candidate_fact"})
+FACT_RECEIPT_TOOLS = frozenset({"search_evidence", "read_section", "read_table_record", "submit_candidate_fact"})
 TARGET_WORKFLOW_POLICY = "TARGET_FACTS_V1"
 REVIEW_WORKFLOW_POLICY = "AGENT_LED_REVIEW_V1"
 SOURCE_BODY_KEYS = frozenset({"quote", "opening", "text", "content"})
 VALIDATION_REJECTIONS = frozenset({
     "QUERY_INVALID", "SOURCE_NOT_DISCLOSED", "SOURCE_NOT_CURRENT", "ROW_OFFSET_INVALID",
     "FIELD_INVALID", "FACT_PROTOCOL_INVALID", "FACT_OUTSIDE_TARGET",
+    "INFERENCE_PROTOCOL_INVALID", "INFERENCE_CITATION_UNGROUNDED", "INFERENCE_TYPED_FACT_REQUIRED",
+    "INFERENCE_PREVIOUSLY_REJECTED",
+    "INFERENCE_CURRENT_SCOPE_CONFLICT",
 })
 REVIEW_VALIDATION_REJECTIONS = frozenset({
     "PLAN_APPROVAL_REQUIRED", "REVIEW_INPUT_INVALID", "REQUIREMENT_SOURCE_INCOMPLETE",
@@ -105,6 +108,11 @@ REVIEW_INSTRUCTIONS = """你是 BidCheck 的主审查员。你从招标原条款
 """
 
 
+INSTRUCTIONS += """
+你可以通过 submit_candidate_fact 提出有引文的推断：kind=INFERRED，attributes.inference 提交 claim、reasoning、confidence、risks、evidence:[{sourceId,quote}]，attributes.proposedFact 填实际事实合同所需的kind、subject、field、rawValue、value、scope、attributes。推断可综合多处逐字原文；不能编造引用。自报把握程度不授权通过；打码姓名、跨页同名、多人候选、金额口径或单位归属不明须等待客户确认。NEEDS_CONFIRMATION 是可操作的待确认事项，不是已采纳事实，不得反复改写同一推断；继续处理其他目标。"""
+REVIEW_INSTRUCTIONS += INSTRUCTIONS[INSTRUCTIONS.index("你可以通过 submit_candidate_fact 提出有引文的推断"):]
+
+
 def review_mode(start: dict[str, Any]) -> bool:
     return start.get("context", {}).get("workflowPolicy") == REVIEW_WORKFLOW_POLICY
 
@@ -128,12 +136,149 @@ def canonical(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
+def recent_tool_batches(items: list[Any], keep: int = 2) -> tuple[list[dict[str, Any]], int, int]:
+    """Assistant prose does not consume a tool-batch slot; calls/outputs stay paired.
+
+    Prefix messages belong to the following batch, trailing messages to the last
+    one. A parallel batch closes only after every call has its output. Fail closed
+    on malformed SDK history instead of silently forwarding an orphan output.
+    """
+    batches: list[list[dict[str, Any]]] = []
+    prefix: list[dict[str, Any]] = []
+    current: list[dict[str, Any]] | None = None
+    pending: set[str] = set()
+    for item in items:
+        value = copy.deepcopy(item) if isinstance(item, dict) else item.model_dump(exclude_none=True)
+        kind = value.get("type")
+        if kind == "function_call":
+            identifier = value.get("call_id")
+            if not isinstance(identifier, str) or not identifier or identifier in pending:
+                raise WorkerError("MODEL_TOOL_HISTORY_INVALID")
+            if current is None:
+                current, prefix = prefix, []
+            current.append(value)
+            pending.add(identifier)
+        elif kind == "function_call_output":
+            identifier = value.get("call_id")
+            if current is None or identifier not in pending:
+                raise WorkerError("MODEL_TOOL_HISTORY_INVALID")
+            current.append(value)
+            pending.remove(identifier)
+            if not pending:
+                batches.append(current)
+                current = None
+        elif current is not None:
+            current.append(value)
+        else:
+            prefix.append(value)
+    if pending:
+        raise WorkerError("MODEL_TOOL_HISTORY_INCOMPLETE")
+    selected = batches[-keep:]
+    recent = [value for batch in selected for value in batch]
+    # Preserve the model's final connective message without counting it as a batch.
+    recent.extend(prefix)
+    return recent, len(selected), len(batches)
+
+
+def receipt_reference(receipt: dict[str, Any]) -> str:
+    # Contract deduplication changes transport spelling, not the host computation.
+    value = {key: item for key, item in receipt.items() if key not in {
+        "expectedFactContracts", "allowedFactContracts", "expectedFactContractsRevision",
+        "expectedFactContractsUnchanged", "expectedFactContractsRef"}}
+    return "host.computationReceipt:" + hashlib.sha256(canonical(value).encode()).hexdigest()
+
+
+def project_computation_receipt(receipt: dict[str, Any], active: str) -> dict[str, Any]:
+    """A provider-only view; full receipts remain in Runner/host/state for restoration.
+
+    Keep the current obligation, all ancestor operators and sibling status/gap
+    summaries. Aggregate evidence repeats child quotes; replace that duplicate
+    material with a hash/reference while retaining the active leaf's exact data.
+    No projected value is ever passed to observe_completion or source admission.
+    """
+    wanted = {active, active.removesuffix("::own")} if active else set()
+    selected: list[dict[str, Any]] = []
+
+    def identifier(node: dict[str, Any]) -> str:
+        return str(node.get("id", node.get("obligationId", node.get("targetObligationId", ""))))
+
+    def children(node: dict[str, Any]) -> list[Any]:
+        direct = node.get("children")
+        proof = node.get("proof")
+        return direct if isinstance(direct, list) else proof.get("children", []) if isinstance(proof, dict) and isinstance(proof.get("children"), list) else []
+
+    def includes(node: Any) -> bool:
+        return isinstance(node, dict) and (identifier(node) in wanted or any(includes(child) for child in children(node)))
+
+    def summary(node: dict[str, Any], view: str) -> dict[str, Any]:
+        out = {key: copy.deepcopy(node[key]) for key in ("id", "obligationId", "targetObligationId", "status", "logic", "operator") if key in node}
+        proof = node.get("proof", {})
+        if isinstance(proof, dict):
+            for key in ("logic", "operator", "applicable", "conditionStatus", "selectedBranchId"):
+                if key in proof:
+                    out.setdefault("proof", {})[key] = copy.deepcopy(proof[key])
+        gaps = node.get("gaps", []) if isinstance(node.get("gaps", []), list) else []
+        out.update(view=view, gapCodes=list(dict.fromkeys(str(gap.get("code", "")) for gap in gaps if isinstance(gap, dict))),
+                   childCount=len(children(node)), bodyAvailableWhenScheduled=True)
+        return out
+
+    def remove_aggregate_duplicates(node: Any) -> Any:
+        if not isinstance(node, dict):
+            return copy.deepcopy(node)
+        out = copy.deepcopy(node)
+        nested = children(node)
+        if nested:
+            if "evidences" in out:
+                evidence = out.pop("evidences")
+                out["aggregateEvidenceRef"] = {"count": len(evidence) if isinstance(evidence, list) else 0,
+                    "sha256": hashlib.sha256(canonical(evidence).encode()).hexdigest(),
+                    "policy": "CHILD_EVIDENCE_PRESERVED_FULL_AGGREGATE_IN_HOST_AUDIT"}
+            if isinstance(out.get("children"), list):
+                out["children"] = [remove_aggregate_duplicates(child) for child in nested]
+            elif isinstance(out.get("proof"), dict):
+                out["proof"]["children"] = [remove_aggregate_duplicates(child) for child in nested]
+        return out
+
+    def project(node: Any) -> Any:
+        if not isinstance(node, dict):
+            return copy.deepcopy(node)
+        if identifier(node) in wanted:
+            selected.append(node)
+            return remove_aggregate_duplicates(node)
+        if not includes(node):
+            return summary(node, "SIBLING_HOST_DECISION_REFERENCE")
+        out = summary(node, "ANCESTOR_LOGIC_HOST_DECISION_UNCHANGED")
+        out["children"] = [project(child) for child in children(node)]
+        return out
+
+    out = copy.deepcopy(receipt)
+    for key in ("obligations", "decisions"):
+        if isinstance(receipt.get(key), list):
+            out[key] = [project(node) for node in receipt[key]]
+    if isinstance(receipt.get("decision"), dict):
+        out["decision"] = project(receipt["decision"])
+    for key in ("expectedFactContracts", "allowedFactContracts"):
+        if key in out:
+            out.pop(key)
+            out["expectedFactContractsRef"] = "currentHostState.allowedFactContracts"
+    if isinstance(receipt.get("gaps"), list):
+        out["wholeReceiptGapCount"] = len(receipt["gaps"])
+        active_gaps = [gap for node in selected for gap in (node.get("gaps", []) if isinstance(node.get("gaps", []), list) else [])]
+        out["gaps"] = list({canonical(gap): copy.deepcopy(gap) for gap in active_gaps}.values())
+        out["gapView"] = "ACTIVE_TARGET_ONLY_WHOLE_RECEIPT_GAP_IDS_PRESERVED"
+    out.update(view="ACTIVE_TARGET_AND_ANCESTOR_LOGIC_HOST_RECEIPT_UNCHANGED",
+               activeTargetObligationId=active, fullReceiptRef=receipt_reference(receipt),
+               activeTargetPresent=bool(selected), fullReceiptAvailableWhenScheduled=True)
+    return out
+
+
 def operation_key(name: str, arguments: dict[str, Any]) -> str:
     """Normalize representation, not business meaning (roles/names/IDs stay distinct)."""
     def normalize(value: Any, key: str = "") -> Any:
         if isinstance(value, dict):
             return {field: normalize(item, field) for field, item in value.items()
-                    if not (field == "basis" and value.get("kind") in {"MATERIAL", "DECLARATION"})}
+                    if field not in {"reasoning", "confidence", "risks"}
+                    and not (field == "basis" and value.get("kind") in {"MATERIAL", "DECLARATION"})}
         if isinstance(value, list):
             items = [normalize(item) for item in value]
             return sorted(set(items)) if key == "sourceIds" and all(isinstance(x, str) for x in items) else items
@@ -410,6 +555,8 @@ class Investigation:
     duplicate_calls: int = 0
     consecutive_duplicates: int = 0
     cached: dict[str, dict[str, Any]] = field(default_factory=dict)
+    semantic_rejections: dict[str, dict[str, Any]] = field(default_factory=dict)
+    confirmation_targets: set[str] = field(default_factory=set)
     successful_read_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
     source_versions: set[str] = field(default_factory=set)
     disclosed_ids: set[str] = field(default_factory=set)
@@ -450,6 +597,11 @@ class Investigation:
     preplan_feedback_issued: bool = False
     review_stage_blocks: int = 0
     context_compactions: int = 0
+    context_rebuilds: int = 0
+    context_retained_tool_batches: int = 0
+    context_receipt_input_chars: int = 0
+    context_receipt_output_chars: int = 0
+    latest_computation_receipt: dict[str, Any] = field(default_factory=dict)
     context_input_chars: int = 0
     context_removed_chars: int = 0
     correctable_tool_rejections: int = 0
@@ -640,6 +792,7 @@ class Investigation:
                         self.blocked_paths.pop(key, None)
                         self.semantic_work_items.pop(key, None)
                 self.completed_target_ids.discard(target)
+                self.confirmation_targets.discard(target)
                 self.completed = False
                 self.target_completed = False
                 self.exhausted_path_repeats = 0
@@ -673,7 +826,13 @@ class Investigation:
         return blocked - self.completed_target_ids
 
     def remaining_target_ids(self) -> set[str]:
-        return self.target_ids() - self.blocked_target_ids() - self.completed_target_ids - set(self.exhausted_targets)
+        return self.target_ids() - self.blocked_target_ids() - self.completed_target_ids - set(self.exhausted_targets) - self.confirmation_targets
+
+    def waiting_for_confirmation(self) -> bool:
+        # Exhausted/blocked targets are still business-unclosed. Their presence
+        # cannot be hidden merely because there is no schedulable target left.
+        unclosed = self.target_ids() - self.completed_target_ids
+        return bool(unclosed) and unclosed <= self.confirmation_targets and not self.failed_tools
 
     def select_active_target(self) -> str:
         remaining = self.remaining_target_ids()
@@ -742,6 +901,18 @@ class Investigation:
             navigation = sorted(self.disclosed_ids)
         return hashlib.sha256(canonical([operation, revision, navigation]).encode()).hexdigest()
 
+    def semantic_rejection_key(self, arguments: dict[str, Any]) -> str:
+        fact = arguments.get("fact")
+        if not isinstance(fact, dict):
+            return ""
+        # Preserve every typed correction, source and attribute; ignore only a rewritten
+        # transcription/justification. New evidence revision always permits another attempt.
+        normalized = {key: value for key, value in fact.items() if key != "rawValue"
+                      and not (key == "basis" and fact.get("kind") in {"MATERIAL", "DECLARATION"})}
+        return self.operation_cache_key(operation_key("submit_candidate_fact", {
+            "targetObligationId": arguments.get("targetObligationId"), "fact": normalized}),
+            "submit_candidate_fact", arguments)
+
     def gate_target(self, name: str, arguments: dict[str, Any]) -> str | None:
         if not self.typed_workflow() or name == "submit_review_plan":
             return None
@@ -749,7 +920,7 @@ class Investigation:
         if target not in self.target_ids():
             return None
         state = ("COMPLETED" if target in self.completed_target_ids else "BLOCKED" if target in self.blocked_target_ids()
-                 else "NO_MORE_EVIDENCE" if target in self.exhausted_targets else "")
+                 else "NEEDS_CONFIRMATION" if target in self.confirmation_targets else "NO_MORE_EVIDENCE" if target in self.exhausted_targets else "")
         if not state:
             return None
         self.target_gate_blocks += 1
@@ -781,11 +952,13 @@ class Investigation:
             # Source bodies remain reusable, but old decisions never cross plans.
             self.completed = self.target_completed = False
             self.completed_target_ids.clear()
+            self.confirmation_targets.clear()
             self.blocked_paths.clear()
             self.semantic_work_items.clear()
             self.target_revisions.clear()
             self.target_progress.clear()
             self.exhausted_targets.clear()
+            self.latest_computation_receipt.clear()
             self.active_target = ""
             self.exhausted_path_repeats = 0
         self.review_targets = set(targets)
@@ -826,7 +999,47 @@ class Investigation:
                     or not plan_valid or not evidence_valid or not completion_consistent):
                 self.completed = self.target_completed = False
                 raise WorkerError("HOST_TARGET_RECEIPT_INVALID")
+            if "pendingConfirmationTargetObligationIds" in receipt or "confirmationTargetProofs" in receipt:
+                pending = receipt.get("pendingConfirmationTargetObligationIds")
+                proofs = receipt.get("confirmationTargetProofs")
+                confirmation_valid = (isinstance(pending, list)
+                    and all(isinstance(value, str) and value in remaining for value in pending)
+                    and len(set(pending)) == len(pending) and isinstance(proofs, dict)
+                    and set(proofs) == set(pending))
+                if confirmation_valid:
+                    for target in pending:
+                        proof = proofs[target]
+                        claims = proof.get("claimIds") if isinstance(proof, dict) else None
+                        sources = proof.get("sourceIds") if isinstance(proof, dict) else None
+                        if not (isinstance(proof, dict)
+                                and proof.get("authority") == "SOURCE_VALIDATED_PENDING_CONFIRMATION"
+                                and proof.get("targetObligationId") == target
+                                and proof.get("conditionStatus") == "NEEDS_CONFIRMATION"
+                                and proof.get("gapCodes") == ["INFERENCE_CONFIRMATION_REQUIRED"]
+                                and proof.get("businessProof") is False
+                                and self.valid_revision(proof.get("targetFingerprint"))
+                                and proof.get("sourceValidation") == "CURRENT_DOCUMENT_HASH_VERSION_PAGE_AND_EXACT_QUOTE"
+                                and isinstance(claims, list) and claims
+                                and all(self.valid_revision(value) for value in claims)
+                                and len(set(claims)) == len(claims)
+                                and isinstance(sources, list) and sources
+                                and all(self.valid_revision(value) for value in sources)):
+                            confirmation_valid = False
+                            break
+                if not confirmation_valid:
+                    self.completed = self.target_completed = False
+                    raise WorkerError("HOST_CONFIRMATION_RECEIPT_INVALID")
+                changed_confirmations = self.confirmation_targets != set(pending)
+                self.confirmation_targets = set(pending)
+                for target in pending:
+                    self.progress_entry(target).update(state="NEEDS_CONFIRMATION", confirmationIds=proofs[target]["claimIds"],
+                                                       evidenceRevision=revisions[target], receiptAuthority="CURRENT_SERVER_PROOF")
+                if changed_confirmations:
+                    self.emit("evidence_pending", pendingConfirmationTargetObligationIds=sorted(pending),
+                              reason="SOURCE_VALIDATED_CONFIRMATION_TARGETS", evidenceRevision=self.host_revision,
+                              businessProof=False)
             self.completed_target_ids = set(done)
+            self.confirmation_targets.difference_update(done)
             # Scheduling authority comes from the same validated host partition.
             # A tool's prose, the model's selected target, or an old ledger cannot
             # manufacture remaining work or reopen a covered ANY branch.
@@ -980,10 +1193,17 @@ class Investigation:
                 "repeatedRejectionCount": self.repeated_rejection_count,
                 "automaticRecomputations": self.automatic_recomputations,
                 "contextCompactions": self.context_compactions,
+                "contextRebuilds": self.context_rebuilds,
+                "contextRetainedToolBatches": self.context_retained_tool_batches,
+                "contextReceiptInputChars": self.context_receipt_input_chars,
+                "contextReceiptOutputChars": self.context_receipt_output_chars,
+                "contextReceiptRemovedChars": max(0, self.context_receipt_input_chars - self.context_receipt_output_chars),
                 "contextInputChars": self.context_input_chars,
                 "contextRemovedChars": self.context_removed_chars,
                 "blockedTargetObligationIds": sorted(self.blocked_target_ids()),
                 "remainingTargetObligationIds": sorted(self.remaining_target_ids()),
+                "pendingConfirmationTargetObligationIds": sorted(self.confirmation_targets),
+                "waitingForConfirmation": self.waiting_for_confirmation(),
                 "completedTargetObligationIds": sorted(self.completed_target_ids),
                 "businessUnclosedTargetObligationIds": sorted(self.target_ids() - self.completed_target_ids),
                 "investigationIncomplete": status == "FAILED" and code == "AGENT_STALLED_WITH_REMAINING_TARGETS",
@@ -997,6 +1217,10 @@ class Investigation:
     def finish(self, code: str = "") -> dict[str, Any]:
         # A server recompute owns completion. A resolved target can stop this
         # investigation even while unrelated obligations remain unresolved.
+        if self.waiting_for_confirmation() and code in {"", "EVIDENCE_PENDING", "WAIT_CONFIRMATION", "AGENT_STALLED_WITH_REMAINING_TARGETS"}:
+            result = self.result("NO_PROGRESS", "WAIT_CONFIRMATION")
+            result["summary"] = "所有剩余目标已有原文依据的待确认卡；等待确认后重算，尚未形成业务通过。"
+            return result
         status = ("COMPLETED" if self.target_completed or self.completed else
                   "FAILED" if self.failed_tools else
                   "EVIDENCE_UPDATED" if self.accepted_ids else "NO_PROGRESS")
@@ -1265,6 +1489,9 @@ class Investigation:
         key = self.operation_cache_key(operation, name, arguments)
         read_key = self.operation_cache_key(operation, name, arguments, body=True)
         prior = self.cached.get(key)
+        semantic_key = self.semantic_rejection_key(arguments) if name == "submit_candidate_fact" else ""
+        if prior is None and semantic_key:
+            prior = self.semantic_rejections.get(semantic_key)
         if prior is None and self.typed_workflow() and name in {"read_section", "read_table_record"}:
             prior = self.successful_read_cache.get(read_key)
         if prior is not None:
@@ -1293,6 +1520,9 @@ class Investigation:
             self.duplicate(name)
             return canonical({"cached": True, "noProgress": True,
                               "priorStatus": prior.get("status", "COMPLETED"),
+                              "priorRejections": prior.get("rejections", []),
+                              "expectedFactContracts": prior.get("expectedFactContracts", []),
+                              "correctionHints": prior.get("correctionHints", []),
                               "sourceIds": prior.get("sourceIds", []),
                               "blockedTargetObligationIds": sorted(self.blocked_target_ids()),
                               "remainingTargetObligationIds": sorted(self.remaining_target_ids()),
@@ -1324,6 +1554,12 @@ class Investigation:
             raise WorkerError("TOOL_RESULT_TOO_LARGE")
         kind = receipt_kind(result, review=review_mode(self.start))
         tool_failed = kind == "FAILED"
+        if semantic_key and kind == "REJECTED":
+            # An exact quote/protocol repair may legitimately change rawValue; never suppress it.
+            codes = {str(row.get("code", "")) for row in result.get("rejections", []) if isinstance(row, dict)}
+            codes.add(str(result.get("error", "")))
+            if codes & {"FACT_OUTSIDE_TARGET", "CURRENT_ROLE_SOURCE_UNPROVEN", "SUBJECT_IDENTITY_CONFLICT", "ENTITY_IDENTITY_AMBIGUOUS", "PERSON_ROLE_PERSON_UNPROVEN", "FACT_SUBJECT_REQUIRED"}:
+                self.semantic_rejections[semantic_key] = copy.deepcopy(result)
         if plan_structure and kind == "REJECTED":
             self.review_plan_rejections.setdefault(plan_structure, copy.deepcopy(result))
             self.emit("review_plan_rejection_remembered", error=result.get("error", "PLAN_REJECTED"),
@@ -1388,6 +1624,7 @@ class Investigation:
             self.target_completed = kind == "OK" and current_plan and (self.completed or result.get("targetCheckCompleted") is True)
             if kind == "OK" and current_plan:
                 self.observe_completion(result)
+                self.latest_computation_receipt = copy.deepcopy(result)
         receipt = result.get("computationReceipt")
         receipt_tools = FACT_RECEIPT_TOOLS | ({"submit_review_judgment"} if review_mode(self.start) else set())
         automatic = (name in receipt_tools and not tool_failed and isinstance(receipt, dict)
@@ -1407,8 +1644,17 @@ class Investigation:
                 self.current_gap_ids = {value for value in automatic_gaps if value}
             self.automatic_recomputations += 1
             self.observe_completion(receipt)
+            self.latest_computation_receipt = copy.deepcopy(receipt)
             self.emit("host_recomputed", trigger=name, targetCheckCompleted=self.target_completed,
                       businessCheckCompleted=self.completed, remainingGapIds=receipt.get("remainingGapIds", []))
+        if (name == "submit_candidate_fact" and not tool_failed and result.get("status") == "NEEDS_CONFIRMATION"
+                and result.get("confirmationId") and not automatic
+                and "pendingConfirmationTargetObligationIds" not in result):
+            # Legacy hosts supplied only the submission receipt. Modern hosts
+            # recompute the whole target: one new card cannot hide a remaining
+            # content/validity requirement on that same target.
+            self.confirmation_targets.add(call_target)
+            self.progress_entry(call_target).update(state="NEEDS_CONFIRMATION", confirmationId=result["confirmationId"])
         self.emit("tool_finished", tool=name, toolIndex=self.tool_calls,
                   durationMs=int((time.monotonic() - began) * 1000),
                   acceptedFactCount=len(self.accepted_ids), businessCheckCompleted=self.completed,
@@ -1424,6 +1670,10 @@ class Investigation:
         if not tool_failed or self.failed_attempts.get(operation, 0) > 1:
             resulting_key = self.operation_cache_key(operation, name, arguments)
             self.cached[resulting_key] = result
+            if semantic_key and semantic_key in self.semantic_rejections and kind == "REJECTED":
+                # The first denial may also disclose the initial target/source revision.
+                # Cache under that authoritative revision, not only UNOBSERVED.
+                self.semantic_rejections[self.semantic_rejection_key(arguments)] = copy.deepcopy(result)
         if kind == "OK" and self.typed_workflow() and name in {"read_section", "read_table_record"}:
             successful_key = self.operation_cache_key(operation, name, arguments, body=True)
             self.successful_read_cache[successful_key] = result
@@ -1480,7 +1730,7 @@ class Investigation:
                       newTableRecord=new_table, acceptedFactDelta=len(newly_accepted), closedTargetDelta=len(closed_targets),
                       noEvidenceProgressRounds=entry["noEvidenceProgressRounds"])
         should_note_no_progress = self.typed_workflow() and not evidence_progress and not tool_failed \
-            and name != "submit_review_plan" and (not navigation_progress or call_target == "DOCUMENT_DISCOVERY")
+            and name != "submit_review_plan" and call_target not in self.confirmation_targets and (not navigation_progress or call_target == "DOCUMENT_DISCOVERY")
         # A corrected candidate is still verified by the host first. Only a second
         # rejection of the same semantic path with unchanged relevant evidence is
         # stalled; arbitrary reads/reworded explanations do not erase its history.
@@ -1519,23 +1769,33 @@ class Investigation:
         if not self.typed_workflow():
             return data.model_data
         items = data.model_data.input
-        groups: list[list[Any]] = []
-        pending_calls: set[str] = set()
-        for item in items[1:]:
-            value = copy.deepcopy(item) if isinstance(item, dict) else item.model_dump(exclude_none=True)
-            kind = value.get("type")
-            if kind == "function_call":
-                if not pending_calls:
-                    groups.append([])
-                pending_calls.add(value.get("call_id", ""))
-            elif kind == "function_call_output":
-                pending_calls.discard(value.get("call_id", ""))
-            elif not pending_calls:
-                groups.append([])
-            if not groups:
-                groups.append([])
-            groups[-1].append(value)
-        recent = [item for group in groups[-2:] for item in group]
+        recent, retained_batches, total_batches = recent_tool_batches(items[1:])
+        active = self.select_active_target()
+        latest = self.latest_computation_receipt
+        latest_ref = receipt_reference(latest) if latest else ""
+        latest_view = project_computation_receipt(latest, active) if latest else {}
+        receipt_input_chars = receipt_output_chars = 0
+        receipt_refs: set[str] = set()
+
+        def receipt_view(receipt: dict[str, Any]) -> dict[str, Any]:
+            nonlocal receipt_input_chars, receipt_output_chars
+            receipt_input_chars += len(canonical(receipt))
+            reference = receipt_reference(receipt)
+            receipt_refs.add(reference)
+            if reference == latest_ref:
+                # The newest active projection is supplied exactly once in host
+                # state; retained batches keep their original temporal receipt ref.
+                view = {key: copy.deepcopy(receipt[key]) for key in (
+                    "kind", "status", "targetReceiptAuthority", "businessCheckCompleted",
+                    "targetCheckCompleted", "businessDecision", "targetDecision", "planRevision",
+                    "serverPlanRevision", "serverPlanFingerprint", "targetEvidenceRevision",
+                    "remainingGapIds", "completedTargetObligationIds", "remainingTargetObligationIds") if key in receipt}
+                view.update(view="CURRENT_HOST_RECEIPT_REFERENCE", fullReceiptRef=reference,
+                            activeViewRef="currentHostState.latestComputationReceipt")
+            else:
+                view = project_computation_receipt(receipt, active)
+            receipt_output_chars += len(canonical(view))
+            return view
         # Latest contracts have already been applied from authenticated receipts.
         # Remove duplicate contract bodies from the two retained tool batches.
         self.visible_source_versions.clear()
@@ -1557,11 +1817,15 @@ class Investigation:
                     scoped.pop("expectedFactContracts", None)
                     scoped.pop("allowedFactContracts", None)
                     scoped["expectedFactContractsRef"] = "currentHostState.allowedFactContracts"
+            if isinstance(result.get("computationReceipt"), dict):
+                result["computationReceipt"] = receipt_view(result["computationReceipt"])
+            if payload.get("trustedTool") == "recompute_check" and isinstance(result.get("obligations"), list):
+                result = receipt_view(result)
+                payload["result"] = result
             for source in result.get("sources", []) if isinstance(result.get("sources"), list) else []:
                 if isinstance(source, dict) and any(key in source for key in SOURCE_BODY_KEYS):
                     self.visible_source_versions.add(hashlib.sha256(canonical(source).encode()).hexdigest())
             item["output"] = canonical(payload)
-        active = self.select_active_target()
         context, contracts, source_ids = self.active_context(active)
         state = {"allowedFactContracts": contracts,
                  "activeTargetObligationId": active,
@@ -1582,6 +1846,14 @@ class Investigation:
                                    if not active or identifier in source_ids or active in self.source_targets.get(identifier, set())],
                  "disclosedSourceCount": len(self.source_catalog),
                  "sourceBodyPolicy": "Sources omitted from the recent window must be reread with read_section before quoting. Never synthesize their contents."}
+        if latest_view:
+            if latest_ref not in receipt_refs:
+                receipt_input_chars += len(canonical(latest))
+            receipt_output_chars += len(canonical(latest_view))
+            latest_view["currentEvidenceRevision"] = self.host_revision
+            latest_view["matchesCurrentEvidenceRevision"] = latest.get("targetEvidenceRevision") == self.host_revision
+            latest_view["sourceAuthorityPolicy"] = "PROVIDER_VIEW_ONLY_HOST_STATE_USES_FULL_ORIGINAL_RECEIPT; stale revisions are historical context, never new completion proof."
+            state["latestComputationReceipt"] = latest_view
         if review_mode(self.start):
             context["targetObligationIds"] = sorted(self.target_ids())
             state["approvedReviewPlan"] = dict(self.review_plan,
@@ -1592,12 +1864,23 @@ class Investigation:
                     "untrustedCaseData": context, "currentHostState": state})}, *recent]
         before, after = len(canonical(items)), len(canonical(compact))
         self.context_input_chars += after
-        self.context_removed_chars += max(0, before - after)
-        self.context_compactions += 1
-        self.emit("context_compacted", inputChars=after, removedChars=max(0, before - after),
-                  retainedToolBatches=min(2, len(groups)), disclosedSourceCount=len(self.source_catalog),
-                  activeTargetObligationId=active, retainedContractCount=len(contracts),
-                  retainedFactCount=len(context.get("knownFacts", [])))
+        removed = max(0, before - after)
+        self.context_removed_chars += removed
+        self.context_rebuilds += 1
+        self.context_retained_tool_batches = retained_batches
+        self.context_receipt_input_chars += receipt_input_chars
+        self.context_receipt_output_chars += receipt_output_chars
+        metrics = dict(inputChars=after, previousInputChars=before, removedChars=removed,
+                       retainedToolBatches=retained_batches, availableToolBatches=total_batches,
+                       retainedFunctionCalls=sum(item.get("type") == "function_call" for item in recent),
+                       receiptInputChars=receipt_input_chars, receiptOutputChars=receipt_output_chars,
+                       receiptRemovedChars=max(0, receipt_input_chars-receipt_output_chars),
+                       disclosedSourceCount=len(self.source_catalog), activeTargetObligationId=active,
+                       retainedContractCount=len(contracts), retainedFactCount=len(context.get("knownFacts", [])))
+        self.emit("context_rebuilt", **metrics)
+        if removed:
+            self.context_compactions += 1
+            self.emit("context_compacted", **metrics)
         return ModelInputData(input=compact, instructions=data.model_data.instructions)
 
     def active_context(self, active: str) -> tuple[dict[str, Any], list[Any], set[str]]:
@@ -1686,10 +1969,14 @@ class Investigation:
         return context, contracts, source_ids
 
 
+from model_audit import ModelAudit
+
+
 class LocalHooks(RunHooks):
     def __init__(self, investigation: Investigation):
         self.investigation = investigation
         self.model_started = 0.0
+        self.audit = ModelAudit.from_env()
 
     async def on_llm_start(self, context: Any, agent: Any, system_prompt: Any, input_items: Any) -> None:
         state = self.investigation
@@ -1720,13 +2007,15 @@ class LocalHooks(RunHooks):
         # an actual model attempt after the host confirms the current run lease.
         state.model_calls += 1
         self.model_started = time.monotonic()
-        state.emit("model_request_authorized", id=permit_id, modelIndex=state.model_calls)
+        audit = self.audit.record(state.start["requestId"], state.model_calls, "input", {"systemPrompt": system_prompt, "inputItems": input_items, "tools": state.start.get("tools", [])})
+        state.emit("model_request_authorized", id=permit_id, modelIndex=state.model_calls, modelAudit=audit)
 
     async def on_llm_end(self, context: Any, agent: Any, response: Any) -> None:
         usage = getattr(response, "usage", None)
         self.investigation.input_tokens += int(getattr(usage, "input_tokens", 0) or 0)
         self.investigation.output_tokens += int(getattr(usage, "output_tokens", 0) or 0)
-        self.investigation.emit("model_finished", modelIndex=self.investigation.model_calls,
+        audit = self.audit.record(self.investigation.start["requestId"], self.investigation.model_calls, "output", response)
+        self.investigation.emit("model_finished", modelIndex=self.investigation.model_calls, modelAudit=audit,
                                 targetId=self.investigation.select_active_target(),
                                 inputTokens=int(getattr(usage, "input_tokens", 0) or 0),
                                 outputTokens=int(getattr(usage, "output_tokens", 0) or 0),
@@ -1761,6 +2050,8 @@ async def investigate(start: dict[str, Any], channel: Any, settings: Settings,
             if not state.canonical_remaining_targets:
                 state.target_completed = True
                 return state.finish()
+        if state.waiting_for_confirmation():
+            return state.finish("WAIT_CONFIRMATION")
         if state.target_ids() and state.target_ids() <= state.blocked_target_ids():
             raise NoProgress("SEMANTIC_REJECTION_WITHOUT_NEW_EVIDENCE")
         if state.target_ids() and not state.remaining_target_ids():
@@ -1778,9 +2069,10 @@ async def investigate(start: dict[str, Any], channel: Any, settings: Settings,
             # SDK calls this after the whole tool batch has settled. Read only
             # authoritative host state: a later fact in the same batch clears
             # stale completion, and model text/tool-output prose has no say.
-            completed = (state.target_completed or state.completed) and state.stop_reason is None
+            waiting = state.waiting_for_confirmation()
+            completed = (state.target_completed or state.completed or waiting) and state.stop_reason is None
             return ToolsToFinalOutputResult(is_final_output=completed,
-                                            final_output="服务器已完成本次目标重算；整项状态以业务回执为准。" if completed else None)
+                                            final_output="已保存待确认推断；尚未形成业务通过。" if waiting else "服务器已完成本次目标重算；整项状态以业务回执为准。" if completed else None)
         agent = Agent(name="BidCheckLeadReviewer" if review_mode(start) else "BidCheckEvidenceInvestigator",
                       instructions=REVIEW_INSTRUCTIONS if review_mode(start) else INSTRUCTIONS,
                       model=model, tools=build_tools(state),

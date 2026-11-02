@@ -10,7 +10,7 @@ import static cn.bidcheck.verification.facts.LedgerValues.*;
 /** Rebuildable source/target pointers. Audit batches and usages never serve as search entries.
  * All mutations run under the fact publisher's existing project fence and transaction. */
 final class CanonicalFactLookup {
-    static final String VERSION="canonical-source-lookup-1";
+    static final String VERSION="canonical-source-subject-lookup-2";
     private final Store store;
     CanonicalFactLookup(Store store){this.store=store;}
     static String stateId(String documentParent){return dbKey("lookup-state",VERSION+documentParent);}
@@ -61,7 +61,9 @@ final class CanonicalFactLookup {
             else{seal(value);writes.add(store.newRow("fact_lookup_item",id,scope.project,scope.engine.length()<=64?scope.engine:dbKey("lookup-engine",scope.engine),value));}
             Map<String,Object> field=map(value.get("fieldCoverage"));String kind=field.isEmpty()?"fact_lookup_ref":"field_lookup_ref";
             for(Map<String,Object> source:maps(value.get("sources"))){String doc=text(evidence(source.get("evidence")),"documentId"),parent=scope.documentParents.get(doc);if(parent==null)throw new IllegalArgumentException("LOOKUP_SOURCE_OUTSIDE_MANIFEST");
-                for(String token:List.of("A:"+text(source,"id"),"F:"+text(source,"sourceFingerprint"))){
+                List<String> tokens=new ArrayList<>(List.of("A:"+text(source,"id"),"F:"+text(source,"sourceFingerprint")));
+                if(field.isEmpty())for(String subject:subjectTokens(groundedFacts.getOrDefault(id,Map.of())))tokens.add("S:"+subject);
+                for(String token:tokens){
                     String bucket=bucket(parent,token,field.isEmpty()?text(value,"factKind"):"FIELD",text(field,"observationKey"),text(field,"modelIdentity"));
                     String refId=dbKey("lookup-ref",bucket+id);refs.put(refId,of("id",refId,"projectId",scope.project,"version",VERSION,"itemId",id,"itemDigest",text(value,"digest"),"bucket",bucket,"kind",kind));
                 }
@@ -87,6 +89,17 @@ final class CanonicalFactLookup {
         }
         return new Publication(writes.size(),List.copyOf(events));
     }
+    /** Discovery keys only. Every result must still validate all current sources and the fact body. */
+    static Set<String> subjectTokens(Map<String,Object> fact){
+        Set<String> tokens=new LinkedHashSet<>();Map<String,Object> attributes=map(fact.get("attributes"));
+        for(String key:List.of("subject"))addSubject(tokens,text(fact,key));
+        if("PERSON_ROLE".equals(text(fact,"kind")))addSubject(tokens,text(fact,"value"));
+        if("RELATION".equals(text(fact,"kind"))){addSubject(tokens,text(fact,"value"));for(String key:List.of("object","subject","employer","member","organization","leftRole","rightRole"))addSubject(tokens,text(attributes,key));}
+        return tokens;
+    }
+    static String subjectKey(String text){return Objects.toString(text,"").replaceAll("\\s+","");}
+    private static void addSubject(Set<String> tokens,String text){String value=subjectKey(text);if(!value.isBlank()&&value.length()<=200)tokens.add(value);}
+    static boolean subjectMatches(Map<String,Object> fact,Collection<String> subjects){return subjects.isEmpty()||subjects.stream().map(CanonicalFactLookup::subjectKey).anyMatch(subjectTokens(fact)::contains);}
     static String revisionId(String parent){return dbKey("lookup-revision",VERSION+parent);}
     private static Map<String,Object> base(FactLedgerService.Scope scope,Map<String,Object> batch,String id){return of("id",id,"projectId",scope.project,"engineIdentity",scope.engine,"version",VERSION,"batchId",text(batch,"id"),"engineVersion",text(batch,"engineVersion"),"observationPolicy",text(batch,"observationPolicy"),"operationIdentity",text(batch,"operationIdentity"));}
     private static void seal(Map<String,Object> row){row.put("digest",hash(canonical(row)));}

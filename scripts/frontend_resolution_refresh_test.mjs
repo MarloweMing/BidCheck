@@ -34,13 +34,14 @@ await check('another project cannot change current project batch states',async()
   assert.equal(h.q.state.project.runs[1].status,'RUNNING');assert.equal(h.context.paints,0);assert.equal(h.q.state.run,old);
 });
 await check('loading a terminal cooldown schedules exactly one lightweight read',async()=>{
-  const h=harness(),old=report('old',12000);h.q.set(old,[old.run]);h.context.responses.push(old,[]);await h.q.loadRun('old',false);
+  const h=harness(),old=report('old',12000);h.q.set(old,[old.run]);h.context.responses.push(old,[],[]);await h.q.loadRun('old',false);
   const detailReads=()=>h.context.calls.filter(call=>call.url==='/api/runs/old?includeContent=false').length;
   const candidateReads=()=>h.context.calls.filter(call=>call.url==='/api/runs/old/dependency-recalculations').length;
+  const confirmationReads=()=>h.context.calls.filter(call=>call.url==='/api/runs/old/inference-confirmations').length;
   h.q.scheduleResolutionRefresh(old,'p');assert.equal(h.timers.size,1);assert.equal([...h.timers.values()][0].delay,2250);
-  assert.equal(detailReads(),1);assert.equal(candidateReads(),1);assert.equal(h.context.calls.length,2);
+  assert.equal(detailReads(),1);assert.equal(candidateReads(),1);assert.equal(confirmationReads(),1);assert.equal(h.context.calls.length,3);
   h.advance(2250);h.context.responses.push(report('old',12000,true));await h.fire();
-  assert.equal(detailReads(),2);assert.equal(candidateReads(),1);assert.equal(h.context.calls.length,3);
+  assert.equal(detailReads(),2);assert.equal(candidateReads(),1);assert.equal(confirmationReads(),1);assert.equal(h.context.calls.length,4);
   assert.equal(h.q.state.run.resolutionSummary.canRecover,true);assert.equal(h.timers.size,0);
   assert.ok(h.context.calls.every(call=>call.request===undefined));assert.equal(h.network(),0);
 });

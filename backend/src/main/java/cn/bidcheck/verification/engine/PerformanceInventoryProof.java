@@ -14,9 +14,14 @@ final class PerformanceInventoryProof {
     private static final Pattern ROW=Pattern.compile("(?m)^[ \\t]*([1-9][0-9]{0,2})[ \\t]+");
     private static final Pattern NAV=Pattern.compile("^(.+?)\\s*[.．…·]{3,}\\s*([0-9]+)\\s*$");
     private record Table(Document document,Page page,String body,Map<String,Object> scope){}
-    record Match(List<Evidence> evidence,List<Map<String,Object>> records){boolean present(){return !records.isEmpty();}}
+    record Match(List<Evidence> evidence,List<Map<String,Object>> records,List<Map<String,Object>> candidates){
+        Match(List<Evidence> evidence,List<Map<String,Object>> records){this(evidence,records,List.of());}
+        boolean present(){return !records.isEmpty();}
+    }
     private final List<Table> tables=new ArrayList<>();
+    private final EvidenceCorpus corpus;
     PerformanceInventoryProof(String form,RuleEvaluator evaluator){
+        corpus=evaluator.corpus;
         for(Document document:evaluator.corpus.documents){if(!"BID".equals(document.role()))continue;
             DocumentScopeProof.Resolver resolver=DocumentScopeProof.forDocument(document);
             for(Page page:document.pages()){
@@ -35,9 +40,12 @@ final class PerformanceInventoryProof {
         }
     }
     Match match(String name,Set<String> numbers,boolean uniqueName){
+        return match(name,numbers,uniqueName,Set.of());
+    }
+    Match match(String name,Set<String> numbers,boolean uniqueName,Set<String> contractDocuments){
         String wanted=normalized(name);if(wanted.length()<8)return new Match(List.of(),List.of());
         List<Map<String,Object>> records=new ArrayList<>();List<Evidence> evidence=new ArrayList<>();
-        for(Table table:tables)for(Map<String,Object> row:matchingRows(table.body(),wanted)){
+        for(Table table:tables)if(contractDocuments.isEmpty()||contractDocuments.contains(table.document().id()))for(Map<String,Object> row:matchingRows(table.body(),wanted)){
             String quote=str(row,"quote");boolean numbered=numbers.stream().anyMatch(number->Pattern.compile("(?<![A-Za-z0-9/-])"+Pattern.quote(number)+"(?![A-Za-z0-9/-])").matcher(quote).find());
             // A name shared by two distinct contracts is not a unique link without its number.
             if(!uniqueName&&!numbered)continue;
@@ -45,8 +53,58 @@ final class PerformanceInventoryProof {
             evidence.add(new Evidence(table.document().id(),table.document().name(),table.page().number(),table.page().locationType(),quote,"performance-row:"+row.get("row"),1));
         }
         // Duplicate or competing submitted records stay ambiguous; do not silently pick a row.
-        return records.size()==1?new Match(List.copyOf(evidence),List.copyOf(records)):new Match(List.of(),List.of());
+        return records.size()==1?new Match(List.copyOf(evidence),List.copyOf(records)):new Match(List.of(),List.of(),similarCandidates(name,contractDocuments));
     }
+    /** Similar titles need an independent signing date/amount and the formal proof page range.
+     * A user-confirmed row relation authorizes the row join, never its financial qualification. */
+    Match matchWithEvidence(String name,Set<String> numbers,boolean uniqueName,Set<String> documents,List<Source> contractSources,List<Fact> facts){
+        Match exact=match(name,numbers,uniqueName,documents);if(exact.present()||exact.candidates().isEmpty())return exact;
+        List<Map<String,Object>> eligible=new ArrayList<>(),candidates=new ArrayList<>();
+        Set<String> signed=new HashSet<>();Set<java.math.BigDecimal> totals=new TreeSet<>();for(Fact fact:facts)if(fact.kind().equals("CONTRACT")){
+            if(!str(fact.attributes(),"signedDate").isBlank())signed.add(str(fact.attributes(),"signedDate"));
+            if(str(fact.attributes(),"amountBasis").matches(".*(?:合同金额|签约金额|合同总价|合同价款).*")){var amount=RuleEvaluator.normalize(ProofVerifier.decimal(fact.attributes().get("amount")),str(fact.attributes(),"unit"));if(amount!=null)totals.add(amount);}
+        }
+        for(Map<String,Object> initial:exact.candidates()){
+            Map<String,Object> candidate=new LinkedHashMap<>(initial);String quote=str(candidate,"quote"),rowName=str(candidate,"contractName");String documentId=str(candidate,"documentId");int page=((Number)candidate.get("page")).intValue();
+            Table table=tables.stream().filter(t->t.document().id().equals(documentId)&&t.page().number()==page).findFirst().orElse(null);if(table==null)continue;
+            Map<String,Object> row=rowMetadata(quote);candidate.putAll(row);List<String> rowSources=sourceIds(documentId,page,quote);candidate.put("sourceIds",rowSources);
+            boolean confirmed=facts.stream().anyMatch(f->InferenceClaims.humanConfirmed(f)&&f.kind().equals("RELATION")&&f.field().equals("CONTRACT_RECORD_MATCH")&&f.subject().equals(name)&&str(f.attributes(),"object").equals(rowName)&&str(f.attributes(),"documentId").equals(documentId)&&str(f.attributes(),"inventoryPage").equals(Integer.toString(page))&&str(f.attributes(),"inventoryRow").equals(str(candidate,"row"))&&f.sourceIds().containsAll(rowSources)&&contractSources.stream().anyMatch(s->f.sourceIds().contains(s.id())));
+            List<String> rowDates=ProofVerifier.strings(row.get("signedDates"));Set<java.math.BigDecimal> rowAmounts=new TreeSet<>();for(String amount:ProofVerifier.strings(row.get("listedAmounts"))){var value=ProofVerifier.decimal(amount);if(value!=null)rowAmounts.add(value);}
+            boolean dateMatch=signed.size()==1&&rowDates.size()==1&&signed.contains(rowDates.get(0));boolean amountMatch=totals.size()==1&&rowAmounts.size()==1&&totals.equals(rowAmounts);
+            int[] range=proofRange(table);boolean inRange=range[0]>0&&!contractSources.isEmpty()&&contractSources.stream().allMatch(s->s.evidence().documentId().equals(documentId)&&s.evidence().page()>=range[0]&&s.evidence().page()<=range[1]);
+            boolean numbered=numbers.stream().anyMatch(n->Pattern.compile("(?<![A-Za-z0-9/-])"+Pattern.quote(n)+"(?![A-Za-z0-9/-])").matcher(quote).find());
+            boolean identityMatch=confirmed||uniqueName&&inRange&&(numbered||dateMatch&&amountMatch&&((Number)candidate.get("nameSimilarity")).doubleValue()>=0.90);
+            candidate.putAll(linked("signedDateMatched",dateMatch,"contractTotalMatched",amountMatch,"contractNumberMatched",numbered,"proofPageRange",List.of(range[0],range[1]),"contractSourcesWithinRange",inRange,"humanConfirmed",confirmed,"relationProven",identityMatch,"countsAsPerformance",false));
+            if(identityMatch&&!rowSources.isEmpty()){candidate.putAll(linked("confirmationRequired",false,"matchMethod",confirmed?"HUMAN_CONFIRMED_CITED_INVENTORY_ROW":"SIMILAR_NAME_WITH_PAGE_RANGE_AND_INDEPENDENT_CONTRACT_FIELDS","linkScope","LIST_ROW_TO_CONTRACT_ONLY","issuerBindingRequiredSeparately",true));eligible.add(candidate);}
+            candidates.add(candidate);
+        }
+        if(eligible.size()!=1)return new Match(List.of(),List.of(),List.copyOf(candidates));
+        Map<String,Object> row=eligible.get(0);String id=str(row,"documentId");int page=((Number)row.get("page")).intValue();Table table=tables.stream().filter(t->t.document().id().equals(id)&&t.page().number()==page).findFirst().orElseThrow();
+        return new Match(List.of(new Evidence(id,table.document().name(),page,table.page().locationType(),str(row,"quote"),"performance-row:"+row.get("row"),1)),List.of(row),List.of());
+    }
+    private List<String> sourceIds(String document,int page,String quote){
+        var original=corpus.pages.get(EvidenceCorpus.pageKey(document,page,"PAGE"));if(original==null)return List.of();int start=original.text().indexOf(quote);if(start<0||original.text().indexOf(quote,start+1)>=0)return List.of();int end=start+quote.length();List<String> ids=new ArrayList<>();BitSet covered=new BitSet(quote.length());
+        for(Source source:corpus.all){if(!source.evidence().documentId().equals(document)||source.evidence().page()!=page)continue;Matcher range=Pattern.compile("chars:(\\d+)-(\\d+)").matcher(source.evidence().anchor());if(!range.matches())continue;int left=Integer.parseInt(range.group(1)),right=Integer.parseInt(range.group(2));if(left>=end||right<=start||right>original.text().length()||!original.text().substring(left,right).equals(source.evidence().quote()))continue;ids.add(source.id());covered.set(Math.max(start,left)-start,Math.min(end,right)-start);}
+        return covered.cardinality()==quote.length()?List.copyOf(ids):List.of();
+    }
+    private static Map<String,Object> rowMetadata(String quote){Set<String> dates=new LinkedHashSet<>(),amounts=new LinkedHashSet<>();for(String label:List.of("签订时间","签订日期"))cn.bidcheck.verification.source.DateFieldValues.read(quote,label,1).forEach(d->dates.add(d.toString()));Matcher m=Pattern.compile("(?:合同金额|金额)[:：]\\s*([0-9][0-9,.]*)(万元|元)").matcher(quote);while(m.find()){var n=RuleEvaluator.normalize(ProofVerifier.decimal(m.group(1)),m.group(2));if(n!=null)amounts.add(n.toPlainString());}return linked("signedDates",List.copyOf(dates),"listedAmounts",List.copyOf(amounts));}
+    private static int[] proofRange(Table table){
+        if(!(table.scope().get("navigation") instanceof Map<?,?> navigation))return new int[]{-1,-1};Object begin=navigation.get("proofPage");if(!(begin instanceof Number number))return new int[]{-1,-1};int first=number.intValue(),last=table.document().pages().stream().mapToInt(Page::number).max().orElse(first);
+        String section=str(table.scope(),"sectionTitle").replaceFirst("\\s.*$","");if(section.isBlank())return new int[]{-1,-1};int depth=section.split("\\.").length;
+        for(Page page:table.document().pages().stream().filter(p->p.number()<=10).toList())for(String line:nativeText(page.text()).lines().toList()){Matcher nav=NAV.matcher(line.strip());if(!nav.matches())continue;String heading=nav.group(1);Matcher path=Pattern.compile("^([0-9]+(?:\\.[0-9]+)+)\\s*.*").matcher(heading);if(!path.matches())continue;int target=Integer.parseInt(nav.group(2));if(target>first&&path.group(1).split("\\.").length<=depth&&!path.group(1).equals(section))last=Math.min(last,target-1);}
+        return new int[]{first,last};
+    }
+    /** Similarity proposes a row for review; it never links historical people, borrows an
+     * amount basis, or contributes a counted contract. A document boundary is mandatory. */
+    private List<Map<String,Object>> similarCandidates(String name,Set<String> documents){
+        if(documents.isEmpty())return List.of();List<Map<String,Object>> candidates=new ArrayList<>();
+        for(Table table:tables)if(documents.contains(table.document().id()))for(String line:table.body().split("\\R")){
+            Matcher row=ROW.matcher(line),title=Pattern.compile("合同名称[:：]\\s*(.+?)(?=\\s+(?:合同编号|签订日期|签订时间|合同金额|金额)[:：]|[；;]|$)").matcher(line);
+            if(!row.find()||!title.find())continue;String candidate=title.group(1).strip();double score=nameSimilarity(name,candidate);if(score<0.85||normalized(name).equals(normalized(candidate)))continue;
+            candidates.add(linked("documentId",table.document().id(),"documentHash",table.document().sha256(),"documentVersion",table.document().version(),"page",table.page().number(),"row",row.group(1),"quote",line,"contractName",candidate,"nameSimilarity",score,"scope",table.scope(),"linkScope","SAME_DOCUMENT_SUBMITTED_LIST_CANDIDATE_ONLY","confirmationRequired",true,"countsAsPerformance",false,"doesNotChangeHistoricalScope",true));
+        }return candidates.size()<=8?List.copyOf(candidates):List.of();
+    }
+    static double nameSimilarity(String left,String right){String a=normalized(left),b=normalized(right);if(a.length()<8||b.length()<8||a.length()>300||b.length()>300)return 0;int[] previous=new int[b.length()+1];for(int i=0;i<previous.length;i++)previous[i]=i;for(int i=1;i<=a.length();i++){int[] current=new int[b.length()+1];current[0]=i;for(int j=1;j<=b.length();j++)current[j]=Math.min(Math.min(previous[j]+1,current[j-1]+1),previous[j-1]+(a.charAt(i-1)==b.charAt(j-1)?0:1));previous=current;}return 1d-(double)previous[b.length()]/Math.max(a.length(),b.length());}
     private static List<Map<String,Object>> matchingRows(String body,String wanted){
         record Token(String value,int start,int end){}List<Token> tokens=new ArrayList<>();Matcher word=Pattern.compile("\\S+").matcher(body);
         while(word.find()){String value=normalized(word.group());if(!value.isBlank())tokens.add(new Token(value,word.start(),word.end()));}

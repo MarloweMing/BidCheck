@@ -12,9 +12,10 @@ const state = {
   runDocumentId: null, newReviewMode: 'FIXED_WORKFLOW', rerunReviewMode: null, selectedCheckpoint: null, checkpointGroup: 'ALL', projectDrafts: new Map(), uploadErrors: new Map(), tenderSelection: new Map(),
   templateCatalog: [], checkpointSpecs: new Map(), checkpointSpecLoads: new Map(), checkpointSpecErrors: new Map(), templateSetConfirmation: null,
   incrementalCandidates: [], incrementalCandidateError: '', incrementalRecalculationContext: null,
+  inferenceConfirmations: [], inferenceConfirmationError: '',
   resultVersionView: 'source', resultVersionRunId: null,
 };
-const statuses = { PASS: '符合', FAIL: '高风险', WARNING: '有风险', UNDETERMINED: '待核实', NOT_APPLICABLE: '不适用' };
+const statuses = { PASS: '符合', FAIL: '高风险', WARNING: '有风险', UNDETERMINED: '待核实', NEEDS_CONFIRMATION: '需你确认', NOT_APPLICABLE: '不适用' };
 const businessStates = { SATISFIED: '满足要求', RISK: '存在风险', SYSTEM_INCOMPLETE: '系统未完成', EVIDENCE_PENDING: '待补证据', WAIT_EXTERNAL: '待外部条件', USER_ACTION: '需你确认', UNDETERMINED: '未形成结论', NOT_APPLICABLE: '不适用' };
 const purposeLabels = { MANDATORY: '必备要求', SCORING: '评分优化', INFORMATIONAL: '信息提示' };
 const verificationModeLabels = { DOCUMENT: '文件核验', EXTERNAL: '外部核验', HUMAN_JUDGMENT: '需专业判断' };
@@ -905,11 +906,12 @@ function businessPresentation(finding, includeReview = false) {
   const beforeVisual = (assessment.preOcrEvaluation || assessment.rawEvaluation)?.status;
   const evidencePending = assessment.model?.decision==='EXTERNAL_INPUT_REQUIRED' || resolvedInventory || beforeVisual === 'UNDETERMINED' || codes.includes('VISUAL_MARK_UNREADABLE')&&!visualReview.unreadableOnly || ['RELATION_UNCONFIRMED','EVIDENCE_NOT_FOUND'].includes(atomic && atomicPresentation(atomic).state) || codes.some(code=>['EVIDENCE_MISSING','PERSONNEL_COVERAGE_INCOMPLETE','NO_CANDIDATE_EVIDENCE','EVIDENCE_NOT_FOUND'].includes(code));
   const visual = ocr.required === true;
-  const resultState = ({PASS:'SATISFIED',FAIL:'RISK',WARNING:'RISK',NOT_APPLICABLE:'NOT_APPLICABLE'})[status] || (processing ? 'SYSTEM_INCOMPLETE' : externalState ? 'WAIT_EXTERNAL' : external || visualReview.unreadableOnly ? 'USER_ACTION' : evidencePending ? 'EVIDENCE_PENDING' : visual ? 'USER_ACTION' : 'EVIDENCE_PENDING');
+  const resultState = ({PASS:'SATISFIED',FAIL:'RISK',WARNING:'RISK',NOT_APPLICABLE:'NOT_APPLICABLE'})[status] || (processing ? 'SYSTEM_INCOMPLETE' : status === 'NEEDS_CONFIRMATION' ? 'USER_ACTION' : externalState ? 'WAIT_EXTERNAL' : external || visualReview.unreadableOnly ? 'USER_ACTION' : evidencePending ? 'EVIDENCE_PENDING' : visual ? 'USER_ACTION' : 'EVIDENCE_PENDING');
   const userActionRequired = resultState === 'USER_ACTION' || resultState === 'RISK' || resultState === 'SATISFIED' && visual;
   let nextStep = ({SYSTEM_INCOMPLETE:'需继续处理条款、证据校验或失败请求；当前不要求补交材料，也不计入人工核对待办。',EVIDENCE_PENDING:'需继续检索并关联现有文件中的证据；只有确认具体缺口后才要求补充材料。',USER_ACTION:'按下方说明补充外部信息、确认核验时点或核对原图。',RISK:'对照所列原文确认风险，并记录复核结论。',SATISFIED:visual?'文字要求已得到支持；另有原图复核事项，请核对下方指定位置。':'本项已形成满足要求的结论，依据保留供追溯。',NOT_APPLICABLE:'本项不适用于当前条件，适用依据保留供追溯。'})[resultState];
   if(stopped&&['SYSTEM_INCOMPLETE','EVIDENCE_PENDING'].includes(resultState))nextStep='本轮自动补查已停止，需修复处理环节或补足检索条件后再启动；当前不据此要求补交材料。';
   if(resultState==='USER_ACTION'&&gapKind==='EXTERNAL_INPUT')nextStep='需取得招标条款要求的外部记录或现场核验结果；现有文件检索不能替代该记录。';
+  if(resultState==='USER_ACTION'&&status==='NEEDS_CONFIRMATION')nextStep='对照下方原文确认或否定系统提出的关联，确认后将重新计算本项结论。';
   if(resultState==='USER_ACTION'&&scoringReview)nextStep=codes.includes('SCORE_SOURCE_LIST_AMBIGUOUS')?'招标清单含重复项目，已保留原文及逐项核对结果；需确认计分口径，不据此要求补交材料。':'客观内容范围已核对；请按所列评分分档评价针对性、可行性等主观要求。材料齐全不代表达到最高档。';
   if(resultState==='SYSTEM_INCOMPLETE'&&!stopped&&codes.includes('UNIQUE_PRICE_SCOPE_REQUIRED'))nextStep='系统尚未核全本项目的报价与备选方案范围；已识别报价一致仅作局部结果，当前不要求补交材料。';
   if(resultState==='USER_ACTION'&&visualReview.unreadableOnly)nextStep='指定原图已检查，但签章无法辨清；请确认所列签署位置，或提供该页清晰图像。相同页面不再自动重复识别。';
@@ -1512,7 +1514,114 @@ function renderResults() {
 function renderFinding(f, sourcePanel = '') {
   const cp=f.checkpoint,ev=f.evaluation,presentation=findingPresentation(f),business=businessPresentation(f),review=reviewOf(f),references=findingEvidence(f),evidences=references.bid,isConsistency=cp.type==='ENTITY_FIELD_CONSISTENCY';
   const evidenceMissing=findingDimensions(f).evidence.state!=='SUFFICIENT',analysis=businessAnalysisReason(f,presentation,business)||'未提供分析说明。';
-  return `<div class="finding-detail-header"><div class="detail-kicker">${e(findingCategory(f))} / ${e(types[cp.type]||cp.type)}</div><h2>${e(cp.title)}</h2><div class="detail-tags"><span class="pill ${e(business.state)}">${e(business.label)}</span>${renderResultScopeTags(f)}${review?badge(review.status,`人工：${statuses[review.status]||review.status}`):''}</div></div><div class="panel-body">${renderFindingDimensions(f)}<div class="result-reason ${e(business.state)}"><strong>检查结论</strong><p>${e(analysis)}</p></div><p class="suggestion result-next-step"><b>下一步</b><span>${e(business.nextStep)}</span></p>${renderTemplateSubchecks(f)}${renderCompleteness(f)}${originalReviewIsSourceRecord(f)?'':renderOriginalReview(f,presentation)}<div class="evidence-title"><span>${isConsistency?'多处信息与依据对照':'招标要求与投标证据'}</span><small>原文可追溯</small></div><div class="evidence-grid">${renderEvidence(references.source,'招标依据',cp.source?'未取得本次招标文件的有效依据。':'该项为手动或全文通用检查，无独立招标条款。')}${renderEvidence(evidences[0],isConsistency?'证据位置 1':'投标证据',evidenceMissing?'本项尚未取得足够原文依据；当前不据此认定投标材料缺失。':'未返回可展示的投标原文，请按证据引用继续追溯。')}</div>${references.tender.length?`<div class="more-evidence">${references.tender.map(item=>renderEvidence(item,'补充招标依据')).join('')}</div>`:''}${evidences.length>1?`<div class="more-evidence">${evidences.slice(1).map((item,i)=>renderEvidence(item,`证据位置 ${i+2}`)).join('')}</div>`:''}${sourcePanel}${renderInheritedReviews(f)}<details class="business-processing-details result-diagnostics"><summary>处理详情与诊断</summary><div class="result-diagnostics-body">${renderAgentInvestigationDetails(f)}${renderTargetProgressDetails(f)}${renderExternalCheckDetails(f)}${renderTemplateDiagnostics(f)}<p class="preview-caption">条款风险等级：${e(({HIGH:'高',MEDIUM:'中',LOW:'低'})[cp.severity]||'未设置')} · ${e(methodLabel(ev.method))}</p>${renderAtomicCheck(f)}${renderFieldCoverage(f)}${originalReviewIsSourceRecord(f)?renderOriginalReview(f,presentation):''}${renderOriginalExplanation(presentation)}${renderAssessmentDetails(f)}</div></details><details class="business-manual-details" ${disclosureAttributes(`manual-finding-${f.id}`,!!review||state.reviewDrafts.has(f.id))}><summary>记录人工复核${review?' · 已有记录':''}</summary>${renderManualReview(f)}</details></div>`;
+  return `<div class="finding-detail-header"><div class="detail-kicker">${e(findingCategory(f))} / ${e(types[cp.type]||cp.type)}</div><h2>${e(cp.title)}</h2><div class="detail-tags"><span class="pill ${e(business.state)}">${e(business.label)}</span>${renderResultScopeTags(f)}${review?badge(review.status,`人工：${statuses[review.status]||review.status}`):''}</div></div><div class="panel-body">${renderFindingDimensions(f)}<div class="result-reason ${e(business.state)}"><strong>检查结论</strong><p>${e(analysis)}</p></div><p class="suggestion result-next-step"><b>下一步</b><span>${e(business.nextStep)}</span></p>${renderInferenceConfirmations(f)}${renderTemplateSubchecks(f)}${renderCompleteness(f)}${originalReviewIsSourceRecord(f)?'':renderOriginalReview(f,presentation)}<div class="evidence-title"><span>${isConsistency?'多处信息与依据对照':'招标要求与投标证据'}</span><small>原文可追溯</small></div><div class="evidence-grid">${renderEvidence(references.source,'招标依据',cp.source?'未取得本次招标文件的有效依据。':'该项为手动或全文通用检查，无独立招标条款。')}${renderEvidence(evidences[0],isConsistency?'证据位置 1':'投标证据',evidenceMissing?'本项尚未取得足够原文依据；当前不据此认定投标材料缺失。':'未返回可展示的投标原文，请按证据引用继续追溯。')}</div>${references.tender.length?`<div class="more-evidence">${references.tender.map(item=>renderEvidence(item,'补充招标依据')).join('')}</div>`:''}${evidences.length>1?`<div class="more-evidence">${evidences.slice(1).map((item,i)=>renderEvidence(item,`证据位置 ${i+2}`)).join('')}</div>`:''}${sourcePanel}${renderInheritedReviews(f)}<details class="business-processing-details result-diagnostics"><summary>处理详情与诊断</summary><div class="result-diagnostics-body">${renderAgentInvestigationDetails(f)}${renderTargetProgressDetails(f)}${renderExternalCheckDetails(f)}${renderTemplateDiagnostics(f)}<p class="preview-caption">条款风险等级：${e(({HIGH:'高',MEDIUM:'中',LOW:'低'})[cp.severity]||'未设置')} · ${e(methodLabel(ev.method))}</p>${renderAtomicCheck(f)}${renderFieldCoverage(f)}${originalReviewIsSourceRecord(f)?renderOriginalReview(f,presentation):''}${renderOriginalExplanation(presentation)}${renderAssessmentDetails(f)}</div></details><details class="business-manual-details" ${disclosureAttributes(`manual-finding-${f.id}`,!!review||state.reviewDrafts.has(f.id))}><summary>记录人工复核${review?' · 已有记录':''}</summary>${renderManualReview(f)}</details></div>`;
+}
+function renderInferenceFact(record) {
+  const fact = record.proposedFact || {};
+  const field = fields[fact.field] || ({ role: '岗位', employer: '所属单位', certificate: '证书', qualification: '资质', amount: '金额', expiry: '有效期' })[fact.field] || fact.field || '对应内容';
+  return `<div class="inference-fact"><span>确认后采用的内容</span><strong>${e(fact.subject || '所引材料')} · ${e(field)}：${e(fact.value || '')}${fact.unit ? ` ${e(unitLabel(fact.unit))}` : ''}</strong>${fact.basis ? `<small>口径：${e(fact.basis)}</small>` : ''}</div>`;
+}
+function renderInferenceConfirmations(finding) {
+  const runId = state.run?.run?.id;
+  if (!runId) return '';
+  if (state.inferenceConfirmationError) return `<div class="inline-warning">关联确认记录加载失败：${e(state.inferenceConfirmationError)} <button class="text-action" data-action="refresh-inference-confirmations">重新加载</button></div>`;
+  const records = state.inferenceConfirmations.filter(item => item.runId === runId && item.checkpointId === finding.checkpoint?.id);
+  if (!records.length) return '';
+  const pending = records.filter(item => item.status === 'NEEDS_CONFIRMATION');
+  const history = records.filter(item => item.status !== 'NEEDS_CONFIRMATION');
+  const card = item => {
+    const waiting = item.status === 'NEEDS_CONFIRMATION', enabled = terminal.has(state.run.run.status);
+    const evidence = Array.isArray(item.evidences) ? item.evidences : [];
+    const risks = Array.isArray(item.risks) ? item.risks.filter(value => typeof value === 'string') : [];
+    return `<article class="inference-card"><div class="inference-card-heading"><strong>${waiting ? '请确认这项对应关系' : item.status === 'CONFIRMED' ? '已确认关联' : '已否定关联'}</strong></div><dl class="inference-comparison"><div><dt>招标要求</dt><dd>${e(finding.checkpoint?.source?.quote || finding.checkpoint?.expected || finding.checkpoint?.title || '')}</dd></div><div><dt>系统推断</dt><dd>${e(item.claim || '')}</dd></div></dl><p>${e(item.reasoning || '')}</p>${renderInferenceFact(item)}${risks.length ? `<p class="inference-risk">待核实：${risks.map(e).join('；')}</p>` : ''}<details class="inference-sources"><summary>查看依据 · ${evidence.length} 处原文</summary>${evidence.map((ev, index) => renderEvidence(ev, `依据 ${index + 1}`)).join('')}</details>${renderInferenceAttachments(item)}${waiting ? `<p class="preview-caption">确认后将结合其他条件重新计算结论。${enabled ? '' : '请待本轮检查结束后确认。'}</p><div class="inference-actions"><button class="button button-primary button-small" data-action="inference-decision" data-id="${e(item.id)}" data-decision="CONFIRMED" ${enabled ? '' : 'disabled'}>是，确认关联</button><button class="button button-secondary button-small" data-action="inference-decision" data-id="${e(item.id)}" data-decision="REJECTED" ${enabled ? '' : 'disabled'}>不是</button><button class="text-action" data-action="inference-attachment" data-id="${e(item.id)}" ${enabled ? '' : 'disabled'}>补充材料</button></div>` : `<p class="preview-caption">${e(item.actor || '')} · ${e(date(item.decidedAt))}</p><p>${e(item.note || '')}</p>`}</article>`;
+  };
+  return `<section class="inference-confirmations" aria-label="证据关联确认">${pending.map(card).join('')}${history.length ? `<details><summary>已处理的关联确认 · ${history.length} 项</summary>${history.map(card).join('')}</details>` : ''}<a class="text-action" href="/api/runs/${enc(runId)}/inference-confirmations/export" download>导出确认记录</a></section>`;
+}
+function openInferenceAttachment(record) {
+  if (!record || record.runId !== state.run?.run?.id || !terminal.has(state.run.run.status)) { toast('请待当前检查结束后补充材料。', true); return; }
+  openModal('补充本项证明材料', '材料将关联到当前检查事项，解析后重新核验相关条件。', `<form id="inference-attachment-form" class="modal-body" data-run="${e(record.runId)}" data-record="${e(record.id)}"><blockquote class="evidence-quote">${e(record.claim || '')}</blockquote><input type="hidden" name="expectedRevision" value="${Number(record.revision)}"><label class="field-label" for="inference-attachment-file">证明文件</label><input id="inference-attachment-file" name="file" type="file" accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg" required><label class="field-label" for="inference-attachment-note">材料说明</label><textarea id="inference-attachment-note" name="note" maxlength="3000" required placeholder="说明这份材料证明的人员、单位、证书或金额口径"></textarea><p class="modal-note">原投标文件版本保留；补证文件作为独立来源，只核验关联事项。上传材料本身不会确认推断或直接判为通过。</p><div class="modal-footer"><button type="button" class="button button-secondary" data-action="close-modal">取消</button><button type="submit" class="button button-primary">上传并核验</button></div></form>`);
+}
+function renderInferenceAttachments(record) {
+  const attachments=Array.isArray(record.attachments)?record.attachments:[];
+  if(!attachments.length)return '';
+  return `<div class="inference-attachments" aria-label="本项补充材料">${attachments.map(item=>{
+    const label=item.status==='FAILED'?'解析失败':item.recomputeStatus==='QUEUED'?'已发起关联核验':item.status==='READY'?'已解析，等待核验':item.status==='PARSING'?'正在解析':'等待解析';
+    return `<p class="preview-caption">补证：${e(item.name||'证明文件')} · ${e(label)}${item.recomputeRunId?` <button class="text-action" data-action="open-run" data-id="${e(item.recomputeRunId)}">查看核验进度</button>`:''}${item.error?`<br><span class="error-text">${e(item.error)}</span>`:''}</p>`;
+  }).join('')}</div>`;
+}
+const pollingInferenceAttachments=new Set();
+async function pollInferenceAttachment(runId,pid,recordId,attachmentId) {
+  if(!attachmentId||pollingInferenceAttachments.has(attachmentId))return;
+  pollingInferenceAttachments.add(attachmentId);
+  try {
+    while(projectId()===pid&&state.selectedRunId===runId){
+      const records=await api(`/api/runs/${enc(runId)}/inference-confirmations`);
+      if(projectId()!==pid||state.selectedRunId!==runId)return;
+      state.inferenceConfirmations=Array.isArray(records)?records:[];
+      const attachment=state.inferenceConfirmations.find(item=>item.id===recordId)?.attachments?.find(item=>item.attachmentId===attachmentId);
+      if(state.tab==='results')render();
+      if(attachment?.recomputeStatus==='QUEUED'&&attachment.recomputeRunId){
+        await loadProject(pid);if(projectId()!==pid||state.selectedRunId!==runId)return;
+        await loadRun(attachment.recomputeRunId);pollRun(attachment.recomputeRunId,pid);toast('补证解析完成，正在重新核验关联事项。');return;
+      }
+      if(attachment?.status==='FAILED'||attachment?.recomputeStatus==='SAVED_REQUIRES_RECHECK'){toast(attachment.error||'补证处理未完成，请查看本项材料记录。',true);return;}
+      await sleep(1500);
+    }
+  }catch(error){toast(`补证状态更新中断：${error.message}，刷新后可查看处理记录。`,true);}
+  finally{pollingInferenceAttachments.delete(attachmentId);}
+}
+async function submitInferenceAttachment(form) {
+  const runId = form.dataset.run, recordId = form.dataset.record, pid = projectId(), key = `attachment:${recordId}`;
+  if (!recordId || state.run?.run?.id !== runId || !terminal.has(state.run.run.status) || state.busy.has(key)) { toast('当前检查已变化，请刷新后重试。', true); return; }
+  const body = new FormData(form), file = body.get('file'), note = String(body.get('note') || '').trim();
+  if (!file?.name || !file.size || !note) { toast('请选择证明文件并填写材料说明。', true); return; }
+  if (!uploadExtensions().includes(file.name.split('.').at(-1).toLowerCase()) || file.size > maxFileSizeMb() * 1024 * 1024) { toast(`请选择支持的文件，大小不能超过 ${maxFileSizeMb()} MB。`, true); return; }
+  const button = form.querySelector('button[type="submit"]'); state.busy.add(key); if (button) button.disabled = true;
+  try {
+    const result = await api(`/api/runs/${enc(runId)}/inference-confirmations/${enc(recordId)}/attachments`, {method: 'POST', body});
+    modal.close();
+    if (projectId() !== pid || state.selectedRunId !== runId) return;
+    const nextRunId=result.run?.id||result.recomputeRunId;
+    if (result.recomputeStatus === 'QUEUED' && nextRunId) {
+      await loadProject(pid); if (projectId() !== pid) return;
+      await loadRun(nextRunId); pollRun(nextRunId, pid); toast('补证已关联，正在重新核验相关事项。');
+    } else if (result.taskId) {
+      const label = `解析补证 ${file.name}`;
+      state.tasks.set(result.taskId, {id: result.taskId, status: result.status || 'PENDING', projectId: pid, label, role: 'SUPPLEMENT', originRunId: runId, claimId: recordId});
+      pollTask(result.taskId, pid, label);
+      pollInferenceAttachment(runId,pid,recordId,result.attachmentId);
+      await loadRun(runId);
+      toast('补证已保存，正在解析；完成后将核验关联事项。');
+    } else {
+      await loadRun(runId); toast(result.reason || '补证已保存，尚未开始重算。', true);
+    }
+  } finally { state.busy.delete(key); if (button) button.disabled = false; }
+}
+function openInferenceDecision(record, decision) {
+  if (!record || record.runId !== state.run?.run?.id || record.status !== 'NEEDS_CONFIRMATION' || !['CONFIRMED', 'REJECTED'].includes(decision)) { toast('确认记录已变化，请刷新后重试。', true); return; }
+  const confirm = decision === 'CONFIRMED';
+  openModal(confirm ? '确认证据关联' : '否定证据关联', '请对照原文说明判断依据。该操作会保留确认记录。', `<form id="inference-decision-form" class="modal-body" data-run="${e(record.runId)}" data-record="${e(record.id)}" data-decision="${decision}" data-revision="${Number(record.revision)}"><blockquote class="evidence-quote">${e(record.claim)}</blockquote>${renderInferenceFact(record)}<label class="field-label" for="inference-reviewer">确认人</label><input id="inference-reviewer" name="reviewer" maxlength="80" required placeholder="请输入姓名"><label class="field-label" for="inference-note">判断依据</label><textarea id="inference-note" name="note" maxlength="3000" required placeholder="填写所核对的原文和判断依据"></textarea><p class="modal-note">${confirm ? '已确认的事实将参与重算，检查是否通过仍取决于其他要求和证据。' : '否定后不采用这条推断，并根据其余证据重新计算。'}</p><div class="modal-footer"><button type="button" class="button button-secondary" data-action="close-modal">取消</button><button type="submit" class="button button-primary">${confirm ? '确认并重算' : '保存否定记录'}</button></div></form>`);
+}
+async function submitInferenceDecision(form) {
+  const runId = form.dataset.run, pid = projectId(), key = `inference:${form.dataset.record}`;
+  if (state.run?.run?.id !== runId || state.busy.has(key)) { toast('请刷新当前检查后重试。', true); return; }
+  const data = Object.fromEntries(new FormData(form)), button = form.querySelector('button[type="submit"]');
+  const body = {decision: form.dataset.decision, reviewer: String(data.reviewer || '').trim(), note: String(data.note || '').trim(), expectedRevision: Number(form.dataset.revision)};
+  if (!body.reviewer || !body.note) { toast('请填写确认人和判断依据。', true); return; }
+  state.busy.add(key); if (button) button.disabled = true;
+  try {
+    const result = await api(`/api/runs/${enc(runId)}/inference-confirmations/${enc(form.dataset.record)}/decision`, {method: 'POST', body});
+    modal.close();
+    if (projectId() !== pid || state.selectedRunId !== runId) return;
+    if (result.recomputeStatus === 'QUEUED' && result.run?.id) {
+      await loadProject(pid); if (projectId() !== pid) return;
+      await loadRun(result.run.id); pollRun(result.run.id, pid);
+      toast('处理记录已保存，正在重新核验受影响的检查项。');
+    } else {
+      await loadRun(runId);
+      toast(result.recomputeStatus === 'SAVED_REQUIRES_RECHECK' ? `处理记录已保存，尚未开始重算：${result.reason || '请重新发起检查。'}` : '确认记录已保存。', result.recomputeStatus === 'SAVED_REQUIRES_RECHECK');
+    }
+  } finally { state.busy.delete(key); if (button) button.disabled = false; }
 }
 function businessAnalysisReason(finding,presentation,business) {
   const raw=finding.evaluation?.reason||'',current=typeof business?.reason==='string'?business.reason:raw;
@@ -1527,6 +1636,7 @@ function atomicWorkflow(check) {
   return [presentation.label, presentation.state === 'PROCESSING_FAILED' ? 'error' : presentation.state === 'COMPLETED' ? 'complete' : 'pending'];
 }
 function atomicConditionLabel(status, role, display, predicate) {
+  if (status === 'NEEDS_CONFIRMATION') return '关联待确认';
   if (status === 'PASS' && predicate === 'REFERENCE_TIME') return '参考时点已确认';
   if (role === 'APPLICABILITY') return status === 'PASS' ? '适用判断：成立' : status === 'FAIL' ? '适用判断：不成立' : status === 'NOT_APPLICABLE' ? '适用判断：本分支未执行' : '适用判断：待确认';
   if (status === 'UNDETERMINED' && typeof display?.label === 'string') return display.label;
@@ -1544,6 +1654,7 @@ function atomicReadable(value, conditions = []) {
 function atomicMappingPending(code) { return ['COMPARISON_FIELD_MAPPING_REQUIRED','COMPARISON_RECORD_IDENTITY_UNPROVEN','REGISTRATION_EMPLOYER_BINDING_REQUIRED','FORM_TEMPLATE_REFERENCE_REQUIRED','FORM_REQUIREMENT_SOURCE_REQUIRED','FORM_PROJECT_BINDING_REQUIRED','FORM_INSTANCE_AMBIGUOUS','FORM_CONTENT_COVERAGE_REQUIRED','FORM_CONDITION_COVERAGE_REQUIRED','DURATION_REQUIREMENT_SOURCE_REQUIRED','DURATION_REQUIREMENT_FIELD_UNBOUND','DURATION_RESPONSE_FORMAT_REQUIRED'].includes(code); }
 function atomicCategory(code) {
   if (typeof code !== 'string') return 'NEEDS_REVIEW';
+  if (code === 'INFERENCE_CONFIRMATION_REQUIRED') return 'NEEDS_CONFIRMATION';
   if (atomicMappingPending(code)) return 'RELATION_UNCONFIRMED';
   if (code.startsWith('MODEL_') || code.startsWith('HTTP_') || ['AGENT_INVESTIGATION_FAILED','RULE_COMPILATION_UNAVAILABLE','FACT_EXTRACTION_UNAVAILABLE','TRANSPORT_FAILURE','REQUEST_TIMEOUT','CAPACITY_TIMEOUT','OUTPUT_JSON_INVALID','OUTPUT_SCHEMA_INVALID','OUTPUT_INCOMPLETE','OUTPUT_LIMIT','INPUT_LIMIT'].includes(code)) return 'PROCESSING_FAILED';
   if (code.includes('COMPILATION') || code.startsWith('REQUIREMENT_') || ['UNSUPPORTED_RULE','OPERATOR_UNSUPPORTED','SUBJECT_REQUIRED','ATOMIC_CONDITION_NOT_EVALUATED','PRICE_REQUIREMENT_DIMENSIONS_REQUIRED','PERSON_COUNT_ROLE_REQUIRED','PERSON_COUNT_COMPARISON_REQUIRED'].includes(code)) return 'REQUIREMENT_UNPARSED';
@@ -1552,9 +1663,9 @@ function atomicCategory(code) {
   return 'NEEDS_REVIEW';
 }
 function atomicPresentation(check, conditions = check?.conditions || []) {
-  const labels = { PROCESSING_FAILED: '处理失败', REQUIREMENT_UNPARSED: '条款未解析完整', RELATION_UNCONFIRMED: '对应关系待确认', EVIDENCE_NOT_FOUND: '证据未找到', WAIT_STAGE: '等待适用时点', COMPLETED: '条件计算已结束', NEEDS_REVIEW: '尚未形成结论' };
-  const reasons = { PROCESSING_FAILED: '本项处理未完成，已得到的条件和依据予以保留；不能据此判断材料缺失或不符合。', REQUIREMENT_UNPARSED: '尚未完整明确本条款的核验要求，暂不能据此判断投标是否符合。', RELATION_UNCONFIRMED: '要求对象与文件中的单位、人员、证件或报价口径尚未完整对应，需要结合原文确认。', EVIDENCE_NOT_FOUND: '本次检查尚未定位到足以支持判断的相关证据，不代表原文件缺少材料。', WAIT_STAGE: '本条件尚未到适用的核验时点。', COMPLETED: '条件处理已完成，整项结论及原图复核要求以上方结果为准。', NEEDS_REVIEW: '仍有需要人工确认的范围，请结合条件说明和原文核对。' };
-  const actions = { PROCESSING_FAILED: '查看处理说明；系统需继续处理失败请求，本提示不要求补交材料，不计入人工核对待办。', REQUIREMENT_UNPARSED: '先对照招标原句明确要求对象、比较条件与适用范围。', RELATION_UNCONFIRMED: '核对相关原文中的人员、单位、证件及项目口径，确认它们是否对应同一要求。', EVIDENCE_NOT_FOUND: '先核对本次文件中的相关材料和定位范围，再确认是否确需补充材料。', WAIT_STAGE: '核对条款规定的核验时点，当前保留待核。' };
+  const labels = { NEEDS_CONFIRMATION: '关联待确认', PROCESSING_FAILED: '处理失败', REQUIREMENT_UNPARSED: '条款未解析完整', RELATION_UNCONFIRMED: '对应关系待确认', EVIDENCE_NOT_FOUND: '证据未找到', WAIT_STAGE: '等待适用时点', COMPLETED: '条件计算已结束', NEEDS_REVIEW: '尚未形成结论' };
+  const reasons = { NEEDS_CONFIRMATION: '已找到可引用的原文，关联含义仍需确认。', PROCESSING_FAILED: '本项处理未完成，已得到的条件和依据予以保留；不能据此判断材料缺失或不符合。', REQUIREMENT_UNPARSED: '尚未完整明确本条款的核验要求，暂不能据此判断投标是否符合。', RELATION_UNCONFIRMED: '要求对象与文件中的单位、人员、证件或报价口径尚未完整对应，需要结合原文确认。', EVIDENCE_NOT_FOUND: '本次检查尚未定位到足以支持判断的相关证据，不代表原文件缺少材料。', WAIT_STAGE: '本条件尚未到适用的核验时点。', COMPLETED: '条件处理已完成，整项结论及原图复核要求以上方结果为准。', NEEDS_REVIEW: '仍有需要人工确认的范围，请结合条件说明和原文核对。' };
+  const actions = { NEEDS_CONFIRMATION: '对照确认卡片中的原文确认或否定关联。', PROCESSING_FAILED: '查看处理说明；系统需继续处理失败请求，本提示不要求补交材料，不计入人工核对待办。', REQUIREMENT_UNPARSED: '先对照招标原句明确要求对象、比较条件与适用范围。', RELATION_UNCONFIRMED: '核对相关原文中的人员、单位、证件及项目口径，确认它们是否对应同一要求。', EVIDENCE_NOT_FOUND: '先核对本次文件中的相关材料和定位范围，再确认是否确需补充材料。', WAIT_STAGE: '核对条款规定的核验时点，当前保留待核。' };
   const remap=check?.agentInvestigation?.status==='FAILED'||(check?.gaps||[]).some(gap=>atomicMappingPending(gap?.code)||['AGENT_INVESTIGATION_FAILED','REGISTRATION_CERTIFICATE_REQUIRED'].includes(gap?.code));
   const raw = !remap && check?.presentation && typeof check.presentation === 'object' ? check.presentation : {};
   const publishedPending = check?.finalBusinessStatus && !['PASS','FAIL','WARNING','NOT_APPLICABLE'].includes(check.finalBusinessStatus);
@@ -1563,9 +1674,9 @@ function atomicPresentation(check, conditions = check?.conditions || []) {
   if (publishedPending && check?.complete === true && check?.workflowState === 'COMPLETED') issues.push({category:'REQUIREMENT_UNPARSED',label:'整项要求尚未证明',description:'辅助条件的完成不足以证明整项要求；以守卫后的业务结论为准。',nextStep:'需补齐主条件及其证据，不能用参考日期或处理完成替代业务证明。'});
   const categories = issues.map(item => item.category);
   if (['ENGINE_FAILURE','ERROR'].includes(check?.workflowState) || check?.agentInvestigation?.status==='FAILED' || Number(check?.modelDiagnostics?.unresolvedFailures) > 0) { categories.unshift('PROCESSING_FAILED'); if (!issues.some(issue => issue.category === 'PROCESSING_FAILED')) issues.push({category: 'PROCESSING_FAILED', label: businessCompleted ? '候选处理记录' : labels.PROCESSING_FAILED, description: businessCompleted ? '部分候选处理曾未完成；其他证据已支持当前完整结论，详见处理记录。' : reasons.PROCESSING_FAILED, nextStep: actions.PROCESSING_FAILED}); }
-  const priority = ['PROCESSING_FAILED','REQUIREMENT_UNPARSED','RELATION_UNCONFIRMED','EVIDENCE_NOT_FOUND','NEEDS_REVIEW'];
+  const priority = ['PROCESSING_FAILED','REQUIREMENT_UNPARSED','RELATION_UNCONFIRMED','EVIDENCE_NOT_FOUND','NEEDS_CONFIRMATION','NEEDS_REVIEW'];
   issues.sort((a, b) => priority.indexOf(a.category) - priority.indexOf(b.category));
-  const inferred = ['PROCESSING_FAILED','REQUIREMENT_UNPARSED','RELATION_UNCONFIRMED','EVIDENCE_NOT_FOUND','NEEDS_REVIEW'].find(item => categories.includes(item)) || (check?.workflowState === 'WAIT_STAGE' ? 'WAIT_STAGE' : !publishedPending && (check?.complete === true && check?.workflowState === 'COMPLETED' || ['PASS','FAIL','NOT_APPLICABLE'].includes(check?.status)) ? 'COMPLETED' : 'NEEDS_REVIEW');
+  const inferred = ['PROCESSING_FAILED','REQUIREMENT_UNPARSED','RELATION_UNCONFIRMED','EVIDENCE_NOT_FOUND','NEEDS_CONFIRMATION','NEEDS_REVIEW'].find(item => categories.includes(item)) || (check?.workflowState === 'WAIT_STAGE' ? 'WAIT_STAGE' : !publishedPending && (check?.complete === true && check?.workflowState === 'COMPLETED' || ['PASS','FAIL','NOT_APPLICABLE'].includes(check?.status)) ? 'COMPLETED' : 'NEEDS_REVIEW');
   const state = businessCompleted ? 'COMPLETED' : !publishedPending && typeof raw.state === 'string' && Object.hasOwn(labels, raw.state) ? raw.state : inferred;
   const next = businessCompleted ? [] : !publishedPending && Array.isArray(raw.nextSteps) ? raw.nextSteps.filter(value => typeof value === 'string' && value.trim()) : [...new Set(issues.map(item => item.nextStep).filter(value => typeof value === 'string' && value.trim()))];
   if (!next.length) next.push(actions[state] || '核对整项结论及引用原文；如有原图复核提示，先对照原图确认。');
@@ -1605,7 +1716,7 @@ function renderAtomicCheck(finding) {
   const next = display.nextSteps.slice(0, 2);
   const pending = items => `<ul class="atomic-gap-list">${items.map(line => `<li>${e(line)}</li>`).join('')}</ul>`;
   return `<section class="atomic-check" data-atomic-check><div class="atomic-check-heading"><h3>条件核验${domains.length ? `<small>${domains.map(e).join(' · ')}</small>` : ''}</h3><span class="atomic-workflow ${tone}">${e(workflow)}</span></div><div class="atomic-next-step"><strong>下一步</strong>${pending(next)}${display.issues.length ? `<details><summary>查看处理说明 · ${display.issues.length} 项</summary><ul class="atomic-gap-list">${display.issues.map(issue => `<li><strong>${e(typeof issue.label === 'string' ? issue.label : '待确认')}</strong> · ${e(atomicReadable(issue.description, conditions))}</li>`).join('')}</ul></details>` : ''}</div><details class="atomic-conditions" ${disclosureAttributes(`atomic-conditions-${finding.id}`)}><summary>查看 ${conditions.length} 个条件与依据</summary>${counts.length ? `<p class="atomic-condition-counts">${counts.map(e).join(' · ')}</p>` : ''}${conditions.length ? `<ol>${conditions.map((condition, index) => {
-    const status = condition.conditionRole === 'APPLICABILITY' ? 'NOT_APPLICABLE' : ['PASS', 'FAIL', 'UNDETERMINED', 'NOT_APPLICABLE', 'WARNING'].includes(condition.status) ? condition.status : 'UNDETERMINED';
+    const status = condition.conditionRole === 'APPLICABILITY' ? 'NOT_APPLICABLE' : ['PASS', 'FAIL', 'UNDETERMINED', 'NEEDS_CONFIRMATION', 'NOT_APPLICABLE', 'WARNING'].includes(condition.status) ? condition.status : 'UNDETERMINED';
     const title = typeof condition.title === 'string' && condition.title.trim() ? atomicReadable(condition.title, conditions) : `条件 ${index + 1}`, detail = atomicPresentation(condition, conditions);
     const sources = Array.isArray(condition.evidences) ? condition.evidences.filter(item => item && typeof item === 'object' && !Array.isArray(item)) : [];
     const reason = condition.status === 'UNDETERMINED' ? detail.reason : atomicReadable(condition.reason, conditions);
@@ -1614,7 +1725,7 @@ function renderAtomicCheck(finding) {
 }
 function renderManualReview(f, title = '人工复核') {
   const ev = f.evaluation, review = reviewOf(f), draft = state.reviewDrafts.get(f.id);
-  return `<div class="manual-section"><div class="manual-heading"><h3>${icon('user', true)}${e(title)}</h3><span>复核保留自动结论与历史记录</span></div>${review ? `<div class="review-summary"><strong>${e(review.reviewer || '未署名复核人')}</strong> · ${e(date(review.createdAt))} · ${e(statuses[review.status] || review.status)}${review.note ? `<p>${e(review.note)}</p>` : ''}<button class="text-action" data-action="review-history" data-id="${e(f.id)}">查看全部复核记录</button></div>` : ''}<form class="review-form" id="review-form" data-result="${e(f.id)}"><div class="review-fields"><div><label class="field-label" for="review-status">复核结论</label><select id="review-status" name="status">${options(statuses, draft?.status || review?.status || ev.status)}</select></div><div><label class="field-label" for="reviewer">复核人</label><input id="reviewer" name="reviewer" maxlength="80" placeholder="请输入姓名" value="${e(draft?.reviewer ?? review?.reviewer ?? '')}" required></div></div><label class="field-label" for="review-note">复核说明</label><textarea id="review-note" name="note" maxlength="3000" placeholder="记录判断依据、补充说明或需整改事项" required>${e(draft?.note || '')}</textarea><div class="review-submit-row"><p>提交后可再次复核，所有记录均保留。</p><button class="button button-primary button-small" type="submit" ${state.busy.has(`review-${f.id}`) ? 'disabled' : ''}>${icon('check', true)}保存复核</button></div></form></div>`;
+  return `<div class="manual-section"><div class="manual-heading"><h3>${icon('user', true)}${e(title)}</h3><span>复核保留自动结论与历史记录</span></div>${review ? `<div class="review-summary"><strong>${e(review.reviewer || '未署名复核人')}</strong> · ${e(date(review.createdAt))} · ${e(statuses[review.status] || review.status)}${review.note ? `<p>${e(review.note)}</p>` : ''}<button class="text-action" data-action="review-history" data-id="${e(f.id)}">查看全部复核记录</button></div>` : ''}<form class="review-form" id="review-form" data-result="${e(f.id)}"><div class="review-fields"><div><label class="field-label" for="review-status">复核结论</label><select id="review-status" name="status">${options(Object.fromEntries(Object.entries(statuses).filter(([key]) => key !== 'NEEDS_CONFIRMATION')), draft?.status || review?.status || (ev.status === 'NEEDS_CONFIRMATION' ? 'UNDETERMINED' : ev.status))}</select></div><div><label class="field-label" for="reviewer">复核人</label><input id="reviewer" name="reviewer" maxlength="80" placeholder="请输入姓名" value="${e(draft?.reviewer ?? review?.reviewer ?? '')}" required></div></div><label class="field-label" for="review-note">复核说明</label><textarea id="review-note" name="note" maxlength="3000" placeholder="记录判断依据、补充说明或需整改事项" required>${e(draft?.note || '')}</textarea><div class="review-submit-row"><p>提交后可再次复核，所有记录均保留。</p><button class="button button-primary button-small" type="submit" ${state.busy.has(`review-${f.id}`) ? 'disabled' : ''}>${icon('check', true)}保存复核</button></div></form></div>`;
 }
 function renderEvidence(ev, title, empty = '暂无原文证据。') {
   if (!ev) return `<article class="evidence-card"><div class="evidence-card-header"><strong>${icon('document', true)}${e(title)}</strong></div><div class="evidence-card-body"><p class="evidence-empty">${e(empty)}</p></div></article>`;
@@ -1663,11 +1774,12 @@ async function loadProject(id, { showLoading = false, selectLatest = false } = {
 async function loadRun(id, paint = true) {
   const request = ++state.runRequest, expectedProject = projectId();
   state.selectedRunId = id;
-  let detail, candidates = [], candidateError = '';
+  let detail, candidates = [], candidateError = '', confirmations = [], confirmationError = '';
   try {
-    [detail, candidates] = await Promise.all([
+    [detail, candidates, confirmations] = await Promise.all([
       api(`/api/runs/${enc(id)}?includeContent=false`),
-      api(`/api/runs/${enc(id)}/dependency-recalculations`).catch(error => { candidateError = error.message || '增量候选状态加载失败。'; return []; })
+      api(`/api/runs/${enc(id)}/dependency-recalculations`).catch(error => { candidateError = error.message || '增量候选状态加载失败。'; return []; }),
+      api(`/api/runs/${enc(id)}/inference-confirmations`).catch(error => { confirmationError = error.message || '确认记录加载失败。'; return []; })
     ]);
   }
   catch (error) { if (request !== state.runRequest || expectedProject !== projectId()) return; throw error; }
@@ -1680,6 +1792,8 @@ async function loadRun(id, paint = true) {
   } else if (state.resultVersionView === 'current' && !detail?.publishedResultVersion?.id) state.resultVersionView = 'source';
   state.incrementalCandidates = Array.isArray(candidates) ? candidates : [];
   state.incrementalCandidateError = candidateError;
+  state.inferenceConfirmations = Array.isArray(confirmations) ? confirmations : [];
+  state.inferenceConfirmationError = confirmationError;
   scheduleResolutionRefresh(detail, expectedProject);
   if (paint) render();
 }
@@ -1780,6 +1894,7 @@ async function pollRun(id, pid) {
         if (selected && state.tab === 'results' || statusChanged || terminal.has(detail.run.status)) render();
       }
       if (terminal.has(detail.run.status)) {
+        if (projectId() === pid && state.selectedRunId === id) await loadRun(id);
         if (failed.has(detail.run.status)) toast(`检查失败：${detail.run.error || '请查看任务详情。'}`, true); else toast('检查已完成，可以查看逐项证据与分析。');
         break;
       }
@@ -2098,6 +2213,10 @@ async function showIncrementalResultVersion(versionId) {
 
 async function handleAction(action, el) {
   const id = el.dataset.id;
+  if (action === 'refresh-inference-confirmations') { if (state.run?.run?.id) await loadRun(state.run.run.id); return; }
+  if (action === 'open-run') { const pid=projectId();if(!id||!pid)return;state.tab='results';await loadProject(pid);if(projectId()!==pid)return;await loadRun(id);if(state.run?.run?.id===id&&!terminal.has(state.run.run.status))pollRun(id,pid);return; }
+  if (action === 'inference-attachment') return openInferenceAttachment(state.inferenceConfirmations.find(item => item.id === id));
+  if (action === 'inference-decision') return openInferenceDecision(state.inferenceConfirmations.find(item => item.id === id), el.dataset.decision);
   if (action === 'close-modal') { ++state.modalVersion; return modal.close(); }
   if (action === 'capabilities') return showCapabilities();
   if (action === 'new-project') return newProject();
@@ -2349,7 +2468,7 @@ document.addEventListener('input', event => {
   if (event.target.id === 'result-search') renderKeepFocus('result-search', () => { state.resultQuery = event.target.value; });
 });
 document.addEventListener('submit', async event => {
-  const form = event.target; if (!['new-project-form', 'checkpoint-form', 'review-form', 'project-info-form', 'incremental-decision-form', 'incremental-recalculation-form'].includes(form.id)) return;
+  const form = event.target; if (!['new-project-form', 'checkpoint-form', 'review-form', 'project-info-form', 'incremental-decision-form', 'incremental-recalculation-form', 'inference-decision-form', 'inference-attachment-form'].includes(form.id)) return;
   event.preventDefault(); if (!form.reportValidity()) return;
   const button = form.querySelector('button[type="submit"]'); if (button.disabled) return; button.disabled = true;
   const values = new FormData(form);
@@ -2400,6 +2519,10 @@ document.addEventListener('submit', async event => {
       const candidate = await api(`/api/runs/${enc(runId)}/dependency-recalculations`, { method: 'POST', body: { expectedRevision: revision, changedNeedKeys, expectedSourceResultDigest: plan.sourceResultDigest } });
       modal.close(); state.incrementalRecalculationContext = null; await loadRun(runId, false); render();
       toast(Number(candidate.changedCheckpointCount || 0) > 0 ? `已生成候选：${candidate.changedCheckpointCount} 项结论变化，等待审核发布。` : '已完成关联项重算，结论没有变化，无需发布。');
+    } else if (form.id === 'inference-attachment-form') {
+      await submitInferenceAttachment(form);
+    } else if (form.id === 'inference-decision-form') {
+      await submitInferenceDecision(form);
     } else if (form.id === 'incremental-decision-form') {
       const runId = form.dataset.run, recordId = form.dataset.record, decision = form.dataset.decision;
       const reviewer = String(values.get('reviewer') || '').trim(), note = String(values.get('note') || '').trim();

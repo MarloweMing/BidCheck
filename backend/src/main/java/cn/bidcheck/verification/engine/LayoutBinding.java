@@ -9,6 +9,13 @@ import static cn.bidcheck.verification.engine.ProofVerifier.*;
 final class LayoutBinding {
     static List<Map<String,Object>> sources(Fact fact,Map<String,Source> sources){return fact.sourceIds().stream().map(sources::get).filter(Objects::nonNull).filter(s->!s.id().startsWith("V")).map(s->linked("id",s.id(),"documentHash",s.documentHash(),"documentVersion",s.documentVersion(),"sourceFingerprint",identity(s.id()+s.evidence().quote()),"evidence",linked("documentId",s.evidence().documentId(),"documentName",s.evidence().documentName(),"page",s.evidence().page(),"locationType",s.evidence().locationType(),"quote",s.evidence().quote(),"anchor",s.evidence().anchor()))).toList();}
     static TableStructure.Result structure(Fact fact,List<Map<String,Object>> cells,Map<String,Source> sources){return TableStructure.analyze(SubjectIdentity.person(fact),strings(fact.attributes().get("cellIds")),cells,sources(fact,sources));}
+    /** A blank appointment cell cannot invalidate a separately proved current section title.
+     * Explicit competing table roles still veto the join; source scope is rederived by the server. */
+    static boolean sectionAppointment(Fact fact,TableStructure.Result structure,Map<String,Source> sources){
+        if(!fact.kind().equals("PERSON_ROLE")||!structure.valid()||structure.rows().stream().noneMatch(row->fact.value().equals(row.name())))return false;
+        if(structure.rows().stream().anyMatch(row->{String role=row.fields().getOrDefault("ROLE","").strip();return !role.isBlank()&&!Set.of("/","／","-","—").contains(role);}))return false;
+        return fact.sourceIds().stream().map(sources::get).filter(Objects::nonNull).anyMatch(source->DocumentSubjectScope.appointment(source,fact));
+    }
     static String structuredIssue(Fact f,TableStructure.Result result){
         if(!result.valid())return result.issue();
         if(f.kind().equals("MONTHS")){
@@ -16,9 +23,9 @@ final class LayoutBinding {
             Set<String> months=new HashSet<>();result.rows().forEach(r->months.addAll(r.months()));if(!months.containsAll(strings(f.attributes().get("months")))||strings(f.attributes().get("months")).isEmpty())return "STRUCTURE_MONTH_COVERAGE_UNPROVEN";
             String employer=str(f.attributes(),"employer");if(!employer.isBlank()&&result.rows().stream().anyMatch(r->!r.employer().equals(employer)))return "STRUCTURE_EMPLOYER_UNPROVEN";
         }else if(f.kind().equals("PERSON_ROLE")){
-            if(result.rows().stream().noneMatch(r->f.subject().equals(r.fields().get("ROLE"))))return "STRUCTURE_ROLE_UNPROVEN";
+            if(result.rows().stream().noneMatch(r->PersonnelRoles.canonical(f.subject()).equals(PersonnelRoles.canonical(r.fields().getOrDefault("ROLE","")))))return "STRUCTURE_ROLE_UNPROVEN";
         }else if(f.kind().equals("CERTIFICATE")){
-            boolean complete=result.rows().stream().anyMatch(r->{for(String key:List.of("category","grade","profession","employer")){String value=str(f.attributes(),key);String field=switch(key){case "category"->"CATEGORY";case "grade"->"GRADE";case "profession"->"PROFESSION";default->"EMPLOYER";};if(!value.isBlank()&&!value.equals(r.fields().get(field)))return false;}
+            boolean complete=result.rows().stream().anyMatch(r->{for(String key:List.of("category","grade","profession","employer")){String value=str(f.attributes(),key);String field=switch(key){case "category"->"CATEGORY";case "grade"->"GRADE";case "profession"->"PROFESSION";default->"EMPLOYER";};String actual=r.fields().getOrDefault(field,"");if(!value.isBlank()&&!(key.equals("grade")?CredentialGrades.normalize(value).equals(CredentialGrades.normalize(actual)):key.equals("category")?DomainBindings.sameCertificateCategory(value,actual):value.equals(actual)))return false;}
                 String number=str(f.attributes(),"number"),field=str(f.attributes(),"numberField");if(!number.isBlank()&&(field.isBlank()||!number.equals(r.fields().get(field))))return false;
                 String validity=str(f.attributes(),"validityField"),start=str(f.attributes(),"start"),end=str(f.attributes(),"end");return start.isBlank()&&end.isBlank()||!validity.isBlank()&&datePresent(r.fields().getOrDefault("DATE:"+validity,""),start)&&datePresent(r.fields().getOrDefault("DATE:"+validity,""),end);});
             if(!complete)return "STRUCTURE_CERTIFICATE_FIELDS_UNPROVEN";

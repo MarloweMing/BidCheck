@@ -1075,7 +1075,9 @@ class TargetWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('S0', latest)
         self.assertEqual(len(host.tool_calls()), 4)
         self.assertGreater(result["contextRemovedChars"], 50000)
-        self.assertEqual(result["contextCompactions"], 5)
+        self.assertEqual(result["contextRebuilds"], 5)
+        self.assertEqual(result["contextCompactions"], 2)
+        self.assertEqual(result["contextRetainedToolBatches"], 2)
         # The previously recorded request remains intact (filter must deep-copy).
         self.assertIn("FIRST_BODY_", json.dumps(model.inputs[1], default=str))
 

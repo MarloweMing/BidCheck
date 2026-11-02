@@ -26,7 +26,7 @@ final class PersonnelCredentialProof {
         boolean current(Rule rule,RuleEvaluator evaluator){return this.rule==rule&&owner==evaluator
             &&ruleSnapshot.equals(rule.toString())&&factSnapshot.equals(evaluator.facts.toString())&&sourceSnapshot.equals(evaluator.corpus.all)&&pageSnapshot.equals(evaluator.corpus.pages)
             &&sourceSnapshot.stream().allMatch(s->s.equals(evaluator.corpus.byId.get(s.id())))
-            &&new LinkedHashSet<>(evaluator.resolvedSubjects(rule)).equals(new LinkedHashSet<>(identityFacts.stream().map(Fact::subject).toList()));}
+            &&coversSubjects(rule,evaluator,identityFacts);}
         List<Fact> identityFacts(){return identityFacts;}
         List<CertificateSourceComparison.Record> records(){return records;}
     }
@@ -53,7 +53,7 @@ final class PersonnelCredentialProof {
         List<CertificateSourceComparison.Record> selected=new ArrayList<>();List<Fact> identityFacts=new ArrayList<>();
         Decision decision=evaluate(rule,evaluator,selected,identityFacts);
         Selection selection=Set.of("PASS","FAIL").contains(decision.status())&&!selected.isEmpty()
-            &&new LinkedHashSet<>(evaluator.resolvedSubjects(rule)).equals(new LinkedHashSet<>(identityFacts.stream().map(Fact::subject).toList()))
+            &&coversSubjects(rule,evaluator,identityFacts)
             ?new Selection(rule,evaluator,decision,selected,identityFacts):null;
         return new SelectedEvaluation(decision,selection);
     }
@@ -65,13 +65,13 @@ final class PersonnelCredentialProof {
         for(String person:people)decisions.add(person(rule,person,kind,all,evaluator,selected,identityFacts));return decisions.size()==1?decisions.get(0):RuleEvaluator.combine(rule.id(),rule.description(),"ALL",decisions);
     }
     private static Decision person(Rule rule,String person,String kind,List<CertificateSourceComparison.Record> all,RuleEvaluator evaluator,List<CertificateSourceComparison.Record> selected,List<Fact> identityFacts){
-        List<CertificateSourceComparison.Record> records=all.stream().filter(r->r.side().equals("CERTIFICATE")&&r.owner().equals(person)).filter(r->kind.equals("SAFETY")?r.category().startsWith("安全生产考核合格证书"):r.category().contains("注册建造师")).toList();
+        List<CertificateSourceComparison.Record> records=all.stream().filter(r->r.side().equals("CERTIFICATE")&&ConfirmedSubjectBindings.recordMatches(person,r,evaluator)).filter(r->kind.equals("SAFETY")?r.category().startsWith("安全生产考核合格证书"):r.category().contains("注册建造师")).toList();
         Map<String,Object> proof=linked("executor",VERSION,"subject",person,"credentialKind",kind,"requirementQuote",rule.sourceQuote(),"records",records.stream().map(CertificateSourceComparison.Record::audit).toList());
         if(records.size()!=1||!records.get(0).issues().isEmpty())return evaluator.unknown(rule,"CERTIFICATE_SELECTION_REQUIRED","需唯一适用证照及明确字段；缺少记录或多版本时不择优拼接",List.of(),proof);
         var record=records.get(0);var number=record.fields().get("CERTIFICATE_NUMBER");if(number==null)number=record.fields().get("REGISTRATION_NUMBER");
         if(!sourceFieldsBound(record,evaluator.corpus))return evaluator.unknown(rule,"CERTIFICATE_FIELD_SOURCE_MISMATCH","证照字段与当前不可变原文范围不一致，需重新读取原始记录",List.of(),proof);
         if(number==null)return evaluator.unknown(rule,"CERTIFICATE_IDENTITY_REQUIRED","证照缺少明确类型的编号",List.of(),proof);
-        Fact identity=new Fact("personnel-record:"+record.id(),"CERTIFICATE",person,"证书",number.raw(),number.value(),"","","UNRESOLVED",record.sources().stream().map(Source::id).toList(),Map.of("category",record.category(),"number",number.value(),"numberField",number.label()));
+        Fact identity=ConfirmedSubjectBindings.recordIdentity(record);
         String sourceIssue=new ProofVerifier().issue(identity,evaluator.corpus.byId);if(sourceIssue==null)sourceIssue=DomainBindings.issue(identity,evaluator.corpus.byId,List.of());
         if(sourceIssue!=null)return evaluator.unknown(rule,sourceIssue,"所选证件的原始字段与来源绑定尚未通过复核",List.of(),proof);
         var identityIssue=evaluator.identities.issue(rule,List.of(identity));if(identityIssue!=null)return evaluator.unknown(rule,identityIssue.code(),identityIssue.reason(),List.of(),proof);
@@ -114,6 +114,7 @@ final class PersonnelCredentialProof {
         return new Decision(rule.id(),rule.description(),"PASS","本次人员已绑定证照的指定类别、等级或专业满足该原子要求；有效期与共同证明分别核验",evidence,List.of(),proof);
     }
     private static String selectedProfession(CertificateSourceComparison.Record record,String required){String canonical=required.equals("房屋建筑工程")?"建筑工程":required;return record.fields().containsKey("PROFESSION:"+canonical)?canonical:"";}
+    private static boolean coversSubjects(Rule rule,RuleEvaluator evaluator,List<Fact> identities){List<String> subjects=evaluator.resolvedSubjects(rule);return identities.size()==subjects.size()&&subjects.stream().allMatch(person->identities.stream().anyMatch(f->f.subject().equals(person)||ConfirmedSubjectBindings.matches(person,f,evaluator.facts,evaluator.corpus)));}
     private static boolean sourceFieldsBound(CertificateSourceComparison.Record record,EvidenceCorpus corpus){
         for(var field:record.fields().values()){
             Source source=corpus.byId.get(field.sourceId());if(source==null)return false;var origin=source.evidence();var evidence=field.evidence();

@@ -59,6 +59,7 @@ bidcheck:
     enabled: ${BIDCHECK_WORD_ENABLED:true}
     license-path: ${BIDCHECK_WORD_LICENSE_PATH:}
   verification:
+    scan-layout-timeout-seconds: ${BIDCHECK_VERIFICATION_SCAN_LAYOUT_TIMEOUT_SECONDS:60}
     max-visual-calls: ${BIDCHECK_VERIFICATION_MAX_VISUAL_CALLS:12}
     max-model-calls: ${BIDCHECK_VERIFICATION_MAX_MODEL_CALLS:-1}
     input-poll-ms: 2000
@@ -88,6 +89,9 @@ bidcheck:
     extraction-model: ${BIDCHECK_EXTRACTION_MODEL:${BIDCHECK_MODEL:}}
     extraction-url: ${BIDCHECK_EXTRACTION_URL:${BIDCHECK_MODEL_URL:}}
   agent:
+    # Opt-in local SDK payload files. No cloud tracing or credentials are recorded.
+    audit-directory: ${BIDCHECK_AGENT_AUDIT_DIRECTORY:}
+    inference-normalization-min-confidence: ${BIDCHECK_INFERENCE_NORMALIZATION_MIN_CONFIDENCE:0.9}
     enabled: ${BIDCHECK_AGENT_ENABLED:false}
     python: ${BIDCHECK_AGENT_PYTHON:}
     worker: ${BIDCHECK_AGENT_WORKER:agent-worker/worker.py}

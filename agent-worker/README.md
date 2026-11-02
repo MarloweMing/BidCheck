@@ -160,6 +160,10 @@ Java 在 `context.workflowPolicy` 下发 `TARGET_FACTS_V1` 时启用目标绑定
 
 ## 日志与数据流
 
+可选配置 `BIDCHECK_AGENT_AUDIT_DIRECTORY` 保存 SDK 每次模型请求的输入和返回。默认关闭；排查时设置为服务进程可写、静态网站目录以外的本地目录。部署 Worker 时须一同部署 `model_audit.py`。审计由 `on_llm_start/on_llm_end` 获取实际 SDK 上下文，输入在宿主允许模型调用后记录。它不是 HTTP 抓包或供应商计费凭证。
+
+每次调用生成独立 JSON 文件，普通事件只保留 `modelAudit.status/file/sha256/bytes`。文件保留引用原文，密钥、认证字段和配置中的密钥文本会被遮蔽；不会开启云追踪。文件写入失败或超过单文件上限时记录明确状态，不伪称已保存全文。文件采用请求 ID 哈希命名并禁止覆盖，后续可按 `requestId + modelIndex` 对应工具链日志；历史运行没有开启此功能时，不能补造其原始模型输入输出。
+
 Worker 输出 `type=event` 的本地事件，包含模型/工具阶段、序号、耗时、接受事实数量及完成状态，不输出提示词、文档正文、参数原文、API key 或异常原始消息。工具调用消息本身包含业务参数，Java 必须作为进程协议处理，不得直接全文记入普通日志。
 
 云追踪被三层禁用：导入 SDK 前的环境开关、SDK 全局禁用并清空处理器、每次 `RunConfig(tracing_disabled=True, trace_include_sensitive_data=False)`。只有百炼的显式模型客户端可接收任务上下文及工具返回的必要材料。
@@ -167,6 +171,16 @@ Worker 输出 `type=event` 的本地事件，包含模型/工具阶段、序号�
 无变化的相同操作会使用缓存；缓存按目标、规范化参数及已采用事实/已披露来源区分。重算参数中的重复说明不能绕过去重；已知新来源可恢复此前被拒绝的读取。技术故障允许真实重试，同一故障重复发生后仍保留系统失败，不把失败缓存当作成功。
 
 不同检索措辞返回完全相同来源正文时也记录语义无进展；连续再次重复会停止本轮，保留原结论。新来源或新事实允许继续，不设置业务事项或模型费用预算。相同来源及相同正文在 SDK 对话中只传一份，后续保留引用标识和范围元数据；同来源正文或范围变化时仍传新正文。即便模型忽略 `parallel_tool_calls=False` 返回多个工具调用，Python 仍使用锁保证与 Java 的请求/回复按顺序配对。
+
+## 滚动上下文与重算回执
+
+模型输入保留最近两组完整工具调用及返回；一组并行工具必须全部配对，普通助手说明不占用工具组名额。原始 Runner 历史与宿主审计不被删除。保留窗口外的原文通过 `read_section` 恢复，来源索引不能当作原文引用。
+
+完整重算回执先由 Worker 校验并更新真实执行状态，再生成仅供模型阅读的视图：保留当前目标的决策详情、祖先的 ALL/ANY 等逻辑，以及兄弟目标的状态和缺口摘要。聚合节点重复收集的引文只保留哈希和计数，当前目标叶节点的具体证据仍保留。最新回执在 `currentHostState.latestComputationReceipt` 提供一次，历史工具结果引用同一 `fullReceiptRef`。完整最新回执仍保存在 Worker 和宿主，切换目标时从原始回执恢复，不靠模型摘要重建；视图不参与完成判定。
+
+日志指标明确区分重建与压缩：`contextRebuilds` 计每次模型输入重建，`contextCompactions` 只计序列化字数实际减少的次数。`contextRetainedToolBatches` 记录最近一次实际保留的完整工具组数；`contextReceiptInputChars`、`contextReceiptOutputChars`、`contextReceiptRemovedChars` 记录回执视图的累计字符量。每次发出 `context_rebuilt`，实际减少时另发 `context_compacted`，同时给出工具组数、调用配对数量、回执前后字数和活动目标，便于区分反复重建与真正丢弃上下文。
+
+`read_table_record` 属于受控宿主取证工具。只有宿主返回可信同版本自动重算回执时，Worker 才采用其事实及完成状态；表格结构识别、模型提交或界面显示本身不能自行宣布通过。
 
 ## 官方参考
 

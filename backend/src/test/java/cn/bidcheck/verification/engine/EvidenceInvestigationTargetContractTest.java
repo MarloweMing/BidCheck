@@ -46,12 +46,13 @@ class EvidenceInvestigationTargetContractTest {
         assertEquals(false,initial.get("targetCheckCompleted"));assertEquals(false,initial.get("businessCheckCompleted"));
     }
     @Test void closedAndForgedReadTargetsNeverReachSourceNavigation(){
-        var h=host();h.call("search_evidence",Map.of("query","项目负责人"));h.start();h.disclosed.clear();h.navigation.clear();
+        var h=host();h.call("search_evidence",Map.of("query","项目负责人"));h.start();h.disclosed.clear();
         String source=h.corpus.all.get(0).id();
         for(String tool:List.of("search_evidence","read_section","read_table_record"))for(String target:List.of("A","B","forged")){
+            Map<String,Source> navigationBefore=new LinkedHashMap<>(h.navigation);
             Map<String,Object> arguments=new LinkedHashMap<>(Map.of("targetObligationId",target));arguments.put(tool.equals("search_evidence")?"query":"sourceId",tool.equals("search_evidence")?"项目负责人":source);
             var receipt=h.call(tool,arguments);assertEquals(target.equals("forged")?"INVALID_TARGET_RECEIPT":"TARGET_STATE_UNCHANGED",receipt.get("error"));
-            assertTrue(h.disclosed.isEmpty());assertTrue(h.navigation.isEmpty());
+            assertTrue(h.disclosed.isEmpty());assertEquals(navigationBefore,h.navigation,"rejected calls must not add navigation beyond the legitimate initial server receipt");
         }
     }
     @Test void remainingTargetReadRunsAndRecomputeStaysArgumentFree(){

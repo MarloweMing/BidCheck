@@ -61,7 +61,7 @@ class OcrRequestGovernorTest {
         String task = request.at("/parameters/ocr_options/task").asText();
         Object content = "advanced_recognition".equals(task)
                 ? Map.of("ocr_result", Map.of("words_info", List.of(Map.of("text", "项目甲", "rotate_rect", List.of(50, 30, 80, 20, 0)))))
-                : Map.of("text", task.isBlank() ? json.writeValueAsString(Map.of("status", "COMPLETE", "textBoxes", List.of(Map.of(
+                : Map.of("text", task.isBlank() ? json.writeValueAsString(Map.of("status", "COMPLETE", "coordinateSystem","PIXEL","bboxFormat","XYWH","textBoxes", List.of(Map.of(
                     "id", "b1", "frameId", "image", "text", "项目甲", "bbox", Map.of("x", 10, "y", 20, "width", 80, "height", 20))),
                     "tables", List.of(), "readingOrder", List.of("b1"))) : "项目甲");
         respond(exchange, 200, json.writeValueAsString(Map.of("output", Map.of("choices", List.of(Map.of("finish_reason", "stop", "message", Map.of("content", List.of(content))))))));

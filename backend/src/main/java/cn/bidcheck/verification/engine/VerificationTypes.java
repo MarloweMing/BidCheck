@@ -4,7 +4,7 @@ import cn.bidcheck.domain.Domain.Evidence;
 import java.util.*;
 
 final class VerificationTypes {
-    static final String VERSION="verification-engine-2.28-source-occurrence-ledger";
+    static final String VERSION="verification-engine-2.31-targeted-evidence-closure";
     static final Set<String> PREDICATES=Set.of("MATERIAL","DECLARATION","SECTION","PERSON_ROLE","PERSON_COUNT","ENTITY_COUNT","NOT_APPLICABLE","CERTIFICATE","VALIDITY","MONTHS","RELATION","NUMBER","SAME_FIELD","PRICE_RECONCILE","DATE_RELATION","CONTRACT","SCORE_COUNT","TEXT_ANOMALY","QUALITY_ADVISORY","QUALITY","EXTERNAL","VISUAL","REFERENCE_TIME","INPUT","UNSUPPORTED");
     record Rule(String id,String description,String predicate,String subject,String field,String operator,String expected,String unit,
                 Map<String,Object> parameters,String sourceQuote,String logic,List<Rule> children) {

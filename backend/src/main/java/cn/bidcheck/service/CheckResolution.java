@@ -21,7 +21,7 @@ public final class CheckResolution {
             ||maps(a.get("gaps")).stream().anyMatch(gap->"AGENT_INVESTIGATION_STALLED".equals(text(gap,"code")));
     }
     public static boolean unresolved(Finding f){
-        if("UNDETERMINED".equals(f.evaluation().status()))return true;
+        if(Set.of("UNDETERMINED","NEEDS_CONFIRMATION").contains(f.evaluation().status()))return true;
         if("NOT_APPLICABLE".equals(f.evaluation().status()))return false;
         // An ALL tree can already fail while other required conditions remain unresolved.
         // A final status alone must not clear those gaps; complete marks the proof boundary,
@@ -148,6 +148,8 @@ public final class CheckResolution {
         List<Map<String,Object>> pendingVisual=TrustedVisualReview.pendingRequests(a,visualReview.observations());
         boolean invalidCompilation=Set.of("UNRESOLVED","VALIDATION_FAILED","REPAIR_RETRY_PENDING").contains(text(compilation,"state"))
             ||codes.stream().anyMatch(RecoveryFailureRouting::requirement);
+        if(!invalidCompilation&&"NEEDS_CONFIRMATION".equals(f.evaluation().status())&&codes.equals(Set.of("INFERENCE_CONFIRMATION_REQUIRED")))
+            return fields("strategy","WAIT_INFERENCE_CONFIRMATION","status","WAITING_USER","reason","已有带原文引用的推断需要确认，尚未构成业务通过。","nextAction","确认或否定下方推断后重算；相同证据不再自动重复调查。");
         if(Set.of("NOT_CONFIGURED","CONFIGURATION_INVALID","SCOPE_INCOMPLETE").contains(text(externalState,"state"))){
             strategy="SCOPE_INCOMPLETE".equals(text(externalState,"state"))?"REPAIR_EXTERNAL_SCOPE":"RESTORE_EXTERNAL_CONNECTION";status="FAILED";reason=text(externalState,"label");next=text(externalState,"nextStep");
         }else if(codes.stream().anyMatch(ExternalCheckState::systemFailure)){

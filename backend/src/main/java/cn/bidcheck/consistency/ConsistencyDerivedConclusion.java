@@ -6,7 +6,7 @@ import static cn.bidcheck.consistency.ConsistencyRunSupport.*;
 
 /** Re-evaluates a complete original occurrence set; it does not overwrite the immutable scan or human review. */
 public final class ConsistencyDerivedConclusion {
-    public static final String VERSION="consistency-derived-1-complete-observed-occurrences";
+    public static final String VERSION="consistency-derived-2-confirmed-source-relations";
     public static String identity(){return VERSION+"|"+ConsistencyObjectRecovery.VERSION;}
     private final Document document;
     private final Map<String,Map<String,Object>> occurrences=new LinkedHashMap<>();
@@ -14,9 +14,12 @@ public final class ConsistencyDerivedConclusion {
     private final ConsistencyObjectRecovery recovery;
 
     ConsistencyDerivedConclusion(Document document,Collection<Map<String,Object>> sourceOccurrences){
+        this(document,sourceOccurrences,List.of());
+    }
+    ConsistencyDerivedConclusion(Document document,Collection<Map<String,Object>> sourceOccurrences,List<Map<String,Object>> confirmedRelations){
         this.document=document;
         for(var occurrence:sourceOccurrences){String id=string(occurrence,"id");if(occurrences.putIfAbsent(id,occurrence)!=null)duplicatedIds.add(id);}
-        recovery=new ConsistencyObjectRecovery(document,occurrences.values());
+        recovery=new ConsistencyObjectRecovery(document,occurrences.values(),confirmedRelations);
     }
     /** Pure local revalidation, suitable both after retrieval and when consuming a frozen current-run report. */
     public static Map<String,Evaluation> recompute(Document document,Map<String,Object> report){
@@ -24,7 +27,7 @@ public final class ConsistencyDerivedConclusion {
         String reportDocument=string(report,"documentId"),reportHash=string(report,"documentHash");
         if(!reportDocument.isBlank()&&!reportDocument.equals(document.id())||!reportHash.isBlank()&&!reportHash.equals(document.sha256()))
             throw new IllegalArgumentException("CONSISTENCY_SOURCE_MANIFEST_MISMATCH");
-        ConsistencyDerivedConclusion evaluator=new ConsistencyDerivedConclusion(document,maps(report.get("occurrences")));
+        ConsistencyDerivedConclusion evaluator=new ConsistencyDerivedConclusion(document,maps(report.get("occurrences")),maps(report.get("confirmedEvidenceRelations")));
         Map<String,Evaluation> results=new LinkedHashMap<>();
         for(var group:maps(report.get("groups")))evaluator.evaluate(group).ifPresent(result->results.put(string(group,"id"),result));
         return Collections.unmodifiableMap(results);

@@ -129,6 +129,16 @@ public final class OcrRequestGovernor {
 
     HttpResponse<byte[]> send(HttpClient client, URI endpoint, String key, byte[] payload, int responseLimit,
                               Duration timeout, OcrRequestSettings settings, RequestBudget batchBudget) throws IOException {
+        return sendAudited(client,endpoint,key,payload,responseLimit,timeout,settings,batchBudget,null);
+    }
+    @FunctionalInterface interface ResponseObserver { void accept(int attempt,int status,byte[] response); }
+    @FunctionalInterface interface FailureObserver { void accept(int attempt,String phase,String code,Integer status,long durationMillis); }
+    HttpResponse<byte[]> sendAudited(HttpClient client, URI endpoint, String key, byte[] payload, int responseLimit,
+                              Duration timeout, OcrRequestSettings settings, RequestBudget batchBudget,ResponseObserver observer) throws IOException {
+        return sendAudited(client,endpoint,key,payload,responseLimit,timeout,settings,batchBudget,observer,null);
+    }
+    HttpResponse<byte[]> sendAudited(HttpClient client, URI endpoint, String key, byte[] payload, int responseLimit,
+                              Duration timeout, OcrRequestSettings settings, RequestBudget batchBudget,ResponseObserver observer,FailureObserver failures) throws IOException {
         long outerDeadline = batchBudget == null ? Long.MAX_VALUE : batchBudget.deadline();
         long queueDeadline = Math.min(outerDeadline, System.nanoTime() + timeout.multipliedBy(2).toNanos());
         long networkDeadline = 0;
@@ -136,7 +146,9 @@ public final class OcrRequestGovernor {
         for (int attempt = 1; attempt <= settings.retryAttempts(); attempt++) {
             interrupted();
             if (batchBudget != null) batchBudget.check();
-            Admission admission = acquire(networkDeadline == 0 ? queueDeadline : networkDeadline);
+            long admissionStarted=System.nanoTime();Admission admission;
+            try{admission=acquire(networkDeadline == 0 ? queueDeadline : networkDeadline);}
+            catch(OcrFailure failed){observeFailure(failures,attempt,"ADMISSION",failed,admissionStarted);throw failed;}
             if (networkDeadline == 0) networkDeadline = Math.min(outerDeadline, System.nanoTime() + timeout.multipliedBy(3).toNanos());
             HttpResponse<byte[]> response = null;
             long delay = 0;
@@ -148,6 +160,7 @@ public final class OcrRequestGovernor {
                 attempts.increment();
                 sent = true;
                 response = exchange(client, endpoint, key, payload, responseLimit, Duration.ofNanos(budget));
+                if(observer!=null)try{observer.accept(attempt,response.statusCode(),response.body());}catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(OcrRequestGovernor.class).warn("bidcheck.page_layout_response_audit status=OBSERVER_FAILED attempt={}",attempt);}
                 if (response.statusCode() == 200) { recordHealth(admission,true,false);return response; }
                 last = OcrFailure.http(response.statusCode());
                 recordHealth(admission,false,response.statusCode()>=500);
@@ -159,7 +172,7 @@ public final class OcrRequestGovernor {
                     notifyAll();
                 }
                 if (response.statusCode() == 429) rateLimited.increment();
-            } catch (OcrFailure failed) { last = failed;delay=retryDelay(null,attempt,settings);if(sent)recordHealth(admission,false,Set.of("TIMEOUT","TRANSPORT_ERROR").contains(failed.code()));if ("TIMEOUT".equals(failed.code())) timeouts.increment(); }
+            } catch (OcrFailure failed) { observeFailure(failures,attempt,sent?"TRANSPORT":"BEFORE_SEND",failed,started);last = failed;delay=retryDelay(null,attempt,settings);if(sent)recordHealth(admission,false,Set.of("TIMEOUT","TRANSPORT_ERROR").contains(failed.code()));if ("TIMEOUT".equals(failed.code())) timeouts.increment(); }
             finally { networkNanos.add(System.nanoTime() - started); release(admission); }
             if (!last.temporary() || "BATCH_BUDGET_EXHAUSTED".equals(last.code()) || attempt == settings.retryAttempts()) throw last;
             // Retry-After is never shortened to fit the budget; refuse this retry instead.
@@ -169,6 +182,10 @@ public final class OcrRequestGovernor {
             catch (InterruptedException stopped) { throw interruptedFailure(); }
         }
         throw last;
+    }
+    private static void observeFailure(FailureObserver observer,int attempt,String phase,OcrFailure failure,long started){
+        if(observer!=null)try{observer.accept(attempt,phase,failure.code(),failure.httpStatus(),TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started));}
+        catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(OcrRequestGovernor.class).warn("bidcheck.page_layout_failure_audit status=OBSERVER_FAILED attempt={}",attempt);}
     }
 
     private record Admission(long epoch,boolean probe) { }

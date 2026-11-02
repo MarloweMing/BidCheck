@@ -12,10 +12,14 @@ final class SourceLocalPersonnelCredentialClosure {
     private SourceLocalPersonnelCredentialClosure(){}
 
     static Map<String,Object> review(Rule rule,PersonnelCredentialProof.Selection selection,RuleEvaluator evaluator){
+        return reviewRecords(rule,selection.records(),evaluator);
+    }
+    /** The caller must reconstruct and validate its selected records in this evaluator. */
+    static Map<String,Object> reviewRecords(Rule rule,List<CertificateSourceComparison.Record> selectedRecords,RuleEvaluator evaluator){
         long started=System.nanoTime();List<Map<String,Object>> witnesses=new ArrayList<>();
         List<CertificateSourceComparison.Record> all=evaluator.personnelCredentialRecords();
         Map<String,CertificateEvidenceRecords.ScopeResolver> scopes=new HashMap<>();
-        for(var selected:selection.records()){
+        for(var selected:selectedRecords){
             String key=selected.category().contains("建造师")&&selected.fields().containsKey("REGISTRATION_NUMBER")||!selected.fields().containsKey("CERTIFICATE_NUMBER")?"REGISTRATION_NUMBER":"CERTIFICATE_NUMBER";
             String number=normal(selected.value(key)),family=family(selected.category());
             Set<String> examined=new LinkedHashSet<>();List<Map<String,Object>> records=new ArrayList<>();
@@ -27,7 +31,9 @@ final class SourceLocalPersonnelCredentialClosure {
                 if(!record.issues().isEmpty())return unresolved("SAME_CREDENTIAL_COUNTEREVIDENCE_UNRESOLVED",examined);
                 if(!selected.owner().equals(record.owner()))return unresolved("SAME_CREDENTIAL_HOLDER_CONFLICT",examined);
                 for(String field:List.of("PERSON_ID","BIRTH_DATE"))if(differentKnown(selected,record,field))return unresolved("SAME_CREDENTIAL_IDENTITY_CONFLICT",examined);
-                if(rule.predicate().equals("CERTIFICATE")){
+                if(RegistrationEmployerProof.applies(rule)){
+                    if(differentKnown(selected,record,"EMPLOYER"))return unresolved("SAME_CREDENTIAL_EMPLOYER_CONFLICT",examined);
+                }else if(rule.predicate().equals("CERTIFICATE")){
                     if(!selected.category().equals(record.category()))return unresolved("SAME_CREDENTIAL_FIELDS_CONFLICT",examined);
                     String profession=str(rule.parameters(),"requiredProfession").replace("房屋建筑工程","建筑工程");
                     if(!profession.isBlank()&&record.side().equals("CERTIFICATE")&&!professionSet(selected).equals(professionSet(record)))return unresolved("SAME_CREDENTIAL_FIELDS_CONFLICT",examined);

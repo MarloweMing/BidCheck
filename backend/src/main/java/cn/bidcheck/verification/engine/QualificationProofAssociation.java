@@ -10,7 +10,7 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 /** Common query proof belongs to a qualification that actually satisfied the parent alternative. */
 final class QualificationProofAssociation {
     private static final Logger LOG=LoggerFactory.getLogger(QualificationProofAssociation.class);
-    static final String VERSION="selected-qualification-proof-3-same-certificate-validity";
+    static final String VERSION="selected-qualification-proof-5-header-and-layout-actions";
     private static final Pattern NUMBER=Pattern.compile("(?:资质证书编号|证书编号|证书号码|证号)[\\s:：|]*([A-Za-z0-9][A-Za-z0-9()（）/-]{3,79})");
     private static final Pattern HOLDER=Pattern.compile("(?:企业名称|单位名称|组织名称|持证单位)[\\t :：|]*([^\\r\\n|]+)");
     private static final Pattern CATEGORY=Pattern.compile("(?:资质类别|资质名称|证书类别|类别)[\\t :：|]*([^\\r\\n|]+)");
@@ -30,7 +30,7 @@ final class QualificationProofAssociation {
 
     record Record(Source source,String company,String category,String number,String grade,boolean query,List<String> urls,List<Evidence> evidences,Map<String,Object> fields){
         Record(Source source,String company,String category,String number,String grade,boolean query,List<String> urls){this(source,company,category,number,grade,query,urls,List.of(source.evidence()),Map.of());}
-        String key(){return company+"|"+CertificateEvidenceRecords.category(category)+"|"+number;}
+        String key(){return clean(company)+"|"+CertificateEvidenceRecords.normalizeCertificateNumber(number);}
         Map<String,Object> audit(){return linked("sourceId",source.id(),"source",source.evidence(),"subject",company,"category",category,"certificateNumber",number,"grade",grade,"query",query,"urls",urls,"fieldSources",fields,"sources",evidences);}
     }
     record Selected(Fact fact,Rule branch,Record certificate){}
@@ -74,13 +74,18 @@ final class QualificationProofAssociation {
     /** A document exists and its category matches does not establish validity at the tender event. */
     private static Decision validity(Rule rule,Selected selected,RuleEvaluator evaluator){
         Fact certificate=selected.fact();String category=str(certificate.attributes(),"category"),number=str(certificate.attributes(),"number");
-        Rule validity=new Rule(rule.id()+"-VALID-"+identity(certificate.subject()+category+number).substring(0,12),"所选资质证书在要求时点有效","VALIDITY",certificate.subject(),"","","","",Map.of("category",category,"number",number),rule.sourceQuote(),"",List.of());
+        var originalHeader=QualificationCertificateEvidence.resolve(certificate,selected.certificate().source(),evaluator.corpus);
+        Map<String,Object> parameters=linked("category",category,"number",number);
+        originalHeader.ifPresent(value->parameters.put("validityField",value.field()));
+        Rule validity=new Rule(rule.id()+"-VALID-"+identity(certificate.subject()+category+number).substring(0,12),"所选资质证书在要求时点有效","VALIDITY",certificate.subject(),"","","","",parameters,rule.sourceQuote(),"",List.of());
         List<Fact> candidates=new ArrayList<>(evaluator.facts);
+        originalHeader.ifPresent(value->candidates.add(value.fact()));
         for(Source source:selected.certificate().source()==null?List.<Source>of():List.of(selected.certificate().source()))candidates.addAll(NativeCertificateFacts.extract(validity,source));
         List<Fact> dates=candidates.stream().filter(f->f.subject().equals(certificate.subject())&&DomainBindings.sameCertificateCategory(str(f.attributes(),"category"),category)&&str(f.attributes(),"number").equals(number))
             .filter(f->new ProofVerifier().issue(f,evaluator.corpus.byId)==null&&DomainBindings.issue(f,evaluator.corpus.byId,List.of())==null)
             .filter(f->f.sourceIds().stream().map(evaluator.corpus.byId::get).filter(Objects::nonNull).anyMatch(s->s.evidence().documentId().equals(selected.certificate().source().evidence().documentId())&&s.evidence().page()==selected.certificate().source().evidence().page())).distinct().toList();
         Decision checked=evaluator.validity(validity,dates);Map<String,Object> proof=new LinkedHashMap<>(checked.proof());
+        originalHeader.ifPresent(value->{proof.put("qualificationDateFieldResolution",value.proof());proof.put("validityFieldResolution","SELECTED_ORIGINAL_CERTIFICATE_HEADER");proof.put("validityFieldReason","由实际满足资质分支的同证原文表头确定，另行核验使用期限与备注限制");});
         proof.putAll(linked("executor",VERSION,"selectedQualificationRuleId",selected.branch().id(),"selectedFactId",certificate.id(),"certificateNumber",number,"certificateDocumentId",selected.certificate().source().evidence().documentId(),"certificatePage",selected.certificate().source().evidence().page(),"proofScope","SELECTED_CERTIFICATE_VALIDITY_AT_TENDER_EVENT"));
         LOG.info("bidcheck.qualification_validity ruleId={} executor={} certificatePage={} status={} gapCodes={}",rule.id(),VERSION,selected.certificate().source().evidence().page(),checked.status(),checked.gaps().stream().map(Gap::code).toList());
         return new Decision(checked.id(),checked.description(),checked.status(),checked.reason(),checked.evidences(),checked.gaps(),proof);
@@ -114,15 +119,21 @@ final class QualificationProofAssociation {
             }
         }
         List<Record> queries=new ArrayList<>();for(String category:categories)for(Source source:evaluator.corpus.all){Record record=read(source,category);if(record!=null&&record.query())queries.add(record);}
-        for(String company:subjects)for(String category:categories)queries.addAll(CertificateEvidenceRecords.qualificationQueries(evaluator.corpus,company,category));
+        for(String company:subjects)for(String category:categories)queries.addAll(CertificateEvidenceRecords.qualificationQueries(evaluator.corpus,company,category,RuleEvaluator.maps(evaluator.context.get("_validatedLayoutCells"))));
         LOG.info("bidcheck.qualification_proof_binding ruleId={} executor={} subjects={} selectedFacts={} queryRecords={} queryTableRecords={}",choice.id(),VERSION,subjects.size(),selected.size(),queries.size(),queries.stream().filter(q->!q.fields().isEmpty()).count());
         return new Bundle(subjects,selected,queries,"","");
     }
 
     private static Decision compare(Rule rule,Selected selected,List<Record> records,RuleEvaluator evaluator){
-        Record certificate=selected.certificate();List<Record> queries=records.stream().filter(q->q.key().equals(certificate.key())).toList();
-        Map<String,Object> proof=linked("executor",VERSION,"selectedQualificationRuleId",selected.branch().id(),"selectedQualificationQuote",selected.branch().sourceQuote(),"selectedFactId",selected.fact().id(),"certificate",certificate.audit(),"queries",queries.stream().map(Record::audit).toList(),"comparedFields",List.of("SUBJECT","CATEGORY","CERTIFICATE_NUMBER","GRADE"));
-        if(queries.isEmpty())return evaluator.unknown(rule,"QUALIFICATION_QUERY_IDENTITY_REQUIRED","尚无与已满足资质的单位、类别和证号对应的查询截图，不能借其他证书的查询材料",List.of(selected.fact()),proof);
+        Record certificate=selected.certificate();List<Record> identities=records.stream().filter(q->q.key().equals(certificate.key())).toList();
+        List<Record> queries=identities.stream().filter(q->DomainBindings.sameCertificateCategory(CertificateEvidenceRecords.category(q.category()),CertificateEvidenceRecords.category(certificate.category()))).toList();
+        Map<String,Object> proof=linked("executor",VERSION,"selectedQualificationRuleId",selected.branch().id(),"selectedQualificationQuote",selected.branch().sourceQuote(),"selectedFactId",selected.fact().id(),"certificate",certificate.audit(),"identityKeyFields",List.of("SUBJECT","CERTIFICATE_NUMBER"),"sameIdentityCandidates",identities.stream().map(Record::audit).toList(),"queries",queries.stream().map(Record::audit).toList(),"comparedFields",List.of("SUBJECT","CATEGORY","CERTIFICATE_NUMBER","GRADE"));
+        if(identities.isEmpty()||queries.isEmpty()){
+            List<Map<String,Object>> actions=CertificateEvidenceRecords.qualificationLayoutActions(evaluator.corpus,certificate.company(),certificate.category(),certificate.number(),rule.id());
+            if(!actions.isEmpty())proof.put("requiredEvidenceActions",actions);
+        }
+        if(identities.isEmpty())return evaluator.unknown(rule,"QUALIFICATION_QUERY_IDENTITY_REQUIRED","尚无与已满足资质的单位和证号对应的查询截图，不能借其他证书的查询材料",List.of(selected.fact()),proof);
+        if(queries.isEmpty())return evaluator.unknown(rule,"QUALIFICATION_QUERY_CATEGORY_REQUIRED","相同单位及证号已对应，但本项资质类别尚未通过原文或已验证单元格归属对齐",List.of(selected.fact()),proof);
         Set<String> grades=new LinkedHashSet<>();queries.forEach(q->grades.add(q.grade()));
         if(grades.size()!=1||grades.contains(""))return evaluator.unknown(rule,"QUALIFICATION_QUERY_FIELDS_REQUIRED","同一证号查询记录的等级缺失或存在不同版本，尚不能确认字段一致",List.of(selected.fact()),proof);
         List<Evidence> evidence=new ArrayList<>(certificate.evidences());queries.forEach(q->evidence.addAll(q.evidences()));
@@ -149,6 +160,6 @@ final class QualificationProofAssociation {
         return new Record(source,company,category,normalNumber(number),CredentialGrades.normalize(grade),query,List.copyOf(urls));
     }
     private static String single(Pattern pattern,String text){Set<String> values=new LinkedHashSet<>();Matcher matcher=pattern.matcher(text);while(matcher.find())values.add(clean(matcher.group(1)));return values.size()==1?values.iterator().next():null;}
-    private static String normalNumber(String value){return clean(value).toUpperCase(Locale.ROOT);}
+    private static String normalNumber(String value){return CertificateEvidenceRecords.normalizeCertificateNumber(value);}
     private static void factIds(Object value,Set<String> ids){if(value instanceof Map<?,?> map){if(map.get("factIds") instanceof List<?> list)list.forEach(id->ids.add(Objects.toString(id)));for(Object child:map.values())factIds(child,ids);}else if(value instanceof List<?> list)list.forEach(child->factIds(child,ids));}
 }

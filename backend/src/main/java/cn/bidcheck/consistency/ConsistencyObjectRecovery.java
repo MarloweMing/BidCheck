@@ -2,6 +2,7 @@ package cn.bidcheck.consistency;
 
 import cn.bidcheck.domain.Domain.*;
 import cn.bidcheck.verification.engine.DocumentScopeProof;
+import cn.bidcheck.verification.engine.ConfirmedInferenceEvidence;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.*;
 import java.util.regex.*;
@@ -9,7 +10,8 @@ import static cn.bidcheck.consistency.ConsistencyRunSupport.*;
 
 /** Evidence-derived object plans. These are children of, and never replacements for, original findings. */
 final class ConsistencyObjectRecovery {
-    static final String VERSION="consistency-object-recovery-5-source-relations-consumed";
+    static final String VERSION="consistency-object-recovery-6-confirmed-source-pairs";
+    private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(ConsistencyObjectRecovery.class);
     private static final ObjectMapper JSON=new ObjectMapper();
     private static final Pattern CERTIFICATE_ID=Pattern.compile("(?:证书编号|证书号码)\\s*[:：]\\s*([\\p{IsHan}A-Za-z0-9()（）/\\-]{5,50})");
     private static final Pattern INVOICE_ID=Pattern.compile("发票(?:号码|编号)\\s*[:：]\\s*([0-9]{8,30})(?![0-9])");
@@ -25,11 +27,16 @@ final class ConsistencyObjectRecovery {
     private final Map<String,Page> pages=new HashMap<>();
     private final DocumentScopeProof.Resolver scope;
     private final Map<String,Binding> bindings=new LinkedHashMap<>();
+    private final List<Map<String,Object>> confirmedRelations;
     record Binding(String key,String kind,String anchor,boolean strong,Map<String,Object> proof,List<Evidence> evidence,List<String> missing,String value) {}
     ConsistencyObjectRecovery(Document document,Collection<Map<String,Object>> occurrences) {
+        this(document,occurrences,List.of());
+    }
+    ConsistencyObjectRecovery(Document document,Collection<Map<String,Object>> occurrences,List<Map<String,Object>> relations) {
         this.document=document;this.scope=DocumentScopeProof.forDocument(document);
+        confirmedRelations=relations.stream().filter(ConfirmedInferenceEvidence::isValidated).toList();
         document.pages().forEach(p->pages.put(p.locationType()+":"+p.number(),p));
-        for(Map<String,Object> occurrence:occurrences)bindings.put(string(occurrence,"id"),bind(occurrence));
+        for(Map<String,Object> occurrence:occurrences){Binding original=bind(occurrence);bindings.put(string(occurrence,"id"),original.strong()?original:confirmedBinding(occurrence,original));}
     }
     Map<String,Object> plan(Map<String,Object> group,Map<String,Map<String,Object>> occurrences) {
         List<String> requested=group.get("occurrenceIds") instanceof List<?> ids?ids.stream().map(Object::toString).toList():List.of();
@@ -141,6 +148,10 @@ final class ConsistencyObjectRecovery {
     /** Convert exact-source candidates into narrow relations; never promote a single observed value to full coverage. */
     Map<String,Object> verifyRelations(Map<String,Object> object,List<Evidence> candidates){
         Map<String,Object> prior=map(object.get("identityProof"));String kind=string(object,"objectKind"),anchor=string(prior,"instanceId");
+        if("CONFIRMED_PERSON_SOURCE_PAIR".equals(kind)){
+            List<Map<String,Object>> proven=new ArrayList<>();for(Binding binding:bindings.values())if(binding.key().equals(string(object,"objectKey"))&&binding.kind().equals(kind))proven.add(binding.proof());
+            return values("policyVersion",VERSION,"status",proven.isEmpty()?"RELATION_UNPROVEN":"VERIFIED","relations",proven,"missingDimensions",proven.isEmpty()?List.of("已确认的精确来源关系尚未复验"):List.of(),"contextResolved",!proven.isEmpty(),"coverageComplete",false,"automaticParentPass",false,"proofScope","ONLY_CITED_OCCURRENCE_IDENTITY");
+        }
         if("EXCLUDED_PROJECT_SOURCE".equals(kind)){
             List<Map<String,Object>> exclusions=new ArrayList<>();
             for(Binding binding:bindings.values())if(binding.key().equals(string(object,"objectKey")))for(Evidence ref:binding.evidence()){
@@ -205,6 +216,35 @@ final class ConsistencyObjectRecovery {
         return values("policyVersion",VERSION,"status",conflict?"RELATION_CONFLICT":relations.isEmpty()?"RELATION_UNPROVEN":"VERIFIED",
             "relations",conflict?List.of():relations,"conflictingCandidates",conflict?relations:List.of(),"missingDimensions",missing.stream().distinct().toList(),
             "contextResolved",!conflict&&!relations.isEmpty()&&missing.isEmpty(),"coverageComplete",false,"automaticParentPass",false);
+    }
+    /** Confirmation is an edge for the cited occurrences, not a global replacement of a name. */
+    private Binding confirmedBinding(Map<String,Object> occurrence,Binding original){
+        String field=string(occurrence,"field");if(!Set.of("personName","personRole").contains(field)||!string(occurrence,"scope").equals("CURRENT_PROJECT"))return original;
+        Evidence source=evidence(occurrence.get("evidence"));if(!valid(source)||!Boolean.TRUE.equals(scope.currentEvidence(source).get("verifiedCurrent")))return original;
+        String owner=field.equals("personName")?string(occurrence,"value"):string(occurrence,"subject");if(owner.isBlank()||owner.equals("UNRESOLVED")||!plain(source.quote()).contains(plain(owner)))return original;
+        List<Map<String,Object>> matches=new ArrayList<>();List<Evidence> references=new ArrayList<>();
+        for(var relation:confirmedRelations){
+            if(!"RELATION".equals(string(relation,"kind"))||!Set.of("同一人","SAME_PERSON","身份对应").contains(string(relation,"field"))||!"CURRENT_PROJECT".equals(string(relation,"scope")))continue;
+            String left=string(relation,"subject"),right=string(map(relation.get("attributes")),"object");if((!left.equals(owner)&&!right.equals(owner))||left.isBlank()||right.isBlank())continue;
+            List<Evidence> refs=new ArrayList<>();boolean invalid=false,covered=false;Set<String> identifiers=new HashSet<>();
+            for(var ref:maps(relation.get("evidences"))){
+                if(!document.id().equals(string(ref,"documentId"))||!document.sha256().equals(string(ref,"documentHash"))||!(ref.get("documentVersion") instanceof Number version)||version.intValue()!=document.version()||!(ref.get("page") instanceof Number page)){invalid=true;break;}
+                Evidence e=new Evidence(document.id(),document.name(),page.intValue(),string(ref,"locationType"),string(ref,"quote"),"confirmed:"+string(ref,"sourceId"),1);
+                if(!valid(e)||!Boolean.TRUE.equals(scope.currentEvidence(e).get("verifiedCurrent"))){invalid=true;break;}
+                refs.add(e);if(e.page()==source.page()&&e.locationType().equals(source.locationType())&&e.quote().contains(source.quote()))covered=true;
+                Matcher ids=Pattern.compile("(?:身份证号(?:码)?|公民身份号码|社会保障号码)[\\s:：]*([0-9]{17}[0-9Xx])(?![0-9])").matcher(e.quote());while(ids.find())identifiers.add(ids.group(1).toUpperCase(Locale.ROOT));
+            }
+            boolean both=refs.stream().anyMatch(e->plain(e.quote()).contains(plain(left)))&&refs.stream().anyMatch(e->plain(e.quote()).contains(plain(right)));
+            if(invalid||!covered||!both||refs.size()<2||identifiers.size()>1)continue;
+            matches.add(relation);references.addAll(refs);
+        }
+        Set<String> canonical=new HashSet<>();matches.forEach(m->canonical.add(string(m,"subject")));if(matches.isEmpty()||canonical.size()!=1)return original;
+        String role=field.equals("personName")?string(occurrence,"subject"):"";if(field.equals("personName")&&(role.isBlank()||role.equals("UNRESOLVED")||!plain(source.quote()).contains(plain(role))))return original;
+        // Source membership in the same confirmed pair is required even for identical full names.
+        String pair=matches.stream().map(m->string(m,"confirmationLedgerId")).sorted().reduce((a,b)->a+"|"+b).orElse("");String key="CONFIRMED_PERSON:"+document.id()+":"+document.sha256()+":"+pair+":"+field+":"+role+":"+string(occurrence,"lot");
+        String value=field.equals("personName")?canonical.iterator().next():original.value();Map<String,Object> proof=values("derivedBy","REVALIDATED_SERVER_CONFIRMATION_LEDGER","confirmationIds",matches.stream().map(m->m.get("confirmationId")).toList(),"confirmationLedgerIds",matches.stream().map(m->m.get("confirmationLedgerId")).toList(),"originalOccurrenceId",occurrence.get("id"),"originalValue",original.value(),"boundedFieldValue",value,"person",canonical.iterator().next(),"scope","CURRENT_PROJECT","field",field,"source",source,"sourceMembershipRequired",true,"doesNotProveQualification",true,"doesNotProveGlobalIdentity",true,"originalBinding",original.proof());
+        LOG.info("bidcheck.consistency_confirmed_relation occurrenceId={} field={} sourcePage={} confirmationIds={} scope={} originalPreserved=true",occurrence.get("id"),field,source.page(),proof.get("confirmationIds"),"CURRENT_PROJECT");
+        references.addAll(original.evidence());return new Binding(key,"CONFIRMED_PERSON_SOURCE_PAIR",canonical.iterator().next(),true,proof,unique(references),List.of(),value);
     }
     private record CertificateRecord(String holder,String type,int start,int end) {}
     /** Scope each certificate to its own table/plain-text document block before reading owner labels. */

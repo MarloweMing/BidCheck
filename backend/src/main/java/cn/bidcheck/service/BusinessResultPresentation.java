@@ -44,6 +44,7 @@ public final class BusinessResultPresentation {
             ||"UNAVAILABLE".equals(text(map(a.get("model")),"state"))
             ||codes.stream().filter(code->!resolvedInventory||!"REQUIREMENT_COMPLETENESS_UNPROVEN".equals(code)).anyMatch(code->code.startsWith("MODEL_")||code.startsWith("HTTP_")||code.contains("COMPILATION")||code.startsWith("REQUIREMENT_")
                 ||code.contains("GROUNDING")||code.endsWith("UNGROUNDED")||Set.of("CONTEXT_BUDGET_EXCEEDED","CHECKLIST_BATCH_REQUIRED","INPUT_INVALID","EVIDENCE_SCOPE_INCOMPLETE","OCR_COVERAGE_DEFERRED","OCR_SOURCE_DEFERRED","OUTPUT_SCHEMA_INVALID","OUTPUT_JSON_INVALID").contains(code))
+            ||"SUPPLEMENT_ANALYSIS_REQUIRED".equals(evaluation.method())||"SUPPLEMENT_EVALUATOR_UNAVAILABLE".equals(text(map(a.get("publicationGuard")),"code"))
             ||Boolean.TRUE.equals(ocr.get("incomplete"));
         boolean scoringReview=verifiedScoringReview(atomic);
         boolean external=scoringReview||templateFinal&&(template.verificationMode()==TemplateTypes.VerificationMode.EXTERNAL||template.action()!=null&&template.action().owner()==TemplateTypes.ActionOwner.EXTERNAL)
@@ -55,7 +56,7 @@ public final class BusinessResultPresentation {
             ||codes.contains("VISUAL_MARK_UNREADABLE")&&!visualReview.unreadableOnly()
             ||codes.stream().anyMatch(code->Set.of("EVIDENCE_MISSING","PERSONNEL_COVERAGE_INCOMPLETE","NO_CANDIDATE_EVIDENCE","EVIDENCE_NOT_FOUND").contains(code));
         boolean visual=Boolean.TRUE.equals(ocr.get("required"));
-        String state=switch(status){case "PASS"->"SATISFIED";case "FAIL","WARNING"->"RISK";case "NOT_APPLICABLE"->"NOT_APPLICABLE";
+        String state=switch(status){case "PASS"->"SATISFIED";case "FAIL","WARNING"->"RISK";case "NOT_APPLICABLE"->"NOT_APPLICABLE";case "NEEDS_CONFIRMATION"->processing?"SYSTEM_INCOMPLETE":"USER_ACTION";
             default->processing?"SYSTEM_INCOMPLETE":!externalState.isEmpty()?"WAIT_EXTERNAL":external||visualReview.unreadableOnly()?"USER_ACTION":evidencePending?"EVIDENCE_PENDING":visual?"USER_ACTION":"EVIDENCE_PENDING";};
         String label=switch(state){case "SATISFIED"->"满足要求";case "RISK"->"存在风险";case "SYSTEM_INCOMPLETE"->"系统未完成";case "USER_ACTION"->"需你确认";case "WAIT_EXTERNAL"->"待外部条件";case "NOT_APPLICABLE"->"不适用";default->"待补证据";};
         boolean userAction="USER_ACTION".equals(state)||"RISK".equals(state)||"SATISFIED".equals(state)&&visual;
@@ -72,6 +73,7 @@ public final class BusinessResultPresentation {
         if(stopped&&Set.of("SYSTEM_INCOMPLETE","EVIDENCE_PENDING").contains(state))
             next="本轮自动补查已停止，需修复处理环节或补足检索条件后再启动；当前不据此要求补交材料。";
         if("USER_ACTION".equals(state)&&"EXTERNAL_INPUT".equals(gapKind))next="需取得招标条款要求的外部记录或现场核验结果；现有文件检索不能替代该记录。";
+        if("USER_ACTION".equals(state)&&codes.contains("INFERENCE_CONFIRMATION_REQUIRED"))next="核对推断卡片的实际主体、字段取值与引用原文；确认或否定后由系统重算，确认操作不会直接判通过。";
         if("USER_ACTION".equals(state)&&codes.contains("MISSING_TENDER_ATTACHMENT")){
             label="缺招标附件";next="请补充招标正文引用的《技术规范书》及附件，以确定完整检查要求；这不表示投标文件缺材料。";
         }

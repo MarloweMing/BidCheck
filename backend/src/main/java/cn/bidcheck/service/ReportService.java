@@ -289,6 +289,7 @@ public class ReportService {
     }
     private static String atomicConditionLabel(Map<String,Object> condition) {
         String status=atomicText(condition,"status");
+        if("NEEDS_CONFIRMATION".equals(status))return "关联待确认";
         if("REFERENCE_TIME".equals(condition.get("predicate"))&&"PASS".equals(status))return "参考时点已确认";
         if("APPLICABILITY".equals(atomicText(condition,"conditionRole")))return switch(status) {
             case "PASS"->"适用判断：成立";case "FAIL"->"适用判断：不成立";
@@ -832,5 +833,5 @@ public class ReportService {
     public static String html(String s) { return safe(s).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;").replace("'","&#39;"); }
     private static String csv(String s) { s=safe(s); if(s.matches("(?s)^[\\s]*[=+@-].*")) s="'"+s; return "\""+s.replace("\"","\"\"")+"\""; }
     private static String evidence(Evidence e) { return e==null?"":e.documentName()+" · "+("PAGE".equals(e.locationType())?"第"+e.page()+"页":"第"+e.page()+"内容块")+" · "+e.quote(); }
-    private static String label(String status) { return switch(status) { case "PASS"->"通过"; case "FAIL"->"不符合"; case "WARNING"->"风险提示"; case "UNDETERMINED"->"待确认"; case "NOT_APPLICABLE"->"不适用"; default->status; }; }
+    private static String label(String status) { return switch(status) { case "PASS"->"通过"; case "FAIL"->"不符合"; case "WARNING"->"风险提示"; case "UNDETERMINED"->"待确认"; case "NEEDS_CONFIRMATION"->"需你确认"; case "NOT_APPLICABLE"->"不适用"; default->status; }; }
 }

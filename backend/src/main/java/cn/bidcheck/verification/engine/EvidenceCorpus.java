@@ -53,41 +53,91 @@ final class EvidenceCorpus {
         Source source=new Source(id,new Evidence(doc.id(),doc.name(),location,type,quote,"image:"+image+":"+box,0),"经定位的原图字段观察；只证明文字，不证明主体关系",false,outer.blocked(),doc.sha256(),doc.version(),scope);if(!byId.containsKey(id)){all.add(source);byId.put(id,source);}
     }}
     List<Source> select(List<Rule> rules,List<Fact> facts,List<Source> prior,int round,HybridRetriever retriever,RunSession session)throws InterruptedIOException{
-        LinkedHashSet<Source> chosen=new LinkedHashSet<>();Map<Source,Integer> ranking=new HashMap<>();
+        return select(rules,facts,prior,round,retriever,session,false,rules);
+    }
+    List<Source> selectForAgent(List<Rule> rules,List<Fact> facts,HybridRetriever retriever,RunSession session)throws InterruptedIOException{
+        return selectForAgent(rules,rules,facts,retriever,session);
+    }
+    List<Source> selectForAgent(List<Rule> searchRules,List<Rule> targetRules,List<Fact> facts,HybridRetriever retriever,RunSession session)throws InterruptedIOException{
+        return select(searchRules,facts,List.of(),0,retriever,session,true,targetRules);
+    }
+    private List<Source> select(List<Rule> rules,List<Fact> facts,List<Source> prior,int round,HybridRetriever retriever,RunSession session,boolean byPage,List<Rule> anchorRules)throws InterruptedIOException{
+        LinkedHashSet<Source> chosen=new LinkedHashSet<>();Map<Source,Integer> ranking=new HashMap<>();Map<Source,Integer> hitRanks=new HashMap<>();Map<String,Integer> pageRanks=new HashMap<>();Set<String> materialBodyPages=new LinkedHashSet<>();
         for(Rule r:rules){List<String> sections=r.predicate().equals("SECTION")?List.of(r.expected()):SourceScoringRules.programOnly(r)||Set.of("QUALITY","QUALITY_ADVISORY").contains(r.predicate())?qualitySections(r):r.predicate().equals("TEXT_ANOMALY")?List.of(str(r.parameters(),"textScope")):List.of();for(String section:sections)if(!wholeScope(section))chosen.addAll(SectionCoverage.locate(section,this).sources());}
+        for(Rule rule:rules)if(Set.of("MATERIAL","SECTION").contains(rule.predicate())){
+            String title=rule.expected().isBlank()?rule.field():rule.expected();List<Source> body=materialBodyAnchors(title);chosen.addAll(body);
+            // At most four independent body pages reserve space; directories remain locators.
+            for(Source source:body){String key=pageKey(source.evidence().documentId(),source.evidence().page(),source.evidence().locationType());if(materialBodyPages.size()<4||materialBodyPages.contains(key))materialBodyPages.add(key);}
+        }
         for(Rule rule:rules){String query=ruleQuery(rule);
-            if(round>0)query+=" "+String.join(" ",resolvedNames(List.of(rule),facts));
+            query+=" "+String.join(" ",resolvedNames(List.of(rule),facts));
             List<String> keys=keywords(query);for(Source s:all){int score=0;String q=s.evidence().quote();for(String k:keys)if(q.contains(k))score+=k.length();if(!s.index())score+=2;if(Set.of("PERSON_ROLE","PERSON_COUNT").contains(rule.predicate())&&!s.historical())score+=2;if(score>3)ranking.merge(s,score,Integer::sum);}
         }
         Set<Source> retrievedSources=new LinkedHashSet<>();int retrievalHits=0,unmappedHits=0;
         if(retriever!=null&&retriever.enabled()){
             String query=rules.stream().map(EvidenceCorpus::ruleQuery).reduce("",(a,b)->a+"\n"+b);
-            if(round>0)query+="\n"+String.join(" ",resolvedNames(rules,facts));
+            query+="\n"+String.join(" ",resolvedNames(rules,facts));
             for(Document doc:documents){
                 RetrievalResult result=retriever.search(doc,query,16);Set<Source> mapped=new LinkedHashSet<>();int missed=0;
-                for(Evidence hit:result.hits()){
+                int rank=0;for(Evidence hit:result.hits()){rank++;
                     List<Source> matches=mapRetrievalHit(hit);if(matches.isEmpty())missed++;
-                    for(Source source:matches){ranking.merge(source,25,Integer::sum);mapped.add(source);}
+                    for(Source source:matches){hitRanks.merge(source,rank,Math::min);pageRanks.merge(pageKey(source.evidence().documentId(),source.evidence().page(),source.evidence().locationType()),rank,Math::min);mapped.add(source);}
                 }
                 retrievedSources.addAll(mapped);retrievalHits+=result.hits().size();unmappedHits+=missed;
                 session.record("RETRIEVE_"+round+"_"+doc.id(),Map.of("query",query),linked("mode",result.mode(),"diagnostics",result.diagnostics(),
-                    "documentId",doc.id(),"round",round,"returnedHits",result.hits().size(),"mappedSourceCount",mapped.size(),"unmappedHitCount",missed));
+                    "documentId",doc.id(),"query",query,"round",round,"returnedHits",result.hits().size(),"mappedSourceCount",mapped.size(),"unmappedHitCount",missed));
                 LOG.info("bidcheck.atomic_retrieval scope={} runId={} checkpointId={} round={} documentId={} mode={} hits={} mappedSources={} unmappedHits={} failureCode={}",
                     session.scope,str(session.context,"sourceRunId"),str(session.context,"checkpointId"),round,doc.id(),result.mode(),result.hits().size(),mapped.size(),missed,str(result.diagnostics(),"failureCode"));
             }
         }
-        // Retain the strongest source for each outstanding obligation before filling the shared budget.
-        for(Rule r:rules){List<String> keys=keywords(ruleQuery(r));all.stream().filter(s->!s.index()).max(Comparator.comparingInt(s->keys.stream().filter(k->s.evidence().quote().contains(k)).mapToInt(String::length).sum())).filter(s->keys.stream().anyMatch(k->s.evidence().quote().contains(k))).ifPresent(chosen::add);}
-        if(round>0){for(Source s:prior){int i=all.indexOf(s);if(i>=0){for(int j=Math.max(0,i-round);j<=Math.min(all.size()-1,i+round);j++)if(all.get(j).evidence().documentId().equals(s.evidence().documentId()))ranking.merge(all.get(j),10,Integer::sum);}}}
-        ranking.entrySet().stream().sorted(Map.Entry.<Source,Integer>comparingByValue().reversed().thenComparing(e->e.getKey().id())).map(Map.Entry::getKey).forEach(chosen::add);
-        List<Source> selected=new ArrayList<>();int chars=0;for(Source s:chosen){if(selected.size()>=24||chars+s.evidence().quote().length()>32_000)continue;selected.add(s);chars+=s.evidence().quote().length();}
+        // Verified facts anchor the next read; high-ranked hybrid hits keep their rank.
+        // Overlapping chunks on one page never accumulate an artificial retrieval bonus.
+        Set<String> pinned=new LinkedHashSet<>();Set<String> pinnedPages=new LinkedHashSet<>();
+        for(Fact fact:facts)if(Set.of("PERSON_ROLE","RELATION").contains(fact.kind())&&"CURRENT_PROJECT".equals(fact.scope())&&AgentInvestigationScope.relevant(fact,anchorRules,facts,this))for(String id:fact.sourceIds()){
+            Source source=byId.get(id);if(source==null)continue;String key=pageKey(source.evidence().documentId(),source.evidence().page(),source.evidence().locationType());
+            if(pinnedPages.contains(key)||pinnedPages.size()<2){pinnedPages.add(key);pinned.add(id);}
+        }
+        if(round>0){for(Source source:prior){int i=all.indexOf(source);if(i>=0)for(int j=Math.max(0,i-round);j<=Math.min(all.size()-1,i+round);j++)if(all.get(j).evidence().documentId().equals(source.evidence().documentId()))ranking.merge(all.get(j),10,Integer::sum);}}
+        Set<Source> candidates=new LinkedHashSet<>(chosen);candidates.addAll(ranking.keySet());candidates.addAll(retrievedSources);
+        for(String id:pinned)if(byId.containsKey(id))candidates.add(byId.get(id));
+        List<Source> ordered=candidates.stream().sorted(Comparator.<Source,Boolean>comparing(s->!materialBodyPages.isEmpty()&&s.index())
+            .thenComparing(s->pageRanks.getOrDefault(pageKey(s.evidence().documentId(),s.evidence().page(),s.evidence().locationType()),Integer.MAX_VALUE)!=1)
+            .thenComparing(s->!pinned.contains(s.id()))
+            .thenComparing(s->!materialBodyPages.contains(pageKey(s.evidence().documentId(),s.evidence().page(),s.evidence().locationType())))
+            .thenComparingInt(s->pageRanks.getOrDefault(pageKey(s.evidence().documentId(),s.evidence().page(),s.evidence().locationType()),Integer.MAX_VALUE))
+            .thenComparingInt(s->hitRanks.getOrDefault(s,Integer.MAX_VALUE))
+            .thenComparing(Comparator.comparingInt((Source s)->ranking.getOrDefault(s,0)).reversed()).thenComparing(Source::id)).toList();
+        List<Source> selected=new ArrayList<>();Set<String> selectedPages=new LinkedHashSet<>();List<Map<String,Object>> candidateDetails=new ArrayList<>();int chars=0,position=0;
+        for(Source source:ordered){position++;int rank=hitRanks.getOrDefault(source,0),pageRank=pageRanks.getOrDefault(pageKey(source.evidence().documentId(),source.evidence().page(),source.evidence().locationType()),0);
+            String key=pageKey(source.evidence().documentId(),source.evidence().page(),source.evidence().locationType());
+            // Agent search selects page representatives; expansion owns its character budget.
+            // A long high-ranked page must not consume the old 24-chunk selection allowance.
+            String exclusion=byPage?(selectedPages.contains(key)?"PAGE_REPRESENTED":selectedPages.size()>=8?"PAGE_LIMIT":""):
+                selected.size()>=24?"SOURCE_LIMIT":chars+source.evidence().quote().length()>32_000?"CHAR_LIMIT":"";
+            if(exclusion.isEmpty()){selected.add(source);selectedPages.add(key);chars+=source.evidence().quote().length();}
+            candidateDetails.add(linked("sourceId",source.id(),"documentId",source.evidence().documentId(),"page",source.evidence().page(),"locationType",source.evidence().locationType(),
+                "position",position,"retrievalRank",rank,"pageRetrievalRank",pageRank,"keywordScore",ranking.getOrDefault(source,0),"retrievalScore",pageRank==0?0:1.0/(60+pageRank),
+                "pinned",pinned.contains(source.id()),"materialBodyAnchor",materialBodyPages.contains(key),"navigationOnly",source.index(),"selected",exclusion.isEmpty(),"exclusionReason",exclusion));
+        }
         String route=retriever==null?"RETRIEVER_NOT_AVAILABLE":retriever.enabled()?"HYBRID_REQUESTED":"VECTOR_DISABLED_LOCAL_SELECTION";
         long selectedRetrieved=selected.stream().filter(retrievedSources::contains).count();
         session.record("RETRIEVAL_SELECTION_"+round,Map.of("round",round),linked("route",route,"returnedHits",retrievalHits,"mappedSourceCount",retrievedSources.size(),
-            "unmappedHitCount",unmappedHits,"selectedSourceCount",selected.size(),"selectedRetrievedSourceCount",selectedRetrieved,"selectedChars",chars));
+            "unmappedHitCount",unmappedHits,"selectedSourceCount",selected.size(),"selectedRetrievedSourceCount",selectedRetrieved,"selectedChars",chars,"queryContext",rules.stream().map(EvidenceCorpus::ruleQuery).toList(),"candidateDetails",candidateDetails,"selectionUnit",byPage?"PAGE":"SOURCE","selectedPages",selectedPages.size(),"materialBodyAnchorPages",materialBodyPages,"rankingPolicy","BODY_BEFORE_DIRECTORY_THEN_HYBRID_TOP_HIT_RELEVANT_ANCHORS_AND_PAGE_RANK"));
         LOG.info("bidcheck.source_selection scope={} runId={} checkpointId={} round={} route={} rules={} hits={} mappedSources={} selectedRetrievedSources={} selectedSources={} selectedChars={}",
             session.scope,str(session.context,"sourceRunId"),str(session.context,"checkpointId"),round,route,rules.size(),retrievalHits,retrievedSources.size(),selectedRetrieved,selected.size(),chars);
         return selected;
+    }
+    /** A retrieval anchor is an exact original heading plus substantive body, never a PASS receipt. */
+    List<Source> materialBodyAnchors(String title){
+        if(title==null||title.length()<2||title.length()>80)return List.of();var extent=SectionCoverage.locate(title,this);if(!extent.sources().isEmpty())return extent.sources().stream().filter(s->!s.index()).toList();
+        List<Source> result=new ArrayList<>();for(Document document:documents){if(!document.role().equals("BID"))continue;for(Page page:document.pages()){
+            List<Source> original=all.stream().filter(s->s.evidence().documentId().equals(document.id())&&s.evidence().page()==page.number()&&s.evidence().locationType().equals(page.locationType())&&!s.id().startsWith("V")).toList();if(original.isEmpty()||original.stream().anyMatch(Source::index))continue;
+            Matcher line=Pattern.compile("(?m)^.*$").matcher(page.text());while(line.find()){String heading=line.group().strip().replaceFirst("^#{1,6}\\s*","");if(!SectionCoverage.strip(heading).equals(title)||heading.matches(".*(?:详见|见附件|拟提供|承诺提供|索引|目录|清单|\\.{3,}|…{2,}).*"))continue;
+                int start=line.end(),end=page.text().length();Matcher next=Pattern.compile("(?m)^.*$").matcher(page.text());next.region(start,end);while(next.find())if(SectionCoverage.level(next.group().strip())>0){end=next.start();break;}
+                String body=page.text().substring(start,end);if(clean(body).length()<80||body.matches("(?s)^\\s*[（(]?填写说明.*"))continue;
+                int headingStart=line.start(),bodyEnd=end;result.addAll(original.stream().filter(s->{int[] range=SectionCoverage.range(s);return range[0]<bodyEnd&&range[1]>headingStart;}).toList());break;
+            }
+        }}return result.stream().distinct().toList();
     }
     /** Retriever and proof corpus use different overlap/newline boundaries. Map the verified range,
      * not just the first 60 characters, which could otherwise drop the useful end of a hit. */
@@ -106,7 +156,8 @@ final class EvidenceCorpus {
     }
     static List<String> keywords(String text){LinkedHashSet<String> words=new LinkedHashSet<>();Matcher m=Pattern.compile("[A-Za-z0-9_-]{3,}|[\\p{IsHan}]{2,12}").matcher(text);while(m.find()){String w=m.group();words.add(w);if(w.length()>5)for(int i=0;i+3<=w.length();i+=2)words.add(w.substring(i,i+3));}return words.stream().limit(80).toList();}
     private static String ruleQuery(Rule rule){
-        return rule.subject()+" "+rule.field()+" "+rule.expected()+" "+rule.description()+" "+str(rule.parameters(),"employer")+" "+str(rule.parameters(),"lot")+" "+str(rule.parameters(),"category")+" "+str(rule.parameters(),"totalField")+" "+String.join(" ",ProofVerifier.strings(rule.parameters().get("componentFields")))+" "+str(rule.parameters(),"leftRole")+" "+str(rule.parameters(),"rightRole")+" "+str(rule.parameters(),"textScope")+" "+str(rule.parameters(),"materialType")+" "+String.join(" ",ProofVerifier.strings(rule.parameters().get("dimensions")))+" "+String.join(" ",PersonnelRoles.queryTerms(rule.subject()));
+        String aliases=rule.field().equals("creditCode")?"统一社会信用代码 纳税人识别号 营业执照 企业名称 单位名称":"";
+        return rule.subject()+" "+rule.field()+" "+aliases+" "+rule.expected()+" "+rule.description()+" "+str(rule.parameters(),"employer")+" "+str(rule.parameters(),"lot")+" "+str(rule.parameters(),"category")+" "+str(rule.parameters(),"totalField")+" "+String.join(" ",ProofVerifier.strings(rule.parameters().get("componentFields")))+" "+str(rule.parameters(),"leftRole")+" "+str(rule.parameters(),"rightRole")+" "+str(rule.parameters(),"textScope")+" "+str(rule.parameters(),"materialType")+" "+String.join(" ",ProofVerifier.strings(rule.parameters().get("dimensions")))+" "+String.join(" ",PersonnelRoles.queryTerms(rule.subject()));
     }
     private List<String> resolvedNames(List<Rule> rules,List<Fact> facts){
         Set<String> names=new LinkedHashSet<>();
@@ -119,6 +170,8 @@ final class EvidenceCorpus {
         if(r.predicate().equals("TEXT_ANOMALY")){result.addAll(textAnomalyScan(r).facts());continue;}
         if(r.predicate().equals("QUALITY_ADVISORY")){result.addAll(qualityAdvisoryScan(r).facts());continue;}
         result.addAll(NativeCertificateFacts.extract(r,this,selected));
+        List<Fact> identifiers=NativeCompanyCodeFacts.extract(r,this,selected);result.addAll(identifiers);
+        if(r.predicate().equals("SAME_FIELD")&&Set.of("creditCode","统一社会信用代码","纳税人识别号").contains(r.field()))LOG.info("bidcheck.native_identifier ruleId={} field={} selectedSources={} facts={} bindings={}",r.id(),r.field(),selected.size(),identifiers.size(),identifiers.stream().map(f->linked("factId",f.id(),"subject",f.subject(),"sourceIds",f.sourceIds(),"binding",str(f.attributes(),"bindingMethod"))).toList());
         for(Source s:selected){if(s.index())continue;String text=s.evidence().quote();
             if(s.id().startsWith("V")&&s.evidence().anchor().startsWith("image:")){
                 int split=text.indexOf('：');if(split>0){String label=text.substring(0,split),value=text.substring(split+1);
@@ -143,6 +196,7 @@ final class EvidenceCorpus {
                 }
             }
             if(r.predicate().equals("SAME_FIELD")&&!r.field().isBlank()){
+                if(Set.of("creditCode","统一社会信用代码","纳税人识别号").contains(r.field()))continue;
                 String label=switch(r.field()){case "projectName"->"项目名称";case "projectNumber"->"(?:项目编号|招标编号)";default->Pattern.quote(r.field());};
                 Matcher m=Pattern.compile(label+"\\s*[:：]\\s*([^\\n|\\t;；]{1,160})").matcher(text);while(m.find())result.add(new Fact("N"+identity(s.id()+m.start()).substring(0,16),"FIELD",r.subject(),r.field(),m.group(1).strip(),m.group(1).strip(),"","",s.historical()?"HISTORICAL_PROJECT":"CURRENT_PROJECT",List.of(s.id()),Map.of()));
             }

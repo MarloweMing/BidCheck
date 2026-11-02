@@ -24,14 +24,19 @@ final class SubjectIdentity {
         }
         // A named certificate on its own remains a local fact. A role-to-person-to-proof join needs identity support.
         if(!roles.isEmpty()&&!rule.predicate().equals("PERSON_ROLE"))for(Fact proof:matched){String name=person(proof);if(name.isBlank()||proof.kind().equals("PERSON_ROLE"))continue;
-            List<Fact> assignments=roles.stream().filter(f->name.equals(person(f))).toList();if(assignments.isEmpty())continue;
-            if(assignments.stream().noneMatch(role->sameLocalOccurrence(role,proof)||sameStrongIdentity(role,proof)||!attachmentProof(role,proof).isEmpty()))return new Problem("ENTITY_IDENTITY_AMBIGUOUS","岗位与证书/社保虽有同名，但跨来源身份关联尚未证明；来源内事实保留，不能把同名候选当作同一人");
+            List<Fact> assignments=roles.stream().filter(f->name.equals(person(f))||ConfirmedSubjectBindings.matches(person(f),proof,facts,corpus)).toList();if(assignments.isEmpty())continue;
+            if(assignments.stream().noneMatch(role->samePerson(role,proof)))return new Problem("ENTITY_IDENTITY_AMBIGUOUS","岗位与证书/社保虽有同名，但跨来源身份关联尚未证明；来源内事实保留，不能把同名候选当作同一人");
         }
         return null;
     }
     List<Map<String,Object>> bindings(List<Fact> matched){return matched.stream().filter(f->!person(f).isBlank()).map(f->{Map<String,Object> entity=identity(f);Map<String,Object> result=linked("factId",f.id(),"subject",redact(person(f)),"entityId",entity.get("id"),"identityStrength",entity.get("identityStrength"),"identityClaims",entity.getOrDefault("identityClaims",List.of()),"sourceIds",f.sourceIds(),"structureProof",entity.getOrDefault("structureProof",Map.of()));
-        for(Fact role:facts)if(role.kind().equals("PERSON_ROLE")&&person(role).equals(person(f))){Map<String,Object> proof=attachmentProof(role,f);if(!proof.isEmpty()){result.put("attachmentIdentityProof",proof);break;}}return result;}).toList();}
-    boolean samePerson(Fact left,Fact right){return !person(left).isBlank()&&person(left).equals(person(right))&&(sameLocalOccurrence(left,right)||sameStrongIdentity(left,right)||!attachmentProof(left,right).isEmpty()||!attachmentProof(right,left).isEmpty());}
+        for(Fact role:facts)if(role.kind().equals("PERSON_ROLE")){Map<String,Object> confirmed=ConfirmedSubjectBindings.edge(person(role),f,facts,corpus);if(!confirmed.isEmpty()){result.put("confirmedIdentityProof",confirmed);break;}if(person(role).equals(person(f))){Map<String,Object> proof=attachmentProof(role,f);if(!proof.isEmpty()){result.put("attachmentIdentityProof",proof);break;}}}return result;}).toList();}
+    boolean samePerson(Fact left,Fact right){Set<String> claimed=new HashSet<>(keys(identity(left)));claimed.addAll(keys(identity(right)));if(claimed.size()>1)return false;String name=person(left);if(left.kind().equals("PERSON_ROLE")&&ConfirmedSubjectBindings.matchesPair(left,right,facts,corpus)||right.kind().equals("PERSON_ROLE")&&ConfirmedSubjectBindings.matchesPair(right,left,facts,corpus))return true;return !name.isBlank()&&!name.matches(".*[*＊×●_].*")&&name.equals(person(right))&&(sameLocalOccurrence(left,right)||sameStrongIdentity(left,right)||!attachmentProof(left,right).isEmpty()||!attachmentProof(right,left).isEmpty());}
+    Map<String,Object> bindingBetween(Fact role,Fact dependent){
+        if(!samePerson(role,dependent))return Map.of();Map<String,Object> confirmed=ConfirmedSubjectBindings.edge(person(role),dependent,facts,corpus);if(!confirmed.isEmpty())return confirmed;
+        Map<String,Object> attachment=attachmentProof(role,dependent);if(!attachment.isEmpty())return attachment;
+        return linked("method",sameStrongIdentity(role,dependent)?"SAME_SOURCE_VALIDATED_IDENTIFIER":"SAME_LOCAL_RECORD","appointmentSourceIds",role.sourceIds(),"dependentSourceIds",dependent.sourceIds(),"fieldsRewritten",false);
+    }
     /** Only an identifier re-derived from source text may increase a proven distinct-person count. */
     String countIdentity(Fact fact){Map<String,Object> entity=identity(fact);Set<String> values=keys(entity);return "STRONG".equals(entity.get("identityStrength"))&&values.size()==1?values.iterator().next():"";}
     private static Fact rolePerson(Fact fact,String selector){if(fact.kind().equals("PERSON_ROLE"))return fact;String name=DomainBindings.roleTarget(fact,selector);
@@ -41,8 +46,16 @@ final class SubjectIdentity {
     private boolean sameStrongIdentity(Fact a,Fact b){Set<String> left=keys(identity(a)),right=keys(identity(b));return "STRONG".equals(identity(a).get("identityStrength"))&&"STRONG".equals(identity(b).get("identityStrength"))&&left.size()==1&&right.size()==1&&left.equals(right);}
     private Set<String> keys(Map<String,Object> entity){Set<String> result=new HashSet<>();for(Map<String,Object> claim:RuleEvaluator.maps(entity.get("identityClaims")))if("CN_ID".equals(str(claim,"field"))&&!str(claim,"valueFingerprint").isBlank())result.add(str(claim,"valueFingerprint"));return result;}
     private Map<String,Object> attachmentProof(Fact role,Fact proof){
-        if(!role.kind().equals("PERSON_ROLE")||!proof.kind().equals("CERTIFICATE"))return Map.of();
-        return attachmentProofs.computeIfAbsent(role.sourceIds()+"|"+role.value()+"|"+proof.sourceIds()+"|"+proof.subject()+"|"+proof.attributes(),key->PersonnelAttachmentIdentity.proof(role,proof,corpus));
+        if(!role.kind().equals("PERSON_ROLE")||!Set.of("CERTIFICATE","MONTHS","RELATION").contains(proof.kind()))return Map.of();
+        return attachmentProofs.computeIfAbsent(role.sourceIds()+"|"+role.value()+"|"+role.attributes()+"|"+proof.sourceIds()+"|"+proof.subject()+"|"+proof.attributes(),key->{Map<String,Object> strong=PersonnelAttachmentIdentity.proof(role,proof,corpus);return strong.isEmpty()?PersonnelAttachmentIdentity.multiSignalProof(role,proof,corpus):strong;});
+    }
+    List<Map<String,Object>> confirmationCandidates(Rule rule,List<Fact> matched){
+        List<Map<String,Object>> out=new ArrayList<>();List<Fact> roles=DomainBindings.roleLinks(rule.subject(),facts,corpus).stream().map(f->rolePerson(f,rule.subject())).filter(Objects::nonNull).toList();
+        for(Fact role:roles)for(Fact proof:matched){if(samePerson(role,proof))continue;var score=EvidenceIdentitySignals.assess(role,proof,corpus);if(!score.candidate())continue;
+            Set<String> ids=new LinkedHashSet<>(role.sourceIds());ids.addAll(proof.sourceIds());List<Map<String,Object>> evidence=ids.stream().map(corpus.byId::get).filter(Objects::nonNull).map(s->linked("sourceId",s.id(),"quote",s.evidence().quote())).toList();if(evidence.isEmpty()||evidence.size()>12)continue;
+            Map<String,Object> proposed=linked("kind","RELATION","subject",person(role),"field","同一人","rawValue",person(proof),"value",person(proof),"unit","","basis","来源证明材料的人物对应","scope","CURRENT_PROJECT","sourceIds",List.copyOf(ids),"attributes",linked("object",person(proof),"number",str(proof.attributes(),"number")));
+            out.add(linked("type",person(proof).matches(".*[*＊×●_].*")?"MASKED_PERSON_IDENTITY":"PERSON_IDENTITY","claim",person(role)+"的任职资料与姓名为"+person(proof)+"的证明材料对应同一人","reasoning","当前任职、所属附件及单位等原文信号支持此关联，仍有未确定或冲突信号，需选择确认；不直接证明证书或社保满足要求。","confidence",Math.min(.95,score.score()/100d),"risks",score.vetoes(),"proposedFact",proposed,"evidence",evidence,"targetId",rule.id(),"unresolvedGapCodes",List.of("ENTITY_IDENTITY_AMBIGUOUS","PERSON_IDENTITY_UNPROVEN","SUBJECT_IDENTITY_UNPROVEN"),"identitySignals",score.proof()));
+        }return out;
     }
     private Map<String,Object> identity(Fact fact){return identities.computeIfAbsent(fact.id(),id->{Map<String,Object> entity=new LinkedHashMap<>(EntityIdentity.resolvePerson(person(fact),LayoutBinding.sources(fact,corpus.byId),layout,ProofVerifier.strings(fact.attributes().get("cellIds"))));
         if(SocialInsuranceEvidenceRecords.claims(fact)&&SocialInsuranceEvidenceRecords.issue(fact,corpus.byId)==null){

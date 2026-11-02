@@ -23,12 +23,18 @@ import static cn.bidcheck.service.BidService.*;
 @Service
 public final class FocusedCheckContext {
     private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(FocusedCheckContext.class);
-    public static final String VERSION="focused-context-3-prior-graph-candidates";
+    public static final String VERSION="focused-context-4-scoped-supplement-layout-audit";
     private final Store store;private final FactLedgerService ledger;private final EvidenceLayoutService layouts;private final EvidenceOperationRepository evidenceOperations;
     private final TransactionTemplate tx;
     @org.springframework.beans.factory.annotation.Autowired(required=false)
     private cn.bidcheck.verification.source.VisualVerificationService visuals;
-    public String identity(){return hash(VERSION+ledger.identity()+layouts.identity());}
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private InferenceConfirmationService inferenceConfirmations;
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private cn.bidcheck.storage.ArtifactStorage artifactStorage;
+    @org.springframework.beans.factory.annotation.Value("${bidcheck.agent.inference-normalization-min-confidence:0.9}")
+    private String inferenceNormalizationConfidence="0.9";
+    public String identity(){return hash(VERSION+ledger.identity()+layouts.identity()+"|inference-min="+inferenceNormalizationConfidence);}
     public FocusedCheckContext(Store store,FactLedgerService ledger,EvidenceLayoutService layouts,PlatformTransactionManager manager){
         this.store=store;this.ledger=ledger;this.layouts=layouts;this.evidenceOperations=new EvidenceOperationRepository(store);this.tx=new TransactionTemplate(manager);
         this.tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);this.tx.setTimeout(25);
@@ -39,7 +45,7 @@ public final class FocusedCheckContext {
         List<Document> documents=List.of(bid);
         // Observation storage is independent of business-rule/requirement compiler versions.
         // Current proof verification still revalidates every reused observation against frozen source.
-        String factIdentity=hash("focused-observation-ledger-1"+ledger.identity()+layouts.identity());
+        String factIdentity=hash("focused-observation-ledger-1"+ledger.identity()+layouts.observationIdentity());
         var manifest=ledger.prepareManifest(project,factIdentity,documents);
         Runnable fence=()->{
             if(Thread.currentThread().isInterrupted())throw new CancellationException("检查已中断");
@@ -53,6 +59,7 @@ public final class FocusedCheckContext {
         Map<String,Object> base=new LinkedHashMap<>();
         String reviewMode=CheckReviewMode.of(store.getMap("run",runId));base.put("reviewMode",reviewMode);
         base.put("focusedCheck",true);base.put("unlimitedModelCalls",true);base.put("modelAttemptPermit",permit);
+        base.put("inferenceNormalizationMinConfidence",inferenceNormalizationConfidence);
         base.put("allowModelRuleCompilation",false);
         base.put("sourceRunId",runId);base.put("evaluationStage","BID_SUBMISSION");base.put("documentSetComplete",false);
         base.put("tenderDocuments",tender==null?List.of():List.of(tender));
@@ -80,29 +87,69 @@ public final class FocusedCheckContext {
         Map<String,Object> dates=referenceDates(tender);base.put("referenceDates",dates);
         if(dates.get("BID_DEADLINE") instanceof Map<?,?> deadline){base.putAll(stringMap(deadline));}
         base.put("layoutIdentity",layouts.identity());base.put("processingOccurrences",List.copyOf(processingOccurrences));
+        if(inferenceConfirmations!=null)base.put("confirmedInferenceLookup",(Supplier<List<Map<String,Object>>>)(()->inferenceConfirmations.sharedConfirmedForRun(runId,project,bid,tender)));
+        if(inferenceConfirmations!=null)base.put("inferenceDecisionsLookup",(Supplier<List<Map<String,Object>>>)(()->inferenceConfirmations.decisionsForRun(runId,project,bid,tender)));
         base.put("sharedFactIdentity",factIdentity);
         base.put("sharedFactLookup",(Function<Map<String,Object>,List<Map<String,Object>>>)request->ledger.lookup(manifest,request));
         base.put("evidenceOperationLookup",(Function<Map<String,Object>,Map<String,Object>>)request->evidenceOperations.completed(project,text(request,"operationKey")).orElse(Map.of()));
         base.put("evidenceOperationRepository",evidenceOperations);
         // Reuse full layout if it exists; otherwise adapt only the selected OCR pages, without another document pass.
         Map<String,LayoutEvidenceIndex> pageLayouts=new ConcurrentHashMap<>();
+        Map<String,Map<String,Object>> pageAudits=new ConcurrentHashMap<>();
         String layoutId=stableId("layout:"+bid.id()+":"+layouts.cacheIdentity(bid));Stored saved=store.mapper().get(layoutId);
         LayoutEvidenceIndex existing=new LayoutEvidenceIndex();
         boolean cached=saved!=null&&"verification_layout".equals(saved.kind)&&project.equals(saved.projectId)&&"COMPLETE".equals(store.map(saved.body).get("status"));
         if(cached)existing.add(bid.id(),store.map(saved.body));
+        Function<Integer,Map<String,Object>> nativePages=layouts.nativePdfLayouts(bid,()->{if(artifactStorage==null)throw new java.io.IOException("NATIVE_TABLE_STORAGE_UNAVAILABLE");return artifactStorage.materialize(bid.id(),bid.sha256());});
+        Function<Integer,Map<String,Object>> scanPages=layouts.documentPageLayouts(bid,()->{if(artifactStorage==null)throw new java.io.IOException("PAGE_LAYOUT_STORAGE_UNAVAILABLE");return artifactStorage.materialize(bid.id(),bid.sha256());},true);
+        base.put("layoutAuditLookup",(Function<Map<String,Object>,Map<String,Object>>)request->pageAudits.getOrDefault(text(request,"locationType")+":"+request.get("location"),Map.of()));
         base.put("layoutLookup",(Function<Map<String,Object>,List<Map<String,Object>>>)request->{
             if(!bid.id().equals(text(request,"documentId")))return List.of();
-            if(cached)return existing.apply(request);
+            List<Map<String,Object>> preserved=cached?existing.apply(request):List.of();
+            if(preserved.stream().anyMatch(r->"TABLE_CELL".equals(r.get("kind"))))return preserved;
             int location=request.get("location") instanceof Number n?n.intValue():-1;if(location<1)return List.of();
-            String key=text(request,"locationType")+":"+location;
+            String locationKey=text(request,"locationType")+":"+location;
+            boolean allowScan=Boolean.TRUE.equals(request.get("allowScan"));
+            LayoutEvidenceIndex completed=pageLayouts.get(locationKey+":SCAN");
+            if(completed!=null&&completed.apply(request).stream().anyMatch(r->"TABLE_CELL".equals(r.get("kind"))))return completed.apply(request);
+            String key=locationKey+(allowScan?":SCAN":":NATIVE");
             LayoutEvidenceIndex index=pageLayouts.computeIfAbsent(key,k->{LayoutEvidenceIndex value=new LayoutEvidenceIndex();
-                value.add(bid.id(),layouts.transcribedLayout(bid,new HashSet<>(List.of(Math.max(1,location-1),location,location+1))));return value;});
-            return index.apply(request);
+                Map<String,Object> transcribed=layouts.transcribedLayout(bid,Set.of(location));List<Map<String,Object>> spans=new ArrayList<>(CheckResolution.maps(transcribed.get("spans")));
+                if(spans.stream().noneMatch(r->"TABLE_CELL".equals(r.get("kind")))&&"PAGE".equals(text(request,"locationType"))){Map<String,Object> nativeLayout=(allowScan?scanPages:nativePages).apply(location);spans.addAll(CheckResolution.maps(nativeLayout.get("spans")));
+                    Map<String,Object> audit=new LinkedHashMap<>();for(String field:List.of("pageLayoutAudit","nativeTableAudit","structureStatus","diagnosticCode","errorCode","limitations"))if(nativeLayout.containsKey(field))audit.put(field,nativeLayout.get(field));
+                    audit.put("allowScan",allowScan);audit.put("documentId",bid.id());audit.put("page",location);audit.put("returnedCells",spans.stream().filter(r->"TABLE_CELL".equals(r.get("kind"))).count());pageAudits.put(locationKey,audit);
+                    LOG.info("bidcheck.page_layout runId={} documentId={} page={} cells={} allowScan={} status={} diagnosis={}",runId,bid.id(),location,audit.get("returnedCells"),allowScan,nativeLayout.get("structureStatus"),nativeLayout.get("diagnosticCode"));}
+                Map<String,Object> merged=new LinkedHashMap<>(transcribed);merged.put("spans",spans);value.add(bid.id(),merged);return value;});
+            List<Map<String,Object>> selected=index.apply(request);return selected.isEmpty()?preserved:selected;
         });
         write.accept(()->{Map<String,Object> run=store.getMap("run",runId);run.put("atomicCheckVersion",engineIdentity);
             run.put("atomicReferenceDates",dates);run.put("atomicFactIdentity",factIdentity);store.save("run",runId,project,bid.id(),run);});
+        List<Map<String,Object>> supplementManifest=CheckResolution.maps(store.getMap("run",runId).get("supplementManifest"));
+        Map<String,Function<Map<String,Object>,List<Map<String,Object>>>> supplementLayouts=new ConcurrentHashMap<>();
+        Map<String,Map<String,Object>> supplementAudits=new ConcurrentHashMap<>();
         return cp->{
             Map<String,Object> context=new LinkedHashMap<>(base);String parent=stableId(runId+":atomic-steps:"+cp.id());
+            List<Document> supplements=new ArrayList<>();
+            for(Map<String,Object> item:supplementManifest){
+                if(!cp.id().equals(text(item,"checkpointId"))&&!(item.get("affectedCheckpointIds") instanceof List<?> affected&&affected.contains(cp.id())))continue;
+                Document extra=store.get("document",text(item,"documentId"),Document.class);
+                if(!project.equals(extra.projectId())||!"SUPPLEMENT".equals(extra.role())||!extra.sha256().equals(text(item,"sha256"))||extra.version()!=number(item.get("version"),-1))throw new IllegalStateException("SUPPLEMENT_FROZEN_SOURCE_MISMATCH");
+                supplements.add(extra);
+            }
+            List<Document> scopedDocuments=new ArrayList<>(documents);scopedDocuments.addAll(supplements);
+            var itemManifest=supplements.isEmpty()?manifest:ledger.prepareManifest(project,factIdentity,scopedDocuments);
+            context.put("supplementDocuments",List.copyOf(supplements));
+            context.put("sharedFactLookup",(Function<Map<String,Object>,List<Map<String,Object>>>)request->ledger.lookup(itemManifest,request));
+            if(!supplements.isEmpty()){
+                @SuppressWarnings("unchecked") Function<Map<String,Object>,List<Map<String,Object>>> originalLookup=(Function<Map<String,Object>,List<Map<String,Object>>>)base.get("layoutLookup");
+                @SuppressWarnings("unchecked") Function<Map<String,Object>,Map<String,Object>> originalAudit=(Function<Map<String,Object>,Map<String,Object>>)base.get("layoutAuditLookup");
+                context.put("layoutLookup",(Function<Map<String,Object>,List<Map<String,Object>>>)request->{
+                    if(bid.id().equals(text(request,"documentId")))return originalLookup.apply(request);
+                    Document extra=supplements.stream().filter(d->d.id().equals(text(request,"documentId"))).findFirst().orElse(null);
+                    return extra==null?List.of():supplementLayouts.computeIfAbsent(extra.id(),id->supplementLayout(extra,supplementAudits)).apply(request);
+                });
+                context.put("layoutAuditLookup",(Function<Map<String,Object>,Map<String,Object>>)request->bid.id().equals(text(request,"documentId"))?originalAudit.apply(request):supplementAudits.getOrDefault(text(request,"documentId")+":"+request.get("location"),Map.of()));
+            }
             if(cn.bidcheck.verification.engine.SourceRequirementInventory.aggregateCheckpoint(cp)){
                 Map<String,Object> dependency=requirementDependencySnapshot(project,runId,bid,tender,engineIdentity);
                 context.put("_requirementDependencySnapshot",(Supplier<Map<String,Object>>)(()->dependency));
@@ -110,8 +157,9 @@ public final class FocusedCheckContext {
                 context.put("requirementDependencyInputsVerified",dependency.getOrDefault("verified",false));
                 context.put("requirementDependencyRevision",dependency.getOrDefault("revision",""));
             }
+            if(inferenceConfirmations!=null)context.put("inferencePublisher",(Consumer<Map<String,Object>>)claim->write.accept(()->inferenceConfirmations.capture(runId,cp.id(),bid,tender,claim)));
             context.put("ordinaryRecoveryObservedRevision",OrdinaryRecoveryDependencies.currentRevision(store,project,runId));
-            String factRevision=ledger.lookupRevision(manifest);
+            String factRevision=ledger.lookupRevision(itemManifest);
             if(!factRevision.isBlank())context.put("sharedFactRevision",factRevision);
             List<Map<String,Object>> prior=new ArrayList<>();String previousRun=text(store.getMap("run",runId),"parentRunId");
             if(!previousRun.isBlank()){
@@ -137,7 +185,7 @@ public final class FocusedCheckContext {
                 long started=System.nanoTime();
                 // Split persistence, never truncate facts. A partial batch must not claim full extraction coverage.
                 List<Map<String,Object>> batches=publicationBatches(batch);
-                var prepared=batches.stream().map(part->ledger.prepareBatch(manifest,runId,cp.id(),part)).toList();
+                var prepared=batches.stream().map(part->ledger.prepareBatch(itemManifest,runId,cp.id(),part)).toList();
                 long preparedAt=System.nanoTime();
                 for(int part=0;part<prepared.size();part++){
                     var value=prepared.get(part);int index=part;
@@ -155,6 +203,21 @@ public final class FocusedCheckContext {
                 LOG.info("bidcheck.fact_publish_fenced runId={} checkpointId={} origin={} parts={} prepareMs={} transactionMs={} durationMs={}",runId,cp.id(),text(batch,"origin"),prepared.size(),(preparedAt-started)/1_000_000,(System.nanoTime()-preparedAt)/1_000_000,(System.nanoTime()-started)/1_000_000);
             });
             return context;
+        };
+    }
+    private Function<Map<String,Object>,List<Map<String,Object>>> supplementLayout(Document doc,Map<String,Map<String,Object>> audits){
+        EvidenceLayoutService.NativePdfSource source=()->{if(artifactStorage==null)throw new java.io.IOException("PAGE_LAYOUT_STORAGE_UNAVAILABLE");return artifactStorage.materialize(doc.id(),doc.sha256());};
+        var local=layouts.nativePdfLayouts(doc,source);var scanned=layouts.documentPageLayouts(doc,source,true);
+        Map<String,LayoutEvidenceIndex> cache=new ConcurrentHashMap<>();
+        return request->{
+            int location=number(request.get("location"),-1);if(location<1||!doc.id().equals(text(request,"documentId")))return List.of();
+            boolean allowScan=Boolean.TRUE.equals(request.get("allowScan"));String key=location+(allowScan?":SCAN":":LOCAL");
+            LayoutEvidenceIndex ready=cache.get(location+":SCAN");if(ready!=null&&ready.apply(request).stream().anyMatch(r->"TABLE_CELL".equals(r.get("kind"))))return ready.apply(request);
+            return cache.computeIfAbsent(key,k->{
+                Map<String,Object> value="PAGE".equals(text(request,"locationType"))?(allowScan?scanned:local).apply(location):layouts.transcribedLayout(doc,Set.of(location));
+                Map<String,Object> audit=new LinkedHashMap<>();for(String field:List.of("pageLayoutAudit","nativeTableAudit","structureStatus","diagnosticCode","errorCode"))if(value.containsKey(field))audit.put(field,value.get(field));
+                audits.put(doc.id()+":"+location,audit);LayoutEvidenceIndex index=new LayoutEvidenceIndex();index.add(doc.id(),value);return index;
+            }).apply(request);
         };
     }
     static boolean validRequirementArtifactScope(Map<String,Object> value,String project,Document tender){

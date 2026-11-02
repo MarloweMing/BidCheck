@@ -40,7 +40,8 @@ final class PersonnelCount {
             .filter(f->DomainBindings.currentRoleSource(f,e.corpus.byId)&&DomainBindings.roleMatches(r.subject(),f.subject(),f,e.corpus))
             .filter(f->!SubjectIdentity.person(f).isBlank()).toList();
         String lot=str(r.parameters(),"lot");
-        Set<String> members=new HashSet<>(),lots=new HashSet<>();all.forEach(f->{if(known(str(f.attributes(),"employer")))members.add(str(f.attributes(),"employer"));if(known(str(f.attributes(),"lot")))lots.add(DomainBindings.lot(str(f.attributes(),"lot")));});
+        Map<String,String> memberByFact=new HashMap<>();for(Fact f:all){String member=str(f.attributes(),"employer");if(!known(member)){Set<String> candidates=new LinkedHashSet<>();for(Fact sibling:all)if(known(str(sibling.attributes(),"employer"))&&e.identities.samePerson(f,sibling)&&new ProofVerifier().issue(sibling,e.corpus.byId)==null&&DomainBindings.issue(sibling,e.corpus.byId,List.of())==null)candidates.add(str(sibling.attributes(),"employer"));if(candidates.size()==1)member=candidates.iterator().next();}memberByFact.put(f.id(),member);}
+        Set<String> members=new HashSet<>(),lots=new HashSet<>();all.forEach(f->{if(known(memberByFact.get(f.id())))members.add(memberByFact.get(f.id()));if(known(str(f.attributes(),"lot")))lots.add(DomainBindings.lot(str(f.attributes(),"lot")));});
         // A source-local single-slot appointment is an existential witness. Unrelated
         // candidates with unknown employer must not invalidate it. This path cannot add
         // members, establish a per-member quota, exact count, or cross-lot coverage.
@@ -63,9 +64,9 @@ final class PersonnelCount {
                         proof);
             }
         }
-        if(employer.isBlank()&&(members.size()>1||!members.isEmpty()&&all.stream().anyMatch(f->!known(str(f.attributes(),"employer")))))return e.unknown(r,"PERSON_COUNT_MEMBER_REQUIRED","同岗位涉及不同或未明确的成员单位，须明确本条人数按哪一成员计算，不能把成员人数相加",all);
+        if(employer.isBlank()&&(members.size()>1||!members.isEmpty()&&all.stream().anyMatch(f->!known(memberByFact.get(f.id())))))return e.unknown(r,"PERSON_COUNT_MEMBER_REQUIRED","同岗位涉及不同或未明确的成员单位，须明确本条人数按哪一成员计算，不能把成员人数相加",all);
         if(lot.isBlank()&&(lots.size()>1||!lots.isEmpty()&&all.stream().anyMatch(f->!known(str(f.attributes(),"lot")))))return e.unknown(r,"PERSON_COUNT_LOT_REQUIRED","同岗位涉及不同或未明确的标段，须明确本条人数适用标段，不能跨标段合计",all);
-        List<Fact> selected=all.stream().filter(f->employer.isBlank()||employer.equals(str(f.attributes(),"employer")))
+        List<Fact> selected=all.stream().filter(f->employer.isBlank()||employer.equals(memberByFact.get(f.id())))
             .filter(f->lot.isBlank()||DomainBindings.lot(lot).equals(DomainBindings.lot(str(f.attributes(),"lot")))).toList();
         // A declared employer on an appointment is a dimension, not evidence of an employment relationship.
         if(!employer.isBlank()&&DomainBindings.employment(r.description()+r.sourceQuote())){
@@ -77,7 +78,7 @@ final class PersonnelCount {
         List<Map<String,Object>> complete=completeLists(r,e,selected,employer,lot);
         boolean populationComplete=!complete.isEmpty()&&unresolved==0&&!sameNameAmbiguous;
         int observed=identities.distinct();
-        Map<String,Object> proof=countProof(r,e,selected,employer,lot,expected,operator,identities,complete);
+        Map<String,Object> proof=countProof(r,e,selected,employer,lot,expected,operator,identities,complete);proof.put("memberByFact",memberByFact);proof.put("memberReusePolicy","SOURCE_VALIDATED_SAME_PERSON_ONLY_NO_NEW_EMPLOYMENT_FACT");
         if(sameNameAmbiguous)return e.unknown(r,"PERSON_COUNT_IDENTITY_AMBIGUOUS","同名任职材料出现不同身份，当前岗位对应人员未消歧，不能据此判人数足够或不足",selected,proof);
         if(operator.equals("ROLE_CONFIGURATION")){
             proof.put("proofScope","ROLE_CONFIGURATION_ONLY");proof.put("upperBoundProven",false);proof.put("exactCountProven",false);proof.put("concurrentRolesProven",false);

@@ -25,6 +25,19 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SemanticCheckerTest {
+    @Test void transportAuditSavesFailedHttpBodyWithoutCredentials(@org.junit.jupiter.api.io.TempDir java.nio.file.Path auditDir) throws Exception {
+        status=503;reply="{\"error\":\"unavailable mock-secret\"}";
+        SemanticChecker checker=new SemanticChecker(url,"mock-secret","mock-model");
+        var field=SemanticChecker.class.getDeclaredField("auditDirectory");field.setAccessible(true);field.set(checker,auditDir.toString());
+        org.slf4j.MDC.put("verification.sourceRunId","fixture-run");
+        try{checker.assess(rule("技术响应","核对技术响应内容"),document(),null);}finally{org.slf4j.MDC.remove("verification.sourceRunId");}
+        assertEquals(1,calls.get());
+        try(var files=java.nio.file.Files.list(auditDir.resolve("java-model"))){
+            var records=files.toList();assertEquals(3,records.size());
+            String all=records.stream().map(path->{try{return java.nio.file.Files.readString(path);}catch(Exception e){throw new RuntimeException(e);}}).collect(java.util.stream.Collectors.joining());
+            assertTrue(all.contains("fixture-run"));assertTrue(all.contains("HTTP_ERROR"));assertTrue(all.contains("503"));assertTrue(all.contains("unavailable"));assertFalse(all.contains("mock-secret"));
+        }
+    }
     @Test void normalizedPrintedDateAndProspectiveAdvicePassButActualSigningDoesNot() throws Exception {
         var doc=synthetic("BID",List.of(new Page(1,"技术响应方案\n履约承诺书\n我方承诺遵守技术要求。\n投标人（盖章）：甲公司\n日期：2027年4月6日","PAGE","PDF","")));
         var claim=Map.of("kind","DATE","scope","CURRENT_PROJECT","text","履约承诺书签署日期","value","2027年4月6日","evidenceIds",List.of("C1"));

@@ -9,35 +9,46 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 import static cn.bidcheck.verification.engine.ProofVerifier.date;
 
 /** Date semantics are derived from the selected original certificate, never supplied by a
- * model. An issue date proves that an expiry-only document existed; it is not its valid-from. */
+ * model. Expiry-only evidence does not invent a start date or an unrequested issuance duty. */
 final class CertificateValidityDates {
-    static final String VERSION="certificate-date-semantics-1";
+    static final String VERSION="certificate-date-semantics-3-conjoined-original-limits";
     private static final String DATE="(?:19|20)[0-9]{2}\\s*[年./-]\\s*[0-9]{1,2}\\s*[月./-]\\s*[0-9]{1,2}\\s*日?";
     private static final Pattern ISSUE=Pattern.compile("(?m)^[\\t ]*(?:#{1,6}[\\t ]*)?(?:发证日期|签发日期|颁发日期|核发日期|批准日期|生效日期)[\\t ]*[:：][\\t ]*("+DATE+")[\\t ]*$");
     private static final Pattern AUTHORITY_DATE=Pattern.compile("(?m)^[\\t ]*发证机关\\s*[:：][\\t ]*(?:\\r?\\n[\\t ]*)*("+DATE+")[\\t ]*$");
+    private static final Pattern CATEGORY_LIMIT=Pattern.compile("(?:上述|标注|部分|特定)[^。\\n]{0,45}资质[^。\\n]{0,45}有效期[\\t :：]*至[\\t ]*("+DATE+")");
     private static final Pattern NUMBER=Pattern.compile("(?:证书编号|证书号码|电子证书编号|注册编号|注册证号|资格证号|(?<![\\p{IsHan}])编号)\\s*[:：]\\s*([^\\s;；，,。|<>]{2,80})");
     private CertificateValidityDates(){}
     record Result(Boolean valid,String code,String reason,Map<String,Object> proof){boolean complete(){return valid!=null;}}
 
     static Result fact(Fact fact,EvidenceCorpus corpus,String field,LocalDate reference){
+        return fact(fact,corpus,field,reference,false);
+    }
+    static Result fact(Fact fact,EvidenceCorpus corpus,String field,LocalDate reference,boolean requireIssuance){
+        return fact(fact,corpus,field,reference,requireIssuance,List.of());
+    }
+    static Result fact(Fact fact,EvidenceCorpus corpus,String field,LocalDate reference,boolean requireIssuance,List<Map<String,Object>> layout){
+        String sourceIssue=new ProofVerifier().issue(fact,corpus.byId);if(sourceIssue==null)sourceIssue=DomainBindings.issue(fact,corpus.byId,layout);
+        if(sourceIssue!=null)return pending("CERTIFICATE_DATE_SOURCE_UNPROVEN","日期事实尚未通过同证原文校验，不能只凭候选到期日期计算有效",linked("dateContractVersion",VERSION,"sourceRejection",sourceIssue,"factId",fact.id()));
         LocalDate start=date(fact.attributes().get("start")),end=date(fact.attributes().get("end"));
-        List<Source> original=sameCertificateSources(fact,corpus);
+        List<Source> original=sameCertificateSources(fact,corpus,layout);
         List<Map<String,Object>> issuance=new ArrayList<>();Set<LocalDate> issued=new LinkedHashSet<>();
         for(Source source:original)readIssue(source.evidence().quote(),source,issued,issuance);
         boolean longTerm=start==null&&end==null&&original.stream().anyMatch(s->Pattern.compile(Pattern.quote(field)+"[\\t :：]*(?:长期|永久)(?=[\\s。；;]|$)").matcher(s.evidence().quote()).find());
         Result base;
         if(longTerm){Map<String,Object> proof=linked("dateContractVersion",VERSION,"semantics","LONG_TERM","field",field,"start","","end","","referenceDate",reference.toString(),"issuanceEvidence",issuance,"issueDateIsNotValidityStart",true);
-            if(issued.size()!=1)base=pending("CERTIFICATE_ISSUANCE_REQUIRED","长期有效证照仍须证明同一证件在招标时点已经发行",proof);
+            proof.put("issuanceRequiredByRule",requireIssuance);
+            if(issued.size()>1)base=pending("CERTIFICATE_DATE_CONFLICT","同证出现多个不同发行日期，须核对证书版本",proof);
+            else if(issued.isEmpty()&&requireIssuance)base=pending("CERTIFICATE_ISSUANCE_REQUIRED","本项明确要求发行时点，尚未取得同证原文发行日期",proof);
+            else if(issued.isEmpty()){proof.put("issuanceStatus","NOT_STATED_NOT_REQUIRED_FOR_EXPIRY_CHECK");base=new Result(true,"","",proof);}
             else{LocalDate issue=issued.iterator().next();proof.put("issuedOn",issue.toString());base=new Result(!reference.isBefore(issue),"","",proof);}
-        }else base=period(start,end,issued,reference,field,issuance);
+        }else base=period(start,end,issued,reference,field,issuance,requireIssuance);
         if(!base.complete())return base;
         Map<String,Object> proof=new LinkedHashMap<>(base.proof());
         boolean valid=Boolean.TRUE.equals(base.valid());List<Map<String,Object>> extra=new ArrayList<>();
-        // Explicit electronic use limits constrain this document in addition to its general
-        // expiry. Ambiguous category-specific restrictions require their own scoped proof.
+        // A known false mandatory period already disproves the conjunction. A category note
+        // cannot conceal an electronic-use interval that starts after the tender event.
+        List<Map<String,Object>> unresolvedCategoryLimits=new ArrayList<>();
         for(Source source:original){String text=source.evidence().quote();
-            if(text.matches("(?s).*(?:上述|标注|部分|特定)[^。\\n]{0,45}资质[^。\\n]{0,45}有效期.*"))
-                return pending("CATEGORY_SPECIFIC_PERIOD_REQUIRED","证书存在按资质类别适用的期限限制，须对应本项类别后计算，不能用整证最晚日期替代",proof);
             for(String label:List.of("使用有效期","使用期限")){
                 if(!text.contains(label)||field.equals(label))continue;
                 List<LocalDate> dates=DateFieldValues.read(text,label,2);
@@ -45,8 +56,26 @@ final class CertificateValidityDates {
                 boolean inside=!reference.isBefore(dates.get(0))&&!reference.isAfter(dates.get(1));valid&=inside;
                 extra.add(linked("semantics","USE_PERIOD","field",label,"start",dates.get(0).toString(),"end",dates.get(1).toString(),"valid",inside,"sourceId",source.id()));
             }
+            if(text.matches("(?s).*(?:上述|标注|部分|特定)[^。\\n]{0,45}资质[^。\\n]{0,45}有效期.*")){
+                Matcher limited=CATEGORY_LIMIT.matcher(text);boolean found=false;
+                while(limited.find()){
+                    found=true;LocalDate endLimit=date(limited.group(1).replaceAll("\\s+",""));
+                    // Only an explicit expiry ceiling is usable without colour/category mapping.
+                    // Before this ceiling both possible applicability branches remain valid;
+                    // after it, the specific category must be resolved rather than assumed.
+                    boolean universallyWithin=endLimit!=null&&!reference.isAfter(endLimit);
+                    Map<String,Object> restriction=linked("semantics","CATEGORY_EXPIRY_LIMIT","end",endLimit==null?"":endLimit.toString(),"sourceId",source.id(),"quote",limited.group(),"categoryApplicability","UNRESOLVED","allPossibleBranchesCoverReference",universallyWithin,"doesNotExtendMainExpiry",true);
+                    extra.add(restriction);if(!universallyWithin)unresolvedCategoryLimits.add(restriction);
+                }
+                if(!found)unresolvedCategoryLimits.add(linked("sourceId",source.id(),"reason","CATEGORY_LIMIT_NOT_AN_EXPLICIT_EXPIRY_CEILING"));
+            }
         }
         proof.put("additionalApplicablePeriods",extra);
+        if(!unresolvedCategoryLimits.isEmpty()){
+            proof.put("unresolvedCategoryLimits",unresolvedCategoryLimits);
+            if(valid)return pending("CATEGORY_SPECIFIC_PERIOD_REQUIRED","参考日期已超过可能适用的资质类别期限或备注日期不清，须对应本项类别后计算，不能用整证最晚日期替代",proof);
+            proof.put("decisionBasis","KNOWN_MANDATORY_PERIOD_FALSE_DESPITE_UNRESOLVED_CATEGORY_RESTRICTION");
+        }
         return new Result(valid,"","",Map.copyOf(proof));
     }
 
@@ -54,25 +83,30 @@ final class CertificateValidityDates {
         Set<LocalDate> issueDates=new LinkedHashSet<>();List<Map<String,Object>> evidence=new ArrayList<>();
         var issue=record.fields().get("ISSUE_DATE");if(issue!=null&&date(issue.value())!=null){issueDates.add(date(issue.value()));evidence.add(issue.audit());}
         return period(date(record.value("VALIDITY_START"+suffix)),date(record.value("VALIDITY_END"+suffix)),issueDates,reference,
-                suffix.isBlank()?"有效期":"注册专业有效期"+suffix,evidence);
+                suffix.isBlank()?"有效期":"注册专业有效期"+suffix,evidence,false);
     }
 
-    private static Result period(LocalDate start,LocalDate end,Set<LocalDate> issued,LocalDate reference,String field,List<Map<String,Object>> issuance){
+    private static Result period(LocalDate start,LocalDate end,Set<LocalDate> issued,LocalDate reference,String field,List<Map<String,Object>> issuance,boolean requireIssuance){
         Map<String,Object> proof=linked("dateContractVersion",VERSION,"semantics",start==null?"EXPIRY_DATE":"CLOSED_INTERVAL",
                 "field",field,"start",start==null?"":start.toString(),"end",end==null?"":end.toString(),"referenceDate",reference.toString(),"issuanceEvidence",issuance,
-                "issueDateIsNotValidityStart",true);
+                "issueDateIsNotValidityStart",true,"issuanceRequiredByRule",requireIssuance);
         if(end==null||start!=null&&end.isBefore(start))return pending("VALIDITY_RANGE_REQUIRED","适用有效期日期缺失或范围倒置",proof);
         if(start!=null)return new Result(!reference.isBefore(start)&&!reference.isAfter(end),"","",proof);
         // An explicit past expiry is sufficient to disprove validity even when issue is absent.
         if(reference.isAfter(end))return new Result(false,"","",proof);
-        if(issued.size()!=1)return pending("CERTIFICATE_ISSUANCE_REQUIRED","证书仅记载截止日期；须由同一证号、同一文书的发行或生效日期确认在招标时点已存在，不虚构有效期开始日期",proof);
+        if(issued.size()>1)return pending("CERTIFICATE_DATE_CONFLICT","同证出现多个不同发行日期，须核对原图或证书版本",proof);
+        if(issued.isEmpty()){
+            if(requireIssuance)return pending("CERTIFICATE_ISSUANCE_REQUIRED","本项明确要求发行时点，尚未取得同证原文发行日期",proof);
+            proof.put("issuanceStatus","NOT_STATED_NOT_REQUIRED_FOR_EXPIRY_CHECK");proof.put("proofScope","EXPIRY_AT_REFERENCE_DATE_ONLY");
+            return new Result(true,"","",proof);
+        }
         LocalDate issue=issued.iterator().next();proof.put("issuedOn",issue.toString());
         if(issue.isAfter(end))return pending("CERTIFICATE_DATE_CONFLICT","同证发行日期晚于到期日期，须核对原图或证书版本",proof);
         return new Result(!reference.isBefore(issue),"","",proof);
     }
     private static Result pending(String code,String reason,Map<String,Object> proof){return new Result(null,code,reason,Map.copyOf(proof));}
-    private static List<Source> sameCertificateSources(Fact fact,EvidenceCorpus corpus){
-        if(new ProofVerifier().issue(fact,corpus.byId)!=null||DomainBindings.issue(fact,corpus.byId,List.of())!=null)return List.of();
+    private static List<Source> sameCertificateSources(Fact fact,EvidenceCorpus corpus,List<Map<String,Object>> layout){
+        if(new ProofVerifier().issue(fact,corpus.byId)!=null||DomainBindings.issue(fact,corpus.byId,layout)!=null)return List.of();
         var record=CertificateRecordBindings.matching(fact,corpus.byId);
         if(record!=null)return record.sources();
         List<Source> result=new ArrayList<>();

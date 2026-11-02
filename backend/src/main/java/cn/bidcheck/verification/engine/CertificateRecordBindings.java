@@ -11,7 +11,7 @@ final class CertificateRecordBindings {
     static final String VERSION="certificate-record-spans-1";
     private static final Pattern RANGE=Pattern.compile("chars:(\\d+)-(\\d+)");
     private static final Pattern TITLE=Pattern.compile("(?m)^[\\t #*]*(?:中华人民共和国)?[^\\r\\n:：|<>]{0,50}(?:注册证书|安全生产考核合格证书?)[\\t *]*\\r?$");
-    private static final Pattern HOLDER=Pattern.compile("(?m)^[\\t ]*(?:#{1,6}[\\t ]*)?(?:姓\\s*名|持证人)\\s*[:：]\\s*[\\p{IsHan}·]{2,12}[\\t ]*\\r?$");
+    private static final Pattern HOLDER=Pattern.compile("(?m)^[\\t ]*(?:#{1,6}[\\t ]*)?(?:姓\\s*名|持证人)\\s*[:：]\\s*[\\p{IsHan}·*＊×●]{2,12}[\\t ]*\\r?$");
     private CertificateRecordBindings(){}
     record Original(String text,List<Source> sources){}
     /** Only the corpus constructor registers complete immutable pages. A model-disclosed map

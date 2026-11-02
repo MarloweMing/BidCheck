@@ -127,7 +127,7 @@ final class DocumentSubjectScope {
         // sources retain the old conservative behavior. Scope never comes from model attributes.
         if(source.historical()&&!Set.of("CURRENT_PROJECT","CURRENT_BID_SECTION").contains(source.scopeContext().status()))return false;
         String role=DomainBindings.sourceRole(fact),person=fact.kind().equals("PERSON_ROLE")?fact.value():DomainBindings.roleTarget(fact,role);
-        if(role.isBlank()||person.isBlank())return false;
+        if(!DomainBindings.known(role)||person.isBlank())return false;
         // An enterprise principal is not appointed to a construction post. Its explicitly named
         // current-bid form can legitimately use '/' in the project-appointment cell. Only the
         // navigation+numbered form+printed page boundary established above admits this exception.
