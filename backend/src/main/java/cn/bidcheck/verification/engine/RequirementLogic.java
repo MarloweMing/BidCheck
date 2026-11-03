@@ -6,7 +6,18 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 /** Checks explicit connectors between uniquely located sibling quotes; never guesses a complex sentence's logic. */
 final class RequirementLogic {
     private RequirementLogic(){}
-    private record Span(int start,int end){}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Span{
+        private final int start;
+        private final int end;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Span(@com.fasterxml.jackson.annotation.JsonProperty("start") int start, @com.fasterxml.jackson.annotation.JsonProperty("end") int end) { this.start = start; this.end = end; }
+        public int start() { return start; }
+        public int end() { return end; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Span that = (Span) other; return java.util.Objects.equals(this.start, that.start) && java.util.Objects.equals(this.end, that.end); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.start); hash = 31 * hash + java.util.Objects.hashCode(this.end); return hash; }
+        @Override public String toString() { return "Span[" + "start=" + start + ", end=" + end + "]"; }
+}
     static String expected(String source,List<Rule> children){
         if(children.size()<2)return "";List<Span> spans=locate(source,children,false);
         if(spans.isEmpty()||overlap(spans))spans=locate(source,children,true);
@@ -26,14 +37,14 @@ final class RequirementLogic {
     private static List<Span> locate(String source,List<Rule> children,boolean materialNames){
         List<Span> spans=new ArrayList<>();
         for(Rule child:children){String quote=child.sourceQuote();
-            if(materialNames){if(!Set.of("MATERIAL","CERTIFICATE","DECLARATION","SECTION").contains(child.predicate()))return List.of();
-                quote=child.expected();if(quote.isBlank())quote=str(child.parameters(),"category");
-                if(quote.isBlank()||!child.sourceQuote().contains(quote))return List.of();}
-            int start=source.indexOf(quote);if(quote.isBlank()||start<0||source.indexOf(quote,start+1)>=0)return List.of();
+            if(materialNames){if(!cn.bidcheck.compat.Java8Api.setOf("MATERIAL", "CERTIFICATE", "DECLARATION", "SECTION").contains(child.predicate()))return cn.bidcheck.compat.Java8Api.listOf();
+                quote=child.expected();if(cn.bidcheck.compat.Java8Api.isBlank(quote))quote=str(child.parameters(),"category");
+                if(cn.bidcheck.compat.Java8Api.isBlank(quote)||!child.sourceQuote().contains(quote))return cn.bidcheck.compat.Java8Api.listOf();}
+            int start=source.indexOf(quote);if(cn.bidcheck.compat.Java8Api.isBlank(quote)||start<0||source.indexOf(quote,start+1)>=0)return cn.bidcheck.compat.Java8Api.listOf();
             spans.add(new Span(start,start+quote.length()));
         }return spans;
     }
-    private static boolean overlap(List<Span> spans){List<Span> sorted=spans.stream().sorted(Comparator.comparingInt(Span::start)).toList();for(int i=1;i<sorted.size();i++)if(sorted.get(i-1).end()>sorted.get(i).start())return true;return false;}
+    private static boolean overlap(List<Span> spans){List<Span> sorted=cn.bidcheck.compat.Java8Api.toList(spans.stream().sorted(Comparator.comparingInt(Span::start)));for(int i=1;i<sorted.size();i++)if(sorted.get(i-1).end()>sorted.get(i).start())return true;return false;}
     static String issue(String source,String logic,List<Rule> children){
         String expected=expected(source,children);return !expected.isEmpty()&&!expected.equals(logic)?"原句连接词要求"+expected+"，不能解释为"+logic:"";
     }

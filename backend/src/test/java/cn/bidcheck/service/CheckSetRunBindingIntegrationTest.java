@@ -31,7 +31,7 @@ class CheckSetRunBindingIntegrationTest {
     @Autowired BidService service;@Autowired Store store;@Autowired CheckSpecificationStoreService specifications;
 
     @Test void runUsesTheRequestedConfirmedManifestAndScopesIdempotencyToItsFrozenRequest() throws Exception {
-        String project=BidService.text(service.createProject(Map.of("name","检查集绑定测试")),"id");
+        String project=BidService.text(service.createProject(cn.bidcheck.compat.Java8Api.mapOf("name", "检查集绑定测试")),"id");
         String tender=parsed(project,"TENDER","投标人应提供营业执照正文。");service.execute(service.extract(project,tender));
         for(Checkpoint checkpoint:checkpoints(project))service.updateCheckpoint(checkpoint.id(),disabled(checkpoint));
         Document tenderDocument=store.get("document",tender,Document.class);String checkpointId=Store.id();
@@ -53,8 +53,8 @@ class CheckSetRunBindingIntegrationTest {
             .isInstanceOfSatisfying(TemplateApiException.class,error->assertThat(error.code()).isEqualTo("IDEMPOTENCY_CONFLICT"));
         Map<String,Object> runB=service.startRun(project,bid,false,"set-b",2,"start-b-key");
 
-        CheckSpec frozenA=specifications.findSnapshotSpec(project,runA.get("id").toString(),checkpointId).orElseThrow();
-        CheckSpec frozenB=specifications.findSnapshotSpec(project,runB.get("id").toString(),checkpointId).orElseThrow();
+        CheckSpec frozenA=specifications.findSnapshotSpec(project,runA.get("id").toString(),checkpointId).orElseThrow(java.util.NoSuchElementException::new);
+        CheckSpec frozenB=specifications.findSnapshotSpec(project,runB.get("id").toString(),checkpointId).orElseThrow(java.util.NoSuchElementException::new);
         assertThat(frozenA.parameters()).containsEntry("materialType","营业执照");
         assertThat(frozenB.parameters()).containsEntry("materialType","营业执照副本");
         assertThat(runA).containsEntry("checkSetId","set-a").containsEntry("manifestRevision",2);
@@ -67,7 +67,7 @@ class CheckSetRunBindingIntegrationTest {
 
         Checkpoint before=store.get("checkpoint",checkpointId,Checkpoint.class);Checkpoint candidate=new Checkpoint(checkpointId,"不应半保存",before.category(),before.severity(),before.type(),before.field(),before.operator(),before.expected(),before.unit(),before.required(),before.confirmed(),before.enabled(),before.source());
         Map<String,Object> expectedMap=store.map(store.encode(before)),candidateMap=store.map(store.encode(candidate));
-        assertThatThrownBy(()->service.updateCheckpointConfiguration(checkpointId,Map.of("expectedCheckpoint",expectedMap,"checkpoint",candidateMap,"spec",spec(99,tenderDocument,source,"错误修订")))).isInstanceOf(TemplateApiException.class);
+        assertThatThrownBy(()->service.updateCheckpointConfiguration(checkpointId,cn.bidcheck.compat.Java8Api.mapOf("expectedCheckpoint", expectedMap, "checkpoint", candidateMap, "spec", spec(99,tenderDocument,source,"错误修订")))).isInstanceOf(TemplateApiException.class);
         assertThat(store.get("checkpoint",checkpointId,Checkpoint.class)).isEqualTo(before);
 
         service.updateCheckpoint(checkpointId,new Checkpoint(checkpointId,"营业执照（已修改）",checkpoint.category(),checkpoint.severity(),checkpoint.type(),checkpoint.field(),checkpoint.operator(),checkpoint.expected(),checkpoint.unit(),checkpoint.required(),true,true,checkpoint.source()));
@@ -76,14 +76,14 @@ class CheckSetRunBindingIntegrationTest {
     }
 
     private void confirmSet(String project,String tender,String set,String specId,String key){
-        specifications.putCheckSet(project,set,Map.of("expectedRevision",0,"tenderDocumentId",tender,"specIds",List.of(specId)));
-        specifications.confirmCheckSet(project,set,Map.of("expectedRevision",1,"idempotencyKey",key,"confirmedBy","tester"));
+        specifications.putCheckSet(project,set,cn.bidcheck.compat.Java8Api.mapOf("expectedRevision", 0, "tenderDocumentId", tender, "specIds", cn.bidcheck.compat.Java8Api.listOf(specId)));
+        specifications.confirmCheckSet(project,set,cn.bidcheck.compat.Java8Api.mapOf("expectedRevision", 1, "idempotencyKey", key, "confirmedBy", "tester"));
     }
     private Map<String,Object> spec(int expectedRevision,Document tender,Evidence evidence,String materialType){
         Map<String,Object> ref=new LinkedHashMap<>();ref.put("documentId",tender.id());ref.put("documentVersion",tender.version());ref.put("documentHash",tender.sha256());ref.put("parserFingerprint",evidence.anchor());ref.put("sourceHash","");ref.put("locationType",evidence.locationType());ref.put("location",evidence.page());ref.put("quote",evidence.quote());ref.put("startOffset",null);ref.put("endOffset",null);
-        Map<String,Object> parameters=Map.of("materialType",materialType,"requireBody",true);List<Map<String,Object>> sources=List.of(ref);
-        List<Map<String,Object>> bindings=parameters.entrySet().stream().map(entry->Map.<String,Object>of("parameter",entry.getKey(),"value",entry.getValue(),"origin","MANUAL_CONFIRMED","reason","测试确认","sources",sources)).toList();
-        Map<String,Object> request=new LinkedHashMap<>();request.put("expectedRevision",expectedRevision);request.put("businessItemId","license-item");request.put("category","QUALIFICATION");request.put("purpose","MANDATORY");request.put("verificationMode","DOCUMENT");request.put("templateId","MATERIAL_PRESENT");request.put("templateVersion","1.0");request.put("proofStandard","MATERIAL_SUBMISSION");request.put("subjectSelector",Map.of("entityType","ORGANIZATION","role","BIDDER","scope","CURRENT_PROJECT","constraints",Map.of()));request.put("parameters",parameters);request.put("applicability",Map.of("state","APPLIES","reason","","sources",List.of()));request.put("requirementRefs",sources);request.put("parameterBindings",bindings);request.put("requiredFields",Map.of());request.put("evidenceContract",Map.of());request.put("sourceCoverage",Map.of("state","FULL","unsupportedFragments",List.of()));return request;
+        Map<String,Object> parameters=cn.bidcheck.compat.Java8Api.mapOf("materialType", materialType, "requireBody", true);List<Map<String,Object>> sources=cn.bidcheck.compat.Java8Api.listOf(ref);
+        List<Map<String,Object>> bindings=cn.bidcheck.compat.Java8Api.toList(parameters.entrySet().stream().map(entry->cn.bidcheck.compat.Java8Api.<String, Object>mapOf("parameter", entry.getKey(), "value", entry.getValue(), "origin", "MANUAL_CONFIRMED", "reason", "测试确认", "sources", sources)));
+        Map<String,Object> request=new LinkedHashMap<>();request.put("expectedRevision",expectedRevision);request.put("businessItemId","license-item");request.put("category","QUALIFICATION");request.put("purpose","MANDATORY");request.put("verificationMode","DOCUMENT");request.put("templateId","MATERIAL_PRESENT");request.put("templateVersion","1.0");request.put("proofStandard","MATERIAL_SUBMISSION");request.put("subjectSelector",cn.bidcheck.compat.Java8Api.mapOf("entityType", "ORGANIZATION", "role", "BIDDER", "scope", "CURRENT_PROJECT", "constraints", cn.bidcheck.compat.Java8Api.mapOf()));request.put("parameters",parameters);request.put("applicability",cn.bidcheck.compat.Java8Api.mapOf("state", "APPLIES", "reason", "", "sources", cn.bidcheck.compat.Java8Api.listOf()));request.put("requirementRefs",sources);request.put("parameterBindings",bindings);request.put("requiredFields",cn.bidcheck.compat.Java8Api.mapOf());request.put("evidenceContract",cn.bidcheck.compat.Java8Api.mapOf());request.put("sourceCoverage",cn.bidcheck.compat.Java8Api.mapOf("state", "FULL", "unsupportedFragments", cn.bidcheck.compat.Java8Api.listOf()));return request;
     }
     @SuppressWarnings("unchecked") private List<Checkpoint> checkpoints(String project){return (List<Checkpoint>)service.detail(project).get("checkpoints");}
     private static Checkpoint disabled(Checkpoint checkpoint){return new Checkpoint(checkpoint.id(),checkpoint.title(),checkpoint.category(),checkpoint.severity(),checkpoint.type(),checkpoint.field(),checkpoint.operator(),checkpoint.expected(),checkpoint.unit(),checkpoint.required(),true,false,checkpoint.source());}

@@ -12,7 +12,7 @@ final class RecoveryTransition {
     static Map<String,Object> afterAttempt(Finding before,Finding after,String executedStrategy,
             Map<String,Object> nextPlan,boolean businessProgress,boolean requirementsRepaired,
             boolean recomputed,List<Map<String,Object>> diagnostics) {
-        boolean visualFailure=diagnostics.stream().anyMatch(d->Set.of("VISUAL_RETRY_PENDING","VISUAL_ENGINE_FAILURE","VISUAL_SOURCE_UNAVAILABLE").contains(text(d,"code")));
+        boolean visualFailure=diagnostics.stream().anyMatch(d->cn.bidcheck.compat.Java8Api.setOf("VISUAL_RETRY_PENDING", "VISUAL_ENGINE_FAILURE", "VISUAL_SOURCE_UNAVAILABLE").contains(text(d,"code")));
         boolean externalFailure=diagnostics.stream().anyMatch(d->ExternalCheckState.systemFailure(text(d,"code")));
         boolean complete=!unresolved(after);
         boolean observedFailure=hasProcessingFailure(after)||visualFailure||externalFailure||"FAILED".equals(text(nextPlan,"status"));
@@ -30,10 +30,10 @@ final class RecoveryTransition {
         // A distinct capability may be tried initially. The durable per-target gate below
         // still vetoes returning to a consumed investigation after observation-only changes.
         boolean newStrategyWork=!failedNow&&changedStrategy&&CheckResolution.ACTIVE.contains(status)
-            &&Set.of("VERIFY_SOURCE_PAGES","QUERY_EXTERNAL","RESTORE_REQUIREMENT_SOURCE","RECOMPILE_REQUIREMENT","REPAIR_REQUIREMENT","RETRY_FAILED_STEP","TARGETED_EVIDENCE","SPLIT_FAILED_REQUEST","RECOMPUTE_SHARED_EVIDENCE").contains(nextStrategy);
+            &&cn.bidcheck.compat.Java8Api.setOf("VERIFY_SOURCE_PAGES", "QUERY_EXTERNAL", "RESTORE_REQUIREMENT_SOURCE", "RECOMPILE_REQUIREMENT", "REPAIR_REQUIREMENT", "RETRY_FAILED_STEP", "TARGETED_EVIDENCE", "SPLIT_FAILED_REQUEST", "RECOMPUTE_SHARED_EVIDENCE").contains(nextStrategy);
         if(complete)status="SUCCEEDED";
         else if(!newStrategyWork&&(!(businessProgress||requirementsRepaired||recovered)||!changedStrategy&&!newSameStrategyWork))
-            status=failedNow?"FAILED":Set.of("WAITING_USER","WAITING_EXTERNAL").contains(status)?status:"BLOCKED_NO_PROGRESS";
+            status=failedNow?"FAILED":cn.bidcheck.compat.Java8Api.setOf("WAITING_USER", "WAITING_EXTERNAL").contains(status)?status:"BLOCKED_NO_PROGRESS";
         Map<String,Object> outcome=fields("status",status,"executedStrategy",executedStrategy,"nextStrategy",nextStrategy,
             "technicalRecovered",recovered,"processingFailed",failedNow,"businessComplete",complete,"inputsChanged",changedInputs,
             "newStrategyWork",newStrategyWork,
@@ -60,17 +60,17 @@ final class RecoveryTransition {
         Map<String,Object> retained=map(map(finding.assessment()).get("recoveryFailure"));
         // The frozen earlier proof may contain an earlier request failure. A new retention
         // receipt explicitly classifies the latest attempt, so that old error cannot reappear.
-        if(Boolean.TRUE.equals(retained.get("retainedCompletedProof"))&&retained.get("processingFailed") instanceof Boolean failed)return failed;
+        if(Boolean.TRUE.equals(retained.get("retainedCompletedProof"))&&retained.get("processingFailed") instanceof Boolean)return ((Boolean) (retained.get("processingFailed")));
         Map<String,Object> atomic=atomic(finding),model=map(atomic.get("modelDiagnostics"));
         if("FAILED".equals(text(map(atomic.get("agentInvestigation")),"status")))return true;
         if(CheckResolution.retryable(model))return true;
-        if(model.get("unresolvedFailures") instanceof Number n&&n.longValue()>0)return true;
+        if(model.get("unresolvedFailures") instanceof Number&&((Number) (model.get("unresolvedFailures"))).longValue()>0)return true;
         if(maps(model.get("failures")).stream().anyMatch(f->!Boolean.TRUE.equals(f.get("recoveredByRetry"))&&!Boolean.TRUE.equals(f.get("transportRecovered"))))return true;
-        if(Set.of("ENGINE_FAILURE","ERROR","PROCESSING_FAILED").contains(text(atomic,"workflowState")))return true;
+        if(cn.bidcheck.compat.Java8Api.setOf("ENGINE_FAILURE", "ERROR", "PROCESSING_FAILED").contains(text(atomic,"workflowState")))return true;
         if("REPAIR_RETRY_PENDING".equals(text(map(atomic.get("compilationAudit")),"state")))return true;
         if(maps(atomic.get("fieldCoverage")).stream().anyMatch(RecoveryTransition::fieldProcessingFailure))return true;
         if(maps(atomic.get("gaps")).stream().anyMatch(g->{String code=text(g,"code");return code.startsWith("MODEL_")||code.startsWith("HTTP_")
-            ||Set.of("AGENT_INVESTIGATION_FAILED","AGENT_INVESTIGATION_STALLED","REQUEST_TIMEOUT","OUTPUT_SCHEMA_INVALID","OUTPUT_JSON_INVALID","FACT_EXTRACTION_UNAVAILABLE","ENGINE_FAILURE").contains(code);}))return true;
+            ||cn.bidcheck.compat.Java8Api.setOf("AGENT_INVESTIGATION_FAILED", "AGENT_INVESTIGATION_STALLED", "REQUEST_TIMEOUT", "OUTPUT_SCHEMA_INVALID", "OUTPUT_JSON_INVALID", "FACT_EXTRACTION_UNAVAILABLE", "ENGINE_FAILURE").contains(code);}))return true;
         if(!Boolean.TRUE.equals(retained.get("retainedCompletedProof")))return false;
         // Retaining an earlier proof says nothing about whether the new request failed.
         // Older receipts are classified from their actual request/plan, not the retention flag.
@@ -80,7 +80,7 @@ final class RecoveryTransition {
     }
 
     static boolean fieldProcessingFailure(Map<String,Object> row) {
-        String code=text(row,"errorCode");if(code.isBlank())code=text(row,"reason");
+        String code=text(row,"errorCode");if(cn.bidcheck.compat.Java8Api.isBlank(code))code=text(row,"reason");
         return "FAILED".equals(text(row,"status"))&&!"FIELD_VALIDATION_FAILED".equals(code);
     }
 }

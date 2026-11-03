@@ -21,7 +21,7 @@ final class SourcePerformanceScore {
     static Rule compile(String original){
         String body=ScoringSourceSegments.body(original).replaceAll("\\s+","");String[] parts=body.split("证明材料[:：]",-1);if(parts.length!=2)return null;
         Matcher award=AWARD.matcher(parts[0]);if(!award.matches()||!award.group(9).equals(award.group(10)))return null;
-        String role=Objects.toString(award.group(5),""),basis=Objects.toString(award.group(6),"");boolean person=!role.isBlank();
+        String role=Objects.toString(award.group(5),""),basis=Objects.toString(award.group(6),"");boolean person=!cn.bidcheck.compat.Java8Api.isBlank(role);
         if(person!=!award.group(1).equals("施工业绩情况")||person&&!award.group(1).equals(role+"业绩"))return null;
         String proof=parts[1];Map<String,Object> parameters=params(MODE);
         if(person){
@@ -36,53 +36,53 @@ final class SourcePerformanceScore {
         }
         LocalDate since;try{since=LocalDate.of(Integer.parseInt(award.group(2)),Integer.parseInt(award.group(3)),Integer.parseInt(award.group(4)));}catch(Exception invalid){return null;}
         BigDecimal per=decimal(award.group(11)),max=decimal(award.group(12)),minimum=decimal(award.group(7));if(per==null||max==null||minimum==null||minimum.signum()<0||per.signum()<=0||max.signum()<=0)return null;
-        parameters.putAll(linked("sinceDate",since.toString(),"amountMinimum",award.group(7),"amountUnit",award.group(8),"performanceAmountBasis",basis.isBlank()?"CONTRACT_OR_EPC_CONSTRUCTION":"CONSTRUCTION_INSTALLATION",
+        parameters.putAll(linked("sinceDate",since.toString(),"amountMinimum",award.group(7),"amountUnit",award.group(8),"performanceAmountBasis",cn.bidcheck.compat.Java8Api.isBlank(basis)?"CONTRACT_OR_EPC_CONSTRUCTION":"CONSTRUCTION_INSTALLATION",
                 "performanceType",award.group(9),"personRole",role,"pointsPerItem",award.group(11),"maxScore",award.group(12),"commonProofQuote",parts[1],
                 "frameworkOrderAggregation",true,"decisionScope","PERFORMANCE_SCORE_WITH_COMMON_PROOF"));
         if(person)parameters.putAll(linked("requiresReferenceDate",true,"referenceEvent","BID_DEADLINE"));
         else parameters.put("performanceCutoffPolicy","VERIFIED_SUBMISSION_BOUNDARY");
-        return new Rule("SOURCE-PERFORMANCE-"+identity(original).substring(0,12),award.group(1)+"逐合同核验计分","SCORE_COUNT",person?role:"施工单位","scoring","","","",parameters,original,"",List.of());
+        return new Rule("SOURCE-PERFORMANCE-"+identity(original).substring(0,12),award.group(1)+"逐合同核验计分","SCORE_COUNT",person?role:"施工单位","scoring","","","",parameters,original,"",cn.bidcheck.compat.Java8Api.listOf());
     }
     static Map<String,Object> params(String mode){return linked("sourceScoringVersion",SourceScoringRules.VERSION,"sourceScoringMode",mode,"deterministicFamily","SOURCE_SCORING","serverOwned",true);}
     static void putSocial(Map<String,Object> params,Matcher m){params.putAll(linked("earliestMonth",m.group(1)+"-"+String.format(Locale.ROOT,"%02d",Integer.parseInt(m.group(2))),"months",RequirementGrounding.number(m.group(3)).intValue(),"specialProofPermitted",true));}
     static List<Rule> evidenceRules(Rule parent){
         Map<String,Object> p=readParams(parent);List<Rule> rules=new ArrayList<>();
-        boolean personal=!str(parent.parameters(),"personRole").isBlank();
+        boolean personal=!cn.bidcheck.compat.Java8Api.isBlank(str(parent.parameters(),"personRole"));
         rules.add(read(parent,"SUBJECT",personal?"PERSON_ROLE":"RELATION",parent.subject(),personal?"当前任职人员及单位":"当前施工单位、投标人与联合体成员的明确角色关系",p));
-        Map<String,Object> contracts=new LinkedHashMap<>(p);contracts.putAll(linked("requiredFields",List.of("contractName","contractNumber","party","person","personRole","amount","unit","amountBasis","signedDate"),"requiredAmountBasis",personal?"建安费、建筑安装工程费":"合同金额、签约金额；EPC仅施工部分金额", "amountBasisMustQuoteOriginalLabel",true,"performanceType",parent.parameters().get("performanceType")));
+        Map<String,Object> contracts=new LinkedHashMap<>(p);contracts.putAll(linked("requiredFields",cn.bidcheck.compat.Java8Api.listOf("contractName", "contractNumber", "party", "person", "personRole", "amount", "unit", "amountBasis", "signedDate"),"requiredAmountBasis",personal?"建安费、建筑安装工程费":"合同金额、签约金额；EPC仅施工部分金额", "amountBasisMustQuoteOriginalLabel",true,"performanceType",parent.parameters().get("performanceType")));
         rules.add(read(parent,"CONTRACTS","CONTRACT","","逐合同名称、合同号、签约主体、签订日期、同合同施工或建安费金额及人员任职",contracts));
-        if(!str(parent.parameters(),"personRole").isBlank())rules.add(socialRead(parent,parent.subject(),p));
+        if(!cn.bidcheck.compat.Java8Api.isBlank(str(parent.parameters(),"personRole")))rules.add(socialRead(parent,parent.subject(),p));
         return rules;
     }
     static Map<String,Object> readParams(Rule parent){Map<String,Object> p=linked("scoringParentRuleId",parent.id(),"readPurpose","SCORE_FACT_DEPENDENCY","sourceScoringReadVersion",SourceScoringRules.VERSION);if(parent.parameters().containsKey("requirementSourceContext"))p.put("requirementSourceContext",parent.parameters().get("requirementSourceContext"));return p;}
-    static Rule read(Rule parent,String suffix,String predicate,String subject,String description,Map<String,Object> p){return new Rule(parent.id()+"-READ-"+suffix,description,predicate,subject,"","","","",p,parent.sourceQuote(),"",List.of());}
-    static Rule socialRead(Rule parent,String subject,Map<String,Object> base){Map<String,Object> p=new LinkedHashMap<>(base);p.putAll(linked("count",parent.parameters().get("months"),"earliestMonth",parent.parameters().get("earliestMonth"),"requiresReferenceDate",true,"referenceEvent","BID_DEADLINE","requiredFields",List.of("person","employer","months")));return read(parent,"SOCIAL","MONTHS",subject,"当前人员及本单位连续社保",p);}
+    static Rule read(Rule parent,String suffix,String predicate,String subject,String description,Map<String,Object> p){return new Rule(parent.id()+"-READ-"+suffix,description,predicate,subject,"","","","",p,parent.sourceQuote(),"",cn.bidcheck.compat.Java8Api.listOf());}
+    static Rule socialRead(Rule parent,String subject,Map<String,Object> base){Map<String,Object> p=new LinkedHashMap<>(base);p.putAll(linked("count",parent.parameters().get("months"),"earliestMonth",parent.parameters().get("earliestMonth"),"requiresReferenceDate",true,"referenceEvent","BID_DEADLINE","requiredFields",cn.bidcheck.compat.Java8Api.listOf("person", "employer", "months")));return read(parent,"SOCIAL","MONTHS",subject,"当前人员及本单位连续社保",p);}
     static Decision evaluate(Rule rule,RuleEvaluator e){
         BigDecimal per=decimal(rule.parameters().get("pointsPerItem")),max=decimal(rule.parameters().get("maxScore")),minimum=RuleEvaluator.normalize(decimal(rule.parameters().get("amountMinimum")),str(rule.parameters(),"amountUnit"));
         Map<String,Object> proof=linked("executor","source-performance-score-1","scoreProduced",false,"pointsPerItem",per,"scoreMaximum",max,"contractChecks",new ArrayList<>());
-        boolean personal=!str(rule.parameters(),"personRole").isBlank();
-        if(!personal&&!"BID_SUBMISSION".equals(str(e.context,"evaluationStage")))return e.unknown(rule,"PERFORMANCE_CUTOFF_STAGE_REQUIRED","原文“至今”未明确日期事件；当前并非已确认投标阶段，不能默认使用系统今天或其他阶段日期",List.of(),proof);
-        Rule cutoff=new Rule(rule.id()+"-STATISTICS-CUTOFF","投标阶段业绩统计截止依据","REFERENCE_TIME","","","","","",Map.of("referenceEvent","BID_DEADLINE"),rule.sourceQuote(),"",List.of());
+        boolean personal=!cn.bidcheck.compat.Java8Api.isBlank(str(rule.parameters(),"personRole"));
+        if(!personal&&!"BID_SUBMISSION".equals(str(e.context,"evaluationStage")))return e.unknown(rule,"PERFORMANCE_CUTOFF_STAGE_REQUIRED","原文“至今”未明确日期事件；当前并非已确认投标阶段，不能默认使用系统今天或其他阶段日期",cn.bidcheck.compat.Java8Api.listOf(),proof);
+        Rule cutoff=new Rule(rule.id()+"-STATISTICS-CUTOFF","投标阶段业绩统计截止依据","REFERENCE_TIME","","","","","",cn.bidcheck.compat.Java8Api.mapOf("referenceEvent", "BID_DEADLINE"),rule.sourceQuote(),"",cn.bidcheck.compat.Java8Api.listOf());
         LocalDate deadline=e.referenceDate(cutoff);Decision cutoffProof=e.reference(cutoff);
-        if(deadline!=null&&!uniqueCutoff(cutoffProof,deadline)){deadline=null;cutoffProof=e.unknown(cutoff,"REFERENCE_TIME_UNCONFIRMED","截止日期的原文标签存在冲突或未唯一绑定，不能以已确认标记代替日期核对",List.of(),cutoffProof.proof());}
+        if(deadline!=null&&!uniqueCutoff(cutoffProof,deadline)){deadline=null;cutoffProof=e.unknown(cutoff,"REFERENCE_TIME_UNCONFIRMED","截止日期的原文标签存在冲突或未唯一绑定，不能以已确认标记代替日期核对",cn.bidcheck.compat.Java8Api.listOf(),cutoffProof.proof());}
         proof.put("performanceCutoff",linked("policy",personal?"EXPLICIT_SOURCE_SUBMISSION_DEADLINE":"VERIFIED_SUBMISSION_BOUNDARY","sourceEventExplicit",personal,"evaluationStage",str(e.context,"evaluationStage"),"referenceProof",cutoffProof.map(),"interpretation",personal?"原文共同证明明确文件递交截止时点":"仅在投标阶段以已核招标截止日作为业绩统计边界；此为统计策略，不声称至今原文明确了日期事件"));
-        if(deadline==null)return e.unknown(rule,"REFERENCE_TIME_UNCONFIRMED","业绩统计所需投标截止日期或唯一原文出处尚未核实，不使用系统今天补齐",List.of(),proof);
+        if(deadline==null)return e.unknown(rule,"REFERENCE_TIME_UNCONFIRMED","业绩统计所需投标截止日期或唯一原文出处尚未核实，不使用系统今天补齐",cn.bidcheck.compat.Java8Api.listOf(),proof);
         List<String> targets=e.resolvedSubjects(rule);
         if(!personal&&targets.isEmpty()&&!EnterpriseSubjectBindings.consortiumDeclared(e.corpus.all))targets=DomainBindings.subjects("投标人",e.facts,e.corpus);
-        if(targets.size()!=1)return e.unknown(rule,"PERFORMANCE_SUBJECT_REQUIRED","须先从本次投标材料确定唯一拟派人员或施工单位，不能混算其他人员、其他成员业绩",List.of(),proof);
+        if(targets.size()!=1)return e.unknown(rule,"PERFORMANCE_SUBJECT_REQUIRED","须先从本次投标材料确定唯一拟派人员或施工单位，不能混算其他人员、其他成员业绩",cn.bidcheck.compat.Java8Api.listOf(),proof);
         String target=targets.get(0);proof.put("target",target);List<Fact> roles=DomainBindings.roleLinks(rule.subject(),e.facts,e.corpus);
-        List<Fact> validated=e.facts.stream().filter(f->f.kind().equals("CONTRACT")&&valid(f,e)).toList();Map<String,List<Fact>> groups=contractGroups(validated);Set<String> ambiguousNumbers=ambiguousNumberCandidates(groups);
+        List<Fact> validated=cn.bidcheck.compat.Java8Api.toList(e.facts.stream().filter(f->f.kind().equals("CONTRACT")&&valid(f,e)));Map<String,List<Fact>> groups=contractGroups(validated);Set<String> ambiguousNumbers=ambiguousNumberCandidates(groups);
         Inventory inventory=inventory(rule,target,e);proof.put("submittedInventory",inventory.proof());
         List<Fact> accepted=new ArrayList<>();List<Evidence> evidence=new ArrayList<>();List<Map<String,Object>> checks=new ArrayList<>(),confirmationCandidates=new ArrayList<>();Set<String> counted=new LinkedHashSet<>();
         Decision social=null;if(personal){social=social(rule,target,roles,e);proof.put("socialProof",social.map());if(social.status().equals("PASS"))evidence.addAll(social.evidences());}
-        String form=str(rule.parameters(),"formReference");PerformanceInventoryProof submittedForm=form.isBlank()?null:new PerformanceInventoryProof(form,e);
-        Map<String,Long> contractNameCounts=new HashMap<>();for(List<Fact> group:groups.values())group.stream().map(f->clean(str(f.attributes(),"contractName"))).filter(n->!n.isBlank()).distinct().forEach(n->contractNameCounts.merge(n,1L,Long::sum));
-        for(var group:groups.entrySet()){
+        String form=str(rule.parameters(),"formReference");PerformanceInventoryProof submittedForm=cn.bidcheck.compat.Java8Api.isBlank(form)?null:new PerformanceInventoryProof(form,e);
+        Map<String,Long> contractNameCounts=new HashMap<>();for(List<Fact> group:groups.values())group.stream().map(f->clean(str(f.attributes(),"contractName"))).filter(n->!cn.bidcheck.compat.Java8Api.isBlank(n)).distinct().forEach(n->contractNameCounts.merge(n,1L,Long::sum));
+        for(java.util.Map.Entry<java.lang.String, java.util.List<cn.bidcheck.verification.engine.VerificationTypes.Fact>> group:groups.entrySet()){
             List<Fact> facts=group.getValue();List<String> missing=new ArrayList<>(),excluded=new ArrayList<>();Set<String> parties=new LinkedHashSet<>(),dates=new LinkedHashSet<>(),names=new LinkedHashSet<>();
             if(facts.stream().map(f->numberCandidate(str(f.attributes(),"contractNumber"))).anyMatch(ambiguousNumbers::contains))missing.add("合同编号去除分隔符后存在同号候选，名称或日期未能证明同一合同，暂不重复计分");
-            Set<String> numbers=new LinkedHashSet<>();facts.forEach(f->{if(!str(f.attributes(),"contractNumber").isBlank())numbers.add(str(f.attributes(),"contractNumber"));});
+            Set<String> numbers=new LinkedHashSet<>();facts.forEach(f->{if(!cn.bidcheck.compat.Java8Api.isBlank(str(f.attributes(),"contractNumber")))numbers.add(str(f.attributes(),"contractNumber"));});
             if(inventory.complete()&&numbers.stream().noneMatch(inventory.numbers()::contains))continue;
-            facts.forEach(f->{if(!str(f.attributes(),"party").isBlank())parties.add(str(f.attributes(),"party"));if(!str(f.attributes(),"signedDate").isBlank())dates.add(str(f.attributes(),"signedDate"));if(!str(f.attributes(),"contractName").isBlank())names.add(str(f.attributes(),"contractName"));});
+            facts.forEach(f->{if(!cn.bidcheck.compat.Java8Api.isBlank(str(f.attributes(),"party")))parties.add(str(f.attributes(),"party"));if(!cn.bidcheck.compat.Java8Api.isBlank(str(f.attributes(),"signedDate")))dates.add(str(f.attributes(),"signedDate"));if(!cn.bidcheck.compat.Java8Api.isBlank(str(f.attributes(),"contractName")))names.add(str(f.attributes(),"contractName"));});
             List<Source> sources=contractSources(facts,e);String text=sources.stream().map(s->s.evidence().quote()).reduce((a,b)->a+'\n'+b).orElse("");
             if(names.size()!=1)missing.add("同一合同名称");if(parties.isEmpty())missing.add("签约单位");else if(!personal&&!parties.contains(target))excluded.add("非本次施工单位业绩");
             if(parties.stream().anyMatch(party->!Pattern.compile("(?:承包人|承包方|乙方|施工单位|设计单位)[\\s:：|（(盖章）)]*"+Pattern.quote(party)+"(?=[\\s|，,。；;（）()]|$)").matcher(text).find()))missing.add("各签约单位与同一合同承包方的原文关系");
@@ -99,13 +99,13 @@ final class SourcePerformanceScore {
             if(workRoles.isEmpty())missing.add("同一合同中签约主体明确承担的"+type+"工作；其他成员分工不能借用");
             if(sources.stream().noneMatch(s->s.evidence().quote().matches("(?s).*(?:甲方|发包人|建设单位).*(?:签字|签章|盖章).*" )&&s.evidence().quote().matches("(?s).*(?:乙方|承包人|施工单位|设计单位).*(?:签字|签章|盖章).*")))missing.add("同一合同签字盖章页");
             if(personal){
-                List<Fact> individual=facts.stream().filter(f->target.equals(str(f.attributes(),"person"))&&PersonnelRoles.canonical(str(f.attributes(),"personRole")).equals(PersonnelRoles.canonical(str(rule.parameters(),"personRole")))).toList();
+                List<Fact> individual=cn.bidcheck.compat.Java8Api.toList(facts.stream().filter(f->target.equals(str(f.attributes(),"person"))&&PersonnelRoles.canonical(str(f.attributes(),"personRole")).equals(PersonnelRoles.canonical(str(rule.parameters(),"personRole")))));
                 if(individual.isEmpty())missing.add("该合同中的同一负责人任职证明");
                 else if(individual.stream().noneMatch(f->roles.stream().anyMatch(r->e.identities.samePerson(r,f))))missing.add("当前任职与历史合同人员身份关联");
                 if(individual.stream().noneMatch(f->Pattern.compile(Pattern.quote(str(f.attributes(),"personRole"))+"[\\s:：|]*"+Pattern.quote(target)+"(?=[\\s|，,。；;（）()]|$)").matcher(text).find()))missing.add("合同任职岗位与该姓名的直接对应");
                 if(social==null||!social.status().equals("PASS"))missing.add("同一人员在本单位连续社保或已核特殊证明");
             }
-            List<Map<String,Object>> formRecords=List.of(),formCandidates=List.of();if(submittedForm!=null){
+            List<Map<String,Object>> formRecords=cn.bidcheck.compat.Java8Api.listOf(),formCandidates=cn.bidcheck.compat.Java8Api.listOf();if(submittedForm!=null){
                 String contractName=names.size()==1?names.iterator().next():"";Set<String> contractDocuments=new HashSet<>();sources.forEach(s->contractDocuments.add(s.evidence().documentId()));List<Fact> rowFacts=new ArrayList<>(facts);e.facts.stream().filter(InferenceClaims::humanConfirmed).forEach(rowFacts::add);PerformanceInventoryProof.Match rows=submittedForm.matchWithEvidence(contractName,numbers,contractNameCounts.getOrDefault(clean(contractName),0L)==1L,contractDocuments,sources,rowFacts);formCandidates=rows.candidates();
                 if(!rows.present())missing.add(form+"中对应本合同的唯一实填企业业绩记录");else {evidence.addAll(rows.evidence());formRecords=rows.records();}
                 confirmationCandidates.addAll(inventoryCandidates(rule,contractName,formCandidates,sources,e));
@@ -113,63 +113,78 @@ final class SourcePerformanceScore {
             Amount amount=amount(rule,facts,sources,epc,minimum,e.facts);missing.addAll(amount.missing());if(amount.value()!=null&&amount.value().compareTo(minimum)<0)excluded.add("正确金额口径低于限额");
             if(!amount.missing().isEmpty())confirmationCandidates.addAll(amountCandidates(rule,facts,sources,epc,e));
             for(Map<String,Object> row:formRecords){List<String> rowDates=strings(row.get("signedDates"));if(rowDates.size()!=1||dates.size()!=1)missing.add("业绩清单签订日期尚未与合同逐行核对");else if(!dates.contains(rowDates.get(0)))missing.add("业绩清单签订日期与合同签订日期矛盾");
-                Set<BigDecimal> listed=new TreeSet<>();for(String value:strings(row.get("listedAmounts"))){BigDecimal n=decimal(value);if(n!=null)listed.add(n);}Set<BigDecimal> totals=new TreeSet<>();Set<String> confirmedAmounts=new HashSet<>("HUMAN_CONFIRMED_EXISTING_AMOUNT_OCCURRENCE".equals(amount.proof().get("method"))?strings(amount.proof().get("factIds")):List.of());for(Fact f:facts)if(str(f.attributes(),"amountBasis").matches(".*(?:合同金额|签约金额|合同总价|合同价款).*")&&(confirmedAmounts.isEmpty()||confirmedAmounts.contains(f.id()))){BigDecimal total=RuleEvaluator.normalize(decimal(f.attributes().get("amount")),str(f.attributes(),"unit"));if(total!=null)totals.add(total);}
+                Set<BigDecimal> listed=new TreeSet<>();for(String value:strings(row.get("listedAmounts"))){BigDecimal n=decimal(value);if(n!=null)listed.add(n);}Set<BigDecimal> totals=new TreeSet<>();Set<String> confirmedAmounts=new HashSet<>("HUMAN_CONFIRMED_EXISTING_AMOUNT_OCCURRENCE".equals(amount.proof().get("method"))?strings(amount.proof().get("factIds")):cn.bidcheck.compat.Java8Api.listOf());for(Fact f:facts)if(str(f.attributes(),"amountBasis").matches(".*(?:合同金额|签约金额|合同总价|合同价款).*")&&(confirmedAmounts.isEmpty()||confirmedAmounts.contains(f.id()))){BigDecimal total=RuleEvaluator.normalize(decimal(f.attributes().get("amount")),str(f.attributes(),"unit"));if(total!=null)totals.add(total);}
                 if(totals.isEmpty()&&"DEDUPLICATED_ORDER_LOWER_BOUND".equals(amount.proof().get("method"))&&amount.value()!=null)totals.add(amount.value());
                 if(listed.size()!=1||totals.size()!=1)missing.add("业绩清单金额与合同同口径金额尚未逐行核对");else if(listed.iterator().next().compareTo(totals.iterator().next())!=0)missing.add("业绩清单金额与合同同口径金额矛盾");}
             if(missing.isEmpty()&&excluded.isEmpty()){counted.add(group.getKey());accepted.addAll(facts);sources.forEach(s->evidence.add(s.evidence()));}
-            checks.add(linked("contractIdentity",group.getKey(),"contractNumbers",List.copyOf(numbers),"factIds",facts.stream().map(Fact::id).toList(),"sourceIds",sources.stream().map(Source::id).toList(),"submittedFormRecords",formRecords,"submittedFormCandidates",formCandidates,"partyWorkRoleProof",workRoles,"amountBasis",amount.basis(),"amount",amount.value(),"amountEvidence",amount.proof(),"missing",missing,"excluded",excluded,"counted",missing.isEmpty()&&excluded.isEmpty()));
+            checks.add(linked("contractIdentity",group.getKey(),"contractNumbers",cn.bidcheck.compat.Java8Api.listCopyOf(numbers),"factIds",cn.bidcheck.compat.Java8Api.toList(facts.stream().map(Fact::id)),"sourceIds",cn.bidcheck.compat.Java8Api.toList(sources.stream().map(Source::id)),"submittedFormRecords",formRecords,"submittedFormCandidates",formCandidates,"partyWorkRoleProof",workRoles,"amountBasis",amount.basis(),"amount",amount.value(),"amountEvidence",amount.proof(),"missing",missing,"excluded",excluded,"counted",missing.isEmpty()&&excluded.isEmpty()));
         }
         BigDecimal lower=per.multiply(BigDecimal.valueOf(counted.size())).min(max);proof.putAll(linked("contractChecks",checks,"scoreLower",lower,"scoreUpper",max,"deduplicatedContracts",counted.size(),"countedContractIdentities",counted,"signaturePageCheck","KEY_PAGE_SUBMISSION_ONLY","authenticityAssessed",false));
-        if(lower.compareTo(max)>=0){proof.putAll(linked("score",max,"scoreProduced",true,"fullScore",true));return result(rule,"PASS","已逐合同核清主体、时间、金额口径及共同证明，按去重业绩达到原文评分上限",evidence,proof,List.of());}
+        if(lower.compareTo(max)>=0){proof.putAll(linked("score",max,"scoreProduced",true,"fullScore",true));return result(rule,"PASS","已逐合同核清主体、时间、金额口径及共同证明，按去重业绩达到原文评分上限",evidence,proof,cn.bidcheck.compat.Java8Api.listOf());}
         Set<String> checked=new HashSet<>();checks.forEach(c->checked.addAll(strings(c.get("contractNumbers"))));
         if(inventory.complete()&&checked.equals(inventory.numbers())&&checks.stream().allMatch(c->strings(c.get("missing")).isEmpty())){
             proof.putAll(linked("score",lower,"scoreUpper",lower,"scoreProduced",true,"fullScore",false,"exactSubmittedInventoryScore",true));inventory.sources().forEach(s->evidence.add(s.evidence()));
-            return result(rule,"PASS","原文明确列示的完整申报清单已逐合同核完，已按实际合格业绩计算确定分值；未达到满分不作为资格否决",evidence,proof,List.of());
+            return result(rule,"PASS","原文明确列示的完整申报清单已逐合同核完，已按实际合格业绩计算确定分值；未达到满分不作为资格否决",evidence,proof,cn.bidcheck.compat.Java8Api.listOf());
         }
         // A cached/model boolean contractSetComplete is not proof of a complete submitted list.
         proof.put("confirmationCandidates",confirmationCandidates);
         proof.put("confirmationCoversAllGaps",inventory.complete()&&!confirmationCandidates.isEmpty()&&checks.stream().allMatch(c->strings(c.get("missing")).stream().allMatch(m->m.contains("唯一实填企业业绩记录")||m.equals("同一合同金额存在不同取值，需核清版本"))));
-        return result(rule,"UNDETERMINED","已计算有完整证明的业绩分值下限；尚未证明全部申报合同及共同材料覆盖，不把未召回合同计为0分",evidence,proof,List.of(gap("PERFORMANCE_PROOF_COVERAGE_REQUIRED","逐合同缺口和已排除原因见 contractChecks；需闭合申报清单或继续核证至评分上限")));
+        return result(rule,"UNDETERMINED","已计算有完整证明的业绩分值下限；尚未证明全部申报合同及共同材料覆盖，不把未召回合同计为0分",evidence,proof,cn.bidcheck.compat.Java8Api.listOf(gap("PERFORMANCE_PROOF_COVERAGE_REQUIRED","逐合同缺口和已排除原因见 contractChecks；需闭合申报清单或继续核证至评分上限")));
     }
-    private record Amount(BigDecimal value,String basis,List<String> missing,Map<String,Object> proof){}
-    private static List<Fact> amountFacts(Rule rule,List<Fact> facts,boolean epc){String requested=str(rule.parameters(),"performanceAmountBasis"),requiredTax=taxBasis(str(rule.parameters(),"taxBasis"));return facts.stream().filter(f->{String basis=str(f.attributes(),"amountBasis");return requested.equals("CONSTRUCTION_INSTALLATION")?basis.matches(".*(?:建安费|建筑安装工程费).*" ):epc?basis.matches(".*(?:施工部分|施工费用|建安费).*" ):basis.matches(".*(?:合同金额|签约金额|合同价款|合同总价).*" );}).filter(f->requiredTax.isBlank()||requiredTax.equals(factTaxBasis(f))).filter(f->decimal(f.attributes().get("amount"))!=null).toList();}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Amount{
+        private final BigDecimal value;
+        private final String basis;
+        private final List<String> missing;
+        private final Map<String,Object> proof;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Amount(@com.fasterxml.jackson.annotation.JsonProperty("value") BigDecimal value, @com.fasterxml.jackson.annotation.JsonProperty("basis") String basis, @com.fasterxml.jackson.annotation.JsonProperty("missing") List<String> missing, @com.fasterxml.jackson.annotation.JsonProperty("proof") Map<String,Object> proof) { this.value = value; this.basis = basis; this.missing = missing; this.proof = proof; }
+        public BigDecimal value() { return value; }
+        public String basis() { return basis; }
+        public List<String> missing() { return missing; }
+        public Map<String,Object> proof() { return proof; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Amount that = (Amount) other; return java.util.Objects.equals(this.value, that.value) && java.util.Objects.equals(this.basis, that.basis) && java.util.Objects.equals(this.missing, that.missing) && java.util.Objects.equals(this.proof, that.proof); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.value); hash = 31 * hash + java.util.Objects.hashCode(this.basis); hash = 31 * hash + java.util.Objects.hashCode(this.missing); hash = 31 * hash + java.util.Objects.hashCode(this.proof); return hash; }
+        @Override public String toString() { return "Amount[" + "value=" + value + ", basis=" + basis + ", missing=" + missing + ", proof=" + proof + "]"; }
+}
+    private static List<Fact> amountFacts(Rule rule,List<Fact> facts,boolean epc){String requested=str(rule.parameters(),"performanceAmountBasis"),requiredTax=taxBasis(str(rule.parameters(),"taxBasis"));return cn.bidcheck.compat.Java8Api.toList(facts.stream().filter(f->{String basis=str(f.attributes(),"amountBasis");return requested.equals("CONSTRUCTION_INSTALLATION")?basis.matches(".*(?:建安费|建筑安装工程费).*" ):epc?basis.matches(".*(?:施工部分|施工费用|建安费).*" ):basis.matches(".*(?:合同金额|签约金额|合同价款|合同总价).*" );}).filter(f->cn.bidcheck.compat.Java8Api.isBlank(requiredTax)||requiredTax.equals(factTaxBasis(f))).filter(f->decimal(f.attributes().get("amount"))!=null));}
     private static String taxBasis(String value){if(value.matches(".*(?:不含税|未税|税前|EXCLUSIVE).*"))return "TAX_EXCLUSIVE";if(value.matches(".*(?:含税|税后|INCLUSIVE).*"))return "TAX_INCLUSIVE";return "";}
-    private static String factTaxBasis(Fact fact){String tax=taxBasis(str(fact.attributes(),"taxBasis"));return tax.isBlank()?taxBasis(str(fact.attributes(),"amountBasis")):tax;}
-    private static boolean conflictingTaxBases(List<Fact> facts){return facts.stream().map(SourcePerformanceScore::factTaxBasis).filter(v->!v.isBlank()).distinct().count()>1;}
+    private static String factTaxBasis(Fact fact){String tax=taxBasis(str(fact.attributes(),"taxBasis"));return cn.bidcheck.compat.Java8Api.isBlank(tax)?taxBasis(str(fact.attributes(),"amountBasis")):tax;}
+    private static boolean conflictingTaxBases(List<Fact> facts){return facts.stream().map(SourcePerformanceScore::factTaxBasis).filter(v->!cn.bidcheck.compat.Java8Api.isBlank(v)).distinct().count()>1;}
     private static boolean confirmedAmount(Fact link,Fact original,String requested){return InferenceClaims.humanConfirmed(link)&&link.kind().equals("RELATION")&&link.field().equals("CONTRACT_AMOUNT_BASIS")&&link.subject().equals(str(original.attributes(),"contractName"))&&str(link.attributes(),"sourceContractFactId").equals(original.id())&&str(link.attributes(),"targetAmountBasis").equals(requested)&&str(link.attributes(),"observedBasis").equals(str(original.attributes(),"amountBasis"))&&str(link.attributes(),"originalAmount").equals(str(original.attributes(),"amount"))&&str(link.attributes(),"unit").equals(str(original.attributes(),"unit"))&&link.sourceIds().containsAll(original.sourceIds());}
     private static List<Map<String,Object>> inventoryCandidates(Rule rule,String name,List<Map<String,Object>> rows,List<Source> contractSources,RuleEvaluator evaluator){
-        if(name.isBlank()||contractSources.isEmpty())return List.of();List<Map<String,Object>> out=new ArrayList<>();
-        List<Source> witnesses=contractSources.stream().filter(s->clean(s.evidence().quote()).contains(clean(name))).limit(4).toList();if(witnesses.isEmpty())return List.of();
-        for(var row:rows){List<String> rowIds=strings(row.get("sourceIds"));if(rowIds.isEmpty())continue;Set<String> ids=new LinkedHashSet<>(rowIds);witnesses.forEach(s->ids.add(s.id()));List<Map<String,Object>> refs=claimEvidence(ids,evaluator);if(refs.isEmpty())continue;
-            String rowName=str(row,"contractName");Map<String,Object> attributes=linked("object",rowName,"documentId",row.get("documentId"),"inventoryPage",row.get("page"),"inventoryRow",row.get("row"),"contractSourceIds",witnesses.stream().map(Source::id).toList());
-            Map<String,Object> proposed=linked("kind","RELATION","subject",name,"field","CONTRACT_RECORD_MATCH","rawValue",rowName,"value",rowName,"unit","","basis","申报表与合同原件对应","scope","HISTORICAL_PROJECT","sourceIds",List.copyOf(ids),"attributes",attributes);
-            out.add(linked("type","CONTRACT_RECORD_MATCH","claim","申报表第"+row.get("row")+"行“"+rowName+"”对应合同“"+name+"”","reasoning","合同名称相似，但日期、金额或证明页段尚不足以唯一自动关联；请结合两端原文确认。","confidence",row.getOrDefault("nameSimilarity",0.8),"risks",List.of("仅确认清单与合同对应，金额、签章、时间及业绩归属仍逐项核验"),"proposedFact",proposed,"evidence",refs,"targetId",rule.id(),"unresolvedGapCodes",List.of("PERFORMANCE_PROOF_COVERAGE_REQUIRED")));
+        if(cn.bidcheck.compat.Java8Api.isBlank(name)||contractSources.isEmpty())return cn.bidcheck.compat.Java8Api.listOf();List<Map<String,Object>> out=new ArrayList<>();
+        List<Source> witnesses=cn.bidcheck.compat.Java8Api.toList(contractSources.stream().filter(s->clean(s.evidence().quote()).contains(clean(name))).limit(4));if(witnesses.isEmpty())return cn.bidcheck.compat.Java8Api.listOf();
+        for(java.util.Map<java.lang.String, java.lang.Object> row:rows){List<String> rowIds=strings(row.get("sourceIds"));if(rowIds.isEmpty())continue;Set<String> ids=new LinkedHashSet<>(rowIds);witnesses.forEach(s->ids.add(s.id()));List<Map<String,Object>> refs=claimEvidence(ids,evaluator);if(refs.isEmpty())continue;
+            String rowName=str(row,"contractName");Map<String,Object> attributes=linked("object",rowName,"documentId",row.get("documentId"),"inventoryPage",row.get("page"),"inventoryRow",row.get("row"),"contractSourceIds",cn.bidcheck.compat.Java8Api.toList(witnesses.stream().map(Source::id)));
+            Map<String,Object> proposed=linked("kind","RELATION","subject",name,"field","CONTRACT_RECORD_MATCH","rawValue",rowName,"value",rowName,"unit","","basis","申报表与合同原件对应","scope","HISTORICAL_PROJECT","sourceIds",cn.bidcheck.compat.Java8Api.listCopyOf(ids),"attributes",attributes);
+            out.add(linked("type","CONTRACT_RECORD_MATCH","claim","申报表第"+row.get("row")+"行“"+rowName+"”对应合同“"+name+"”","reasoning","合同名称相似，但日期、金额或证明页段尚不足以唯一自动关联；请结合两端原文确认。","confidence",row.getOrDefault("nameSimilarity",0.8),"risks",cn.bidcheck.compat.Java8Api.listOf("仅确认清单与合同对应，金额、签章、时间及业绩归属仍逐项核验"),"proposedFact",proposed,"evidence",refs,"targetId",rule.id(),"unresolvedGapCodes",cn.bidcheck.compat.Java8Api.listOf("PERFORMANCE_PROOF_COVERAGE_REQUIRED")));
         }return out;
     }
     private static List<Map<String,Object>> amountCandidates(Rule rule,List<Fact> facts,List<Source> sources,boolean epc,RuleEvaluator evaluator){
-        List<Fact> eligible=amountFacts(rule,facts,epc);if(conflictingTaxBases(eligible))return List.of();Set<BigDecimal> values=new TreeSet<>();eligible.forEach(f->{BigDecimal n=RuleEvaluator.normalize(decimal(f.attributes().get("amount")),str(f.attributes(),"unit"));if(n!=null)values.add(n);});if(values.size()<2)return List.of();List<Map<String,Object>> out=new ArrayList<>();
-        for(Fact fact:eligible){String name=str(fact.attributes(),"contractName"),requested=str(rule.parameters(),"performanceAmountBasis");if(name.isBlank())continue;List<Map<String,Object>> refs=claimEvidence(new LinkedHashSet<>(fact.sourceIds()),evaluator);if(refs.isEmpty())continue;
+        List<Fact> eligible=amountFacts(rule,facts,epc);if(conflictingTaxBases(eligible))return cn.bidcheck.compat.Java8Api.listOf();Set<BigDecimal> values=new TreeSet<>();eligible.forEach(f->{BigDecimal n=RuleEvaluator.normalize(decimal(f.attributes().get("amount")),str(f.attributes(),"unit"));if(n!=null)values.add(n);});if(values.size()<2)return cn.bidcheck.compat.Java8Api.listOf();List<Map<String,Object>> out=new ArrayList<>();
+        for(Fact fact:eligible){String name=str(fact.attributes(),"contractName"),requested=str(rule.parameters(),"performanceAmountBasis");if(cn.bidcheck.compat.Java8Api.isBlank(name))continue;List<Map<String,Object>> refs=claimEvidence(new LinkedHashSet<>(fact.sourceIds()),evaluator);if(refs.isEmpty())continue;
             Map<String,Object> attrs=linked("object",requested,"targetAmountBasis",requested,"observedBasis",str(fact.attributes(),"amountBasis"),"sourceContractFactId",fact.id(),"originalAmount",str(fact.attributes(),"amount"),"unit",str(fact.attributes(),"unit"),"contractSourceIds",fact.sourceIds());
             Map<String,Object> proposed=linked("kind","RELATION","subject",name,"field","CONTRACT_AMOUNT_BASIS","rawValue",str(fact.attributes(),"amount"),"value",requested,"unit","","basis","选择既有同口径金额原文","scope","HISTORICAL_PROJECT","sourceIds",fact.sourceIds(),"attributes",attrs);
-            out.add(linked("type","CONTRACT_AMOUNT_BASIS","claim","本项采用合同“"+name+"”原文的"+str(fact.attributes(),"amountBasis")+" "+str(fact.attributes(),"amount")+str(fact.attributes(),"unit"),"reasoning","同合同存在多个符合要求口径的不同金额；需要确认适用版本或发生位置，原金额及单位不改写。","confidence",0.8,"risks",List.of("不能将合同总价、设计费、施工部分金额或不同含税口径互相替代"),"proposedFact",proposed,"evidence",refs,"targetId",rule.id(),"unresolvedGapCodes",List.of("PERFORMANCE_PROOF_COVERAGE_REQUIRED")));
+            out.add(linked("type","CONTRACT_AMOUNT_BASIS","claim","本项采用合同“"+name+"”原文的"+str(fact.attributes(),"amountBasis")+" "+str(fact.attributes(),"amount")+str(fact.attributes(),"unit"),"reasoning","同合同存在多个符合要求口径的不同金额；需要确认适用版本或发生位置，原金额及单位不改写。","confidence",0.8,"risks",cn.bidcheck.compat.Java8Api.listOf("不能将合同总价、设计费、施工部分金额或不同含税口径互相替代"),"proposedFact",proposed,"evidence",refs,"targetId",rule.id(),"unresolvedGapCodes",cn.bidcheck.compat.Java8Api.listOf("PERFORMANCE_PROOF_COVERAGE_REQUIRED")));
         }return out;
     }
-    private static List<Map<String,Object>> claimEvidence(Set<String> ids,RuleEvaluator evaluator){if(ids.isEmpty()||ids.size()>12)return List.of();List<Map<String,Object>> out=new ArrayList<>();for(String id:ids){Source source=evaluator.corpus.byId.get(id);if(source==null||source.index()||source.evidence().quote().isBlank())return List.of();out.add(linked("sourceId",id,"quote",source.evidence().quote()));}return out;}
+    private static List<Map<String,Object>> claimEvidence(Set<String> ids,RuleEvaluator evaluator){if(ids.isEmpty()||ids.size()>12)return cn.bidcheck.compat.Java8Api.listOf();List<Map<String,Object>> out=new ArrayList<>();for(String id:ids){Source source=evaluator.corpus.byId.get(id);if(source==null||source.index()||cn.bidcheck.compat.Java8Api.isBlank(source.evidence().quote()))return cn.bidcheck.compat.Java8Api.listOf();out.add(linked("sourceId",id,"quote",source.evidence().quote()));}return out;}
     private static boolean uniqueCutoff(Decision proof,LocalDate expected){
-        if(!(proof.proof().get("referenceDateEvidence") instanceof Map<?,?> source))return false;String quote=Objects.toString(source.get("quote"),"");
+        if(!(proof.proof().get("referenceDateEvidence") instanceof Map<?,?>))return false;String quote=Objects.toString(((Map<?,?>) (proof.proof().get("referenceDateEvidence"))).get("quote"),"");
         Matcher labels=Pattern.compile("(?:投标截止|文件递交截止|递交截止|投标文件递交的截止|提交截止)(?:时间|日期)?").matcher(quote);Set<String> seen=new HashSet<>();Set<LocalDate> values=new HashSet<>();
         while(labels.find())if(seen.add(labels.group())){List<LocalDate> dates=cn.bidcheck.verification.source.DateFieldValues.read(quote,labels.group(),1);if(dates.size()!=1)return false;values.addAll(dates);}
-        return values.equals(Set.of(expected));
+        return values.equals(cn.bidcheck.compat.Java8Api.setOf(expected));
     }
     private static Amount amount(Rule rule,List<Fact> facts,List<Source> sources,boolean epc,BigDecimal minimum,List<Fact> shared){
         String requested=str(rule.parameters(),"performanceAmountBasis");List<Fact> suitable=amountFacts(rule,facts,epc);
-        if(conflictingTaxBases(suitable))return new Amount(null,requested,List.of("同一合同存在不同含税口径，需明确适用金额口径"),linked("taxBases",suitable.stream().map(SourcePerformanceScore::factTaxBasis).filter(v->!v.isBlank()).distinct().toList(),"factIds",suitable.stream().map(Fact::id).toList(),"amountsCombined",false));
+        if(conflictingTaxBases(suitable))return new Amount(null,requested,cn.bidcheck.compat.Java8Api.listOf("同一合同存在不同含税口径，需明确适用金额口径"),linked("taxBases",cn.bidcheck.compat.Java8Api.toList(suitable.stream().map(SourcePerformanceScore::factTaxBasis).filter(v->!cn.bidcheck.compat.Java8Api.isBlank(v)).distinct()),"factIds",cn.bidcheck.compat.Java8Api.toList(suitable.stream().map(Fact::id)),"amountsCombined",false));
         Set<BigDecimal> values=new TreeSet<>();for(Fact f:suitable){BigDecimal value=RuleEvaluator.normalize(decimal(f.attributes().get("amount")),str(f.attributes(),"unit"));if(value!=null)values.add(value);}
-        if(values.size()==1)return new Amount(values.iterator().next(),requested,List.of(),linked("method","SOURCE_BOUND_CONTRACT_AMOUNT","factIds",suitable.stream().map(Fact::id).toList()));
-        if(values.size()>1){List<Fact> confirmed=suitable.stream().filter(f->shared.stream().anyMatch(link->confirmedAmount(link,f,requested))).toList();Set<BigDecimal> selected=new TreeSet<>();confirmed.forEach(f->{BigDecimal n=RuleEvaluator.normalize(decimal(f.attributes().get("amount")),str(f.attributes(),"unit"));if(n!=null)selected.add(n);});if(selected.size()==1)return new Amount(selected.iterator().next(),requested,List.of(),linked("method","HUMAN_CONFIRMED_EXISTING_AMOUNT_OCCURRENCE","factIds",confirmed.stream().map(Fact::id).toList(),"doesNotChangeAmountBasis",true));return new Amount(null,requested,List.of("同一合同金额存在不同取值，需核清版本"),Map.of());}
+        if(values.size()==1)return new Amount(values.iterator().next(),requested,cn.bidcheck.compat.Java8Api.listOf(),linked("method","SOURCE_BOUND_CONTRACT_AMOUNT","factIds",cn.bidcheck.compat.Java8Api.toList(suitable.stream().map(Fact::id))));
+        if(values.size()>1){List<Fact> confirmed=cn.bidcheck.compat.Java8Api.toList(suitable.stream().filter(f->shared.stream().anyMatch(link->confirmedAmount(link,f,requested))));Set<BigDecimal> selected=new TreeSet<>();confirmed.forEach(f->{BigDecimal n=RuleEvaluator.normalize(decimal(f.attributes().get("amount")),str(f.attributes(),"unit"));if(n!=null)selected.add(n);});if(selected.size()==1)return new Amount(selected.iterator().next(),requested,cn.bidcheck.compat.Java8Api.listOf(),linked("method","HUMAN_CONFIRMED_EXISTING_AMOUNT_OCCURRENCE","factIds",cn.bidcheck.compat.Java8Api.toList(confirmed.stream().map(Fact::id)),"doesNotChangeAmountBasis",true));return new Amount(null,requested,cn.bidcheck.compat.Java8Api.listOf("同一合同金额存在不同取值，需核清版本"),cn.bidcheck.compat.Java8Api.mapOf());}
         String all=sources.stream().map(s->s.evidence().quote()).reduce((a,b)->a+'\n'+b).orElse("");
-        if(!all.contains("框架合同")||!all.matches("(?s).*(?:无签约金额|无固定金额|不约定合同金额|框架合同金额[:：]无).*"))return new Amount(null,requested,List.of("可核的"+(requested.equals("CONSTRUCTION_INSTALLATION")?"建安费":epc?"施工部分金额":"合同金额")),Map.of());
-        String number=facts.stream().map(f->str(f.attributes(),"contractNumber")).filter(s->!s.isBlank()).findFirst().orElse("");if(number.isBlank())return new Amount(null,requested,List.of("无金额框架合同的唯一合同编号"),Map.of());
+        if(!all.contains("框架合同")||!all.matches("(?s).*(?:无签约金额|无固定金额|不约定合同金额|框架合同金额[:：]无).*"))return new Amount(null,requested,cn.bidcheck.compat.Java8Api.listOf("可核的"+(requested.equals("CONSTRUCTION_INSTALLATION")?"建安费":epc?"施工部分金额":"合同金额")),cn.bidcheck.compat.Java8Api.mapOf());
+        String number=facts.stream().map(f->str(f.attributes(),"contractNumber")).filter(s->!cn.bidcheck.compat.Java8Api.isBlank(s)).findFirst().orElse("");if(cn.bidcheck.compat.Java8Api.isBlank(number))return new Amount(null,requested,cn.bidcheck.compat.Java8Api.listOf("无金额框架合同的唯一合同编号"),cn.bidcheck.compat.Java8Api.mapOf());
         Map<String,BigDecimal> orders=new LinkedHashMap<>();List<Map<String,Object>> rows=new ArrayList<>();boolean conflict=false,summary=false;
         for(Source source:sources){String text=source.evidence().quote();if(!text.contains(number)||text.matches("(?s).*(?:订单作废|订单取消|已取消订单|负数冲销).*"))continue;if(text.contains("订单汇总")||text.contains("订单列表"))summary=true;
             Matcher order=Pattern.compile("订单(?:编号|号)[:：\\s]*([A-Za-z0-9][A-Za-z0-9/-]{2,60})").matcher(text);Set<String> identifiers=new LinkedHashSet<>();while(order.find())identifiers.add(order.group(1));if(identifiers.size()!=1)continue;
@@ -178,40 +193,40 @@ final class SourcePerformanceScore {
             if(amounts.size()!=1)continue;String id=identifiers.iterator().next();BigDecimal value=amounts.iterator().next(),old=orders.putIfAbsent(id,value);if(old!=null&&old.compareTo(value)!=0)conflict=true;
             rows.add(linked("orderId",id,"amount",value,"sourceId",source.id(),"parentContractNumber",number));
         }
-        if(conflict||!summary||orders.isEmpty())return new Amount(null,requested,List.of(conflict?"同一订单金额冲突":!summary?"同一框架合同的订单汇总清单":"框架合同项下逐订单金额与归属"),linked("orders",rows));
+        if(conflict||!summary||orders.isEmpty())return new Amount(null,requested,cn.bidcheck.compat.Java8Api.listOf(conflict?"同一订单金额冲突":!summary?"同一框架合同的订单汇总清单":"框架合同项下逐订单金额与归属"),linked("orders",rows));
         BigDecimal sum=orders.values().stream().reduce(BigDecimal.ZERO,BigDecimal::add);
         // A proven lower bound suffices for a minimum threshold; missing other nonnegative orders
         // must not be represented as an exact final contract amount.
-        return sum.compareTo(minimum)>=0?new Amount(sum,requested,List.of(),linked("method","DEDUPLICATED_ORDER_LOWER_BOUND","exactContractTotal",false,"orders",rows))
-                :new Amount(null,requested,List.of("已核订单合计尚未达到限额且订单全集未证明"),linked("orders",rows,"amountLower",sum));
+        return sum.compareTo(minimum)>=0?new Amount(sum,requested,cn.bidcheck.compat.Java8Api.listOf(),linked("method","DEDUPLICATED_ORDER_LOWER_BOUND","exactContractTotal",false,"orders",rows))
+                :new Amount(null,requested,cn.bidcheck.compat.Java8Api.listOf("已核订单合计尚未达到限额且订单全集未证明"),linked("orders",rows,"amountLower",sum));
     }
     static boolean valid(Fact f,RuleEvaluator e){return new ProofVerifier().issue(f,e.corpus.byId)==null&&DomainBindings.issue(f,e.corpus.byId,RuleEvaluator.maps(e.context.get("_validatedLayoutCells")))==null;}
     private static boolean boundSigningDate(String text,String date){Matcher m=Pattern.compile("(?:合同签订日期|签订日期|合同签订时间|签订时间|签署日期)[\\s:：|]*([^\\n;；|]{1,70})").matcher(text);while(m.find())if(datePresent(m.group(1),date))return true;return false;}
     private static String numberExact(String value){return java.text.Normalizer.normalize(clean(value),java.text.Normalizer.Form.NFKC).toUpperCase(Locale.ROOT).replaceAll("[‐‑‒–—―−]","-");}
     private static String numberCandidate(String value){return numberExact(value).replaceAll("[^\\p{L}\\p{N}]","");}
-    static String contractIdentity(Fact f){String number=numberExact(str(f.attributes(),"contractNumber")),name=clean(str(f.attributes(),"contractName"));return number.isBlank()&&name.isBlank()?"":identity(number.isBlank()?"name:"+name:"number:"+number);}
+    static String contractIdentity(Fact f){String number=numberExact(str(f.attributes(),"contractNumber")),name=clean(str(f.attributes(),"contractName"));return cn.bidcheck.compat.Java8Api.isBlank(number)&&cn.bidcheck.compat.Java8Api.isBlank(name)?"":identity(cn.bidcheck.compat.Java8Api.isBlank(number)?"name:"+name:"number:"+number);}
     private static Map<String,List<Fact>> contractGroups(List<Fact> facts){
-        Map<String,List<Fact>> exact=new LinkedHashMap<>();for(Fact f:facts)if(!str(f.attributes(),"contractNumber").isBlank())exact.computeIfAbsent(contractIdentity(f),k->new ArrayList<>()).add(f);
-        Map<String,List<String>> candidates=new LinkedHashMap<>();for(var entry:exact.entrySet()){String candidate=numberCandidate(str(entry.getValue().get(0).attributes(),"contractNumber"));if(!candidate.isBlank())candidates.computeIfAbsent(candidate,k->new ArrayList<>()).add(entry.getKey());}
+        Map<String,List<Fact>> exact=new LinkedHashMap<>();for(Fact f:facts)if(!cn.bidcheck.compat.Java8Api.isBlank(str(f.attributes(),"contractNumber")))exact.computeIfAbsent(contractIdentity(f),k->new ArrayList<>()).add(f);
+        Map<String,List<String>> candidates=new LinkedHashMap<>();for(java.util.Map.Entry<java.lang.String, java.util.List<cn.bidcheck.verification.engine.VerificationTypes.Fact>> entry:exact.entrySet()){String candidate=numberCandidate(str(entry.getValue().get(0).attributes(),"contractNumber"));if(!cn.bidcheck.compat.Java8Api.isBlank(candidate))candidates.computeIfAbsent(candidate,k->new ArrayList<>()).add(entry.getKey());}
         Map<String,List<Fact>> result=new LinkedHashMap<>(exact);
-        for(var candidate:candidates.entrySet())if(candidate.getValue().size()>1){List<Fact> all=new ArrayList<>();candidate.getValue().forEach(key->all.addAll(exact.get(key)));Set<String> names=new HashSet<>(),dates=new HashSet<>();all.forEach(f->{names.add(clean(str(f.attributes(),"contractName")));dates.add(str(f.attributes(),"signedDate"));});
+        for(java.util.Map.Entry<java.lang.String, java.util.List<java.lang.String>> candidate:candidates.entrySet())if(candidate.getValue().size()>1){List<Fact> all=new ArrayList<>();candidate.getValue().forEach(key->all.addAll(exact.get(key)));Set<String> names=new HashSet<>(),dates=new HashSet<>();all.forEach(f->{names.add(clean(str(f.attributes(),"contractName")));dates.add(str(f.attributes(),"signedDate"));});
             // Punctuation removal identifies a duplicate candidate, not a proven contract.
             // A matching nonempty name AND signing date merge variants. Other collisions
             // stay separate and cannot score until their original identities are resolved.
             if(names.size()==1&&!names.contains("")&&dates.size()==1&&!dates.contains("")){candidate.getValue().forEach(result::remove);result.put(identity("number-variant:"+candidate.getKey()),all);}}
-        Map<String,Set<String>> groupsByName=new HashMap<>();for(var entry:result.entrySet())entry.getValue().forEach(f->groupsByName.computeIfAbsent(clean(str(f.attributes(),"contractName")),k->new HashSet<>()).add(entry.getKey()));
-        for(Fact f:facts)if(str(f.attributes(),"contractNumber").isBlank()){String name=clean(str(f.attributes(),"contractName"));Set<String> keys=groupsByName.getOrDefault(name,Set.of());if(keys.size()>1)continue;String key=keys.size()==1?keys.iterator().next():contractIdentity(f);if(!key.isBlank())result.computeIfAbsent(key,k->new ArrayList<>()).add(f);}return result;
+        Map<String,Set<String>> groupsByName=new HashMap<>();for(java.util.Map.Entry<java.lang.String, java.util.List<cn.bidcheck.verification.engine.VerificationTypes.Fact>> entry:result.entrySet())entry.getValue().forEach(f->groupsByName.computeIfAbsent(clean(str(f.attributes(),"contractName")),k->new HashSet<>()).add(entry.getKey()));
+        for(Fact f:facts)if(cn.bidcheck.compat.Java8Api.isBlank(str(f.attributes(),"contractNumber"))){String name=clean(str(f.attributes(),"contractName"));Set<String> keys=groupsByName.getOrDefault(name,cn.bidcheck.compat.Java8Api.setOf());if(keys.size()>1)continue;String key=keys.size()==1?keys.iterator().next():contractIdentity(f);if(!cn.bidcheck.compat.Java8Api.isBlank(key))result.computeIfAbsent(key,k->new ArrayList<>()).add(f);}return result;
     }
-    private static Set<String> ambiguousNumberCandidates(Map<String,List<Fact>> groups){Map<String,Set<String>> keys=new HashMap<>();for(var entry:groups.entrySet())for(Fact f:entry.getValue()){String number=numberCandidate(str(f.attributes(),"contractNumber"));if(!number.isBlank())keys.computeIfAbsent(number,k->new HashSet<>()).add(entry.getKey());}Set<String> ambiguous=new HashSet<>();keys.forEach((number,identities)->{if(identities.size()>1)ambiguous.add(number);});return ambiguous;}
+    private static Set<String> ambiguousNumberCandidates(Map<String,List<Fact>> groups){Map<String,Set<String>> keys=new HashMap<>();for(java.util.Map.Entry<java.lang.String, java.util.List<cn.bidcheck.verification.engine.VerificationTypes.Fact>> entry:groups.entrySet())for(Fact f:entry.getValue()){String number=numberCandidate(str(f.attributes(),"contractNumber"));if(!cn.bidcheck.compat.Java8Api.isBlank(number))keys.computeIfAbsent(number,k->new HashSet<>()).add(entry.getKey());}Set<String> ambiguous=new HashSet<>();keys.forEach((number,identities)->{if(identities.size()>1)ambiguous.add(number);});return ambiguous;}
     private static final Pattern PARTY_LABEL=Pattern.compile("(?:乙方|承包人|承包方|施工单位|设计单位|成员单位|工作单位|任职单位)[（(]?(?:盖章)?[）)]?[:：\\s|]+([^\\s|，,。；;:：（）()]{2,100})");
     private static Set<String> labelledParties(String text){Set<String> result=new LinkedHashSet<>();Matcher matcher=PARTY_LABEL.matcher(text);while(matcher.find())result.add(matcher.group(1));return result;}
     private static List<Map<String,Object>> personalMembership(List<Source> sources,String person,String role,Set<String> contractParties){
         Pattern appointment=Pattern.compile(Pattern.quote(role)+"[:：\\s|]*"+Pattern.quote(person)+"(?=[\\s|，,。；;（）()]|$)");List<Map<String,Object>> proof=new ArrayList<>();
         for(Source source:sources){String text=source.evidence().quote();if(!appointment.matcher(text).find())continue;Set<String> local=labelledParties(text);List<String> lines=Arrays.asList(text.split("\\R",-1));
             for(int i=0;i<lines.size();i++){String line=lines.get(i);if(!appointment.matcher(line).find())continue;Set<String> bound=labelledParties(line);String quote=line;
-                if(bound.isEmpty()&&i>0&&!lines.get(i-1).isBlank()){bound=labelledParties(lines.get(i-1));if(!bound.isEmpty())quote=lines.get(i-1)+"\n"+line;}
+                if(bound.isEmpty()&&i>0&&!cn.bidcheck.compat.Java8Api.isBlank(lines.get(i-1))){bound=labelledParties(lines.get(i-1));if(!bound.isEmpty())quote=lines.get(i-1)+"\n"+line;}
                 if(bound.isEmpty()&&contractParties.size()==1&&local.equals(contractParties)){bound=local;quote=text;}
-                String party=bound.size()==1?bound.iterator().next():"";proof.add(linked("sourceId",source.id(),"person",person,"personRole",role,"party",party,"quote",quote,"binding",party.isBlank()?"UNRESOLVED_PERSON_PARTY":"LOCAL_PERSON_PARTY"));}}
+                String party=bound.size()==1?bound.iterator().next():"";proof.add(linked("sourceId",source.id(),"person",person,"personRole",role,"party",party,"quote",quote,"binding",cn.bidcheck.compat.Java8Api.isBlank(party)?"UNRESOLVED_PERSON_PARTY":"LOCAL_PERSON_PARTY"));}}
         return proof;
     }
     private static List<Map<String,Object>> workRole(List<Source> sources,String party,String type,boolean epc,Set<String> names,int partyCount){
@@ -225,30 +240,45 @@ final class SourcePerformanceScore {
         if(!epc&&partyCount==1&&!opposite&&names.size()==1&&names.iterator().next().matches(".*"+role+"(?:项目|工程)?合同$"))for(Source source:sources){String text=source.evidence().quote();if(text.contains(names.iterator().next())&&Pattern.compile("(?:乙方|承包人)[:：\\s]*"+p+"(?=[\\s|，,。；;（）()]|$)").matcher(text).find())proof.add(linked("sourceId",source.id(),"party",party,"workRole",type,"quote",text,"binding","SOLE_CONTRACTOR_OF_EXPLICIT_SINGLE_WORK_CONTRACT"));}
         return proof;
     }
-    private record Inventory(boolean complete,Set<String> numbers,List<Source> sources,Map<String,Object> proof){}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Inventory{
+        private final boolean complete;
+        private final Set<String> numbers;
+        private final List<Source> sources;
+        private final Map<String,Object> proof;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Inventory(@com.fasterxml.jackson.annotation.JsonProperty("complete") boolean complete, @com.fasterxml.jackson.annotation.JsonProperty("numbers") Set<String> numbers, @com.fasterxml.jackson.annotation.JsonProperty("sources") List<Source> sources, @com.fasterxml.jackson.annotation.JsonProperty("proof") Map<String,Object> proof) { this.complete = complete; this.numbers = numbers; this.sources = sources; this.proof = proof; }
+        public boolean complete() { return complete; }
+        public Set<String> numbers() { return numbers; }
+        public List<Source> sources() { return sources; }
+        public Map<String,Object> proof() { return proof; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Inventory that = (Inventory) other; return java.util.Objects.equals(this.complete, that.complete) && java.util.Objects.equals(this.numbers, that.numbers) && java.util.Objects.equals(this.sources, that.sources) && java.util.Objects.equals(this.proof, that.proof); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.complete); hash = 31 * hash + java.util.Objects.hashCode(this.numbers); hash = 31 * hash + java.util.Objects.hashCode(this.sources); hash = 31 * hash + java.util.Objects.hashCode(this.proof); return hash; }
+        @Override public String toString() { return "Inventory[" + "complete=" + complete + ", numbers=" + numbers + ", sources=" + sources + ", proof=" + proof + "]"; }
+}
     private static Inventory inventory(Rule rule,String target,RuleEvaluator e){
         List<Source> sources=new ArrayList<>();Set<Set<String>> variants=new HashSet<>();
         for(Source source:e.corpus.all){String text=source.evidence().quote();if(source.index()||source.historical()||source.scopeContext().blocked()||!text.contains(target)||!text.contains("以上为本次申报全部业绩"))continue;
-            String role=str(rule.parameters(),"personRole");if(!role.isBlank()&&!text.contains(role))continue;String form=str(rule.parameters(),"formReference");if(!form.isBlank()&&!text.contains(form))continue;
+            String role=str(rule.parameters(),"personRole");if(!cn.bidcheck.compat.Java8Api.isBlank(role)&&!text.contains(role))continue;String form=str(rule.parameters(),"formReference");if(!cn.bidcheck.compat.Java8Api.isBlank(form)&&!text.contains(form))continue;
             Matcher total=Pattern.compile("本次申报(?:施工|项目负责人|设计负责人)?业绩共([0-9]{1,3})项").matcher(text);if(!total.find())continue;int declared=Integer.parseInt(total.group(1));if(total.find())continue;
             Matcher contract=Pattern.compile("合同(?:编号|号)[:：\\s]*([A-Za-z0-9][A-Za-z0-9/-]{2,60})").matcher(text);Set<String> numbers=new LinkedHashSet<>();while(contract.find())numbers.add(contract.group(1));if(numbers.size()!=declared)continue;
-            variants.add(Set.copyOf(numbers));sources.add(source);
+            variants.add(cn.bidcheck.compat.Java8Api.setCopyOf(numbers));sources.add(source);
         }
-        boolean complete=variants.size()==1;Set<String> numbers=complete?variants.iterator().next():Set.of();return new Inventory(complete,numbers,List.copyOf(sources),linked("complete",complete,"method","EXPLICIT_SOURCE_COMPLETE_DECLARATION","contractNumbers",numbers,"sourceIds",sources.stream().map(Source::id).toList()));
+        boolean complete=variants.size()==1;Set<String> numbers=complete?variants.iterator().next():cn.bidcheck.compat.Java8Api.setOf();return new Inventory(complete,numbers,cn.bidcheck.compat.Java8Api.listCopyOf(sources),linked("complete",complete,"method","EXPLICIT_SOURCE_COMPLETE_DECLARATION","contractNumbers",numbers,"sourceIds",cn.bidcheck.compat.Java8Api.toList(sources.stream().map(Source::id))));
     }
-    private static List<Source> contractSources(List<Fact> facts,RuleEvaluator e){Set<String> ids=new LinkedHashSet<>();facts.forEach(f->ids.addAll(f.sourceIds()));String number=facts.stream().map(f->str(f.attributes(),"contractNumber")).filter(v->!v.isBlank()).findFirst().orElse("");Set<String> names=new HashSet<>(),parties=new HashSet<>();facts.forEach(f->{names.add(str(f.attributes(),"contractName"));parties.add(str(f.attributes(),"party"));});
+    private static List<Source> contractSources(List<Fact> facts,RuleEvaluator e){Set<String> ids=new LinkedHashSet<>();facts.forEach(f->ids.addAll(f.sourceIds()));String number=facts.stream().map(f->str(f.attributes(),"contractNumber")).filter(v->!cn.bidcheck.compat.Java8Api.isBlank(v)).findFirst().orElse("");Set<String> names=new HashSet<>(),parties=new HashSet<>();facts.forEach(f->{names.add(str(f.attributes(),"contractName"));parties.add(str(f.attributes(),"party"));});
         // Additional key/ordering pages must explicitly name the same contract and party. Page
         // adjacency, project similarity and a common person are not contract linkage evidence.
-        for(Source source:e.corpus.all)if(!source.index()&&!number.isBlank()&&source.evidence().quote().contains(number)&&parties.stream().filter(v->!v.isBlank()).anyMatch(source.evidence().quote()::contains))ids.add(source.id());
-        return ids.stream().map(e.corpus.byId::get).filter(Objects::nonNull).filter(s->!s.index()).toList();}
+        for(Source source:e.corpus.all)if(!source.index()&&!cn.bidcheck.compat.Java8Api.isBlank(number)&&source.evidence().quote().contains(number)&&parties.stream().filter(v->!cn.bidcheck.compat.Java8Api.isBlank(v)).anyMatch(source.evidence().quote()::contains))ids.add(source.id());
+        return cn.bidcheck.compat.Java8Api.toList(ids.stream().map(e.corpus.byId::get).filter(Objects::nonNull).filter(s->!s.index()));}
     static Decision social(Rule rule,String person,List<Fact> appointments,RuleEvaluator e){
-        Rule employerRule=new Rule(rule.id()+"-SOCIAL-EMPLOYER","人员评分本单位范围","MONTHS",person,"社保","","","",Map.of("employer","本单位","personnelRoleSelector",rule.subject()),rule.sourceQuote(),"",List.of());
-        var binding=PersonnelEmployerBindings.resolve(employerRule,e.facts,e.corpus);
-        if(!binding.resolved())return e.unknown(rule,"SOCIAL_EMPLOYER_CONFIRMATION_REQUIRED","人员评分须按本次任职与联合体分工唯一确定本单位，不借另一成员的社保",List.of(),binding.audit());
-        String employer=binding.employers().get(0);List<Fact> social=e.facts.stream().filter(f->f.kind().equals("MONTHS")&&person.equals(str(f.attributes(),"person"))&&employer.equals(str(f.attributes(),"employer"))&&valid(f,e)&&appointments.stream().anyMatch(a->e.identities.samePerson(a,f))).toList();
+        Rule employerRule=new Rule(rule.id()+"-SOCIAL-EMPLOYER","人员评分本单位范围","MONTHS",person,"社保","","","",cn.bidcheck.compat.Java8Api.mapOf("employer", "本单位", "personnelRoleSelector", rule.subject()),rule.sourceQuote(),"",cn.bidcheck.compat.Java8Api.listOf());
+        cn.bidcheck.verification.engine.PersonnelEmployerBindings.Binding binding=PersonnelEmployerBindings.resolve(employerRule,e.facts,e.corpus);
+        if(!binding.resolved())return e.unknown(rule,"SOCIAL_EMPLOYER_CONFIRMATION_REQUIRED","人员评分须按本次任职与联合体分工唯一确定本单位，不借另一成员的社保",cn.bidcheck.compat.Java8Api.listOf(),binding.audit());
+        String employer=binding.employers().get(0);List<Fact> social=cn.bidcheck.compat.Java8Api.toList(e.facts.stream().filter(f->f.kind().equals("MONTHS")&&person.equals(str(f.attributes(),"person"))&&employer.equals(str(f.attributes(),"employer"))&&valid(f,e)&&appointments.stream().anyMatch(a->e.identities.samePerson(a,f))));
         Map<String,Object> params=linked("count",rule.parameters().get("months"),"earliestMonth",rule.parameters().get("earliestMonth"),"employer",employer,"requiresReferenceDate",true,"referenceEvent","BID_DEADLINE");
-        Rule requirement=new Rule(rule.id()+"-SOCIAL-"+identity(person).substring(0,8),"同人同单位连续社保","MONTHS",person,"socialInsurance","","","月",params,rule.sourceQuote(),"",List.of());
+        Rule requirement=new Rule(rule.id()+"-SOCIAL-"+identity(person).substring(0,8),"同人同单位连续社保","MONTHS",person,"socialInsurance","","","月",params,rule.sourceQuote(),"",cn.bidcheck.compat.Java8Api.listOf());
         return e.months(requirement,social);
     }
-    static Decision result(Rule r,String status,String reason,List<Evidence> evidence,Map<String,Object> proof,List<Gap> gaps){LOG.info("bidcheck.source_score rule={} mode={} status={} scoreProduced={} sourceCount={} gapCodes={}",r.id(),str(r.parameters(),"sourceScoringMode"),status,proof.getOrDefault("scoreProduced",false),evidence.size(),gaps.stream().map(Gap::code).toList());return new Decision(r.id(),r.description(),status,reason,evidence.stream().distinct().toList(),gaps,proof);}
+    static Decision result(Rule r,String status,String reason,List<Evidence> evidence,Map<String,Object> proof,List<Gap> gaps){LOG.info("bidcheck.source_score rule={} mode={} status={} scoreProduced={} sourceCount={} gapCodes={}",r.id(),str(r.parameters(),"sourceScoringMode"),status,proof.getOrDefault("scoreProduced",false),evidence.size(),cn.bidcheck.compat.Java8Api.toList(gaps.stream().map(Gap::code)));return new Decision(r.id(),r.description(),status,reason,cn.bidcheck.compat.Java8Api.toList(evidence.stream().distinct()),gaps,proof);}
 }

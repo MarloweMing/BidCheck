@@ -32,11 +32,9 @@ import org.springframework.stereotype.Service;
 public final class TemplateExternalEvidenceService {
     public static final String VERSION = "template-external-evidence-2";
     public static final String RECORD_KIND = "template_external_query";
-    private static final Set<String> GENERIC_ORGANIZATION = Set.of(
-            "投标人", "供应商", "响应人", "投标单位", "响应单位", "BIDDER", "ORGANIZATION");
-    private static final Set<String> RISK_FIELDS = Set.of(
-            "dishonestjudgmentdebtor", "majortaxviolation", "administrativepenalty", "abnormaloperation");
-    private static final Set<String> STATUS_FIELDS = Set.of("creditstatus", "queryresult");
+    private static final Set<String> GENERIC_ORGANIZATION = cn.bidcheck.compat.Java8Api.setOf("投标人", "供应商", "响应人", "投标单位", "响应单位", "BIDDER", "ORGANIZATION");
+    private static final Set<String> RISK_FIELDS = cn.bidcheck.compat.Java8Api.setOf("dishonestjudgmentdebtor", "majortaxviolation", "administrativepenalty", "abnormaloperation");
+    private static final Set<String> STATUS_FIELDS = cn.bidcheck.compat.Java8Api.setOf("creditstatus", "queryresult");
 
     private final Store store;
     private final ExternalVerificationAdapter adapter;
@@ -52,29 +50,28 @@ public final class TemplateExternalEvidenceService {
 
     /** Returns trusted connector facts, or an empty list when the request is not safely executable. */
     public List<Fact> resolve(String projectId, String runId, CheckSpec spec, List<Fact> bidFacts) {
-        if (spec == null || !"EXTERNAL_CHECK".equals(spec.templateId())) return List.of();
+        if (spec == null || !"EXTERNAL_CHECK".equals(spec.templateId())) return cn.bidcheck.compat.Java8Api.listOf();
         Map<String, Object> parameters = spec.parameters();
         String adapterId = text(parameters.get("adapterId"));
         String source = text(parameters.get("source"));
         String queryObject = text(parameters.get("queryObject"));
         String asOfDate = text(parameters.get("asOfDate"));
         String stage = text(parameters.get("evaluationStage"));
-        if (adapterId.isBlank() || source.isBlank() || queryObject.isBlank() || asOfDate.isBlank()
-                || stage.isBlank() || !Set.of("BID_OPENING", "TENDER_DEADLINE", "EVALUATION").contains(stage)
+        if (cn.bidcheck.compat.Java8Api.isBlank(adapterId) || cn.bidcheck.compat.Java8Api.isBlank(source) || cn.bidcheck.compat.Java8Api.isBlank(queryObject) || cn.bidcheck.compat.Java8Api.isBlank(asOfDate)
+                || cn.bidcheck.compat.Java8Api.isBlank(stage) || !cn.bidcheck.compat.Java8Api.setOf("BID_OPENING", "TENDER_DEADLINE", "EVALUATION").contains(stage)
                 || !adapter.enabledTypes().contains(adapterId)
-                || !adapterId.equals(adapter.enabledSourceTypes().get(source))) return List.of();
-        try { LocalDate.parse(asOfDate); } catch (RuntimeException invalid) { return List.of(); }
+                || !adapterId.equals(adapter.enabledSourceTypes().get(source))) return cn.bidcheck.compat.Java8Api.listOf();
+        try { LocalDate.parse(asOfDate); } catch (RuntimeException invalid) { return cn.bidcheck.compat.Java8Api.listOf(); }
         String subject = resolveSubject(spec, queryObject, bidFacts);
-        if (subject.isBlank()) return List.of();
+        if (cn.bidcheck.compat.Java8Api.isBlank(subject)) return cn.bidcheck.compat.Java8Api.listOf();
 
-        Map<String, Object> query = Map.of("type", adapterId, "subject", subject,
-                "evaluationStage", stage, "referenceDate", asOfDate);
+        Map<String, Object> query = cn.bidcheck.compat.Java8Api.mapOf("type", adapterId, "subject", subject, "evaluationStage", stage, "referenceDate", asOfDate);
         String legacyRecordId = BidService.stableId(VERSION + "|" + runId + "|" + store.encode(query)
                 + "|" + adapter.identity());
         Map<String, Object> operationInput = new LinkedHashMap<>(query);
         operationInput.put("source", source);
         Map<String, Object> descriptor = EvidenceOperationRepository.descriptor(projectId,
-                "EXTERNAL_SOURCE_QUERY", List.of(), List.of(Map.of("id", source)), operationInput,
+                "EXTERNAL_SOURCE_QUERY", cn.bidcheck.compat.Java8Api.listOf(), cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("id", source)), operationInput,
                 "", adapter.identity(), "TRUSTED_CONNECTOR_RECORD", VERSION);
         String operationKey = EvidenceOperationRepository.key(descriptor);
         Map<String, Object> response = cachedOrQuery(operationKey, legacyRecordId, projectId, runId,
@@ -143,17 +140,17 @@ public final class TemplateExternalEvidenceService {
     private List<Fact> trustedFacts(CheckSpec spec, String expectedSource, String queryObject,
                                     String adapterId, String asOfDate, String expectedStage, String actualSubject,
                                     Map<String, Object> response) {
-        if (!"COMPLETED".equals(text(response.get("status")))) return List.of();
+        if (!"COMPLETED".equals(text(response.get("status")))) return cn.bidcheck.compat.Java8Api.listOf();
         Map<String, Object> record = map(response.get("record"));
-        if (!"TRUSTED_CONNECTOR".equals(text(record.get("provenanceStatus")))) return List.of();
+        if (!"TRUSTED_CONNECTOR".equals(text(record.get("provenanceStatus")))) return cn.bidcheck.compat.Java8Api.listOf();
         if (!adapterId.equals(text(record.get("type"))) || !actualSubject.equals(text(record.get("subject")))
                 || !asOfDate.equals(text(record.get("effectiveAt")))
                 || !expectedStage.equals(text(record.get("evaluationStage")))
                 || !Boolean.TRUE.equals(record.get("coverageComplete"))
-                || text(record.get("rawSnapshotHash")).isBlank()
-                || !sourceMatches(expectedSource, text(record.get("source")))) return List.of();
+                || cn.bidcheck.compat.Java8Api.isBlank(text(record.get("rawSnapshotHash")))
+                || !sourceMatches(expectedSource, text(record.get("source")))) return cn.bidcheck.compat.Java8Api.listOf();
         Map<String, Object> result = map(record.get("result"));
-        if (!"VERIFIED".equals(text(result.get("status")))) return List.of();
+        if (!"VERIFIED".equals(text(result.get("status")))) return cn.bidcheck.compat.Java8Api.listOf();
 
         Set<String> required = new LinkedHashSet<>(strings(spec.parameters().get("requiredFields")));
         List<Fact> facts = new ArrayList<>();
@@ -162,9 +159,9 @@ public final class TemplateExternalEvidenceService {
             if (!required.contains(field)) continue;
             String raw = text(item.get("rawValue"));
             String quote = text(item.get("sourceQuote"));
-            if (raw.isBlank() || quote.isBlank() || !quote.contains(raw)) continue;
+            if (cn.bidcheck.compat.Java8Api.isBlank(raw) || cn.bidcheck.compat.Java8Api.isBlank(quote) || !quote.contains(raw)) continue;
             String normalized = externalState(field, item.get("value"));
-            if (normalized.isBlank() || "UNRESOLVED".equals(normalized)) continue;
+            if (cn.bidcheck.compat.Java8Api.isBlank(normalized) || "UNRESOLVED".equals(normalized)) continue;
             String anchor = "provenance:TRUSTED_CONNECTOR|adapter:" + adapterId + "|asOf:" + asOfDate
                     + "|stage:" + expectedStage
                     + "|subjectHash:" + BidService.hash(actualSubject)
@@ -173,35 +170,35 @@ public final class TemplateExternalEvidenceService {
                     text(record.get("source")), 0, "TRUSTED_CONNECTOR", quote, anchor, 1d);
             facts.add(new Fact("TRUSTED_CONNECTOR", queryObject, field, raw, normalized, evidence));
         }
-        return List.copyOf(facts);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(facts);
     }
 
     private static String resolveSubject(CheckSpec spec, String queryObject, List<Fact> bidFacts) {
-        for (String key : List.of("querySubject", "subjectName", "name")) {
-            String value = spec.subjectSelector().constraints().getOrDefault(key, "").strip();
-            if (!value.isBlank()) return value;
+        for (String key : cn.bidcheck.compat.Java8Api.listOf("querySubject", "subjectName", "name")) {
+            String value = cn.bidcheck.compat.Java8Api.strip(spec.subjectSelector().constraints().getOrDefault(key, ""));
+            if (!cn.bidcheck.compat.Java8Api.isBlank(value)) return value;
         }
         if (!GENERIC_ORGANIZATION.contains(queryObject.toUpperCase(Locale.ROOT))
                 && !GENERIC_ORGANIZATION.contains(queryObject)) return queryObject;
         Set<String> names = new LinkedHashSet<>();
         if (bidFacts != null) for (Fact fact : bidFacts) {
             if (fact == null || !"companyName".equals(fact.field()) || fact.evidence() == null) continue;
-            if (!Set.of("BIDDER", "ORGANIZATION").contains(text(fact.entityKey()).toUpperCase(Locale.ROOT))) continue;
+            if (!cn.bidcheck.compat.Java8Api.setOf("BIDDER", "ORGANIZATION").contains(text(fact.entityKey()).toUpperCase(Locale.ROOT))) continue;
             String value = text(fact.normalizedValue());
-            if (value.isBlank() || "UNRESOLVED".equalsIgnoreCase(value)) value = text(fact.rawValue());
-            if (!value.isBlank()) names.add(value);
+            if (cn.bidcheck.compat.Java8Api.isBlank(value) || "UNRESOLVED".equalsIgnoreCase(value)) value = text(fact.rawValue());
+            if (!cn.bidcheck.compat.Java8Api.isBlank(value)) names.add(value);
         }
         return names.size() == 1 ? names.iterator().next() : "";
     }
 
     private static String externalState(String field, Object value) {
-        String token = text(value).strip();
+        String token = cn.bidcheck.compat.Java8Api.strip(text(value));
         String normalized = token.toUpperCase(Locale.ROOT).replaceAll("[\\s_-]", "");
         String normalizedField = field.toLowerCase(Locale.ROOT);
         if (RISK_FIELDS.contains(normalizedField)) {
-            if (Set.of("FALSE", "0", "NO", "CLEAR", "NOTFOUND", "NONE", "NORMAL", "正常", "否", "无", "未列入", "未发现").contains(normalized))
+            if (cn.bidcheck.compat.Java8Api.setOf("FALSE", "0", "NO", "CLEAR", "NOTFOUND", "NONE", "NORMAL", "正常", "否", "无", "未列入", "未发现").contains(normalized))
                 return "CLEAR";
-            if (Set.of("TRUE", "1", "YES", "RISK", "HIT", "FOUND", "ACTIVE", "ABNORMAL", "异常", "是", "有", "已列入", "列入").contains(normalized))
+            if (cn.bidcheck.compat.Java8Api.setOf("TRUE", "1", "YES", "RISK", "HIT", "FOUND", "ACTIVE", "ABNORMAL", "异常", "是", "有", "已列入", "列入").contains(normalized))
                 return "RISK";
             return "UNRESOLVED";
         }
@@ -209,9 +206,9 @@ public final class TemplateExternalEvidenceService {
         // fields produced by automatic mapping accept explicit status vocabulary; arbitrary
         // values (including a boolean whose meaning is unknown) cannot become an automatic pass.
         if (STATUS_FIELDS.contains(normalizedField)) {
-            if (Set.of("CLEAR", "PASS", "NORMAL", "GOOD", "COMPLIANT", "NORISK", "正常", "良好", "合规", "无异常", "未发现风险").contains(normalized))
+            if (cn.bidcheck.compat.Java8Api.setOf("CLEAR", "PASS", "NORMAL", "GOOD", "COMPLIANT", "NORISK", "正常", "良好", "合规", "无异常", "未发现风险").contains(normalized))
                 return "CLEAR";
-            if (Set.of("RISK", "HIT", "FAIL", "ABNORMAL", "BAD", "NONCOMPLIANT", "异常", "不良", "不合规", "发现风险").contains(normalized))
+            if (cn.bidcheck.compat.Java8Api.setOf("RISK", "HIT", "FAIL", "ABNORMAL", "BAD", "NONCOMPLIANT", "异常", "不良", "不合规", "发现风险").contains(normalized))
                 return "RISK";
         }
         return "UNRESOLVED";
@@ -219,20 +216,20 @@ public final class TemplateExternalEvidenceService {
 
     private static boolean sourceMatches(String expected, String actual) {
         String left = compact(expected), right = compact(actual);
-        return !left.isBlank() && left.equals(right);
+        return !cn.bidcheck.compat.Java8Api.isBlank(left) && left.equals(right);
     }
     private static String compact(String value) { return text(value).replaceAll("[\\s\\p{Z}]+", "").toLowerCase(Locale.ROOT); }
-    private static String text(Object value) { return Objects.toString(value, "").strip(); }
+    private static String text(Object value) { return cn.bidcheck.compat.Java8Api.strip(Objects.toString(value, "")); }
     @SuppressWarnings("unchecked") private static Map<String, Object> map(Object value) {
-        return value instanceof Map<?, ?> raw ? (Map<String, Object>) raw : Map.of();
+        return value instanceof Map<?, ?> ? (Map<String, Object>) ((Map<?, ?>) (value)) : cn.bidcheck.compat.Java8Api.mapOf();
     }
     private static List<String> strings(Object value) {
-        if (!(value instanceof Collection<?> values)) return List.of();
-        return values.stream().filter(Objects::nonNull).map(Object::toString).map(String::strip)
-                .filter(item -> !item.isBlank()).toList();
+        if (!(value instanceof Collection<?>)) return cn.bidcheck.compat.Java8Api.listOf();
+        return cn.bidcheck.compat.Java8Api.toList(((Collection<?>) (value)).stream().filter(Objects::nonNull).map(Object::toString).map(cn.bidcheck.compat.Java8Api::strip)
+                .filter(item -> !cn.bidcheck.compat.Java8Api.isBlank(item)));
     }
     private static List<Map<String, Object>> maps(Object value) {
-        if (!(value instanceof Collection<?> values)) return List.of();
-        return values.stream().filter(Map.class::isInstance).map(TemplateExternalEvidenceService::map).toList();
+        if (!(value instanceof Collection<?>)) return cn.bidcheck.compat.Java8Api.listOf();
+        return cn.bidcheck.compat.Java8Api.toList(((Collection<?>) (value)).stream().filter(Map.class::isInstance).map(TemplateExternalEvidenceService::map));
     }
 }

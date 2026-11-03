@@ -1,4 +1,5 @@
 package cn.bidcheck.service;
+import cn.bidcheck.compat.HexFormat;
 
 import cn.bidcheck.document.DocumentLimits;
 import cn.bidcheck.domain.Domain.*;
@@ -35,8 +36,8 @@ public class BidService {
     private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(BidService.class);
     public static final String RULE_VERSION="deterministic-1.0-requirements-aligned";
     public static final int MAX_DOCUMENTS_PER_PROJECT=100;
-    public static final List<String> CHECK_CATEGORIES=List.of("形式检查","资格检查","响应检查","全文信息检查","效期检查");
-    public static final Set<String> STATUSES=Set.of("PASS","FAIL","WARNING","UNDETERMINED","NOT_APPLICABLE");
+    public static final List<String> CHECK_CATEGORIES=cn.bidcheck.compat.Java8Api.listOf("形式检查", "资格检查", "响应检查", "全文信息检查", "效期检查");
+    public static final Set<String> STATUSES=cn.bidcheck.compat.Java8Api.setOf("PASS", "FAIL", "WARNING", "UNDETERMINED", "NOT_APPLICABLE");
     public final Store store;
     private final ArtifactStorage storage;
     private final TransactionTemplate tx;
@@ -82,7 +83,7 @@ public class BidService {
     @Value("${bidcheck.template-route-enabled:true}")
     private boolean templateRouteEnabled=true;
     public String checkMode() {
-        if(!Set.of("RULES_RETRIEVAL","FULL_MODEL").contains(configuredCheckMode)) throw new IllegalStateException("Unknown check mode");
+        if(!cn.bidcheck.compat.Java8Api.setOf("RULES_RETRIEVAL", "FULL_MODEL").contains(configuredCheckMode)) throw new IllegalStateException("Unknown check mode");
         return configuredCheckMode;
     }
     /** Compatibility field: -1 means attempts are recorded without a run-wide cap. */
@@ -147,8 +148,8 @@ public class BidService {
     public String semanticModel() { return semantic.enabled()?semantic.modelName():""; }
     public String storageMode() { return storage.mode(); }
     public boolean ocrEnabled() { return ocr.enabled()||pdfOcr.enabled(); }
-    public boolean ocrLayoutEnabled() { return ocr instanceof cn.bidcheck.ocr.StructuredOcrClient structured && structured.layoutEnabled(); }
-    public String ocrLayoutModel() { return ocr instanceof cn.bidcheck.ocr.StructuredOcrClient structured ? structured.layoutModelName() : ""; }
+    public boolean ocrLayoutEnabled() { return ocr instanceof cn.bidcheck.ocr.StructuredOcrClient && ((cn.bidcheck.ocr.StructuredOcrClient) (ocr)).layoutEnabled(); }
+    public String ocrLayoutModel() { return ocr instanceof cn.bidcheck.ocr.StructuredOcrClient ? ((cn.bidcheck.ocr.StructuredOcrClient) (ocr)).layoutModelName() : ""; }
     public String ocrModel() { return pdfOcr.enabled()?pdfOcr.modelName()+"（PDF）；单页补识别："+(ocr.enabled()?ocr.modelName():"未启用"):ocr.enabled()?ocr.modelName():""; }
     public boolean pdfOcrEnabled() { return pdfOcr.enabled(); }
     public String pdfOcrModel() { return pdfOcr.enabled()?pdfOcr.modelName():""; }
@@ -158,7 +159,7 @@ public class BidService {
     private String activeOcrIdentity() { return pdfOcr.enabled()?hash("PDF:"+pdfOcr.identity()+"|SINGLE:"+ocr.identity()):ocr.identity(); }
     public int ocrMaxImages() { return ocrMaxImages; }
     public int ocrConcurrency() { return ocrConcurrency; }
-    public int ocrBatchMaxPages() { var policy=ocr.batchPolicy();return policy!=null&&policy.enabled()?policy.maxPages():1; }
+    public int ocrBatchMaxPages() { cn.bidcheck.ocr.OcrBatchPolicy policy=ocr.batchPolicy();return policy!=null&&policy.enabled()?policy.maxPages():1; }
     public int checkConcurrency() { return checkpointExecutor==null?1:checkpointExecutor.parallelism(); }
     public boolean automaticVisualProcessingEnabled() { return automaticVisualProcessingEnabled; }
     public String documentProcessingMode() { return automaticVisualProcessingEnabled?"STRUCTURED_VISUAL":"TEXT_ONLY"; }
@@ -176,7 +177,7 @@ public class BidService {
         return factLedger;
     }
     private List<Checkpoint> confirmedChecks(String project) {
-        return activeCheckpoints(project,store.getMap("project",project)).stream().filter(c->c.enabled()&&c.confirmed()).toList();
+        return cn.bidcheck.compat.Java8Api.toList(activeCheckpoints(project,store.getMap("project",project)).stream().filter(c->c.enabled()&&c.confirmed()));
     }
     private static ExtractionPlan initialPlan(String role,String name,List<Checkpoint> checks) {
         // A blank native text layer cannot prove a scan contains no personnel/credential evidence.
@@ -197,9 +198,9 @@ public class BidService {
     }
     public Map<String,Object> createProject(Map<String,Object> body) {
         String name=text(body,"name"), code=body.containsKey("projectNumber")?text(body,"projectNumber"):text(body,"code");
-        if(name.isBlank()||name.length()>160||code.length()>100) throw bad("请填写项目名称（不超过160字），编号不超过100字");
-        List<String> manual=new ArrayList<>();if(!code.isBlank())manual.add("projectNumber");if(!text(body,"openingTime").isBlank())manual.add("openingTime");
-        String id=Store.id(); Map<String,Object> p=fields("id",id,"name",name,"code",code,"projectNumber",code,"openingTime",ProjectInformation.openingTime(text(body,"openingTime")),"manualFields",manual,"fieldSources",Map.of(),"createdAt",now());
+        if(cn.bidcheck.compat.Java8Api.isBlank(name)||name.length()>160||code.length()>100) throw bad("请填写项目名称（不超过160字），编号不超过100字");
+        List<String> manual=new ArrayList<>();if(!cn.bidcheck.compat.Java8Api.isBlank(code))manual.add("projectNumber");if(!cn.bidcheck.compat.Java8Api.isBlank(text(body,"openingTime")))manual.add("openingTime");
+        String id=Store.id(); Map<String,Object> p=fields("id",id,"name",name,"code",code,"projectNumber",code,"openingTime",ProjectInformation.openingTime(text(body,"openingTime")),"manualFields",manual,"fieldSources",cn.bidcheck.compat.Java8Api.mapOf(),"createdAt",now());
         store.save("project",id,id,"",p); return p;
     }
     public Map<String,Object> updateProject(String id,Map<String,Object> body) {
@@ -211,23 +212,23 @@ public class BidService {
             for(String field:ProjectInformation.FIELDS) {
                 if(!body.containsKey(field)&&!(field.equals("projectNumber")&&body.containsKey("code"))) continue;
                 String value=text(body,field.equals("projectNumber")&&!body.containsKey(field)?"code":field);
-                if(field.equals("name")&&(value.isBlank()||value.length()>160)) throw bad("项目名称不能为空或超过160字");
+                if(field.equals("name")&&(cn.bidcheck.compat.Java8Api.isBlank(value)||value.length()>160)) throw bad("项目名称不能为空或超过160字");
                 if(field.equals("projectNumber")&&value.length()>100) throw bad("项目编号不能超过100字");
                 if(field.equals("openingTime")) value=ProjectInformation.openingTime(value);
                 p.put(field,value);manual.add(field);
             }
-            p.put("code",text(p,"projectNumber"));p.put("manualFields",List.copyOf(manual));p.put("updatedAt",now());
+            p.put("code",text(p,"projectNumber"));p.put("manualFields",cn.bidcheck.compat.Java8Api.listCopyOf(manual));p.put("updatedAt",now());
             store.save("project",id,id,"",p);
             String audit=Store.id();store.save("audit",audit,id,id,fields("id",audit,"action","PROJECT_UPDATED","before",before,"after",p,"createdAt",now()));
             return p;
         });
     }
     public List<Map<String,Object>> projects() {
-        return store.maps("project",null,null).stream().map(p->{
+        return cn.bidcheck.compat.Java8Api.toList(store.maps("project",null,null).stream().map(p->{
             String id=text(p,"id"); Stored run=store.mapper().latest("run",id,null);
             p.put("documentCount",store.mapper().count("document",id,null));
             p.put("latestStatus",run==null?"NEW":store.map(run.body).get("status")); return p;
-        }).toList();
+        }));
     }
     public Map<String,Object> detail(String project) {
         return detail(project,true);
@@ -237,17 +238,17 @@ public class BidService {
         List<Checkpoint> checks=activeCheckpoints(project,p);
         p.put("checkpointRulesOutdated",checkpointRulesOutdated(p,checks));
         return fields("project",p,"documents",includeContent?store.list("document",project,null,Document.class):store.documentSummaries(project),
-            "checkpoints",checks,"runs",store.maps("run",project,null),"tasks",store.mapper().projectTasks(project).stream().map(this::publicTask).toList(),
+            "checkpoints",checks,"runs",store.maps("run",project,null),"tasks",cn.bidcheck.compat.Java8Api.toList(store.mapper().projectTasks(project).stream().map(this::publicTask)),
             "requirementMapping",requirementMappingSummary(project,p));
     }
     private Map<String,Object> requirementMappingSummary(String project,Map<String,Object> value) {
-        if(requirementMappings==null||text(value,"activeTenderId").isBlank())return fields("status","NOT_GENERATED","projectId",project,"affectsBusinessConclusion",false);
+        if(requirementMappings==null||cn.bidcheck.compat.Java8Api.isBlank(text(value,"activeTenderId")))return fields("status","NOT_GENERATED","projectId",project,"affectsBusinessConclusion",false);
         return requirementMappings.currentSummary(project);
     }
     private static boolean checkpointRulesOutdated(Map<String,Object> project,List<Checkpoint> checks) {
         String tender=text(project,"activeTenderId");
-        if(project.get("checkpointRuleVersions") instanceof Map<?,?> versions&&RULE_VERSION.equals(versions.get(tender)))return false;
-        return !text(project,"requestedTenderId").isBlank()||!text(project,"checkpointRuleVersion").isBlank()||checks.stream().anyMatch(c->c.source()!=null);
+        if(project.get("checkpointRuleVersions") instanceof Map<?,?>&&RULE_VERSION.equals(((Map<?,?>) (project.get("checkpointRuleVersions"))).get(tender)))return false;
+        return !cn.bidcheck.compat.Java8Api.isBlank(text(project,"requestedTenderId"))||!cn.bidcheck.compat.Java8Api.isBlank(text(project,"checkpointRuleVersion"))||checks.stream().anyMatch(c->c.source()!=null);
     }
     public void requireCurrentCheckpointRules(Map<String,Object> project,List<Checkpoint> checks) {
         if(checkpointRulesOutdated(project,checks))throw bad("提取规则已更新，请重新提取并确认检查项；已保存的人工调整和历史报告会保留");
@@ -259,7 +260,7 @@ public class BidService {
     public Map<String,Object> publicTask(TaskRow t) {
         String documentId=text(store.map(t.inputJson),"documentId");
         Map<String,Object> result=fields("id",t.id,"projectId",t.projectId,"documentId",documentId,"type",t.taskType,"status",t.status,"stage",t.stage,"progress",t.progress,"attempt",t.attempt,"error",t.error,"createdAt",t.createdAt,"updatedAt",t.updatedAt);
-        if("PARSE".equals(t.taskType)&&!documentId.isBlank()) {
+        if("PARSE".equals(t.taskType)&&!cn.bidcheck.compat.Java8Api.isBlank(documentId)) {
             Stored row=store.mapper().get("upload:"+documentId);
             if(row!=null) {Map<String,Object> upload=store.map(row.body);result.put("fileName",text(upload,"name"));result.put("role",text(upload,"role"));}
         }
@@ -271,7 +272,7 @@ public class BidService {
     }
     private List<Checkpoint> activeCheckpoints(String project,Map<String,Object> p) {
         String tender=text(p,"activeTenderId");
-        return store.list("checkpoint",project,tender.isBlank()?null:tender,Checkpoint.class);
+        return store.list("checkpoint",project,cn.bidcheck.compat.Java8Api.isBlank(tender)?null:tender,Checkpoint.class);
     }
     public TaskRow task(String id) {
         TaskRow task=store.mapper().task(id); if(task==null) throw new ResponseStatusException(HttpStatus.NOT_FOUND,"任务不存在"); return task;
@@ -287,7 +288,7 @@ public class BidService {
     public void verificationFinished(TaskRow task,String stage) { finish(task,stage); }
     public TaskRow migrateProjectFacts(String project) {
         return tx.execute(s->{store.lock("project",project);
-            for(TaskRow existing:store.mapper().projectTasks(project))if("FACT_MIGRATE".equals(existing.taskType)&&Set.of("PENDING","RUNNING").contains(existing.status))return existing;
+            for(TaskRow existing:store.mapper().projectTasks(project))if("FACT_MIGRATE".equals(existing.taskType)&&cn.bidcheck.compat.Java8Api.setOf("PENDING", "RUNNING").contains(existing.status))return existing;
             return newTask(project,"FACT_MIGRATE",fields("migrationVersion","RELATIONAL_V3"));
         });
     }
@@ -295,29 +296,29 @@ public class BidService {
     /** Continue structured materials from durable page results; never resend OCR for completed text. */
     public TaskRow continueProcessing(String documentId){
         Document doc=document(documentId);return tx.execute(s->{store.lock("project",doc.projectId());
-            for(TaskRow task:store.mapper().projectTasks(doc.projectId()))if("PROCESS".equals(task.taskType)&&Set.of("PENDING","RUNNING").contains(task.status)
+            for(TaskRow task:store.mapper().projectTasks(doc.projectId()))if("PROCESS".equals(task.taskType)&&cn.bidcheck.compat.Java8Api.setOf("PENDING", "RUNNING").contains(task.status)
                 &&documentId.equals(text(store.map(task.inputJson),"documentId")))return task;
             return newTask(doc.projectId(),"PROCESS",fields("documentId",documentId,"processingIdentity",processingIdentity(),"checks",confirmedChecks(doc.projectId())));
         });
     }
     public Map<String,Object> ocrPlan(String documentId) {
         Stored saved=store.mapper().get("ocr-plan:"+documentId);
-        return saved==null?Map.of():store.map(saved.body);
+        return saved==null?cn.bidcheck.compat.Java8Api.mapOf():store.map(saved.body);
     }
     /** Metadata only: safe to poll without loading recognition text or geometry. */
     public Map<String,Object> ocrProgress(String documentId) {
         Stored metadata=store.mapper().get(documentId);
         if(metadata==null||!"document".equals(metadata.kind))metadata=store.mapper().get("upload:"+documentId);
         if(metadata==null)metadata=store.mapper().get("ocr-preparation:"+documentId);
-        if(metadata==null||!Set.of("document","upload","ocr_preparation").contains(metadata.kind))throw new ResponseStatusException(HttpStatus.NOT_FOUND,"文档不存在");
+        if(metadata==null||!cn.bidcheck.compat.Java8Api.setOf("document", "upload", "ocr_preparation").contains(metadata.kind))throw new ResponseStatusException(HttpStatus.NOT_FOUND,"文档不存在");
         String project=metadata.projectId;
         Stored summary=store.mapper().get("ocr-progress:"+documentId);
-        if(summary==null||!"ocr_progress".equals(summary.kind)||!project.equals(summary.projectId))return Map.of("documentId",documentId,"units",List.of());
+        if(summary==null||!"ocr_progress".equals(summary.kind)||!project.equals(summary.projectId))return cn.bidcheck.compat.Java8Api.mapOf("documentId", documentId, "units", cn.bidcheck.compat.Java8Api.listOf());
         Map<String,Object> result=new LinkedHashMap<>(store.map(summary.body));String scope=text(result,"scope");
-        result.put("units",store.maps("ocr_unit_status",project,documentId).stream().filter(unit->scope.equals(text(unit,"scope")))
-            .sorted(Comparator.comparing((Map<String,Object> unit)->text(unit,"locationType")).thenComparingInt(unit->((Number)unit.get("position")).intValue()).thenComparingInt(unit->((Number)unit.get("imageIndex")).intValue())).toList());
-        result.put("batches",store.maps("ocr_batch_status",project,documentId).stream().filter(batch->scope.equals(text(batch,"scope"))).toList());
-        result.put("batchEvents",store.maps("ocr_batch_event",project,documentId).stream().filter(batch->scope.equals(text(batch,"scope"))).toList());
+        result.put("units",cn.bidcheck.compat.Java8Api.toList(store.maps("ocr_unit_status",project,documentId).stream().filter(unit->scope.equals(text(unit,"scope")))
+            .sorted(Comparator.comparing((Map<String,Object> unit)->text(unit,"locationType")).thenComparingInt(unit->((Number)unit.get("position")).intValue()).thenComparingInt(unit->((Number)unit.get("imageIndex")).intValue()))));
+        result.put("batches",cn.bidcheck.compat.Java8Api.toList(store.maps("ocr_batch_status",project,documentId).stream().filter(batch->scope.equals(text(batch,"scope")))));
+        result.put("batchEvents",cn.bidcheck.compat.Java8Api.toList(store.maps("ocr_batch_event",project,documentId).stream().filter(batch->scope.equals(text(batch,"scope")))));
         return result;
     }
     private OcrUnitJournal ocrJournal(TaskRow task,String documentId,int version,String sourceHash,ExtractionPlan plan,String baseId) {
@@ -325,31 +326,31 @@ public class BidService {
             plan.sourceBoundHash(sourceHash),hash(FileParser.POLICY_VERSION+"|"+OcrUnitJournal.VERSION+"|"+activeOcrIdentity()),task.id,baseId);
     }
     private DocumentProcessingSession processingSession(TaskRow task,Document metadata,ExtractionPlan plan,String base,List<Checkpoint> checks){
-        List<Checkpoint> scoped="BID".equals(metadata.role())?checks:List.of();
+        List<Checkpoint> scoped="BID".equals(metadata.role())?checks:cn.bidcheck.compat.Java8Api.listOf();
         return new DocumentProcessingSession(store,tx,()->progress(task,task.progress,task.stage),ocrJournal(task,metadata.id(),metadata.version(),metadata.sha256(),plan,base),
             factLedger(),metadata,task.id,processingIdentity(),scoped,automaticVisualProcessingEnabled);
     }
     /** Available while the upload is still parsing; does not publish an incomplete document as a completed version. */
     public Map<String,Object> processing(String documentId){
         Stored meta=processingMetadata(documentId);Stored saved=store.mapper().get(DocumentProcessingSession.summaryId(documentId));
-        if(saved==null||!meta.projectId.equals(saved.projectId))return fields("documentId",documentId,"status","NOT_STARTED","pages",List.of(),"checks",List.of());
+        if(saved==null||!meta.projectId.equals(saved.projectId))return fields("documentId",documentId,"status","NOT_STARTED","pages",cn.bidcheck.compat.Java8Api.listOf(),"checks",cn.bidcheck.compat.Java8Api.listOf());
         Map<String,Object> out=new LinkedHashMap<>(store.map(saved.body));String scope=text(out,"scope");
         out.put("configurationCurrent",processingIdentity().equals(text(out,"identity")));
-        out.put("pages",store.maps("processing_page",meta.projectId,documentId).stream().filter(p->scope.equals(p.get("scope"))).map(row->{
+        out.put("pages",cn.bidcheck.compat.Java8Api.toList(store.maps("processing_page",meta.projectId,documentId).stream().filter(p->scope.equals(p.get("scope"))).map(row->{
             Page page=store.decode(store.encode(row.get("page")),Page.class);return fields("page",page.number(),"locationType",page.locationType(),"parser",page.parser(),"warning",page.warning(),"route",row.get("route"));
-        }).sorted(Comparator.comparingInt(p->((Number)p.get("page")).intValue())).toList());
-        out.put("checks",store.maps("incremental_check",meta.projectId,documentId).stream().filter(r->scope.equals(r.get("scope"))
-            &&(!out.containsKey("checkScope")||Objects.equals(out.get("checkScope"),r.get("checkScope")))).toList());
-        out.put("windows",store.maps("processing_window",meta.projectId,documentId).stream().filter(r->scope.equals(r.get("scope"))).map(r->fields("pages",r.get("pages"),"status",r.get("status"),"relations",r.get("relations"),"factResult",r.get("factResult"))).toList());
+        }).sorted(Comparator.comparingInt(p->((Number)p.get("page")).intValue()))));
+        out.put("checks",cn.bidcheck.compat.Java8Api.toList(store.maps("incremental_check",meta.projectId,documentId).stream().filter(r->scope.equals(r.get("scope"))
+            &&(!out.containsKey("checkScope")||Objects.equals(out.get("checkScope"),r.get("checkScope"))))));
+        out.put("windows",cn.bidcheck.compat.Java8Api.toList(store.maps("processing_window",meta.projectId,documentId).stream().filter(r->scope.equals(r.get("scope"))).map(r->fields("pages",r.get("pages"),"status",r.get("status"),"relations",r.get("relations"),"factResult",r.get("factResult")))));
         return out;
     }
     public Map<String,Object> processingFacts(String documentId){
         Stored meta=processingMetadata(documentId);Stored saved=store.mapper().get(DocumentProcessingSession.summaryId(documentId));
-        if(saved==null||!meta.projectId.equals(saved.projectId))return Map.of("documentId",documentId,"occurrences",List.of());
+        if(saved==null||!meta.projectId.equals(saved.projectId))return cn.bidcheck.compat.Java8Api.mapOf("documentId", documentId, "occurrences", cn.bidcheck.compat.Java8Api.listOf());
         Map<String,Object> summary=store.map(saved.body);String scope=text(summary,"scope");
-        List<Page> pages=store.maps("processing_page",meta.projectId,documentId).stream().filter(p->scope.equals(p.get("scope")))
-            .map(p->store.decode(store.encode(p.get("page")),Page.class)).toList();
-        Document d=new Document(documentId,meta.projectId,text(summary,"role"),text(summary,"documentName"),((Number)summary.get("documentVersion")).intValue(),text(summary,"documentHash"),"",pages,List.of());
+        List<Page> pages=cn.bidcheck.compat.Java8Api.toList(store.maps("processing_page",meta.projectId,documentId).stream().filter(p->scope.equals(p.get("scope")))
+            .map(p->store.decode(store.encode(p.get("page")),Page.class)));
+        Document d=new Document(documentId,meta.projectId,text(summary,"role"),text(summary,"documentName"),((Number)summary.get("documentVersion")).intValue(),text(summary,"documentHash"),"",pages,cn.bidcheck.compat.Java8Api.listOf());
         Map<String,Object> view=new LinkedHashMap<>(factLedger().documentView(d,text(summary,"identity")));
         view.put("configurationCurrent",processingIdentity().equals(text(summary,"identity")));
         view.put("parsingComplete",Boolean.TRUE.equals(summary.get("parsingComplete")));
@@ -358,11 +359,11 @@ public class BidService {
     private Stored processingMetadata(String id){
         Stored row=store.mapper().get(id);if(row==null||!"document".equals(row.kind))row=store.mapper().get("upload:"+id);
         if(row==null)row=store.mapper().get("ocr-preparation:"+id);
-        if(row==null||!Set.of("document","upload","ocr_preparation").contains(row.kind))throw new ResponseStatusException(HttpStatus.NOT_FOUND,"文档不存在");return row;
+        if(row==null||!cn.bidcheck.compat.Java8Api.setOf("document", "upload", "ocr_preparation").contains(row.kind))throw new ResponseStatusException(HttpStatus.NOT_FOUND,"文档不存在");return row;
     }
     private List<Checkpoint> readCheckpoints(Object value) {
-        if(value==null)return List.of();
-        return List.of(store.decode(store.encode(value),Checkpoint[].class));
+        if(value==null)return cn.bidcheck.compat.Java8Api.listOf();
+        return cn.bidcheck.compat.Java8Api.listOf(store.decode(store.encode(value),Checkpoint[].class));
     }
     private void saveOcrPlan(Document document,ExtractionPlan plan,Map<String,Object> report,String baseId) {
         Map<String,Object> saved=new LinkedHashMap<>(report);saved.put("documentId",document.id());saved.put("documentVersion",document.version());
@@ -388,9 +389,9 @@ public class BidService {
             Map<String,Object> value=fields("documentId",id,"projectId",task.projectId,"role",source.role(),"version",nextDocumentVersion(task.projectId,source.role()),"createdAt",now(),"baseDocumentId",source.id(),"planHash",plan.hash(),"status","PENDING");
             store.save("ocr_preparation","ocr-preparation:"+id,task.projectId,runId,value);return value;
         });
-        Document preparing=new Document(id,source.projectId(),source.role(),source.name(),((Number)reservation.get("version")).intValue(),source.sha256(),text(reservation,"createdAt"),List.of(),List.of());
-        var processing=processingSession(task,preparing,plan,source.id(),frozenChecks);
-        long[] last={0};var extraction=parser.parsePlanned(path(source.id()),source.name(),(percent,stage)->{
+        Document preparing=new Document(id,source.projectId(),source.role(),source.name(),((Number)reservation.get("version")).intValue(),source.sha256(),text(reservation,"createdAt"),cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf());
+        cn.bidcheck.service.DocumentProcessingSession processing=processingSession(task,preparing,plan,source.id(),frozenChecks);
+        long[] last={0};cn.bidcheck.document.ExtractionResult extraction=parser.parsePlanned(path(source.id()),source.name(),(percent,stage)->{
             long tick=System.nanoTime();if(percent>=100||tick-last[0]>=1_000_000_000L){progress(task,2,"全文识别："+stage);last[0]=tick;}
         },plan,processing);
         // Keep file identity durable and immutable for download, preview and subsequent revisions.
@@ -406,7 +407,7 @@ public class BidService {
         return document(id);
     }
     public TaskRow upload(String project,String role,MultipartFile file) throws IOException {
-        if(!Set.of("TENDER","BID").contains(role)) throw bad("文件类型必须为招标文件或投标文件");
+        if(!cn.bidcheck.compat.Java8Api.setOf("TENDER", "BID").contains(role)) throw bad("文件类型必须为招标文件或投标文件");
         synchronized(projectLock(project)) { return uploadLocked(project,role,file); }
     }
     /** Separate proof attachment bound to one frozen check and its explicit dependencies. */
@@ -414,10 +415,10 @@ public class BidService {
         Map<String,Object> run=store.getMap("run",runId);String project=text(run,"projectId");
         synchronized(projectLock(project)){
             run=store.getMap("run",runId);
-            if(!Set.of("COMPLETED","FAILED").contains(text(run,"status")))throw bad("请待当前检查结束后补充材料");
+            if(!cn.bidcheck.compat.Java8Api.setOf("COMPLETED", "FAILED").contains(text(run,"status")))throw bad("请待当前检查结束后补充材料");
             if(store.list("snapshot",project,runId,Checkpoint.class).stream().noneMatch(c->c.id().equals(checkpointId)))throw bad("补充材料必须关联当前检查事项");
-            if(note==null||note.isBlank()||note.length()>3000)throw bad("请填写补充材料的证明用途");
-            if(claimId!=null&&!claimId.isBlank()){
+            if(note==null||cn.bidcheck.compat.Java8Api.isBlank(note)||note.length()>3000)throw bad("请填写补充材料的证明用途");
+            if(claimId!=null&&!cn.bidcheck.compat.Java8Api.isBlank(claimId)){
                 Map<String,Object> claim=store.getMap("inference_claim",claimId);
                 if(!project.equals(text(claim,"projectId"))||!checkpointId.equals(text(claim,"checkpointId"))||!text(run,"documentId").equals(text(claim,"documentId")))throw bad("确认记录与补充事项不一致");
             }
@@ -425,7 +426,7 @@ public class BidService {
             Stored documentRow=store.mapper().get(documentId);Map<String,Object> metadata=documentRow!=null&&"document".equals(documentRow.kind)?store.map(documentRow.body):store.getMap("upload","upload:"+documentId);
             String id=stableId("supplement:"+runId+":"+checkpointId+":"+Objects.toString(claimId,"")+":"+documentId);
             if(store.mapper().get(id)==null){Map<String,Object> attachment=fields("attachmentId",id,"documentId",documentId,"taskId",parsed.id,"status","PENDING","checkpointId",checkpointId,"claimId",Objects.toString(claimId,""),"originRunId",runId,"projectId",project,
-                "name",metadata.get("name"),"sha256",metadata.get("sha256"),"version",metadata.get("version"),"note",note.strip(),"createdAt",now(),"updatedAt",now(),"recomputeStatus","WAITING_PARSE");
+                "name",metadata.get("name"),"sha256",metadata.get("sha256"),"version",metadata.get("version"),"note",cn.bidcheck.compat.Java8Api.strip(note),"createdAt",now(),"updatedAt",now(),"recomputeStatus","WAITING_PARSE");
                 store.save("supplement_attachment",id,project,runId,attachment);
                 LOG.info("bidcheck.supplement_attachment runId={} checkpointId={} claimId={} attachmentId={} documentId={} action=UPLOADED taskId={}",runId,checkpointId,claimId,id,documentId,parsed.id);
             }
@@ -442,18 +443,18 @@ public class BidService {
         }
     }
     private void completeSupplements(String documentId,String project){
-        List<Map<String,Object>> attachments=store.maps("supplement_attachment",project,null).stream().filter(v->documentId.equals(text(v,"documentId"))).toList();
+        List<Map<String,Object>> attachments=cn.bidcheck.compat.Java8Api.toList(store.maps("supplement_attachment",project,null).stream().filter(v->documentId.equals(text(v,"documentId"))));
         for(Map<String,Object> old:attachments){Map<String,Object> value=new LinkedHashMap<>(old);value.put("status","READY");value.put("error","");value.put("updatedAt",now());store.save("supplement_attachment",text(value,"attachmentId"),project,text(value,"originRunId"),value);}
-        for(Map<String,Object> old:attachments){String id=text(old,"attachmentId"),origin=text(old,"originRunId");Map<String,Object> value=store.getMap("supplement_attachment",id);if("QUEUED".equals(text(value,"recomputeStatus"))&&!text(value,"recomputeRunId").isBlank())continue;
+        for(Map<String,Object> old:attachments){String id=text(old,"attachmentId"),origin=text(old,"originRunId");Map<String,Object> value=store.getMap("supplement_attachment",id);if("QUEUED".equals(text(value,"recomputeStatus"))&&!cn.bidcheck.compat.Java8Api.isBlank(text(value,"recomputeRunId")))continue;
             try{Map<String,Object> next=recoverRun(project,origin);value.put("recomputeStatus","QUEUED");value.put("recomputeRunId",next.get("id"));}
-            catch(RuntimeException failure){value.put("recomputeStatus","SAVED_REQUIRES_RECHECK");value.put("error",failure instanceof ResponseStatusException response?Objects.toString(response.getReason(),"重算创建失败"):"补证解析完成，创建重算任务失败，请重新发起补查");}
+            catch(RuntimeException failure){value.put("recomputeStatus","SAVED_REQUIRES_RECHECK");value.put("error",failure instanceof ResponseStatusException?Objects.toString(((ResponseStatusException) (failure)).getReason(),"重算创建失败"):"补证解析完成，创建重算任务失败，请重新发起补查");}
             value.put("updatedAt",now());store.save("supplement_attachment",id,project,origin,value);
             LOG.info("bidcheck.supplement_attachment runId={} checkpointId={} attachmentId={} documentId={} action=PARSE_COMPLETE recomputeStatus={} recomputeRunId={}",origin,value.get("checkpointId"),id,documentId,value.get("recomputeStatus"),value.get("recomputeRunId"));
         }
     }
     private TaskRow uploadLocked(String project,String role,MultipartFile file) throws IOException {
         store.require("project",project);
-        if(!Set.of("TENDER","BID","SUPPLEMENT").contains(role)) throw bad("文件类型不支持");
+        if(!cn.bidcheck.compat.Java8Api.setOf("TENDER", "BID", "SUPPLEMENT").contains(role)) throw bad("文件类型不支持");
         String name=Optional.ofNullable(file.getOriginalFilename()).orElse("file").replace('\\','/');
         name=name.substring(name.lastIndexOf('/')+1).replaceAll("[\\p{Cntrl}]","");
         if(name.length()>200) name=name.substring(name.length()-200);
@@ -474,8 +475,8 @@ public class BidService {
         Optional<Map<String,Object>> pending=uploads.stream().filter(u->role.equals(u.get("role"))&&hash.equals(u.get("sha256"))&&planHash.equals(text(u,"ocrPlanHash"))&&ocrPreparationIdentity().equals(text(u,"preparationIdentity"))).reduce((a,b)->b);
         if(duplicate.isPresent()||pending.isPresent()) {
             storage.discardStaging(id);
-            if(pending.isPresent()&&!text(pending.get(),"taskId").isBlank()) return task(text(pending.get(),"taskId"));
-            return completedDuplicate(project,text(duplicate.orElseThrow(),"id"));
+            if(pending.isPresent()&&!cn.bidcheck.compat.Java8Api.isBlank(text(pending.get(),"taskId"))) return task(text(pending.get(),"taskId"));
+            return completedDuplicate(project,text(duplicate.orElseThrow(java.util.NoSuchElementException::new),"id"));
         }
         if(uploads.size()>=MAX_DOCUMENTS_PER_PROJECT) {storage.discardStaging(id);throw bad("每个项目最多上传100份文件（含历史版本），请创建新项目后继续");}
         try { storage.commit(id); }
@@ -514,7 +515,7 @@ public class BidService {
     private TaskRow recognizeAgain(String documentId,boolean full) throws IOException {
         if(!ocrEnabled()) throw bad("OCR尚未启用，请配置百炼OCR服务后重试");
         Document source=document(documentId);
-        List<Checkpoint> planChecks=full?List.of():confirmedChecks(source.projectId());
+        List<Checkpoint> planChecks=full?cn.bidcheck.compat.Java8Api.listOf():confirmedChecks(source.projectId());
         if(!full&&planChecks.isEmpty())throw bad("请先确认并启用检查项，再按检查计划识别");
         ExtractionPlan requestedPlan=full?ExtractionPlan.full():initialPlan(source.role(),source.name(),planChecks);
         String requestKey="ocr-request:"+stableId(documentId+":"+requestedPlan.hash()+":"+ocrPreparationIdentity());
@@ -523,7 +524,7 @@ public class BidService {
             Stored previous=store.mapper().get(requestKey);
             if(previous!=null) {
                 TaskRow active=task(text(store.map(previous.body),"taskId"));
-                if(Set.of("PENDING","RUNNING").contains(active.status)) return active;
+                if(cn.bidcheck.compat.Java8Api.setOf("PENDING", "RUNNING").contains(active.status)) return active;
             }
             if(store.mapper().count("upload",source.projectId(),null)>=MAX_DOCUMENTS_PER_PROJECT)throw bad("每个项目最多上传100份文件（含历史版本），请创建新项目后继续");
             String id=Store.id(); Path staged=storage.stagePath(id);
@@ -534,7 +535,7 @@ public class BidService {
                 Stored queued=store.mapper().get(requestKey);
                 if(queued!=null) {
                     TaskRow active=task(text(store.map(queued.body),"taskId"));
-                    if(Set.of("PENDING","RUNNING").contains(active.status)) return active;
+                    if(cn.bidcheck.compat.Java8Api.setOf("PENDING", "RUNNING").contains(active.status)) return active;
                 }
                 TaskRow task=newTask(source.projectId(),"PARSE",fields("documentId",id));
                 store.save("upload","upload:"+id,source.projectId(),"",fields("id",id,"projectId",source.projectId(),"role",source.role(),"name",source.name(),
@@ -583,15 +584,15 @@ public class BidService {
         if(!processingIdentity().equals(text(summary,"identity"))||!document.sha256().equals(text(summary,"documentHash"))
             ||!Objects.equals(document.version(),((Number)summary.getOrDefault("documentVersion",0)).intValue()))return nativeFacts;
         List<Fact> derived=factLedger().documentFacts(document,text(summary,"identity"));
-        return IncrementalCheckEngine.distinctEvidence(java.util.stream.Stream.concat(derived.stream(),nativeFacts.stream()).toList());
+        return IncrementalCheckEngine.distinctEvidence(cn.bidcheck.compat.Java8Api.toList(java.util.stream.Stream.concat(derived.stream(),nativeFacts.stream())));
     }
     public List<Map<String,Object>> processingOccurrences(List<Document> documents){
         List<Map<String,Object>> out=new ArrayList<>();for(Document doc:documents){
             Stored saved=store.mapper().get(DocumentProcessingSession.summaryId(doc.id()));if(saved==null||!doc.projectId().equals(saved.projectId))continue;
             Map<String,Object> summary=store.map(saved.body);if(!processingIdentity().equals(text(summary,"identity"))||!doc.sha256().equals(text(summary,"documentHash")))continue;
             Object occurrences=factLedger().documentView(doc,text(summary,"identity")).get("occurrences");
-            if(occurrences instanceof List<?> list)for(Object item:list)if(item instanceof Map<?,?>){out.add(store.map(store.encode(item)));if(out.size()>=10000)return List.copyOf(out);}
-        }return List.copyOf(out);
+            if(occurrences instanceof List<?>)for(Object item:((List<?>) (occurrences)))if(item instanceof Map<?,?>){out.add(store.map(store.encode(item)));if(out.size()>=10000)return cn.bidcheck.compat.Java8Api.listCopyOf(out);}
+        }return cn.bidcheck.compat.Java8Api.listCopyOf(out);
     }
     private void replaceFacts(Document document,List<Fact> facts) {
         String id=document.id();factLedger().persistNativeFacts(document,facts,RULE_VERSION);
@@ -613,7 +614,7 @@ public class BidService {
     }
     public TaskRow extract(String project,String documentId) {
         Document d=document(documentId); scoped(d,project,"TENDER");
-        if(d.pages().stream().allMatch(p->p.text()==null||p.text().isBlank())) throw bad("文件没有可读取文本，请先提供文字版文件或完成 OCR");
+        if(d.pages().stream().allMatch(p->p.text()==null||cn.bidcheck.compat.Java8Api.isBlank(p.text()))) throw bad("文件没有可读取文本，请先提供文字版文件或完成 OCR");
         return tx.execute(s->{
             Map<String,Object> selected=store.map(store.lock("project",project).body);
             selected.put("requestedTenderId",documentId);selected.put("requestedInformationTenderId",documentId);store.save("project",project,project,"",selected);
@@ -648,8 +649,8 @@ public class BidService {
             if(!current.equals(expected))throw cn.bidcheck.checktemplate.TemplateApiException.conflict("CHECKPOINT_REVISION_CHANGED","检查项已被其他修改更新，请刷新后重试",-1);
             Checkpoint updated=new Checkpoint(id,input.title(),input.category(),input.severity(),input.type(),input.field(),input.operator(),input.expected(),input.unit(),input.required(),input.confirmed(),input.enabled(),current.source());
             store.save("checkpoint",id,stored.projectId,stored.parentId,updated);String audit=Store.id();store.save("audit",audit,stored.projectId,id,fields("id",audit,"action","CHECKPOINT_CONFIGURATION_UPDATED","before",current,"after",updated,"createdAt",now()));
-            Map<String,Object> spec=null;if(request.get("spec") instanceof Map<?,?> raw&&!raw.isEmpty()){
-                if(checkSpecifications==null)throw bad("检查规格服务不可用");@SuppressWarnings("unchecked") Map<String,Object> specRequest=(Map<String,Object>)raw;spec=checkSpecifications.putSpec(id,specRequest);
+            Map<String,Object> spec=null;if(request.get("spec") instanceof Map<?,?>&&!((Map<?,?>) (request.get("spec"))).isEmpty()){
+                if(checkSpecifications==null)throw bad("检查规格服务不可用");@SuppressWarnings("unchecked") Map<String,Object> specRequest=(Map<String,Object>)((Map<?,?>) (request.get("spec")));spec=checkSpecifications.putSpec(id,specRequest);
             }
             return fields("checkpoint",updated,"spec",spec);
         });
@@ -658,18 +659,18 @@ public class BidService {
         return tx.execute(s->{
             Map<String,Object> p=store.map(store.lock("project",project).body);
             String tender=text(p,"activeTenderId");
-            if(tender.isBlank()) throw bad("请先选择并解析招标文件，再添加检查项");
+            if(cn.bidcheck.compat.Java8Api.isBlank(tender)) throw bad("请先选择并解析招标文件，再添加检查项");
             scoped(document(tender),project,"TENDER");
             String id=Store.id();
             String category=text(body,"category");if(!CHECK_CATEGORIES.contains(category)) throw bad("请选择形式、资格、响应、全文信息或效期检查");
             Checkpoint c=new Checkpoint(id,text(body,"title"),category,defaultText(body,"severity","MEDIUM"),defaultText(body,"type","SEMANTIC_RESPONSE"),defaultText(body,"field","manualRequirement"),defaultText(body,"operator","RESPONDS"),text(body,"expected"),text(body,"unit"),!Boolean.FALSE.equals(body.get("required")),Boolean.TRUE.equals(body.get("confirmed")),!Boolean.FALSE.equals(body.get("enabled")),null);
-            if(c.expected().isBlank()) throw bad("请填写检查要求");
+            if(cn.bidcheck.compat.Java8Api.isBlank(c.expected())) throw bad("请填写检查要求");
             validate(c);store.save("checkpoint",id,project,tender,c);
             String audit=Store.id();store.save("audit",audit,project,id,fields("id",audit,"action","CHECKPOINT_CREATED","after",c,"createdAt",now()));
             return c;
         });
     }
-    private static String defaultText(Map<String,Object> body,String field,String fallback) {String value=text(body,field);return value.isBlank()?fallback:value;}
+    private static String defaultText(Map<String,Object> body,String field,String fallback) {String value=text(body,field);return cn.bidcheck.compat.Java8Api.isBlank(value)?fallback:value;}
     public Map<String,Object> deleteCheckpoint(String id) {
         Stored row=store.require("checkpoint",id);
         return tx.execute(s->{
@@ -682,13 +683,13 @@ public class BidService {
         });
     }
     private void validate(Checkpoint c) {
-        if(c.title()==null||c.title().isBlank()||c.title().length()>300) throw bad("检查项标题不能为空或超过300字");
-        if(c.type()==null||!Set.of("VALUE_COMPARE","ENTITY_FIELD_CONSISTENCY","MATERIAL_EXISTENCE","DATE_VALIDITY","SEMANTIC_RESPONSE","SIGNATURE_SEAL","FULL_TEXT_REVIEW").contains(c.type())) throw bad("不支持的检查类型");
-        if(c.severity()==null||!Set.of("HIGH","MEDIUM","LOW").contains(c.severity())) throw bad("风险等级无效");
+        if(c.title()==null||cn.bidcheck.compat.Java8Api.isBlank(c.title())||c.title().length()>300) throw bad("检查项标题不能为空或超过300字");
+        if(c.type()==null||!cn.bidcheck.compat.Java8Api.setOf("VALUE_COMPARE", "ENTITY_FIELD_CONSISTENCY", "MATERIAL_EXISTENCE", "DATE_VALIDITY", "SEMANTIC_RESPONSE", "SIGNATURE_SEAL", "FULL_TEXT_REVIEW").contains(c.type())) throw bad("不支持的检查类型");
+        if(c.severity()==null||!cn.bidcheck.compat.Java8Api.setOf("HIGH", "MEDIUM", "LOW").contains(c.severity())) throw bad("风险等级无效");
         if(c.expected()!=null&&c.expected().length()>4000) throw bad("期望值过长");
         if(c.field()==null||c.operator()==null||c.category()==null||c.category().length()>100||c.field().length()>100||c.operator().length()>40||c.unit()==null||c.unit().length()>100) throw bad("检查项字段、分类、运算符或单位无效");
         if("VALUE_COMPARE".equals(c.type())&&c.enabled()) {
-            if(!Set.of("bidValidity","duration","warranty","totalPrice").contains(c.field()) || !Set.of(">=","<=","=",">","<").contains(c.operator())) throw bad("数值检查的字段或运算符无效");
+            if(!cn.bidcheck.compat.Java8Api.setOf("bidValidity", "duration", "warranty", "totalPrice").contains(c.field()) || !cn.bidcheck.compat.Java8Api.setOf(">=", "<=", "=", ">", "<").contains(c.operator())) throw bad("数值检查的字段或运算符无效");
             if(c.expected()==null||!c.expected().matches("[0-9]{1,24}(\\.[0-9]{1,6})?")) throw bad("期望值需为非负数，最多24位整数及6位小数");
         }
         if("DATE_VALIDITY".equals(c.type())&&c.enabled()&&c.confirmed()) {
@@ -711,9 +712,9 @@ public class BidService {
         boolean explicitTargeted=requestedCheckpointIds!=null;
         Set<String> selectedIds=new TreeSet<>();
         if(explicitTargeted){
-            if(requestedCheckpointIds.isEmpty()||requestedCheckpointIds.size()>1000||requestedCheckpointIds.stream().anyMatch(v->v==null||v.isBlank()))throw bad("定向检查必须提供非空的检查项编号列表");
-            requestedCheckpointIds.stream().map(String::strip).forEach(selectedIds::add);
-            if(requestedCheckSetId!=null&&!requestedCheckSetId.isBlank()||requestedManifestRevision!=null)throw bad("定向检查不能同时指定模板检查集；检查项将单独冻结");
+            if(requestedCheckpointIds.isEmpty()||requestedCheckpointIds.size()>1000||requestedCheckpointIds.stream().anyMatch(v->v==null||cn.bidcheck.compat.Java8Api.isBlank(v)))throw bad("定向检查必须提供非空的检查项编号列表");
+            requestedCheckpointIds.stream().map(cn.bidcheck.compat.Java8Api::strip).forEach(selectedIds::add);
+            if(requestedCheckSetId!=null&&!cn.bidcheck.compat.Java8Api.isBlank(requestedCheckSetId)||requestedManifestRevision!=null)throw bad("定向检查不能同时指定模板检查集；检查项将单独冻结");
         }
         String reviewMode=CheckReviewMode.normalize(requestedReviewMode);requireReviewMode(reviewMode);
         boolean useTemplates=CheckReviewMode.FIXED.equals(reviewMode)&&templateRouteEnabled();
@@ -721,36 +722,36 @@ public class BidService {
         return tx.execute(s->{
             Map<String,Object> projectState=store.map(store.lock("project",project).body);
             String informationTender=text(projectState,"informationTenderId");
-            if(!informationTender.isBlank()&&!informationTender.equals(text(projectState,"activeTenderId")))throw bad("招标文件已更新，请先重新提取并确认对应检查项");
-            List<Checkpoint> enabledChecks=activeCheckpoints(project,projectState).stream().filter(Checkpoint::enabled).toList();
+            if(!cn.bidcheck.compat.Java8Api.isBlank(informationTender)&&!informationTender.equals(text(projectState,"activeTenderId")))throw bad("招标文件已更新，请先重新提取并确认对应检查项");
+            List<Checkpoint> enabledChecks=cn.bidcheck.compat.Java8Api.toList(activeCheckpoints(project,projectState).stream().filter(Checkpoint::enabled));
             if(explicitTargeted){Set<String> confirmed=enabledChecks.stream().filter(Checkpoint::confirmed).map(Checkpoint::id).collect(java.util.stream.Collectors.toSet());
-                List<String> invalid=selectedIds.stream().filter(id->!confirmed.contains(id)).toList();if(!invalid.isEmpty())throw bad("定向检查项不存在、未启用或未确认："+String.join(",",invalid));}
-            List<Checkpoint> originalChecks=explicitTargeted?enabledChecks.stream().filter(c->selectedIds.contains(c.id())).toList():enabledChecks;
+                List<String> invalid=cn.bidcheck.compat.Java8Api.toList(selectedIds.stream().filter(id->!confirmed.contains(id)));if(!invalid.isEmpty())throw bad("定向检查项不存在、未启用或未确认："+String.join(",",invalid));}
+            List<Checkpoint> originalChecks=explicitTargeted?cn.bidcheck.compat.Java8Api.toList(enabledChecks.stream().filter(c->selectedIds.contains(c.id()))):enabledChecks;
             requireCurrentCheckpointRules(projectState,originalChecks);
-            List<Checkpoint> checks=originalChecks.stream().map(c->withProjectDate(c,projectState)).toList();
+            List<Checkpoint> checks=cn.bidcheck.compat.Java8Api.toList(originalChecks.stream().map(c->withProjectDate(c,projectState)));
             if(checks.isEmpty()) throw bad("请先从招标文件提取并确认检查项");
             if(checks.stream().anyMatch(c->!c.confirmed())) throw bad("仍有启用的检查项未确认，请确认或停用后再开始检查");
             originalChecks.forEach(this::validate);
-            Map<String,Object> information=fields("name",text(projectState,"name"),"projectNumber",text(projectState,"projectNumber"),"code",text(projectState,"projectNumber"),"openingTime",text(projectState,"openingTime"),"manualFields",projectState.getOrDefault("manualFields",List.of()));
+            Map<String,Object> information=fields("name",text(projectState,"name"),"projectNumber",text(projectState,"projectNumber"),"code",text(projectState,"projectNumber"),"openingTime",text(projectState,"openingTime"),"manualFields",projectState.getOrDefault("manualFields",cn.bidcheck.compat.Java8Api.listOf()));
             String tenderId=text(projectState,"activeTenderId");Optional<Map<String,Object>> selectedSet=checkSpecifications==null||explicitTargeted?Optional.empty():checkSpecifications.confirmedSetForRun(project,tenderId,requestedCheckSetId,requestedManifestRevision);
-            if((requestedCheckSetId!=null&&!requestedCheckSetId.isBlank()||requestedManifestRevision!=null)&&checkSpecifications==null)throw bad("检查集服务不可用，无法按已确认版本开始检查");
+            if((requestedCheckSetId!=null&&!cn.bidcheck.compat.Java8Api.isBlank(requestedCheckSetId)||requestedManifestRevision!=null)&&checkSpecifications==null)throw bad("检查集服务不可用，无法按已确认版本开始检查");
             selectedSet.ifPresent(value->checkSpecifications.verifyRunCheckpointManifest(value,originalChecks));
             String checkSetId=selectedSet.map(value->text(value,"checkSetId")).orElse("");Integer manifestRevision=selectedSet.map(value->((Number)value.get("manifestRevision")).intValue()).orElse(null);
             String templateSpecIdentity=selectedSet.map(value->text(value,"templateSpecIdentity")).orElseGet(()->checkSpecifications==null?"UNAVAILABLE":checkSpecifications.confirmedSpecsIdentity(project,checks));
-            List<String> configuredTemplateIds=selectedSet.map(value->stringList(value.get("templateCheckpointIds"))).orElseGet(()->checks.stream().filter(c->currentTemplateRoute(project,c)).map(Checkpoint::id).toList());
-            List<String> templateRouteIds=useTemplates?configuredTemplateIds:List.of();
-            String normalizedRequest=store.encode(fields("documentId",d.id(),"documentVersion",d.version(),"documentHash",d.sha256(),"force",force,"checkSetId",checkSetId,"manifestRevision",manifestRevision==null?-1:manifestRevision,"reviewMode",reviewMode,"templateRouteEnabled",useTemplates,"templateCheckpointIds",templateRouteIds,"explicitTargetedRun",explicitTargeted,"targetedCheckpointIds",List.copyOf(selectedIds)));
+            List<String> configuredTemplateIds=selectedSet.map(value->stringList(value.get("templateCheckpointIds"))).orElseGet(()->cn.bidcheck.compat.Java8Api.toList(checks.stream().filter(c->currentTemplateRoute(project,c)).map(Checkpoint::id)));
+            List<String> templateRouteIds=useTemplates?configuredTemplateIds:cn.bidcheck.compat.Java8Api.listOf();
+            String normalizedRequest=store.encode(fields("documentId",d.id(),"documentVersion",d.version(),"documentHash",d.sha256(),"force",force,"checkSetId",checkSetId,"manifestRevision",manifestRevision==null?-1:manifestRevision,"reviewMode",reviewMode,"templateRouteEnabled",useTemplates,"templateCheckpointIds",templateRouteIds,"explicitTargetedRun",explicitTargeted,"targetedCheckpointIds",cn.bidcheck.compat.Java8Api.listCopyOf(selectedIds)));
             String requestDigest=hash(normalizedRequest),apiRequestId=runApiRequestId(project,idempotencyKey);
-            Map<String,Object> prior=idempotencyKey==null||idempotencyKey.isBlank()?null:priorRunRequest(apiRequestId,requestDigest);
+            Map<String,Object> prior=idempotencyKey==null||cn.bidcheck.compat.Java8Api.isBlank(idempotencyKey)?null:priorRunRequest(apiRequestId,requestDigest);
             if(prior!=null)return store.getMap("run",text(prior,"resourceId"));
-            var confirmations=InferenceConfirmationSnapshot.from(store.maps("inference_decided",project,d.id()),d,tenderId.isBlank()?null:document(tenderId));
+            cn.bidcheck.service.InferenceConfirmationSnapshot.Snapshot confirmations=InferenceConfirmationSnapshot.from(store.maps("inference_decided",project,d.id()),d,cn.bidcheck.compat.Java8Api.isBlank(tenderId)?null:document(tenderId));
             String fingerprint=hash(d.id()+"\n"+d.sha256()+store.encode(checks)+store.encode(information)+RULE_VERSION+semantic.identity()+ocrPreparationIdentity()+consistencyIdentity()+focusedCheckIdentity()+templateCheckIdentity()+"|reviewMode="+reviewMode+"|templateRoute="+useTemplates+store.encode(templateRouteIds)+templateSpecIdentity+"|checkSet="+checkSetId+"@"+(manifestRevision==null?"legacy":manifestRevision)+resolutionPolicyIdentity()+"|confirmations="+confirmations.digest()+"|explicitTargeted="+explicitTargeted+"|targetIds="+String.join(",",selectedIds));
-            Optional<Map<String,Object>> existing=store.maps("run",project,null).stream().filter(r->fingerprint.equals(r.get("fingerprint"))&&!"FAILED".equals(r.get("status"))&&(!force||Set.of("PENDING","RUNNING").contains(r.get("status")))).reduce((first,last)->last);
+            Optional<Map<String,Object>> existing=store.maps("run",project,null).stream().filter(r->fingerprint.equals(r.get("fingerprint"))&&!"FAILED".equals(r.get("status"))&&(!force||cn.bidcheck.compat.Java8Api.setOf("PENDING", "RUNNING").contains(r.get("status")))).reduce((first,last)->last);
             if(existing.isPresent()) {persistRunRequest(project,apiRequestId,idempotencyKey,requestDigest,text(existing.get(),"id"));return existing.get();}
             String id=Store.id(); TaskRow task=newTask(project,"CHECK",fields("runId",id,"documentId",documentId));
             Map<String,Object> run=fields("id",id,"projectId",project,"documentId",documentId,"tenderDocumentId",tenderId,"status","PENDING","stage","等待检查","progress",0,"createdAt",now(),"taskId",task.id,"fingerprint",fingerprint,"ruleVersion",RULE_VERSION,"documentVersion",d.version(),"semanticConfiguration",semantic.identity(),"model",semanticModel());
-            if(explicitTargeted){run.put("explicitTargetedRun",true);run.put("targetedCheckpointIds",List.copyOf(selectedIds));run.put("consistencyScope","TARGETED_ITEMS_NO_ADDITIONAL_FINDINGS");LOG.info("bidcheck.targeted_run runId={} projectId={} checkpointCount={} checkpointIds={} manifest=FROZEN_PROJECT_CHECKPOINTS",id,project,checks.size(),selectedIds);}
-            if(!checkSetId.isBlank()){run.put("checkSetId",checkSetId);run.put("manifestRevision",manifestRevision);run.put("runRequestDigest",requestDigest);}
+            if(explicitTargeted){run.put("explicitTargetedRun",true);run.put("targetedCheckpointIds",cn.bidcheck.compat.Java8Api.listCopyOf(selectedIds));run.put("consistencyScope","TARGETED_ITEMS_NO_ADDITIONAL_FINDINGS");LOG.info("bidcheck.targeted_run runId={} projectId={} checkpointCount={} checkpointIds={} manifest=FROZEN_PROJECT_CHECKPOINTS",id,project,checks.size(),selectedIds);}
+            if(!cn.bidcheck.compat.Java8Api.isBlank(checkSetId)){run.put("checkSetId",checkSetId);run.put("manifestRevision",manifestRevision);run.put("runRequestDigest",requestDigest);}
             run.put("inferenceConfirmationDigest",confirmations.digest());
             run.put("inferenceConfirmationRecords",confirmations.records());
             run.put("checkConcurrency",checkConcurrency());
@@ -774,7 +775,7 @@ public class BidService {
             store.save("run",id,project,documentId,run);
             store.insertNew("snapshot",project,id,checks,c->stableId(id+c.id()));
             if(checkSpecifications!=null){Map<String,Object> templateSnapshot=selectedSet.isPresent()
-                ?checkSpecifications.snapshotForRun(project,id,checks,checkSetId,manifestRevision,List.of(tenderId,d.id()),templateRouteIds)
+                ?checkSpecifications.snapshotForRun(project,id,checks,checkSetId,manifestRevision,cn.bidcheck.compat.Java8Api.listOf(tenderId, d.id()),templateRouteIds)
                 :checkSpecifications.snapshotForRun(project,id,checks,templateRouteIds);
                 run.put("templateSnapshotId",templateSnapshot.get("id"));run.put("templateSnapshotDigest",templateSnapshot.get("contentDigest"));run.put("templateRouting",templateSnapshot.get("routing"));store.save("run",id,project,documentId,run);}
             persistRunRequest(project,apiRequestId,idempotencyKey,requestDigest,id);
@@ -782,9 +783,9 @@ public class BidService {
         });
     }
 
-    private String runApiRequestId(String project,String key){if(key==null||key.isBlank())return "";if(key.length()>160||!key.matches("[A-Za-z0-9._:-]+"))throw bad("幂等键格式无效或长度超过限制");return stableId("api-request:START_RUN:"+project+":"+key);}
+    private String runApiRequestId(String project,String key){if(key==null||cn.bidcheck.compat.Java8Api.isBlank(key))return "";if(key.length()>160||!key.matches("[A-Za-z0-9._:-]+"))throw bad("幂等键格式无效或长度超过限制");return stableId("api-request:START_RUN:"+project+":"+key);}
     private Map<String,Object> priorRunRequest(String id,String digest){Stored row=store.mapper().get(id);if(row==null)return null;if(!"api_request".equals(row.kind))throw new IllegalStateException("IDEMPOTENCY_RECORD_SCOPE_MISMATCH");Map<String,Object> saved=store.map(row.body);if(!digest.equals(text(saved,"requestDigest")))throw cn.bidcheck.checktemplate.TemplateApiException.conflict("IDEMPOTENCY_CONFLICT","同一幂等键已用于不同的检查请求",-1);return saved;}
-    private void persistRunRequest(String project,String id,String key,String digest,String runId){if(id==null||id.isBlank())return;Map<String,Object> value=fields("schemaVersion","api-request-v1","projectId",project,"operation","START_RUN","idempotencyKey",key,"requestDigest",digest,"resourceId",runId,"committedAt",now());store.insertImmutableIfAbsent("api_request",id,project,project,value);}
+    private void persistRunRequest(String project,String id,String key,String digest,String runId){if(id==null||cn.bidcheck.compat.Java8Api.isBlank(id))return;Map<String,Object> value=fields("schemaVersion","api-request-v1","projectId",project,"operation","START_RUN","idempotencyKey",key,"requestDigest",digest,"resourceId",runId,"committedAt",now());store.insertImmutableIfAbsent("api_request",id,project,project,value);}
     public String resolutionPolicyIdentity(){return hash(CheckResolution.VERSION+RULE_VERSION+"|reviewMode="+CheckReviewMode.VERSION+"|agentGroup="+AgentBusinessGroupReuse.VERSION+"|ocrReview="+cn.bidcheck.engine.OcrReviewPolicy.VERSION+"|"+semantic.identity()+focusedCheckIdentity()+templateCheckIdentity()+consistencyIdentity()+onDemandPolicyVersion()
         +(focusedContext==null?"":focusedContext.identity())+(verification==null?"":verification.getObject().checkSourceIdentity()));}
 
@@ -812,8 +813,8 @@ public class BidService {
         return false;
     }
     private static List<String> stringList(Object value){
-        if(!(value instanceof Collection<?> items))return List.of();
-        return items.stream().filter(Objects::nonNull).map(Object::toString).toList();
+        if(!(value instanceof Collection<?>))return cn.bidcheck.compat.Java8Api.listOf();
+        return cn.bidcheck.compat.Java8Api.toList(((Collection<?>) (value)).stream().filter(Objects::nonNull).map(Object::toString));
     }
     private boolean reusableResult(Finding finding,Map<String,Object> parent,String currentTemplateSpecIdentity){
         if(CheckResolution.unresolved(finding))return false;
@@ -834,18 +835,18 @@ public class BidService {
             Map<String,Object> parent=store.getMap("run",parentRunId);
             if(!project.equals(text(parent,"projectId")))throw bad("检查记录不属于当前项目");
             String reviewMode=CheckReviewMode.of(parent);requireReviewMode(reviewMode);
-            if(!Set.of("COMPLETED","FAILED").contains(text(parent,"status")))throw bad("当前检查仍在执行，请等待本轮结束");
+            if(!cn.bidcheck.compat.Java8Api.setOf("COMPLETED", "FAILED").contains(text(parent,"status")))throw bad("当前检查仍在执行，请等待本轮结束");
             List<Checkpoint> checks=store.list("snapshot",project,parentRunId,Checkpoint.class);
             boolean parentTemplateRoute=Boolean.TRUE.equals(parent.get("templateRouteEnabled"));
             if(parentTemplateRoute&&!templateCheckIdentity().equals(text(parent,"templateCheckIdentity")))throw bad("固定检查模板或判定器已升级，请发起完整新检查；历史报告保持原样");
-            String parentTemplateSpecIdentity=text(parent,"templateSpecIdentity");final String frozenTemplateSpecIdentity=parentTemplateSpecIdentity.isBlank()?"UNAVAILABLE":parentTemplateSpecIdentity;
+            String parentTemplateSpecIdentity=text(parent,"templateSpecIdentity");final String frozenTemplateSpecIdentity=cn.bidcheck.compat.Java8Api.isBlank(parentTemplateSpecIdentity)?"UNAVAILABLE":parentTemplateSpecIdentity;
             Document bid=document(text(parent,"documentId"));scoped(bid,project,"BID");
-            String tenderId=text(parent,"tenderDocumentId");Document tender=tenderId.isBlank()?null:document(tenderId);if(tender!=null)scoped(tender,project,"TENDER");
+            String tenderId=text(parent,"tenderDocumentId");Document tender=cn.bidcheck.compat.Java8Api.isBlank(tenderId)?null:document(tenderId);if(tender!=null)scoped(tender,project,"TENDER");
             List<Map<String,Object>> inferenceDecisions=store.maps("inference_decided",project,bid.id());
-            var confirmations=InferenceConfirmationSnapshot.from(inferenceDecisions,bid,tender);
-            boolean confirmationChanged=!confirmations.digest().isBlank()&&!confirmations.digest().equals(text(parent,"inferenceConfirmationDigest"));
+            cn.bidcheck.service.InferenceConfirmationSnapshot.Snapshot confirmations=InferenceConfirmationSnapshot.from(inferenceDecisions,bid,tender);
+            boolean confirmationChanged=!cn.bidcheck.compat.Java8Api.isBlank(confirmations.digest())&&!confirmations.digest().equals(text(parent,"inferenceConfirmationDigest"));
             List<Finding> previous=store.list("finding",project,parentRunId,Finding.class);
-            var supplements=SupplementAttachmentSnapshot.from(CheckResolution.maps(parent.get("supplementManifest")),store.maps("supplement_attachment",project,parentRunId),previous);
+            cn.bidcheck.service.SupplementAttachmentSnapshot.Snapshot supplements=SupplementAttachmentSnapshot.from(CheckResolution.maps(parent.get("supplementManifest")),store.maps("supplement_attachment",project,parentRunId),previous);
             boolean supplementChanged=!supplements.digest().equals(text(parent,"supplementDigest"));
             boolean supplementOnly=supplementChanged&&!confirmationChanged;
             String policy=resolutionPolicyIdentity(),requestId=stableId("check-recovery:"+parentRunId+":"+policy+":"+text(parent,"templateSnapshotDigest")+":confirmations="+confirmations.digest()+":supplements="+supplements.digest());
@@ -860,11 +861,11 @@ public class BidService {
             if(supplementChanged){confirmationAffected.addAll(supplements.affectedCheckpointIds());LOG.info("bidcheck.supplement_recompute parentRunId={} manifestDigest={} attachmentCount={} affectedCheckpointIds={} scope=BOUND_ITEM_AND_EXPLICIT_DEPENDENCIES",parentRunId,supplements.digest(),supplements.manifest().size(),supplements.affectedCheckpointIds());}
             Map<String,Object> consistency=consistencyReport(parentRunId);
             if(confirmationChanged){
-                List<Map<String,Object>> cited=inferenceDecisions.stream().filter(c->"CONFIRMED".equals(text(c,"status"))).flatMap(c->CheckResolution.maps(c.get("evidences")).stream()).toList();
+                List<Map<String,Object>> cited=cn.bidcheck.compat.Java8Api.toList(inferenceDecisions.stream().filter(c->"CONFIRMED".equals(text(c,"status"))).flatMap(c->CheckResolution.maps(c.get("evidences")).stream()));
                 for(Map<String,Object> group:ConsistencyRunSupport.maps(consistency.get("groups")))if(CheckResolution.maps(group.get("evidences")).stream().anyMatch(e->cited.stream().anyMatch(c->text(e,"documentId").equals(text(c,"documentId"))&&Objects.equals(e.get("page"),c.get("page"))&&text(e,"locationType").equals(text(c,"locationType")))))
                     previous.stream().filter(f->f.id().equals(text(group,"findingId"))).map(f->f.checkpoint().id()).forEach(confirmationAffected::add);
             }
-            Set<String> confirmedTargets=Set.copyOf(confirmationAffected);
+            Set<String> confirmedTargets=cn.bidcheck.compat.Java8Api.setCopyOf(confirmationAffected);
             Set<String> found=previous.stream().map(f->f.checkpoint().id()).collect(java.util.stream.Collectors.toSet());
             boolean missing=checks.stream().anyMatch(c->!found.contains(c.id()));
             Map<String,Object> available=CheckResolution.summary(parent,previous,store.maps("check_resolution",project,parentRunId),policy);
@@ -872,7 +873,7 @@ public class BidService {
             String id=Store.id();TaskRow task=newTask(project,"CHECK",fields("runId",id,"documentId",bid.id()));
             List<String> templateRouteIds=stringList(CheckResolution.map(parent.get("templateRouting")).get("templateCheckpointIds"));
             Map<String,Object> run=new LinkedHashMap<>(parent);
-            for(String key:List.of("finishedAt","error","retrievalPreparation","atomicReferenceDates","atomicFactIdentity","resolutionSummary"))run.remove(key);
+            for(String key:cn.bidcheck.compat.Java8Api.listOf("finishedAt", "error", "retrievalPreparation", "atomicReferenceDates", "atomicFactIdentity", "resolutionSummary"))run.remove(key);
             run.putAll(fields("id",id,"taskId",task.id,"parentRunId",parentRunId,"recoveryOnly",true,"createdAt",now(),"status","PENDING","stage","等待补查未完成事项","progress",0,
                 "fingerprint",hash(parentRunId+policy+frozenTemplateSpecIdentity+"|reviewMode="+reviewMode+"|templateSnapshot="+text(parent,"templateSnapshotDigest")+"|confirmations="+confirmations.digest()+"|supplements="+supplements.digest()),"reviewMode",reviewMode,"reviewModeVersion",CheckReviewMode.VERSION,"ruleVersion",RULE_VERSION,"semanticConfiguration",semantic.identity(),"model",semanticModel(),
                 "checkMode",checkMode(),"onDemandPolicyVersion",onDemandPolicyVersion(),"ocrPreparationIdentity",ocrPreparationIdentity(),"ocrPreparationComplete",true,
@@ -887,14 +888,14 @@ public class BidService {
                 Map<String,Object> a=pending?new LinkedHashMap<>():new LinkedHashMap<>(CheckResolution.map(f.assessment()));a.remove("resolutionJob");
                 if(pending){
                     copyConsistencyLocation(a,CheckResolution.map(f.assessment()));
-                    List<Map<String,Object>> matching=ConsistencyRunSupport.maps(consistency.get("groups")).stream().filter(g->f.id().equals(text(g,"findingId"))).toList();
+                    List<Map<String,Object>> matching=cn.bidcheck.compat.Java8Api.toList(ConsistencyRunSupport.maps(consistency.get("groups")).stream().filter(g->f.id().equals(text(g,"findingId"))));
                     if(matching.size()==1)copyConsistencyGroupLocation(a,matching.get(0));
                 }
                 a.put("inheritedFrom",fields("runId",parentRunId,"findingId",f.id(),"pending",pending,"ruleVersion",parent.get("ruleVersion"),
                     "semanticConfiguration",parent.get("semanticConfiguration"),"focusedCheckIdentity",parent.get("focusedCheckIdentity"),"reusedConclusion",!pending,"previousEvaluation",f.evaluation()));
                 Evaluation published=f.evaluation();
                 if(pending){published=new Evaluation("UNDETERMINED","本项等待按当前规则重新核验；旧结论仅保留在来源批次。","继续已保存的补查任务。",f.evaluation().evidences(),0,"RECOVERY_PENDING");
-                    a.put("adjustments",List.of(fields("code","REQUIREMENT_RECHECK_PENDING","description","旧结论未作为本批次新结论使用。")));}
+                    a.put("adjustments",cn.bidcheck.compat.Java8Api.listOf(fields("code","REQUIREMENT_RECHECK_PENDING","description","旧结论未作为本批次新结论使用。")));}
                 Finding copy=new Finding(stableId(id+":"+f.checkpoint().id()),id,f.checkpoint(),published,FocusedCheckEvaluator.reconcileAssessment(published,a));
                 store.save("finding",copy.id(),project,id,copy);
                 if(pending)store.save("check_resolution",CheckResolution.jobId(id,f.checkpoint().id()),project,id,
@@ -906,9 +907,9 @@ public class BidService {
             Map<String,Map<String,Object>> priorReviews=new LinkedHashMap<>();
             CheckResolution.maps(parent.get("priorReviewRecords")).forEach(v->priorReviews.put(text(v,"id"),v));
             store.maps("review",project,null).stream().filter(v->parentRunId.equals(v.get("runId"))).forEach(v->priorReviews.put(text(v,"id"),v));
-            run.put("priorReviewRecords",List.copyOf(priorReviews.values()));
+            run.put("priorReviewRecords",cn.bidcheck.compat.Java8Api.listCopyOf(priorReviews.values()));
             store.save("run",id,project,bid.id(),run);store.insertNew("snapshot",project,id,checks,c->stableId(id+c.id()));
-            if(checkSpecifications!=null){Map<String,Object> templateSnapshot=text(parent,"templateSnapshotId").isBlank()
+            if(checkSpecifications!=null){Map<String,Object> templateSnapshot=cn.bidcheck.compat.Java8Api.isBlank(text(parent,"templateSnapshotId"))
                 ?checkSpecifications.snapshotForRun(project,id,checks,templateRouteIds)
                 :checkSpecifications.copySnapshotForRecovery(project,parentRunId,id);
                 run.put("templateSnapshotId",templateSnapshot.get("id"));run.put("templateSnapshotDigest",templateSnapshot.get("contentDigest"));run.put("templateRouting",templateSnapshot.get("routing"));store.save("run",id,project,bid.id(),run);}
@@ -928,28 +929,28 @@ public class BidService {
         });
     }
     private static void copyConsistencyLocation(Map<String,Object> target,Map<String,Object> source){
-        for(String key:List.of("consistencyGroupId","categoryId","relationType","ruleId","comparisonContext"))
+        for(String key:cn.bidcheck.compat.Java8Api.listOf("consistencyGroupId", "categoryId", "relationType", "ruleId", "comparisonContext"))
             if(source.containsKey(key))target.put(key,source.get(key));
     }
     private static void copyConsistencyGroupLocation(Map<String,Object> target,Map<String,Object> group){
-        if(text(group,"id").isBlank())return;
+        if(cn.bidcheck.compat.Java8Api.isBlank(text(group,"id")))return;
         target.put("consistencyGroupId",group.get("id"));copyConsistencyLocation(target,group);
     }
     /** Review receipts describe executed work; a model recommendation never replaces a business conclusion. */
     static Finding reviewedConsistencyFinding(Finding finding,Map<String,Object> group){return reviewedConsistencyFinding(finding,group,null);}
     static Finding reviewedConsistencyFinding(Finding finding,Map<String,Object> group,Evaluation derived){
-        if(!finding.id().equals(text(group,"findingId"))||text(group,"id").isBlank())return finding;
+        if(!finding.id().equals(text(group,"findingId"))||cn.bidcheck.compat.Java8Api.isBlank(text(group,"id")))return finding;
         Map<String,Object> assessment=new LinkedHashMap<>(CheckResolution.map(finding.assessment()));
         copyConsistencyGroupLocation(assessment,group);
         Map<String,Object> review=CheckResolution.map(group.get("targetedReview"));assessment.put("consistencyReview",review);
         Map<String,Object> inherited=new LinkedHashMap<>(CheckResolution.map(assessment.get("inheritedFrom")));
         boolean recoveryPending=Boolean.TRUE.equals(inherited.get("pending"))||"RECOVERY_PENDING".equals(finding.evaluation().method());
-        boolean received=ConsistencyDoubtReviewer.VERSION.equals(text(review,"policyVersion"))&&Set.of("RULE_CONFIRMED","LOCAL_RELATIONS_VERIFIED","EVIDENCE_AUGMENTED","MODEL_REVIEWED","EVIDENCE_INSUFFICIENT","MODEL_UNAVAILABLE","ERROR").contains(text(review,"status"));
+        boolean received=ConsistencyDoubtReviewer.VERSION.equals(text(review,"policyVersion"))&&cn.bidcheck.compat.Java8Api.setOf("RULE_CONFIRMED", "LOCAL_RELATIONS_VERIFIED", "EVIDENCE_AUGMENTED", "MODEL_REVIEWED", "EVIDENCE_INSUFFICIENT", "MODEL_UNAVAILABLE", "ERROR").contains(text(review,"status"));
         Evaluation evaluation=finding.evaluation();
         if(recoveryPending&&received){
             inherited.putAll(fields("pending",false,"rechecked",true,"reusedConclusion",false));assessment.put("inheritedFrom",inherited);
-            boolean failed=Set.of("ERROR","MODEL_UNAVAILABLE").contains(text(review,"status"));
-            List<Map<String,Object>> adjustments=new ArrayList<>(CheckResolution.maps(assessment.get("adjustments")).stream().filter(v->!"REQUIREMENT_RECHECK_PENDING".equals(text(v,"code"))).toList());
+            boolean failed=cn.bidcheck.compat.Java8Api.setOf("ERROR", "MODEL_UNAVAILABLE").contains(text(review,"status"));
+            List<Map<String,Object>> adjustments=new ArrayList<>(cn.bidcheck.compat.Java8Api.toList(CheckResolution.maps(assessment.get("adjustments")).stream().filter(v->!"REQUIREMENT_RECHECK_PENDING".equals(text(v,"code")))));
             if(failed)adjustments.add(fields("code","MODEL_CONSISTENCY_REVIEW_FAILED","description","本组定向复核尚未取得完整结果，已保存失败收据。"));
             assessment.put("adjustments",adjustments);
             assessment.put("consistencyRecoveryExecution",fields("status",failed?"FAILED":"FINISHED","reviewStatus",review.get("status"),"receiptSaved",true));
@@ -966,7 +967,7 @@ public class BidService {
                 assessment.put("consistencyRecoveryExecution",fields("status","FINISHED","reviewStatus",review.get("status"),"receiptSaved",true,"recomputed",true));
                 {
                     String originalTitle=text(assessment,"originalConsistencyTitle");
-                    if(originalTitle.isBlank())originalTitle=checkpoint.title().contains("已识别记录一致")&&!text(group,"title").isBlank()?text(group,"title"):checkpoint.title();
+                    if(cn.bidcheck.compat.Java8Api.isBlank(originalTitle))originalTitle=checkpoint.title().contains("已识别记录一致")&&!cn.bidcheck.compat.Java8Api.isBlank(text(group,"title"))?text(group,"title"):checkpoint.title();
                     assessment.putIfAbsent("originalConsistencyTitle",originalTitle);
                     String title="PASS".equals(derived.status())?originalTitle.replace("缺少比较依据","已识别记录一致").replace("存在疑似差异","已识别记录一致"):originalTitle;
                     checkpoint=new Checkpoint(checkpoint.id(),title,checkpoint.category(),checkpoint.severity(),checkpoint.type(),checkpoint.field(),checkpoint.operator(),checkpoint.expected(),checkpoint.unit(),checkpoint.required(),checkpoint.confirmed(),checkpoint.enabled(),checkpoint.source());
@@ -980,9 +981,9 @@ public class BidService {
         if(!project.containsKey("openingTime"))return c;
         boolean signing="FULL_TEXT_REVIEW".equals(c.type())&&"signingAfterOpening".equals(c.field());
         boolean certificate=("FULL_TEXT_REVIEW".equals(c.type())&&"certificateCoverage".equals(c.field())||"DATE_VALIDITY".equals(c.type()))
-            &&((c.expected()==null||c.expected().isBlank())||ProjectInformation.usesOpeningDate(c));
+            &&((c.expected()==null||cn.bidcheck.compat.Java8Api.isBlank(c.expected()))||ProjectInformation.usesOpeningDate(c));
         if(!signing&&!certificate)return c;
-        String expected="DATE_VALIDITY".equals(c.type())&&!opening.isBlank()?opening.substring(0,10):opening;
+        String expected="DATE_VALIDITY".equals(c.type())&&!cn.bidcheck.compat.Java8Api.isBlank(opening)?opening.substring(0,10):opening;
         return new Checkpoint(c.id(),c.title(),c.category(),c.severity(),c.type(),c.field(),c.operator(),expected,c.unit(),c.required(),c.confirmed(),c.enabled(),c.source());
     }
     public Map<String,Object> run(String id) { return run(id,true); }
@@ -994,7 +995,7 @@ public class BidService {
         for(Map<String,Object> job:resolutionJobs){Map<String,Object> display=new LinkedHashMap<>(job);
             if("FAILED".equals(r.get("status"))&&CheckResolution.ACTIVE.contains(text(display,"status"))){display.put("status","FAILED");display.put("stopReason","本轮执行中断，可恢复已保存的步骤。");}
             jobsByCheckpoint.put(text(job,"checkpointId"),display);}
-        findings=findings.stream().map(f->CheckResolution.attach(f,jobsByCheckpoint.get(f.checkpoint().id()))).toList();
+        findings=cn.bidcheck.compat.Java8Api.toList(findings.stream().map(f->CheckResolution.attach(f,jobsByCheckpoint.get(f.checkpoint().id()))));
         Map<String,Integer> order=new LinkedHashMap<>();
         for(Checkpoint checkpoint:store.list("snapshot",project,id,Checkpoint.class))order.putIfAbsent(checkpoint.id(),order.size());
         findings=new ArrayList<>(findings);
@@ -1002,23 +1003,23 @@ public class BidService {
         List<Map<String,Object>> summaries=store.documentSummaries(project);
         String bidId=text(r,"documentId"),tenderId=text(r,"tenderDocumentId");
         Set<String> legacyTenderIds=new HashSet<>();
-        if(tenderId.isBlank()) for(Finding finding:findings) if(finding.checkpoint().source()!=null) legacyTenderIds.add(finding.checkpoint().source().documentId());
+        if(cn.bidcheck.compat.Java8Api.isBlank(tenderId)) for(Finding finding:findings) if(finding.checkpoint().source()!=null) legacyTenderIds.add(finding.checkpoint().source().documentId());
         List<Document> scope=new ArrayList<>();
         for(Map<String,Object> summary:summaries) {
             String documentId=text(summary,"id"),role=text(summary,"role");
             if(project.equals(text(summary,"projectId")) && (("BID".equals(role)&&bidId.equals(documentId))
-                    ||("TENDER".equals(role)&&(tenderId.equals(documentId)||(tenderId.isBlank()&&legacyTenderIds.contains(documentId)))))) scope.add(document(documentId));
+                    ||("TENDER".equals(role)&&(tenderId.equals(documentId)||(cn.bidcheck.compat.Java8Api.isBlank(tenderId)&&legacyTenderIds.contains(documentId)))))) scope.add(document(documentId));
         }
         // Use this run's frozen tender version, never the project's newer active document.
         // Legacy runs with ambiguous tender versions retain the conservative grouping path.
-        List<Document> groupingTenders=scope.stream().filter(d->"TENDER".equals(d.role())).toList();
+        List<Document> groupingTenders=cn.bidcheck.compat.Java8Api.toList(scope.stream().filter(d->"TENDER".equals(d.role())));
         Document groupingTender=groupingTenders.size()==1?groupingTenders.get(0):null;
         Set<String> savedCheckpoints=findings.stream().map(f->f.checkpoint().id()).collect(java.util.stream.Collectors.toSet());
         int missingRecords=(int)order.keySet().stream().filter(cp->!savedCheckpoints.contains(cp)).count();
         Map<String,Object> publishedResultVersion=publishedTemplateResultVersion(id,"current");
-        return fields("run",r,"results",findings,"publishedResultVersion",publishedResultVersion,"resolutionSummary",CheckResolution.summary(r,findings,resolutionJobs,resolutionPolicyIdentity(),missingRecords),"inheritedReviews",r.getOrDefault("priorReviewRecords",List.of()),"reviews",store.maps("review",project,null).stream().filter(v->id.equals(v.get("runId"))).sorted(Comparator.comparing(v->Instant.parse(text(v,"createdAt")))).toList(),"documents",includeContent?store.list("document",project,null,Document.class):summaries,
+        return fields("run",r,"results",findings,"publishedResultVersion",publishedResultVersion,"resolutionSummary",CheckResolution.summary(r,findings,resolutionJobs,resolutionPolicyIdentity(),missingRecords),"inheritedReviews",r.getOrDefault("priorReviewRecords",cn.bidcheck.compat.Java8Api.listOf()),"reviews",cn.bidcheck.compat.Java8Api.toList(store.maps("review",project,null).stream().filter(v->id.equals(v.get("runId"))).sorted(Comparator.comparing(v->Instant.parse(text(v,"createdAt"))))),"documents",includeContent?store.list("document",project,null,Document.class):summaries,
             "ocrContext",reportOcrContext(findings,scope,r),"consistency",consistencyReport(id),"businessGroups",BusinessObligationGroups.summarize(findings,groupingTender),
-            "summary",cn.bidcheck.semantic.OnDemandSummary.summarize(r,findings,r.get("onDemandCheckpointCount") instanceof Number count?count.intValue():
+            "summary",cn.bidcheck.semantic.OnDemandSummary.summarize(r,findings,r.get("onDemandCheckpointCount") instanceof Number?((Number) (r.get("onDemandCheckpointCount"))).intValue():
                 (int)store.list("snapshot",project,id,Checkpoint.class).stream().filter(c->"SEMANTIC_RESPONSE".equals(c.type())).count()));
     }
 
@@ -1029,14 +1030,14 @@ public class BidService {
     public Map<String,Object> publishedTemplateResultVersion(String runId,String selector) {
         Map<String,Object> run=store.getMap("run",runId);String projectId=text(run,"projectId");
         String requested=selector==null?"source":selector.trim();
-        if(requested.isBlank()||"source".equalsIgnoreCase(requested))return Map.of();
+        if(cn.bidcheck.compat.Java8Api.isBlank(requested)||"source".equalsIgnoreCase(requested))return cn.bidcheck.compat.Java8Api.mapOf();
         String versionId=requested;
         if("current".equalsIgnoreCase(requested)){
             Stored head=store.mapper().get(cn.bidcheck.checktemplate.incremental.TemplateIncrementalPublicationService.headId(runId));
-            if(head==null)return Map.of();
+            if(head==null)return cn.bidcheck.compat.Java8Api.mapOf();
             if(!cn.bidcheck.checktemplate.incremental.TemplateIncrementalPublicationService.RESULT_HEAD_KIND.equals(head.kind)
                 ||!projectId.equals(head.projectId)||!runId.equals(head.parentId))throw new IllegalStateException("RESULT_VERSION_HEAD_SCOPE_MISMATCH");
-            versionId=text(store.map(head.body),"currentVersionId");if(versionId.isBlank())return Map.of();
+            versionId=text(store.map(head.body),"currentVersionId");if(cn.bidcheck.compat.Java8Api.isBlank(versionId))return cn.bidcheck.compat.Java8Api.mapOf();
         }
         Stored version=store.mapper().get(versionId);
         if(version==null||!cn.bidcheck.checktemplate.incremental.TemplateIncrementalPublicationService.RESULT_VERSION_KIND.equals(version.kind))
@@ -1058,22 +1059,22 @@ public class BidService {
     }
     private Map<String,Object> processingCoverageSnapshot(Document document) {
         Stored row=store.mapper().get(DocumentProcessingSession.summaryId(document.id()));
-        if(row==null||!document.projectId().equals(row.projectId)) return Map.of();
+        if(row==null||!document.projectId().equals(row.projectId)) return cn.bidcheck.compat.Java8Api.mapOf();
         Map<String,Object> saved=store.map(row.body);
         if(!document.id().equals(text(saved,"documentId"))||!document.sha256().equals(text(saved,"documentHash"))
-            ||!(saved.get("documentVersion") instanceof Number version)||version.intValue()!=document.version()) return Map.of();
+            ||!(saved.get("documentVersion") instanceof Number)||((Number) (saved.get("documentVersion"))).intValue()!=document.version()) return cn.bidcheck.compat.Java8Api.mapOf();
         Map<String,Object> snapshot=new LinkedHashMap<>();
-        for(String key:List.of("documentId","documentHash","documentVersion","identity","scope","checkScope","version","processingMode","visualAnalysisStatus","automaticVisualRequested","status","parsingComplete","processedPages","incompletePages","visualCalls","contextWindows","contextPending","contextReviewRequired","contextCompleted","contextNoFacts","contextNoFactPages","contextNoFactPageCount","contextLimitedPages","contextLimitedPageCount","contextCoverageLimitations","pageReviewRequired","visualBudget","visualDeferredForOcr","visualDeferralReason","updatedAt"))
+        for(String key:cn.bidcheck.compat.Java8Api.listOf("documentId", "documentHash", "documentVersion", "identity", "scope", "checkScope", "version", "processingMode", "visualAnalysisStatus", "automaticVisualRequested", "status", "parsingComplete", "processedPages", "incompletePages", "visualCalls", "contextWindows", "contextPending", "contextReviewRequired", "contextCompleted", "contextNoFacts", "contextNoFactPages", "contextNoFactPageCount", "contextLimitedPages", "contextLimitedPageCount", "contextCoverageLimitations", "pageReviewRequired", "visualBudget", "visualDeferredForOcr", "visualDeferralReason", "updatedAt"))
             if(saved.containsKey(key)) snapshot.put(key,saved.get(key));
         return snapshot;
     }
     private Map<String,Object> consistencyReport(String runId) {
         Stored report=store.mapper().get(ConsistencyRunSupport.reportId(runId));
-        if(report==null||!"consistency_report".equals(report.kind))return Map.of();
+        if(report==null||!"consistency_report".equals(report.kind))return cn.bidcheck.compat.Java8Api.mapOf();
         Map<String,Object> value=store.map(report.body);
         if(Boolean.TRUE.equals(value.get("reviewSnapshotComplete")))return value;
         // During a long review, persist only the changed group, not the entire occurrence corpus.
-        Map<String,Map<String,Object>> deltas=new HashMap<>();Map<String,Object> latest=Map.of();
+        Map<String,Map<String,Object>> deltas=new HashMap<>();Map<String,Object> latest=cn.bidcheck.compat.Java8Api.mapOf();
         for(Map<String,Object> delta:store.maps("consistency_review_group",report.projectId,runId)){
             if(!Objects.equals(value.get("documentId"),delta.get("documentId"))||!Objects.equals(value.get("documentHash"),delta.get("documentHash")))continue;
             deltas.put(text(delta,"groupId"),delta);
@@ -1090,8 +1091,8 @@ public class BidService {
     public Map<String,Object> review(String resultId,Map<String,Object> body) {
         Stored row=store.require("finding",resultId); Finding finding=store.decode(row.body,Finding.class);
         String status=text(body,"status"),note=text(body,"note"),reviewer=text(body,"reviewer");
-        if(!STATUSES.contains(status)||note.isBlank()||note.length()>3000||reviewer.length()>80) throw bad("请选择有效结论，并填写复核说明（不超过3000字）");
-        if(reviewer.isBlank()) reviewer="本机复核员";
+        if(!STATUSES.contains(status)||cn.bidcheck.compat.Java8Api.isBlank(note)||note.length()>3000||reviewer.length()>80) throw bad("请选择有效结论，并填写复核说明（不超过3000字）");
+        if(cn.bidcheck.compat.Java8Api.isBlank(reviewer)) reviewer="本机复核员";
         String id=Store.id(); Map<String,Object> review=fields("id",id,"resultId",resultId,"runId",finding.runId(),"status",status,"note",note,"reviewer",reviewer,"createdAt",now());
         store.save("review",id,row.projectId,resultId,review); return review;
     }
@@ -1121,29 +1122,21 @@ public class BidService {
     }
     public void execute(TaskRow task) throws Exception {
         Map<String,Object> input=store.map(task.inputJson);
-        switch(task.taskType) {
-            case "PARSE" -> {String documentId=text(input,"documentId");updateSupplementParse(documentId,task.projectId,"PARSING",null);try{parse(task,documentId);}catch(Exception failure){updateSupplementParse(documentId,task.projectId,"FAILED",failure.getClass().getSimpleName()+": "+Objects.toString(failure.getMessage(),"解析失败"));throw failure;}}
-            case "EXTRACT" -> extractTask(task,text(input,"documentId"));
-            case "CHECK" -> checkTask(task,text(input,"runId"),text(input,"documentId"));
-            case "VERIFY" -> verification.getObject().execute(task);
-            case "FACT_MIGRATE" -> migrateFactsTask(task);
-            case "PROCESS" -> {
+        switch (task.taskType) {case "PARSE":{String documentId=text(input,"documentId");updateSupplementParse(documentId,task.projectId,"PARSING",null);try{parse(task,documentId);}catch(Exception failure){updateSupplementParse(documentId,task.projectId,"FAILED",failure.getClass().getSimpleName()+": "+Objects.toString(failure.getMessage(),"解析失败"));throw failure;}} break;case "EXTRACT":extractTask(task,text(input,"documentId")); break;case "CHECK":checkTask(task,text(input,"runId"),text(input,"documentId")); break;case "VERIFY":verification.getObject().execute(task); break;case "FACT_MIGRATE":migrateFactsTask(task); break;case "PROCESS":{
                 if(!processingIdentity().equals(text(input,"processingIdentity")))throw bad("处理配置已变化，请重新发起继续处理");
                 Document doc=document(text(input,"documentId"));if(!doc.projectId().equals(task.projectId))throw bad("资料不属于当前项目");
                 progress(task,10,automaticVisualProcessingEnabled?"继续跨页理解与增量检查，复用已保存文字":"整理已保存文字与页码，更新文字处理记录");
-                var session=processingSession(task,doc,ExtractionPlan.full(),"",readCheckpoints(input.get("checks")));
+                cn.bidcheck.service.DocumentProcessingSession session=processingSession(task,doc,ExtractionPlan.full(),"",readCheckpoints(input.get("checks")));
                 session.finish(doc,path(doc.id()),processingVisual,Math.max(1,processingMaxVisualCalls),true,processingFullVisualHardLimit);
                 tx.executeWithoutResult(s->{progress(task,95,"保存继续处理结果");finish(task,automaticVisualProcessingEnabled?"增量处理结束，未完成材料及疑点请查看处理记录":"文字处理结束；图片和签章核验未请求，请在正式检查中核对全文上下文");});
-            }
-            default -> throw new IllegalStateException("未知任务类型");
-        }
+            } break;default:throw new IllegalStateException("未知任务类型");}
     }
     private void migrateFactsTask(TaskRow task) {
         String key="fact-migration:"+task.id;Stored prior=store.mapper().get(key);
-        Map<String,Object> state=prior==null?fields("taskId",task.id,"projectId",task.projectId,"storage","RELATIONAL_V3","nativeDocuments",0,"scanned",0,"migrated",0,"alreadyPresent",0,"rejected",0,"errors",Map.of(),"cursor","","status","RUNNING"):store.map(prior.body);
+        Map<String,Object> state=prior==null?fields("taskId",task.id,"projectId",task.projectId,"storage","RELATIONAL_V3","nativeDocuments",0,"scanned",0,"migrated",0,"alreadyPresent",0,"rejected",0,"errors",cn.bidcheck.compat.Java8Api.mapOf(),"cursor","","status","RUNNING"):store.map(prior.body);
         List<String> ids;
-        if(state.get("documentIds") instanceof List<?> list)ids=list.stream().map(Object::toString).toList();
-        else {ids=store.documentSummaries(task.projectId).stream().map(d->text(d,"id")).toList();if(ids.size()>2000)throw bad("迁移资料超过单次范围，请按项目分批处理");state.put("documentIds",ids);}
+        if(state.get("documentIds") instanceof List<?>)ids=cn.bidcheck.compat.Java8Api.toList(((List<?>) (state.get("documentIds"))).stream().map(Object::toString));
+        else {ids=cn.bidcheck.compat.Java8Api.toList(store.documentSummaries(task.projectId).stream().map(d->text(d,"id")));if(ids.size()>2000)throw bad("迁移资料超过单次范围，请按项目分批处理");state.put("documentIds",ids);}
         int already=((Number)state.get("nativeDocuments")).intValue();
         for(int index=already;index<ids.size();index++){
             String id=ids.get(index);int done=index+1;
@@ -1155,9 +1148,9 @@ public class BidService {
         while(more){
             Map<String,Object> batch=tx.execute(s->{progress(task,75,"校验并迁移历史来源事实");store.lock("project",task.projectId);
                 Map<String,Object> result=factLedger().migrateLegacyOccurrences(task.projectId,100,text(state,"cursor"));
-                for(String counter:List.of("scanned","migrated","alreadyPresent","rejected"))state.put(counter,((Number)state.get(counter)).intValue()+((Number)result.get(counter)).intValue());
-                Map<String,Object> errors=new LinkedHashMap<>();if(state.get("errors") instanceof Map<?,?> previous)previous.forEach((code,count)->errors.put(code.toString(),count));
-                if(result.get("errors") instanceof Map<?,?> next)next.forEach((code,count)->errors.merge(code.toString(),count,(a,b)->((Number)a).intValue()+((Number)b).intValue()));
+                for(String counter:cn.bidcheck.compat.Java8Api.listOf("scanned", "migrated", "alreadyPresent", "rejected"))state.put(counter,((Number)state.get(counter)).intValue()+((Number)result.get(counter)).intValue());
+                Map<String,Object> errors=new LinkedHashMap<>();if(state.get("errors") instanceof Map<?,?>)((Map<?,?>) (state.get("errors"))).forEach((code,count)->errors.put(code.toString(),count));
+                if(result.get("errors") instanceof Map<?,?>)((Map<?,?>) (result.get("errors"))).forEach((code,count)->errors.merge(code.toString(),count,(a,b)->((Number)a).intValue()+((Number)b).intValue()));
                 state.put("errors",errors);state.put("cursor",result.get("nextCursor"));state.put("hasMore",result.get("hasMore"));state.put("adoptedForRun",false);
                 store.save("fact_migration",key,task.projectId,task.id,state);return result;
             });
@@ -1177,9 +1170,9 @@ public class BidService {
         List<Checkpoint> frozenChecks=readCheckpoints(u.get("ocrPlanCheckpoints"));
         ExtractionPlan plan=Boolean.TRUE.equals(u.get("requireOcr"))?ExtractionPlan.full():initialPlan(text(u,"role"),text(u,"name"),frozenChecks);
         if(u.containsKey("ocrPlanHash")&&!plan.hash().equals(text(u,"ocrPlanHash")))throw bad("识别计划版本已变更，请重新上传或发起识别");
-        Document preparing=new Document(id,task.projectId,text(u,"role"),text(u,"name"),((Number)u.get("version")).intValue(),text(u,"sha256"),text(u,"createdAt"),List.of(),List.of());
-        var processing=processingSession(task,preparing,plan,text(u,"reprocessOf"),frozenChecks);
-        var extraction=parser.parsePlanned(path(id),text(u,"name"),(percent,stage)->{
+        Document preparing=new Document(id,task.projectId,text(u,"role"),text(u,"name"),((Number)u.get("version")).intValue(),text(u,"sha256"),text(u,"createdAt"),cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf());
+        cn.bidcheck.service.DocumentProcessingSession processing=processingSession(task,preparing,plan,text(u,"reprocessOf"),frozenChecks);
+        cn.bidcheck.document.ExtractionResult extraction=parser.parsePlanned(path(id),text(u,"name"),(percent,stage)->{
             long tick=System.nanoTime();
             if(percent>=100 || tick-lastUpdate[0]>=1_000_000_000L) {
                 progress(task,10+Math.max(0,Math.min(100,percent))/2,stage);lastUpdate[0]=tick;
@@ -1208,7 +1201,7 @@ public class BidService {
         List<Checkpoint> candidates=extractor.extract(d);
         cn.bidcheck.checktemplate.mapping.RequirementMappingSnapshot mapping=null;String mappingWarning="";
         if(requirementMappings!=null)try{mapping=requirementMappings.analyze(d);}catch(RuntimeException failure){mappingWarning="条款模板覆盖分析未完成，可在检查项页面重试";}
-        var preparedMapping=mapping;var preparedMappingWarning=mappingWarning;
+        cn.bidcheck.checktemplate.mapping.RequirementMappingSnapshot preparedMapping=mapping;java.lang.String preparedMappingWarning=mappingWarning;
         tx.executeWithoutResult(s->{
             progress(task,80,"保存候选检查项");
             Map<String,Object> project=store.map(store.lock("project",task.projectId).body);
@@ -1216,12 +1209,12 @@ public class BidService {
             project.put("activeTenderId",id);project.put("checkpointRuleVersion",RULE_VERSION);
             project.put("checkpointExtractionVersion",CheckpointExtractor.VERSION);
             Map<String,Object> versions=new LinkedHashMap<>();
-            if(project.get("checkpointRuleVersions") instanceof Map<?,?> previous)previous.forEach((key,value)->versions.put(key.toString(),value));
+            if(project.get("checkpointRuleVersions") instanceof Map<?,?>)((Map<?,?>) (project.get("checkpointRuleVersions"))).forEach((key,value)->versions.put(key.toString(),value));
             versions.put(id,RULE_VERSION);project.put("checkpointRuleVersions",versions);
-            var outcome=new CheckpointReconciler(store).reconcile(task.projectId,id,candidates,RULE_VERSION);
+            cn.bidcheck.service.CheckpointReconciler.Outcome outcome=new CheckpointReconciler(store).reconcile(task.projectId,id,candidates,RULE_VERSION);
             if(checkSpecifications!=null)checkSpecifications.ensureLegacyDrafts(task.projectId,id,activeCheckpoints(task.projectId,project));
             if(preparedMapping!=null){requirementMappings.persist(preparedMapping);project.remove("requirementMappingWarning");}
-            else if(!preparedMappingWarning.isBlank())project.put("requirementMappingWarning",preparedMappingWarning);
+            else if(!cn.bidcheck.compat.Java8Api.isBlank(preparedMappingWarning))project.put("requirementMappingWarning",preparedMappingWarning);
             project.put("checkpointExtractionWarnings",outcome.warnings());
             ProjectInformation.apply(d,project);store.save("project",task.projectId,task.projectId,"",project);
             finish(task,"当前共"+outcome.count()+"个检查项；新增或规则变更项请人工确认，已保存的调整保留");
@@ -1249,14 +1242,14 @@ public class BidService {
         tx.executeWithoutResult(s->{progress(task,4,"检查计划所需识别已结束");Map<String,Object> current=store.getMap("run",runId);
             current.putIfAbsent("inputDocumentId",documentId);current.put("documentId",d.id());current.put("documentVersion",d.version());current.put("ocrPreparationComplete",true);current.put("ocrPlan",ocrPlan(d.id()));store.save("run",runId,task.projectId,d.id(),current);});
         String tenderId=text(frozen,"tenderDocumentId");
-        Document tender=tenderId.isBlank()?null:document(tenderId);
+        Document tender=cn.bidcheck.compat.Java8Api.isBlank(tenderId)?null:document(tenderId);
         tx.executeWithoutResult(s->{
             progress(task,4,"记录本次文档处理覆盖范围");
             Map<String,Object> current=store.getMap("run",runId);
             if(!current.containsKey("processingCoverage")) {
                 List<Map<String,Object>> snapshots=new ArrayList<>();
                 snapshots.add(processingCoverageSnapshot(d));if(tender!=null)snapshots.add(processingCoverageSnapshot(tender));
-                current.put("processingCoverage",snapshots.stream().filter(v->!v.isEmpty()).toList());
+                current.put("processingCoverage",cn.bidcheck.compat.Java8Api.toList(snapshots.stream().filter(v->!v.isEmpty())));
                 store.save("run",runId,task.projectId,d.id(),current);
             }
         });
@@ -1271,7 +1264,7 @@ public class BidService {
         boolean templateOnly=allCheckpointsUseFrozenTemplates(task.projectId,runId,checkpoints);
         boolean explicitlyTargeted=Boolean.TRUE.equals(frozen.get("explicitTargetedRun"));
         long consistencyStarted=System.nanoTime();
-        Map<String,Object> consistency=templateOnly||explicitlyTargeted?Map.of():prepareConsistency(task,runId,d,tender,checkpoints);
+        Map<String,Object> consistency=templateOnly||explicitlyTargeted?cn.bidcheck.compat.Java8Api.mapOf():prepareConsistency(task,runId,d,tender,checkpoints);
         checkPhase(task,runId,explicitlyTargeted?"CONSISTENCY_SKIPPED_EXPLICIT_TARGETED_SCOPE":templateOnly?"CONSISTENCY_SKIPPED_TEMPLATE_ONLY":"CONSISTENCY_SCAN",consistencyStarted,ConsistencyRunSupport.maps(consistency.get("groups")).size());
         if(templateOnly)tx.executeWithoutResult(s->{String stage="固定模板按证据依赖执行，复用已保存文字与事实";
             progress(task,5,stage);updateRun(task,"RUNNING",5,stage,null);});
@@ -1282,7 +1275,7 @@ public class BidService {
                 String stage="准备全文检索索引（第 "+attempt+" 次，已完成片段可复用）";
                 tx.executeWithoutResult(s->{progress(task,5,stage);updateRun(task,"RUNNING",5,stage,null);});
                 long started=System.nanoTime();
-                var preparation=semantic.prepareRetrieval(d,metrics->{
+                cn.bidcheck.retrieval.RetrievalResult preparation=semantic.prepareRetrieval(d,metrics->{
                     String detail=stage+"："+Objects.toString(metrics.get("completedChunks"),"0")+" / "+Objects.toString(metrics.get("chunks"),"?")+" 段";
                     tx.executeWithoutResult(s->{progress(task,5,detail);updateRun(task,"RUNNING",5,detail,null);});
                 });
@@ -1292,11 +1285,11 @@ public class BidService {
                 preparations.add(entry);
                 tx.executeWithoutResult(s->{
                     progress(task,5,stage);
-                    Map<String,Object> run=store.getMap("run",runId);run.put("retrievalPreparation",List.copyOf(preparations));
+                    Map<String,Object> run=store.getMap("run",runId);run.put("retrievalPreparation",cn.bidcheck.compat.Java8Api.listCopyOf(preparations));
                     store.save("run",runId,task.projectId,d.id(),run);
                 });
                 if(!Boolean.TRUE.equals(preparation.diagnostics().get("retryableFailure"))
-                    &&!Set.of("RETRIEVAL_TIMEOUT","EMBEDDING_TIMEOUT").contains(text(preparation.diagnostics(),"failureCode"))) break;
+                    &&!cn.bidcheck.compat.Java8Api.setOf("RETRIEVAL_TIMEOUT", "EMBEDDING_TIMEOUT").contains(text(preparation.diagnostics(),"failureCode"))) break;
             }
         }
         OnDemandModelBudget modelBudget=new OnDemandModelBudget(store,tx,task,runId);
@@ -1309,15 +1302,15 @@ public class BidService {
                 // Revalidate against this immutable document and every original group record. A
                 // stored model receipt or a coverage boolean cannot itself authorize a conclusion.
                 Evaluation derived=ConsistencyDerivedConclusion.recompute(d,fields("documentId",d.id(),"documentHash",d.sha256(),
-                    "occurrences",consistency.getOrDefault("occurrences",List.of()),"groups",List.of(group),"confirmedEvidenceRelations",consistency.getOrDefault("confirmedEvidenceRelations",List.of()))).get(groupId);
+                    "occurrences",consistency.getOrDefault("occurrences",cn.bidcheck.compat.Java8Api.listOf()),"groups",cn.bidcheck.compat.Java8Api.listOf(group),"confirmedEvidenceRelations",consistency.getOrDefault("confirmedEvidenceRelations",cn.bidcheck.compat.Java8Api.listOf()))).get(groupId);
                 Map<String,Object> delta=fields("groupId",groupId,"documentId",d.id(),"documentHash",d.sha256(),"updatedAt",now(),
-                    "targetedReview",group.get("targetedReview"),"derivedConclusion",group.getOrDefault("derivedConclusion",Map.of()),"doubtReview",consistency.getOrDefault("doubtReview",Map.of()));
+                    "targetedReview",group.get("targetedReview"),"derivedConclusion",group.getOrDefault("derivedConclusion",cn.bidcheck.compat.Java8Api.mapOf()),"doubtReview",consistency.getOrDefault("doubtReview",cn.bidcheck.compat.Java8Api.mapOf()));
                 Store.PreparedRecord preparedGroup=store.prepareRecord("consistency_review_group",stableId(runId+":consistency-review:"+groupId),task.projectId,runId,delta);
                 tx.executeWithoutResult(s->{
                 String stage="全文一致性疑点复核："+text(group,"title");
                 progress(task,5,stage);updateRun(task,"RUNNING",5,stage,null);
                 String findingId=text(group,"findingId");
-                if(!findingId.isBlank()) {
+                if(!cn.bidcheck.compat.Java8Api.isBlank(findingId)) {
                     Finding originalFinding=store.get("finding",findingId,Finding.class);
                     Finding reviewed=reviewedConsistencyFinding(originalFinding,group,derived);
                     store.save("finding",findingId,task.projectId,runId,reviewed);
@@ -1330,7 +1323,7 @@ public class BidService {
             // Reconcile that saved receipt without repeating retrieval or model work.
             for(Map<String,Object> group:ConsistencyRunSupport.maps(consistency.get("groups"))){
                 Map<String,Object> review=CheckResolution.map(group.get("targetedReview"));String findingId=text(group,"findingId");
-                if(!ConsistencyDoubtReviewer.VERSION.equals(text(review,"policyVersion"))||"IN_PROGRESS".equals(text(review,"status"))||findingId.isBlank())continue;
+                if(!ConsistencyDoubtReviewer.VERSION.equals(text(review,"policyVersion"))||"IN_PROGRESS".equals(text(review,"status"))||cn.bidcheck.compat.Java8Api.isBlank(findingId))continue;
                 Finding saved=store.get("finding",findingId,Finding.class);
                 Map<String,Object> savedAssessment=CheckResolution.map(saved.assessment());
                 if("RECOVERY_PENDING".equals(saved.evaluation().method())||Boolean.TRUE.equals(CheckResolution.map(savedAssessment.get("inheritedFrom")).get("pending"))
@@ -1358,7 +1351,7 @@ public class BidService {
                 &&CheckResolution.ACTIVE.contains(text(store.map(job.body),"status")));
         }
         boolean focused="RULES_RETRIEVAL".equals(checkMode())&&focusedChecks!=null&&focusedContext!=null&&checkpoints.stream().anyMatch(c->focusedChecks.supports(c,reviewMode)&&!frozenTemplateRoute(task.projectId,runId,c));
-        List<Map<String,Object>> atomicOccurrences=processingOccurrences(List.of(d));
+        List<Map<String,Object>> atomicOccurrences=processingOccurrences(cn.bidcheck.compat.Java8Api.listOf(d));
         cn.bidcheck.verification.graph.FactLedgerEvidenceGraphBridge.PriorEvidenceReuse priorGraph=priorEvidenceGraph(task.projectId,runId,d);
         if(!priorGraph.occurrences().isEmpty()){
             LinkedHashMap<String,Map<String,Object>> combined=new LinkedHashMap<>();
@@ -1367,15 +1360,15 @@ public class BidService {
             // SharedFactReuse/ProofVerifier against the selected current source window.
             for(Map<String,Object> occurrence:priorGraph.occurrences())combined.put(text(occurrence,"occurrenceId"),occurrence);
             for(Map<String,Object> occurrence:atomicOccurrences)combined.putIfAbsent(text(occurrence,"occurrenceId"),occurrence);
-            atomicOccurrences=List.copyOf(combined.values());
+            atomicOccurrences=cn.bidcheck.compat.Java8Api.listCopyOf(combined.values());
         }
         Map<String,Object> graphAudit=priorGraph.audit();
         tx.executeWithoutResult(s->{Map<String,Object> current=store.getMap("run",runId);current.put("priorEvidenceGraphReuse",graphAudit);store.save("run",runId,task.projectId,d.id(),current);});
         java.util.function.Function<Checkpoint,Map<String,Object>> atomicContexts=focused
-            ?focusedContext.prepare(task,runId,d,tender,focusedChecks.identity(),atomicOccurrences,modelBudget::reserve):cp->Map.of();
+            ?focusedContext.prepare(task,runId,d,tender,focusedChecks.identity(),atomicOccurrences,modelBudget::reserve):cp->cn.bidcheck.compat.Java8Api.mapOf();
         AgentBusinessGroupReuse.Plan agentReuse=CheckReviewMode.AGENT.equals(reviewMode)
             ?AgentBusinessGroupReuse.plan(checkpoints,tender,cp->focused&&focusedChecks.supports(cp,reviewMode)
-                &&!frozenTemplateRoute(task.projectId,runId,cp)):new AgentBusinessGroupReuse.Plan(Map.of(),List.of());
+                &&!frozenTemplateRoute(task.projectId,runId,cp)):new AgentBusinessGroupReuse.Plan(cn.bidcheck.compat.Java8Api.mapOf(),cn.bidcheck.compat.Java8Api.listOf());
         Map<String,CompletableFuture<Finding>> agentGroupLeaders=new ConcurrentHashMap<>();
         agentReuse.groups().forEach(group->agentGroupLeaders.put(group.groupId(),new CompletableFuture<>()));
         if(agentReuse.reusableGroupCount()>0)LOG.info("bidcheck.agent_group_plan runId={} groups={} followerCheckpoints={} policy={}",runId,
@@ -1431,7 +1424,7 @@ public class BidService {
         java.util.function.BiConsumer<Integer,Finding> persist=(i,result)->{
             int done=completed[0]+1;
             int p=5+done*90/Math.max(1,checkpoints.size()); String stage="已检查 "+done+" / "+checkpoints.size();
-            DbTransactionRetry.executeWithoutResult(tx,"CHECK_RESULT_PUBLISH",Map.of("taskId",task.id,"runId",runId,"checkpointId",checkpoints.get(i).id()),s->{
+            DbTransactionRetry.executeWithoutResult(tx,"CHECK_RESULT_PUBLISH",cn.bidcheck.compat.Java8Api.mapOf("taskId", task.id, "runId", runId, "checkpointId", checkpoints.get(i).id()),s->{
                 progress(task,p,stage);
                 if(result!=null) {Finding published=withPreviousReference(result);store.save("finding",published.id(),task.projectId,runId,published);recordResolution(task,runId,published);}
                 updateRun(task,"RUNNING",p,task.stage,null);
@@ -1465,7 +1458,7 @@ public class BidService {
         if(leader==null)throw new IllegalStateException("AGENT_GROUP_LEADER_MISSING");
         try{return leader.get();}
         catch(InterruptedException stopped){Thread.currentThread().interrupt();throw new CancellationException("Agent 业务组复用等待已中断");}
-        catch(ExecutionException failed){Throwable cause=failed.getCause();if(cause instanceof RuntimeException runtime)throw runtime;if(cause instanceof Error error)throw error;
+        catch(ExecutionException failed){Throwable cause=failed.getCause();if(cause instanceof RuntimeException)throw ((RuntimeException) (cause));if(cause instanceof Error)throw ((Error) (cause));
             throw new IllegalStateException("Agent 业务组首项执行失败: "+runId+":"+checkpointId,cause);}
     }
     /** Finish source-dependency summaries after children/recovery publish their final proofs. */
@@ -1483,7 +1476,7 @@ public class BidService {
             assessment.put("requirementDependencyRecomputation",fields("version",cn.bidcheck.verification.engine.SourceRequirementInventory.VERSION,
                     "revision",context.getOrDefault("requirementDependencyRevision",""),"newModelCalls",0,"sourceRunId",runId));
             Finding published=withPreviousReference(new Finding(after.id(),after.runId(),after.checkpoint(),after.evaluation(),assessment));
-            DbTransactionRetry.executeWithoutResult(tx,"REQUIREMENT_DEPENDENCY_PUBLISH",Map.of("taskId",task.id,"runId",runId,"checkpointId",before.checkpoint().id()),s->{
+            DbTransactionRetry.executeWithoutResult(tx,"REQUIREMENT_DEPENDENCY_PUBLISH",cn.bidcheck.compat.Java8Api.mapOf("taskId", task.id, "runId", runId, "checkpointId", before.checkpoint().id()),s->{
                 progress(task,97,"汇总关联事项的最终结果");store.save("finding",published.id(),task.projectId,runId,published);recordResolution(task,runId,published);
             });
             recomputed++;
@@ -1537,16 +1530,16 @@ public class BidService {
             OnDemandModelBudget budget,java.util.function.Function<Checkpoint,Map<String,Object>> contexts){
         boolean agentOwned=CheckReviewMode.agent(store.getMap("run",runId));
         List<Checkpoint> recoveryCheckpoints=store.list("snapshot",task.projectId,runId,Checkpoint.class);
-        if(recoveryCheckpoints.isEmpty())recoveryCheckpoints=store.list("finding",task.projectId,runId,Finding.class).stream().map(Finding::checkpoint).toList();
+        if(recoveryCheckpoints.isEmpty())recoveryCheckpoints=cn.bidcheck.compat.Java8Api.toList(store.list("finding",task.projectId,runId,Finding.class).stream().map(Finding::checkpoint));
         AgentBusinessGroupReuse.Plan recoveryGroups=agentOwned&&focusedChecks!=null
             ?AgentBusinessGroupReuse.plan(recoveryCheckpoints,tender,cp->focusedChecks.supports(cp,CheckReviewMode.AGENT)&&!frozenTemplateRoute(task.projectId,runId,cp))
-            :new AgentBusinessGroupReuse.Plan(Map.of(),List.of());
+            :new AgentBusinessGroupReuse.Plan(cn.bidcheck.compat.Java8Api.mapOf(),cn.bidcheck.compat.Java8Api.listOf());
         tx.executeWithoutResult(s->{progress(task,96,"整理未完成义务与补查任务");
             for(Finding f:store.list("finding",task.projectId,runId,Finding.class))if(CheckResolution.unresolved(f)
                 &&store.mapper().get(CheckResolution.jobId(runId,f.checkpoint().id()))==null)recordResolution(task,runId,f);});
         while(true){
             tx.executeWithoutResult(s->{progress(task,96,"核对新增证据影响的检查条件");OrdinaryRecoveryDependencies.schedule(store,task.projectId,runId);});
-            List<Map<String,Object>> queued=store.maps("check_resolution",task.projectId,runId).stream().filter(j->CheckResolution.ACTIVE.contains(text(j,"status"))).toList();
+            List<Map<String,Object>> queued=cn.bidcheck.compat.Java8Api.toList(store.maps("check_resolution",task.projectId,runId).stream().filter(j->CheckResolution.ACTIVE.contains(text(j,"status"))));
             if(queued.isEmpty())break;
             for(Map<String,Object> pending:queued){
                 String checkpointId=text(pending,"checkpointId"),jobId=text(pending,"id");
@@ -1588,7 +1581,7 @@ public class BidService {
                     LOG.info("bidcheck.agent_review_recovery_gate runId={} checkpointId={} allowed=false reason=NO_NEW_RELEVANT_EVIDENCE",runId,checkpointId);continue;
                 }
                 // Generated consistency groups are recovered by their object-aware reviewer above.
-                if(CheckResolution.map(before.assessment()).containsKey("consistencyGroupId")||!Set.of("VERIFY_SOURCE_PAGES","QUERY_EXTERNAL","RESTORE_REQUIREMENT_SOURCE","RECOMPILE_REQUIREMENT","REPAIR_REQUIREMENT","RETRY_FAILED_STEP","TARGETED_EVIDENCE","RECOMPUTE_SHARED_EVIDENCE","SPLIT_FAILED_REQUEST").contains(strategy)){
+                if(CheckResolution.map(before.assessment()).containsKey("consistencyGroupId")||!cn.bidcheck.compat.Java8Api.setOf("VERIFY_SOURCE_PAGES", "QUERY_EXTERNAL", "RESTORE_REQUIREMENT_SOURCE", "RECOMPILE_REQUIREMENT", "REPAIR_REQUIREMENT", "RETRY_FAILED_STEP", "TARGETED_EVIDENCE", "RECOMPUTE_SHARED_EVIDENCE", "SPLIT_FAILED_REQUEST").contains(strategy)){
                     tx.executeWithoutResult(s->{progress(task,96,"保存补查结果");Map<String,Object> job=new LinkedHashMap<>(pending);
                         job.put("status","BLOCKED_NO_PROGRESS");job.put("stopReason","本轮可用策略已执行；保留具体证据缺口，等待规则或证据变化。");job.put("updatedAt",now());store.save("check_resolution",jobId,task.projectId,runId,job);});continue;
                 }
@@ -1610,7 +1603,7 @@ public class BidService {
                 RecoverySemanticGate.applyTargets(initialContext,semanticGate);
                 String input=CheckResolution.actionFingerprint(before,resolutionPolicyIdentity(),bid.sha256(),strategy,initialContext);
                 String attemptId=stableId(jobId+":"+input);Stored prior=store.mapper().get(attemptId);
-                if(prior!=null&&Set.of("FINISHED","NO_PROGRESS").contains(text(store.map(prior.body),"status"))){
+                if(prior!=null&&cn.bidcheck.compat.Java8Api.setOf("FINISHED", "NO_PROGRESS").contains(text(store.map(prior.body),"status"))){
                     tx.executeWithoutResult(s->{progress(task,96,"停止无新增证据的重复补查");Map<String,Object> job=new LinkedHashMap<>(pending);
                         job.put("status","BLOCKED_NO_PROGRESS");job.put("stopReason","相同策略和证据已经执行，未再次重复请求。");job.put("updatedAt",now());store.save("check_resolution",jobId,task.projectId,runId,job);});continue;
                 }
@@ -1626,7 +1619,7 @@ public class BidService {
                 Finding externalAfter=before;
                 if("VERIFY_SOURCE_PAGES".equals(strategy)&&verification!=null){
                     List<Map<String,Object>> previousObservations=CheckResolution.maps(context.get("visualObservations"));
-                    List<Map<String,Object>> observations=verification.getObject().collectCheckVisual(task,runId,before.checkpoint(),RecoveryInputs.visualRequest(before),List.of(bid),diagnostics,budget::reserve);
+                    List<Map<String,Object>> observations=verification.getObject().collectCheckVisual(task,runId,before.checkpoint(),RecoveryInputs.visualRequest(before),cn.bidcheck.compat.Java8Api.listOf(bid),diagnostics,budget::reserve);
                     tx.executeWithoutResult(s->{progress(task,96,"保存指定页面观察");for(Map<String,Object> observation:observations){String observationId=stableId(runId+":check-observation:"+checkpointId+":"+store.encode(observation));
                         Map<String,Object> value=new LinkedHashMap<>(observation);value.put("runId",runId);value.put("checkpointId",checkpointId);
                         store.save("check_visual_observation",observationId,task.projectId,runId,value);}});
@@ -1669,8 +1662,8 @@ public class BidService {
                 if("QUERY_EXTERNAL".equals(strategy)&&newExternalRecords.isEmpty())after=ExternalCheckRecovery.attachDiagnostics(after,diagnostics);
                 String outcome=CheckResolution.outcomeFingerprint(after);Map<String,Object> proofProgress=CheckResolution.progress(before,after);
                 boolean progressMade=Boolean.TRUE.equals(proofProgress.get("progressMade"));
-                Map<String,Object> recoveryInput=fields("mode",context.getOrDefault("recoveryMode","TARGETED"),"targetObligationIds",context.getOrDefault("recoveryTargetObligationIds",List.of()),
-                    "changedLocations",context.getOrDefault("recoveryChangedLocations",List.of()),"newObservationCount",newObservations.size(),
+                Map<String,Object> recoveryInput=fields("mode",context.getOrDefault("recoveryMode","TARGETED"),"targetObligationIds",context.getOrDefault("recoveryTargetObligationIds",cn.bidcheck.compat.Java8Api.listOf()),
+                    "changedLocations",context.getOrDefault("recoveryChangedLocations",cn.bidcheck.compat.Java8Api.listOf()),"newObservationCount",newObservations.size(),
                     "newExternalRecordCount",newExternalRecords.size(),"recomputed",businessRecomputed,"newModelCalls",!businessRecomputed?0:CheckResolution.map(CheckResolution.atomic(after).get("metrics")).getOrDefault("modelCalls",0),
                     "dependencyRevision",context.getOrDefault("recoveryDependencyRevision",""),"noopReason",context.getOrDefault("recoveryNoopReason",""));
                 Finding preserved=CheckResolution.protectCompletedProof(before,after);
@@ -1687,7 +1680,7 @@ public class BidService {
                 if(dependencyContinuation.containsKey("dependencyTargetObligationIds"))nextGateContext.put("recoveryTargetObligationIds",dependencyContinuation.get("dependencyTargetObligationIds"));
                 Map<String,Object> nextSemanticGate=RecoverySemanticGate.inspect(published,text(nextPlan,"strategy"),nextGateContext,nextHistory,resolutionPolicyIdentity());
                 RecoveryTransition.applySemanticGate(transition,nextSemanticGate);
-                Map<String,Object> failedOutcome=preserved==after?Map.of():fields("evaluation",after.evaluation(),"assessment",after.assessment());
+                Map<String,Object> failedOutcome=preserved==after?cn.bidcheck.compat.Java8Api.mapOf():fields("evaluation",after.evaluation(),"assessment",after.assessment());
                 tx.executeWithoutResult(s->{progress(task,96,"保存定向补查结果");store.save("finding",published.id(),task.projectId,runId,published);
                     OrdinaryRecoveryDependencies.bind(store,task.projectId,runId,published);
                     Map<String,Object> job=store.getMap("check_resolution",jobId);job.putAll(nextPlan);job.put("updatedAt",now());
@@ -1701,7 +1694,7 @@ public class BidService {
                     if(Boolean.TRUE.equals(transition.get("temporaryVisualFailure"))){long retryAt=store.maps("verification_visual_page_status",task.projectId,runId).stream()
                             .filter(v->"RETRY_PENDING".equals(text(v,"status"))).map(v->v.get("retryNotBeforeEpochMillis")).filter(Number.class::isInstance)
                             .mapToLong(v->((Number)v).longValue()).max().orElse(System.currentTimeMillis()+30000);job.put("retryNotBeforeEpochMillis",retryAt);}
-                    else if(nextPlan.get("retryNotBeforeEpochMillis") instanceof Number time)job.put("retryNotBeforeEpochMillis",time.longValue());
+                    else if(nextPlan.get("retryNotBeforeEpochMillis") instanceof Number)job.put("retryNotBeforeEpochMillis",((Number) (nextPlan.get("retryNotBeforeEpochMillis"))).longValue());
                     store.save("check_resolution",jobId,task.projectId,runId,job);
                     Map<String,Object> attempt=store.getMap("check_resolution_attempt",attemptId);
                     attempt.putAll(fields("outcomeFingerprint",outcome,"status",progressMade||requirementsRepaired||Boolean.TRUE.equals(transition.get("technicalRecovered"))?"FINISHED":"NO_PROGRESS","finishedAt",now(),"outcome",transition,
@@ -1713,7 +1706,7 @@ public class BidService {
                 LOG.info("bidcheck.resolution taskId={} runId={} checkpointId={} strategy={} durationMs={} progressMade={} requirementsRepaired={} businessComplete={} recomputed={} newModelCalls={} technicalRecovered={} processingFailed={} nextStrategy={} resolutionStatus={}",
                     task.id,runId,checkpointId,strategy,(System.nanoTime()-recoveryStarted)/1_000_000,progressMade,requirementsRepaired,!CheckResolution.unresolved(published),recoveryInput.get("recomputed"),recoveryInput.get("newModelCalls"),transition.get("technicalRecovered"),transition.get("processingFailed"),transition.get("nextStrategy"),transition.get("status"));
                 LOG.info("bidcheck.recovery_dependencies runId={} checkpointId={} strategy={} targets={} revision={} noopReason={} gapCodes={}",runId,checkpointId,strategy,
-                    recoveryInput.get("targetObligationIds"),recoveryInput.get("dependencyRevision"),recoveryInput.get("noopReason"),CheckResolution.maps(CheckResolution.atomic(before).get("gaps")).stream().map(g->text(g,"code")).filter(c->c.matches("[A-Z0-9_]{1,100}")).distinct().sorted().toList());
+                    recoveryInput.get("targetObligationIds"),recoveryInput.get("dependencyRevision"),recoveryInput.get("noopReason"),cn.bidcheck.compat.Java8Api.toList(CheckResolution.maps(CheckResolution.atomic(before).get("gaps")).stream().map(g->text(g,"code")).filter(c->c.matches("[A-Z0-9_]{1,100}")).distinct().sorted()));
                 LOG.info("bidcheck.recovery_semantic_gate runId={} checkpointId={} strategy={} allowed={} reason={} eligibleTargets={} blockedTargets={}",runId,checkpointId,text(nextPlan,"strategy"),nextSemanticGate.get("allowed"),nextSemanticGate.get("reasonCode"),nextSemanticGate.get("eligibleTargetIds"),nextSemanticGate.get("blockedTargetIds"));
             }
         }
@@ -1727,15 +1720,15 @@ public class BidService {
                 throw bad("全文扫描快照与当前检查版本不匹配，请重新发起检查");
             previous.put("confirmedEvidenceRelations",confirmedConsistencyRelations(runId,doc,tender));return previous;
         }
-        List<Map<String,Object>> requirementHints=checks.stream().filter(c->c.confirmed()&&c.enabled())
-                .map(c->fields("title",c.title(),"field",c.field(),"expected",Objects.toString(c.expected(),""))).toList();
+        List<Map<String,Object>> requirementHints=cn.bidcheck.compat.Java8Api.toList(checks.stream().filter(c->c.confirmed()&&c.enabled())
+                .map(c->fields("title",c.title(),"field",c.field(),"expected",Objects.toString(c.expected(),""))));
         Map<String,Object> report;
         if("RULES_RETRIEVAL".equals(checkMode())) {
             tx.executeWithoutResult(s->{progress(task,5,"本地全文规则扫描：按主体、项目及金额口径核对");updateRun(task,"RUNNING",5,task.stage,null);});
-            report=new LinkedHashMap<>(new ConsistencyEngine().scan(doc,List.of()));
+            report=new LinkedHashMap<>(new ConsistencyEngine().scan(doc,cn.bidcheck.compat.Java8Api.listOf()));
             Map<String,Object> coverage=new LinkedHashMap<>(ConsistencyRunSupport.map(report.get("coverage")));
             Map<String,Object> ruleScan=new LinkedHashMap<>();
-            for(String key:List.of("pagesTotal","pagesScanned","pagesUnparsed","pagesSkipped","status"))
+            for(String key:cn.bidcheck.compat.Java8Api.listOf("pagesTotal", "pagesScanned", "pagesUnparsed", "pagesSkipped", "status"))
                 if(coverage.containsKey(key))ruleScan.put(key,coverage.get(key));
             ruleScan.put("scope","ALL_DOCUMENT_TEXT");ruleScan.put("policyVersion",ConsistencyEngine.VERSION);
             coverage.put("ruleScan",ruleScan);coverage.put("checkMode","RULES_RETRIEVAL");
@@ -1743,7 +1736,7 @@ public class BidService {
                 "reason","本次执行全文本地规则和相关证据检索，复杂疑点按需调用模型；未请求全文生成式抽取。"));
             report.put("coverage",coverage);
         } else if(selected.isPresent()) {
-            var model=consistencyScanner().scan(doc,requirementHints,stage->tx.executeWithoutResult(s->{progress(task,5,stage);updateRun(task,"RUNNING",5,stage,null);}),consistencyCache(task,runId));
+            cn.bidcheck.consistency.ConsistencyModelScanner.Result model=consistencyScanner().scan(doc,requirementHints,stage->tx.executeWithoutResult(s->{progress(task,5,stage);updateRun(task,"RUNNING",5,stage,null);}),consistencyCache(task,runId));
             report=new LinkedHashMap<>(new ConsistencyEngine().scan(doc,model.facts()));
             Map<String,Object> coverage=new LinkedHashMap<>(ConsistencyRunSupport.map(report.get("coverage")));
             coverage.put("model",model.coverage());report.put("coverage",coverage);
@@ -1782,7 +1775,7 @@ public class BidService {
                     "policyVersion","full-text-consistency-v2","rawEvaluation",raw,"ocrReview",decision.review(),"adjustments",decision.adjustments())));
         }
         report.put("groups",groups);
-        if(selected.isEmpty()) {
+        if((!selected.isPresent())) {
             Map<String,Object> coverage=ConsistencyRunSupport.map(report.get("coverage"));
             Map<String,Object> persons=ConsistencyRunSupport.map(coverage.get("personCredentials"));
             if(persons.isEmpty())persons=coverage; // Legacy person-only reports retain their original shape.
@@ -1794,7 +1787,7 @@ public class BidService {
                 Evaluation coverageResult=new Evaluation("UNDETERMINED",rulesReview
                     ?"全文规则检查存在尚未读取、提取受限或来源未核实的位置；已扫描文字不等于全部信息已核实。"
                     :"人员及证件检查存在尚未完成的扫描或来源核验，详情见处理提示。",
-                    "查看尚未读取、未完成比较或未通过来源核验的位置，完成处理后可重新检查。",List.of(),0,method);
+                    "查看尚未读取、未完成比较或未通过来源核验的位置，完成处理后可重新检查。",cn.bidcheck.compat.Java8Api.listOf(),0,method);
                 findings.add(new Finding(id,runId,parent,coverageResult,fields("personCredentialCoverage",persons,
                     "fullTextRuleCoverage",coverage,"systemCheck",true)));
             }
@@ -1804,9 +1797,9 @@ public class BidService {
         return report;
     }
     private List<Map<String,Object>> confirmedConsistencyRelations(String runId,Document bid,Document tender){
-        if(inferenceConfirmations==null||inferenceConfirmations.getIfAvailable()==null)return List.of();
+        if(inferenceConfirmations==null||inferenceConfirmations.getIfAvailable()==null)return cn.bidcheck.compat.Java8Api.listOf();
         List<Map<String,Object>> stored=inferenceConfirmations.getObject().sharedConfirmedForRun(runId,bid.projectId(),bid,tender);
-        List<Document> documents=tender==null?List.of(bid):List.of(bid,tender);
+        List<Document> documents=tender==null?cn.bidcheck.compat.Java8Api.listOf(bid):cn.bidcheck.compat.Java8Api.listOf(bid, tender);
         List<Map<String,Object>> validated=cn.bidcheck.verification.engine.ConfirmedInferenceEvidence.validated(stored,documents);
         LOG.info("bidcheck.consistency_confirmation runId={} frozenRecords={} validatedRelations={} mode=SOURCE_SCOPED_NO_CONFLICT_OVERRIDE",runId,stored.size(),validated.size());return validated;
     }
@@ -1851,17 +1844,17 @@ public class BidService {
         SemanticAssessment assessment;
         if(frozenTemplateRoute(d.projectId(),runId,c)) {
             Optional<cn.bidcheck.checktemplate.CheckSpec> frozenSpec=checkSpecifications==null?Optional.empty():checkSpecifications.findSnapshotSpec(d.projectId(),runId,c.id());
-            if(frozenExplicitTemplateRoute(runId,c)&&frozenSpec.isEmpty()) {
-                Evaluation failed=new Evaluation("UNDETERMINED","已冻结的检查规格缺失或不可读，本项没有回退到其他判定路径。","修复检查规格快照后重新发起检查。",List.of(),0,"TEMPLATE_SNAPSHOT_INVALID");
+            if(frozenExplicitTemplateRoute(runId,c)&&(!frozenSpec.isPresent())) {
+                Evaluation failed=new Evaluation("UNDETERMINED","已冻结的检查规格缺失或不可读，本项没有回退到其他判定路径。","修复检查规格快照后重新发起检查。",cn.bidcheck.compat.Java8Api.listOf(),0,"TEMPLATE_SNAPSHOT_INVALID");
                 assessment=new SemanticAssessment(failed,failed,fields("templateTrace",fields("route","TEMPLATE","checkpointId",c.id(),"compileRequests",0,"failure","TEMPLATE_SNAPSHOT_INVALID"),
-                    "adjustments",List.of(fields("code","TEMPLATE_SNAPSHOT_INVALID","reason","固定模板快照缺失或损坏。"))));
+                    "adjustments",cn.bidcheck.compat.Java8Api.listOf(fields("code","TEMPLATE_SNAPSHOT_INVALID","reason","固定模板快照缺失或损坏。"))));
             } else {
                 cn.bidcheck.checktemplate.CheckSpec executableSpec=frozenSpec.orElseGet(()->templateChecks.toSpec(c,tender));
                 List<Fact> executableFacts=facts;
                 if(templateExternalEvidence!=null&&"EXTERNAL_CHECK".equals(executableSpec.templateId())){
                     List<Fact> externalFacts=templateExternalEvidence.resolve(d.projectId(),runId,executableSpec,facts);
                     if(!externalFacts.isEmpty())executableFacts=IncrementalCheckEngine.distinctEvidence(
-                        java.util.stream.Stream.concat(facts.stream(),externalFacts.stream()).toList());
+                        cn.bidcheck.compat.Java8Api.toList(java.util.stream.Stream.concat(facts.stream(),externalFacts.stream())));
                 }
                 cn.bidcheck.checktemplate.TemplateEvidenceAssembler.Assembly evidence=templateEvidence.assemble(executableSpec,c,d,tender,executableFacts);
                 cn.bidcheck.checktemplate.LegacyTemplateBridge.BridgeResult result=templateChecks.evaluate(executableSpec,evidence.evidenceView(),evidence.evidences());
@@ -1881,7 +1874,7 @@ public class BidService {
             assessment=new SemanticAssessment(summary,summary,fields("consistencyReportId",ConsistencyRunSupport.reportId(runId),"coverage",consistency.get("coverage")));
         }
         else if(CheckReviewMode.AGENT.equals(atomicContext.get("reviewMode"))&&"FULL_TEXT_REVIEW".equals(c.type())
-                &&Set.of("amountAccuracy","missingFields","signatureDate","signingAfterOpening","typos","certificateCoverage").contains(c.field())) {
+                &&cn.bidcheck.compat.Java8Api.setOf("amountAccuracy", "missingFields", "signatureDate", "signingAfterOpening", "typos", "certificateCoverage").contains(c.field())) {
             // These document-wide checks already have bounded program executors. Agent owns the
             // orchestration but delegates the scan to deterministic code; asking the model to
             // rediscover the same anomaly detector only adds cost and cannot improve coverage.
@@ -1890,11 +1883,11 @@ public class BidService {
                 "mode",CheckReviewMode.AGENT,"executor","DETERMINISTIC_FULL_TEXT_REVIEW","modelCalls",0,
                 "reason","该全文检查已有程序扫描器，由 Agent 主审流程直接调用并保留原文证据。")));
         }
-        else if(!CheckReviewMode.AGENT.equals(atomicContext.get("reviewMode"))&&!consistency.isEmpty()&&"ENTITY_FIELD_CONSISTENCY".equals(c.type())&&Set.of("companyName","personName").contains(c.field())
-                &&(c.expected()==null||c.expected().isBlank())) {
+        else if(!CheckReviewMode.AGENT.equals(atomicContext.get("reviewMode"))&&!consistency.isEmpty()&&"ENTITY_FIELD_CONSISTENCY".equals(c.type())&&cn.bidcheck.compat.Java8Api.setOf("companyName", "personName").contains(c.field())
+                &&(c.expected()==null||cn.bidcheck.compat.Java8Api.isBlank(c.expected()))) {
             // The legacy per-field cards must use the same current-project scope as the full-text report.
-            List<Map<String,Object>> groups=ConsistencyRunSupport.maps(consistency.get("groups")).stream().filter(g->c.field().equals(g.get("field"))).toList();
-            List<Evidence> evidence=groups.stream().flatMap(g->ConsistencyRunSupport.evidences(store,g.get("evidences")).stream()).distinct().toList();
+            List<Map<String,Object>> groups=cn.bidcheck.compat.Java8Api.toList(ConsistencyRunSupport.maps(consistency.get("groups")).stream().filter(g->c.field().equals(g.get("field"))));
+            List<Evidence> evidence=cn.bidcheck.compat.Java8Api.toList(groups.stream().flatMap(g->ConsistencyRunSupport.evidences(store,g.get("evidences")).stream()).distinct());
             boolean conflict=groups.stream().anyMatch(g->"CONFLICT".equals(g.get("status")));
             Evaluation scoped=new Evaluation(groups.isEmpty()?"UNDETERMINED":conflict?"FAIL":"WARNING",
                     groups.isEmpty()?"当前项目可对齐范围内未发现该字段冲突；未识别或范围不明的信息仍需核对。":groups.stream().map(g->text(g,"reason")).distinct().collect(java.util.stream.Collectors.joining("；")),
@@ -1913,15 +1906,15 @@ public class BidService {
         }
         else {
             Evaluation deterministic=engine.evaluate(c,d,facts,tender);
-            assessment=new SemanticAssessment(deterministic,deterministic,Map.of());
+            assessment=new SemanticAssessment(deterministic,deterministic,cn.bidcheck.compat.Java8Api.mapOf());
         }
-        List<Map<String,Object>> scopedSupplements=CheckResolution.maps(store.getMap("run",runId).get("supplementManifest")).stream()
-            .filter(row->c.id().equals(text(row,"checkpointId"))||stringList(row.get("affectedCheckpointIds")).contains(c.id())).toList();
+        List<Map<String,Object>> scopedSupplements=cn.bidcheck.compat.Java8Api.toList(CheckResolution.maps(store.getMap("run",runId).get("supplementManifest")).stream()
+            .filter(row->c.id().equals(text(row,"checkpointId"))||stringList(row.get("affectedCheckpointIds")).contains(c.id())));
         if(!scopedSupplements.isEmpty()&&(!assessment.audit().containsKey("atomicCheck"))){
             // Legacy/template scanners accept a single BID document. They must not claim that an
             // independent attachment was checked simply because the original BID still passes.
             Evaluation pending=new Evaluation("UNDETERMINED","补充材料已解析；本项当前判定路径尚未完成对独立补证的核验。","请查看本项补证及处理记录；原结论仅作历史参考。",assessment.evaluation().evidences(),0,"SUPPLEMENT_ANALYSIS_REQUIRED");
-            Map<String,Object> audit=new LinkedHashMap<>(assessment.audit());audit.put("preSupplementEvaluation",assessment.evaluation());audit.put("supplementProcessing",fields("status","EVALUATOR_NOT_CONNECTED","attachmentIds",scopedSupplements.stream().map(r->text(r,"attachmentId")).toList(),"checked",false));
+            Map<String,Object> audit=new LinkedHashMap<>(assessment.audit());audit.put("preSupplementEvaluation",assessment.evaluation());audit.put("supplementProcessing",fields("status","EVALUATOR_NOT_CONNECTED","attachmentIds",cn.bidcheck.compat.Java8Api.toList(scopedSupplements.stream().map(r->text(r,"attachmentId"))),"checked",false));
             audit.put("publicationGuard",fields("code","SUPPLEMENT_EVALUATOR_UNAVAILABLE","reason","独立补证尚未进入本项现有判定器，未据此形成结论。"));assessment=new SemanticAssessment(pending,assessment.rawEvaluation(),audit);
         }
         Evaluation beforeOcr=assessment.evaluation();
@@ -1930,11 +1923,11 @@ public class BidService {
         Evaluation e=decision.evaluation();
         Map<String,Object> trace=new LinkedHashMap<>(assessment.audit());
         List<Object> adjustments=new ArrayList<>();
-        if(trace.get("guards") instanceof List<?> guards) adjustments.addAll(guards);
+        if(trace.get("guards") instanceof List<?>) adjustments.addAll(((List<?>) (trace.get("guards"))));
         adjustments.addAll(decision.adjustments());
         if(("FAIL".equals(e.status())||"WARNING".equals(e.status()))&&(e.evidences()==null||e.evidences().isEmpty())&&c.source()==null) {
-            adjustments.add(Map.of("code","EVIDENCE_MISSING","reason","未获得可追溯证据。"));
-            e=new Evaluation("UNDETERMINED","未获得可追溯证据，需人工复核",e.suggestion(),List.of(),0,"EVIDENCE_GUARD");
+            adjustments.add(cn.bidcheck.compat.Java8Api.mapOf("code", "EVIDENCE_MISSING", "reason", "未获得可追溯证据。"));
+            e=new Evaluation("UNDETERMINED","未获得可追溯证据，需人工复核",e.suggestion(),cn.bidcheck.compat.Java8Api.listOf(),0,"EVIDENCE_GUARD");
         }
         if(trace.containsKey("policyVersion")) trace.put("semanticPolicyVersion",trace.get("policyVersion"));
         trace.put("policyVersion","evidence-review-v3");
@@ -1949,7 +1942,7 @@ public class BidService {
     /** Explicit production boundary for a semantic checkpoint without executable atomic context. */
     static SemanticAssessment atomicContextUnavailable(Checkpoint checkpoint){
         Evaluation pending=new Evaluation("UNDETERMINED","本检查项尚未建立可执行的原子规则与证据上下文，系统未调用旧版模型生成结论。",
-            "先完成检查项映射及证据字段绑定，再由程序规则自动重算。",List.of(),0,"ATOMIC_CONTEXT_UNAVAILABLE");
+            "先完成检查项映射及证据字段绑定，再由程序规则自动重算。",cn.bidcheck.compat.Java8Api.listOf(),0,"ATOMIC_CONTEXT_UNAVAILABLE");
         Map<String,Object> audit=fields("modelOutputRole","NOT_REQUESTED","legacySemanticFallback",false,
             "checkpointId",checkpoint==null?"":checkpoint.id(),"publicationGuard",fields("code","ATOMIC_CONTEXT_REQUIRED",
                 "reason","只有固定模板或来源已校验的原子事实可以进入程序结论计算。"));
@@ -1962,20 +1955,20 @@ public class BidService {
         templateDependencyGraphs.publish(projectId,runId,fragments,sourceResultDigest);}
     /** Builds the durable project evidence graph from every fact ledger used by this completed pass. */
     private void publishProjectEvidenceGraph(String projectId,String runId,Document bid){if(evidenceGraphs==null)return;
-        Map<String,Object> run=store.getMap("run",runId);List<String> identities=new ArrayList<>();identities.add(consistencyIdentity());String atomic=text(run,"atomicFactIdentity");if(!atomic.isBlank())identities.add(atomic);
-        String previousRevision="",parentRun=text(run,"parentRunId");if(!parentRun.isBlank())try{previousRevision=text(CheckResolution.map(store.getMap("run",parentRun).get("evidenceGraph")),"revisionId");}catch(RuntimeException ignored){/* a missing historical run is not a graph identity */}
+        Map<String,Object> run=store.getMap("run",runId);List<String> identities=new ArrayList<>();identities.add(consistencyIdentity());String atomic=text(run,"atomicFactIdentity");if(!cn.bidcheck.compat.Java8Api.isBlank(atomic))identities.add(atomic);
+        String previousRevision="",parentRun=text(run,"parentRunId");if(!cn.bidcheck.compat.Java8Api.isBlank(parentRun))try{previousRevision=text(CheckResolution.map(store.getMap("run",parentRun).get("evidenceGraph")),"revisionId");}catch(RuntimeException ignored){/* a missing historical run is not a graph identity */}
         // A normal rerun may reuse the latest stable graph without having a recovery parent. Keep
         // that revision as the comparison base so the newly published graph reports only actual
         // dependency changes instead of invalidating every graph-backed need.
-        if(previousRevision.isBlank()){Map<String,Object> reused=CheckResolution.map(run.get("priorEvidenceGraphReuse"));
+        if(cn.bidcheck.compat.Java8Api.isBlank(previousRevision)){Map<String,Object> reused=CheckResolution.map(run.get("priorEvidenceGraphReuse"));
             if("REVALIDATED".equals(reused.get("status")))previousRevision=text(reused,"revisionId");}
-        var refreshed=evidenceGraphs.refreshCombined(projectId,runId,identities,List.of(bid),previousRevision,List.of());var graph=refreshed.graph();
-        Map<String,Object> dependency=templateDependencyGraphs==null?Map.of():templateDependencyGraphs.get(runId);
-        Set<String> changedNeeds=cn.bidcheck.verification.graph.EvidenceGraphDependencyAdapter.affectedNeedKeys(dependency,graph.changedDependencyKeys());Set<String> checkpoints=Set.of();
-        if(templateDependencyGraphs!=null&&!dependency.isEmpty()&&dependency.get("revision") instanceof Number revision&&!changedNeeds.isEmpty())checkpoints=templateDependencyGraphs.plan(runId,revision.longValue(),changedNeeds).checkpointIds();
+        cn.bidcheck.verification.graph.FactLedgerEvidenceGraphBridge.RefreshResult refreshed=evidenceGraphs.refreshCombined(projectId,runId,identities,cn.bidcheck.compat.Java8Api.listOf(bid),previousRevision,cn.bidcheck.compat.Java8Api.listOf());cn.bidcheck.verification.graph.EvidenceGraph.BuildResult graph=refreshed.graph();
+        Map<String,Object> dependency=templateDependencyGraphs==null?cn.bidcheck.compat.Java8Api.mapOf():templateDependencyGraphs.get(runId);
+        Set<String> changedNeeds=cn.bidcheck.verification.graph.EvidenceGraphDependencyAdapter.affectedNeedKeys(dependency,graph.changedDependencyKeys());Set<String> checkpoints=cn.bidcheck.compat.Java8Api.setOf();
+        if(templateDependencyGraphs!=null&&!dependency.isEmpty()&&dependency.get("revision") instanceof Number&&!changedNeeds.isEmpty())checkpoints=templateDependencyGraphs.plan(runId,((Number) (dependency.get("revision"))).longValue(),changedNeeds).checkpointIds();
         String bindingId=stableId("evidence-graph-binding:"+runId);Map<String,Object> binding=fields("id",bindingId,"projectId",projectId,"runId",runId,
             "revisionId",graph.snapshot().revision().id(),"contentDigest",graph.snapshot().revision().contentDigest(),"manifestDigest",graph.snapshot().revision().manifestDigest(),
-            "occurrenceDigest",graph.snapshot().revision().occurrenceDigest(),"builderVersion",graph.snapshot().revision().builderVersion(),"sourceLedgerIdentities",identities.stream().distinct().sorted().toList(),
+            "occurrenceDigest",graph.snapshot().revision().occurrenceDigest(),"builderVersion",graph.snapshot().revision().builderVersion(),"sourceLedgerIdentities",cn.bidcheck.compat.Java8Api.toList(identities.stream().distinct().sorted()),
             "reused",graph.reused(),"previousRevisionId",graph.previousRevisionId(),"changedGraphDependencyKeys",graph.changedDependencyKeys(),"changedEvidenceNeedKeys",changedNeeds,"affectedCheckpointIds",checkpoints,
             "diagnostics",graph.snapshot().diagnostics(),"updatedAt",now());
         Set<String> finalCheckpoints=checkpoints;tx.executeWithoutResult(s->{store.lock("project",projectId);Map<String,Object> current=store.getMap("run",runId);store.save("evidence_graph_binding",bindingId,projectId,runId,binding);
@@ -1986,25 +1979,22 @@ public class BidService {
     /** Selects the latest completed, same-document graph revision and reopens only its supported
      * current-project source occurrences. A recovery parent is preferred when present. */
     private cn.bidcheck.verification.graph.FactLedgerEvidenceGraphBridge.PriorEvidenceReuse priorEvidenceGraph(String projectId,String runId,Document bid){
-        if(evidenceGraphs==null)return new cn.bidcheck.verification.graph.FactLedgerEvidenceGraphBridge.PriorEvidenceReuse(List.of(),Map.of(
-            "status","NOT_REUSED","reason","GRAPH_SERVICE_UNAVAILABLE","acceptedOccurrenceCount",0,"businessDecisionReused",false));
+        if(evidenceGraphs==null)return new cn.bidcheck.verification.graph.FactLedgerEvidenceGraphBridge.PriorEvidenceReuse(cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.mapOf("status", "NOT_REUSED", "reason", "GRAPH_SERVICE_UNAVAILABLE", "acceptedOccurrenceCount", 0, "businessDecisionReused", false));
         Map<String,Object> current=store.getMap("run",runId);List<Map<String,Object>> candidates=new ArrayList<>();
-        String parent=text(current,"parentRunId");if(!parent.isBlank())try{candidates.add(store.getMap("run",parent));}catch(RuntimeException ignored){/* fall through to other completed runs */}
+        String parent=text(current,"parentRunId");if(!cn.bidcheck.compat.Java8Api.isBlank(parent))try{candidates.add(store.getMap("run",parent));}catch(RuntimeException ignored){/* fall through to other completed runs */}
         store.maps("run",projectId,null).stream().filter(run->!runId.equals(text(run,"id"))&&"COMPLETED".equals(text(run,"status")))
-            .filter(run->bid.id().equals(text(run,"documentId"))&&run.get("documentVersion") instanceof Number version&&bid.version()==version.intValue())
+            .filter(run->bid.id().equals(text(run,"documentId"))&&run.get("documentVersion") instanceof Number&&bid.version()==((Number) (run.get("documentVersion"))).intValue())
             .sorted(Comparator.comparing((Map<String,Object> run)->text(run,"createdAt")).reversed()).forEach(candidates::add);
         Set<String> seen=new HashSet<>();
         for(Map<String,Object> candidate:candidates){String candidateRun=text(candidate,"id");if(!seen.add(candidateRun))continue;
-            String revision=text(CheckResolution.map(candidate.get("evidenceGraph")),"revisionId");if(revision.isBlank())continue;
-            var reuse=evidenceGraphs.reusableCurrentProjectOccurrences(projectId,revision,List.of(bid));
+            String revision=text(CheckResolution.map(candidate.get("evidenceGraph")),"revisionId");if(cn.bidcheck.compat.Java8Api.isBlank(revision))continue;
+            cn.bidcheck.verification.graph.FactLedgerEvidenceGraphBridge.PriorEvidenceReuse reuse=evidenceGraphs.reusableCurrentProjectOccurrences(projectId,revision,cn.bidcheck.compat.Java8Api.listOf(bid));
             if("REVALIDATED".equals(reuse.audit().get("status"))){Map<String,Object> audit=new LinkedHashMap<>(reuse.audit());audit.put("sourceRunId",candidateRun);
                 return new cn.bidcheck.verification.graph.FactLedgerEvidenceGraphBridge.PriorEvidenceReuse(reuse.occurrences(),audit);}
         }
-        return new cn.bidcheck.verification.graph.FactLedgerEvidenceGraphBridge.PriorEvidenceReuse(List.of(),Map.of(
-            "status","NOT_REUSED","reason","NO_STABLE_SAME_DOCUMENT_GRAPH","acceptedOccurrenceCount",0,
-            "candidateEdgesAccepted",0,"historicalEdgesAccepted",0,"unresolvedEdgesAccepted",0,"businessDecisionReused",false));
+        return new cn.bidcheck.verification.graph.FactLedgerEvidenceGraphBridge.PriorEvidenceReuse(cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.mapOf("status", "NOT_REUSED", "reason", "NO_STABLE_SAME_DOCUMENT_GRAPH", "acceptedOccurrenceCount", 0, "candidateEdgesAccepted", 0, "historicalEdgesAccepted", 0, "unresolvedEdgesAccepted", 0, "businessDecisionReused", false));
     }
-    public Map<String,Object> templateDependencyGraph(String runId){Map<String,Object> run=store.getMap("run",runId);String projectId=text(run,"projectId");if(projectId.isBlank()||templateDependencyGraphs==null)return Map.of();return templateDependencyGraphs.get(runId);}
+    public Map<String,Object> templateDependencyGraph(String runId){Map<String,Object> run=store.getMap("run",runId);String projectId=text(run,"projectId");if(cn.bidcheck.compat.Java8Api.isBlank(projectId)||templateDependencyGraphs==null)return cn.bidcheck.compat.Java8Api.mapOf();return templateDependencyGraphs.get(runId);}
 
     /**
      * Re-evaluates only checkpoints that were frozen on the template route for a completed run.
@@ -2022,15 +2012,15 @@ public class BidService {
         if(run.containsKey("resolutionPolicyIdentity")&&!resolutionPolicyIdentity().equals(text(run,"resolutionPolicyIdentity")))throw cn.bidcheck.checktemplate.TemplateApiException.conflict(
             "RESULT_POLICY_CHANGED","结果保护或证据复核策略已升级，请发起新的完整检查；历史结果保持原样",-1);
         Document bid=document(text(run,"documentId"));scoped(bid,projectId,"BID");String tenderId=text(run,"tenderDocumentId");
-        Document tender=tenderId.isBlank()?null:document(tenderId);if(tender!=null)scoped(tender,projectId,"TENDER");
+        Document tender=cn.bidcheck.compat.Java8Api.isBlank(tenderId)?null:document(tenderId);if(tender!=null)scoped(tender,projectId,"TENDER");
         List<Fact> facts=facts(bid.id());Map<String,Checkpoint> frozen=new LinkedHashMap<>();
         for(Checkpoint checkpoint:store.list("snapshot",projectId,runId,Checkpoint.class))frozen.put(checkpoint.id(),checkpoint);
-        List<String> targets=checkpointIds==null?List.of():checkpointIds.stream().filter(Objects::nonNull).map(String::trim).filter(v->!v.isBlank()).distinct().sorted().toList();
+        List<String> targets=checkpointIds==null?cn.bidcheck.compat.Java8Api.listOf():cn.bidcheck.compat.Java8Api.toList(checkpointIds.stream().filter(Objects::nonNull).map(String::trim).filter(v->!cn.bidcheck.compat.Java8Api.isBlank(v)).distinct().sorted());
         Map<String,Finding> candidates=new LinkedHashMap<>();
         for(String checkpointId:targets){Checkpoint checkpoint=frozen.get(checkpointId);
             if(checkpoint==null)throw bad("依赖图引用了不属于本次检查快照的检查项："+checkpointId);
             if(!frozenTemplateRoute(projectId,runId,checkpoint))throw bad("依赖图引用了非模板检查项："+checkpointId);
-            candidates.put(checkpointId,evaluateFinding(runId,checkpoint,bid,tender,facts,Map.of(),()->false,Map.of()));
+            candidates.put(checkpointId,evaluateFinding(runId,checkpoint,bid,tender,facts,cn.bidcheck.compat.Java8Api.mapOf(),()->false,cn.bidcheck.compat.Java8Api.mapOf()));
         }
         return Collections.unmodifiableMap(candidates);
     }
@@ -2038,11 +2028,11 @@ public class BidService {
     /** Stable identity for the current local evidence that a template candidate can consume. */
     public String templateEvidenceSnapshotDigest(String runId){
         Map<String,Object> run=store.getMap("run",runId);String projectId=text(run,"projectId");Document bid=document(text(run,"documentId"));scoped(bid,projectId,"BID");
-        String tenderId=text(run,"tenderDocumentId");Document tender=tenderId.isBlank()?null:document(tenderId);if(tender!=null)scoped(tender,projectId,"TENDER");
-        List<String> factSnapshot=facts(bid.id()).stream().map(store::encode).sorted().toList();Map<String,Object> evidence=new LinkedHashMap<>();
+        String tenderId=text(run,"tenderDocumentId");Document tender=cn.bidcheck.compat.Java8Api.isBlank(tenderId)?null:document(tenderId);if(tender!=null)scoped(tender,projectId,"TENDER");
+        List<String> factSnapshot=cn.bidcheck.compat.Java8Api.toList(facts(bid.id()).stream().map(store::encode).sorted());Map<String,Object> evidence=new LinkedHashMap<>();
         evidence.put("bid",templateDocumentIdentity(bid));evidence.put("bidProcessing",processingCoverageSnapshot(bid));evidence.put("facts",factSnapshot);
-        evidence.put("tender",tender==null?Map.of():templateDocumentIdentity(tender));evidence.put("tenderProcessing",tender==null?Map.of():processingCoverageSnapshot(tender));
-        evidence.put("externalRecords",store.maps(cn.bidcheck.checktemplate.TemplateExternalEvidenceService.RECORD_KIND,projectId,runId).stream().map(store::encode).sorted().toList());
+        evidence.put("tender",tender==null?cn.bidcheck.compat.Java8Api.mapOf():templateDocumentIdentity(tender));evidence.put("tenderProcessing",tender==null?cn.bidcheck.compat.Java8Api.mapOf():processingCoverageSnapshot(tender));
+        evidence.put("externalRecords",cn.bidcheck.compat.Java8Api.toList(store.maps(cn.bidcheck.checktemplate.TemplateExternalEvidenceService.RECORD_KIND,projectId,runId).stream().map(store::encode).sorted()));
         evidence.put("factRuleVersion",RULE_VERSION);evidence.put("templateEvidenceVersion",cn.bidcheck.checktemplate.TemplateEvidenceAssembler.VERSION);
         return hash(store.encode(evidence));
     }
@@ -2056,7 +2046,7 @@ public class BidService {
     private void updateRun(TaskRow task,String status,int progress,String stage,String error) {
         String id=text(store.map(task.inputJson),"runId"); Map<String,Object> run=store.getMap("run",id);
         run.put("status",status); run.put("progress",progress); run.put("stage",stage); run.put("error",error);
-        if(Set.of("COMPLETED","FAILED").contains(status)) run.put("finishedAt",now()); else run.remove("finishedAt");
+        if(cn.bidcheck.compat.Java8Api.setOf("COMPLETED", "FAILED").contains(status)) run.put("finishedAt",now()); else run.remove("finishedAt");
         if("FAILED".equals(status))for(Map<String,Object> pending:store.maps("check_resolution",task.projectId,id))if(CheckResolution.ACTIVE.contains(text(pending,"status"))){
             pending.put("status","FAILED");pending.put("stopReason","本轮执行中断，已完成证据保留，可继续未完成步骤。");pending.put("updatedAt",now());
             store.save("check_resolution",text(pending,"id"),task.projectId,id,pending);

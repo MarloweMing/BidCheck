@@ -20,14 +20,14 @@ class AgentGroupLocalModelBoundaryTest {
             public Map<String,Object> investigate(Map<String,Object> start,ToolHandler handler,Consumer<Map<String,Object>> event){throw new AssertionError("local recovery invoked Agent");}
         });
         String requirement="投标人须提交有效营业执照。";
-        Document tender=new Document("tender","p","TENDER","招标",1,"tender-hash","",List.of(new Page(1,requirement,"BLOCK","TEXT","")),List.of());
-        Document bid=new Document("bid","p","BID","投标",1,"bid-hash","",List.of(new Page(1,"投标人：甲公司","PAGE","PDF_TEXT","")),List.of());
+        Document tender=new Document("tender","p","TENDER","招标",1,"tender-hash","",cn.bidcheck.compat.Java8Api.listOf(new Page(1,requirement,"BLOCK","TEXT","")),cn.bidcheck.compat.Java8Api.listOf());
+        Document bid=new Document("bid","p","BID","投标",1,"bid-hash","",cn.bidcheck.compat.Java8Api.listOf(new Page(1,"投标人：甲公司","PAGE","PDF_TEXT","")),cn.bidcheck.compat.Java8Api.listOf());
         Checkpoint cp=new Checkpoint("follower","营业执照","资格检查","HIGH","SEMANTIC_RESPONSE","qualification","RESPONDS",requirement,"",true,true,true,new Evidence("tender","招标",1,"BLOCK",requirement,"",1));
         Map<String,Object> context=new LinkedHashMap<>();context.put("reviewMode","AGENT_LED");context.put("recoveryMode","EVIDENCE_RECOMPUTE");
-        context.put("recoveryStrategy","RECOMPUTE_SHARED_EVIDENCE");context.put("recoveryModelAllowed",false);context.put("priorSteps",List.of());
-        context.put("previousAtomicCheck",Map.of("plan",Map.of("rules",List.of()),"conditions",List.of()));
+        context.put("recoveryStrategy","RECOMPUTE_SHARED_EVIDENCE");context.put("recoveryModelAllowed",false);context.put("priorSteps",cn.bidcheck.compat.Java8Api.listOf());
+        context.put("previousAtomicCheck",cn.bidcheck.compat.Java8Api.mapOf("plan", cn.bidcheck.compat.Java8Api.mapOf("rules", cn.bidcheck.compat.Java8Api.listOf()), "conditions", cn.bidcheck.compat.Java8Api.listOf()));
         context.put("modelAttemptPermit",(BooleanSupplier)()->{permits.incrementAndGet();return false;});
-        Map<String,Object> result=assertDoesNotThrow(()->engine.evaluate(cp,List.of(bid),tender,context));
+        Map<String,Object> result=assertDoesNotThrow(()->engine.evaluate(cp,cn.bidcheck.compat.Java8Api.listOf(bid),tender,context));
         assertEquals(0,permits.get(),"local compilation/replay must avoid requesting even a model permit");
         assertEquals(0,((Number)((Map<?,?>)result.get("metrics")).get("modelCalls")).intValue());
         assertFalse(Thread.currentThread().isInterrupted(),"missing local proof is not task cancellation");

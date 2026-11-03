@@ -38,8 +38,8 @@ import static cn.bidcheck.service.BidService.*;
 public class VerificationService {
     private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(VerificationService.class);
     public static final String VERSION="automation-1.7-person-credential-information";
-    private static final Set<String> STAGES=Set.of("PRE_SUBMISSION","POST_SUBMISSION","EVALUATION");
-    private static final Set<String> EXTERNAL_KINDS=Set.of("REGISTRATION","CREDIT","BLACKLIST","RESTRICTED_SUPPLIER","SUBMISSION","PAYMENT","BIDDER_ROSTER","PRIOR_SERVICE","OTHER");
+    private static final Set<String> STAGES=cn.bidcheck.compat.Java8Api.setOf("PRE_SUBMISSION", "POST_SUBMISSION", "EVALUATION");
+    private static final Set<String> EXTERNAL_KINDS=cn.bidcheck.compat.Java8Api.setOf("REGISTRATION", "CREDIT", "BLACKLIST", "RESTRICTED_SUPPLIER", "SUBMISSION", "PAYMENT", "BIDDER_ROSTER", "PRIOR_SERVICE", "OTHER");
     private final BidService bids;
     private final Store store;
     private final VerificationEngine engine;
@@ -76,7 +76,7 @@ public class VerificationService {
     public Map<String,Object> configuration() {
         return fields("version",VERSION,"visualEnabled",visualEnabled,"maxVisualCalls",maxVisualCalls,"maxModelCalls",-1,"modelCallsUnlimited",true,
             "externalMode",externalAdapter.enabledTypes().isEmpty()?"SOURCE_RECORD_IMPORT":"CONFIGURED_CONNECTORS","externalConfigured",!externalAdapter.enabledTypes().isEmpty(),"externalLiveConnected",false,"externalTypes",externalAdapter.enabledTypes(),
-            "factLayerVersion",factLedger.identity(),"wordRendering",layouts.wordConfiguration(),"capabilities",List.of("资料集合与不可变修订","逐条件核验及证明路径","跨检查项事实复用","实体身份与事实冲突","结构化表格与跨页证明","Word渲染页面映射","定向补证","原图局部核验","来源记录导入","补资料自动续跑"));
+            "factLayerVersion",factLedger.identity(),"wordRendering",layouts.wordConfiguration(),"capabilities",cn.bidcheck.compat.Java8Api.listOf("资料集合与不可变修订", "逐条件核验及证明路径", "跨检查项事实复用", "实体身份与事实冲突", "结构化表格与跨页证明", "Word渲染页面映射", "定向补证", "原图局部核验", "来源记录导入", "补资料自动续跑"));
     }
     public String checkSourceIdentity(){return hash(VERSION+"|CHECK|"+visualEnabled+"|"+visuals.identity()+"|"+layouts.identity()+"|"+factLedger.identity()+"|EXTERNAL|"+externalAdapter.identity());}
     public List<Map<String,Object>> list(String project) { store.require("project",project);return store.maps("verification_run",project,null); }
@@ -86,14 +86,14 @@ public class VerificationService {
     private Map<String,Object> startLocked(String project,Map<String,Object> body,Map<String,Object> parent) {
         Map<String,Object> projectState=store.getMap("project",project);
         String sourceId=parent==null?text(body,"sourceRunId"):text(parent,"sourceRunId");
-        Map<String,Object> source=sourceId.isBlank()?Map.of():store.getMap("run",sourceId);
+        Map<String,Object> source=cn.bidcheck.compat.Java8Api.isBlank(sourceId)?cn.bidcheck.compat.Java8Api.mapOf():store.getMap("run",sourceId);
         if(!source.isEmpty()&&!project.equals(text(source,"projectId"))) throw bad("历史检查不属于本项目");
-        List<String> ids=body.containsKey("documentIds")?strings(body.get("documentIds")):parent!=null?strings(parent.get("documentIds")):List.of();
+        List<String> ids=body.containsKey("documentIds")?strings(body.get("documentIds")):parent!=null?strings(parent.get("documentIds")):cn.bidcheck.compat.Java8Api.listOf();
         if(body.containsKey("documentIds")&&ids.isEmpty()) throw bad("核验资料集合不能为空");
-        if(ids.isEmpty()&&!source.isEmpty()) ids=List.of(text(source,"documentId"));
+        if(ids.isEmpty()&&!source.isEmpty()) ids=cn.bidcheck.compat.Java8Api.listOf(text(source,"documentId"));
         if(ids.isEmpty()) {
-            List<Map<String,Object>> docs=store.documentSummaries(project).stream().filter(d->"BID".equals(d.get("role"))).toList();
-            if(!docs.isEmpty()) ids=List.of(text(docs.get(docs.size()-1),"id"));
+            List<Map<String,Object>> docs=cn.bidcheck.compat.Java8Api.toList(store.documentSummaries(project).stream().filter(d->"BID".equals(d.get("role"))));
+            if(!docs.isEmpty()) ids=cn.bidcheck.compat.Java8Api.listOf(text(docs.get(docs.size()-1),"id"));
         }
         if(ids.isEmpty()||ids.size()>24||new HashSet<>(ids).size()!=ids.size()) throw bad("请选择1至24份不同的核验资料");
         List<Document> documents=new ArrayList<>();
@@ -101,33 +101,33 @@ public class VerificationService {
         if(documents.stream().noneMatch(d->"BID".equals(d.role()))) throw bad("至少需要一份投标文件");
         if(documents.stream().mapToLong(d->d.pages().size()).sum()>20000) throw bad("资料集合过大，请按项目分批核验");
         String tenderId=value(body,parent,"tenderDocumentId");
-        if(tenderId.isBlank()) tenderId=text(source,"tenderDocumentId");
-        if(tenderId.isBlank()) tenderId=text(projectState,"activeTenderId");
+        if(cn.bidcheck.compat.Java8Api.isBlank(tenderId)) tenderId=text(source,"tenderDocumentId");
+        if(cn.bidcheck.compat.Java8Api.isBlank(tenderId)) tenderId=text(projectState,"activeTenderId");
         String frozenTender=parent!=null?text(parent,"tenderDocumentId"):text(source,"tenderDocumentId");
-        if(!frozenTender.isBlank()&&!frozenTender.equals(tenderId)) throw bad("历史检查的主招标依据已冻结；补充澄清请加入资料集合，更换主招标文件需重新确认检查项");
+        if(!cn.bidcheck.compat.Java8Api.isBlank(frozenTender)&&!frozenTender.equals(tenderId)) throw bad("历史检查的主招标依据已冻结；补充澄清请加入资料集合，更换主招标文件需重新确认检查项");
         Document tender=bids.document(tenderId);
         if(!project.equals(tender.projectId())||!"TENDER".equals(tender.role())) throw bad("请选择本项目招标文件");
-        String stage=value(body,parent,"evaluationStage");if(stage.isBlank()) stage="PRE_SUBMISSION";
+        String stage=value(body,parent,"evaluationStage");if(cn.bidcheck.compat.Java8Api.isBlank(stage)) stage="PRE_SUBMISSION";
         if(!STAGES.contains(stage)) throw bad("核验阶段无效");
         List<Checkpoint> checks=parent!=null?store.list("verification_check",project,text(parent,"id"),Checkpoint.class)
-            :sourceId.isBlank()?store.list("checkpoint",project,tenderId,Checkpoint.class):store.list("snapshot",project,sourceId,Checkpoint.class);
-        if(parent==null&&sourceId.isBlank())bids.requireCurrentCheckpointRules(projectState,checks,tenderId);
-        checks=checks.stream().filter(Checkpoint::enabled).toList();
+            :cn.bidcheck.compat.Java8Api.isBlank(sourceId)?store.list("checkpoint",project,tenderId,Checkpoint.class):store.list("snapshot",project,sourceId,Checkpoint.class);
+        if(parent==null&&cn.bidcheck.compat.Java8Api.isBlank(sourceId))bids.requireCurrentCheckpointRules(projectState,checks,tenderId);
+        checks=cn.bidcheck.compat.Java8Api.toList(checks.stream().filter(Checkpoint::enabled));
         if(checks.isEmpty()||checks.stream().anyMatch(c->!c.confirmed())) throw bad("请先确认启用的招标检查项");
         if(checks.size()>500) throw bad("单次最多核验500个检查项");
         Set<String> allowed=new LinkedHashSet<>(ids);allowed.add(tenderId);
-        List<Document> supplemental=documents.stream().filter(d->"TENDER".equals(d.role())&&!tender.id().equals(d.id())).toList();
+        List<Document> supplemental=cn.bidcheck.compat.Java8Api.toList(documents.stream().filter(d->"TENDER".equals(d.role())&&!tender.id().equals(d.id())));
         List<Map<String,Object>> changes=new ArrayList<>();for(Checkpoint cp:checks) {Map<String,Object> change=new LinkedHashMap<>(clarifications.assess(cp,supplemental));change.put("title",cp.title());changes.add(change);}
-        List<Map<String,Object>> accepted=new ArrayList<>(parent==null?List.of():maps(parent.get("acceptedCheckpointOverrides")));
+        List<Map<String,Object>> accepted=new ArrayList<>(parent==null?cn.bidcheck.compat.Java8Api.listOf():maps(parent.get("acceptedCheckpointOverrides")));
         List<Map<String,Object>> overrides=maps(body.get("acceptedCheckpointOverrides"));
         if(body.containsKey("acceptedCheckpointOverrides")&&overrides.isEmpty()) throw bad("请提供需要确认的规则修订");
         Set<String> changedIds=new HashSet<>();List<Checkpoint> revisedChecks=new ArrayList<>(checks);
         for(Map<String,Object> override:overrides) {
             String checkpointId=required(override,"checkpointId",64);if(!changedIds.add(checkpointId)||!Boolean.TRUE.equals(override.get("confirmed"))) throw bad("规则修订须逐项明确确认且不能重复");
             Checkpoint cp=checks.stream().filter(c->c.id().equals(checkpointId)).findFirst().orElseThrow(()->bad("规则修订不属于本次检查"));
-            Map<String,Object> change=changes.stream().filter(c->checkpointId.equals(c.get("checkpointId"))).findFirst().orElseThrow();
+            Map<String,Object> change=changes.stream().filter(c->checkpointId.equals(c.get("checkpointId"))).findFirst().orElseThrow(java.util.NoSuchElementException::new);
             if(Boolean.TRUE.equals(change.get("scanIncomplete"))) throw bad("澄清文件扫描范围尚未完整，请按明确项目范围拆分资料后再确认规则");
-            Set<String> candidateIds=new HashSet<>(maps(change.get("candidates")).stream().map(c->text(c,"id")).toList());
+            Set<String> candidateIds=new HashSet<>(cn.bidcheck.compat.Java8Api.toList(maps(change.get("candidates")).stream().map(c->text(c,"id"))));
             if(candidateIds.isEmpty()||!candidateIds.equals(new HashSet<>(strings(override.get("candidateIds"))))) throw bad("澄清候选范围已变化，请刷新后逐条确认");
             Map<String,Object> origin=map(override.get("source"));String sourceDocumentId=required(origin,"documentId",64),quote=required(origin,"quote",4000);
             Document sourceDocument=supplemental.stream().filter(d->d.id().equals(sourceDocumentId)).findFirst().orElseThrow(()->bad("新规则依据必须是本次选入的招标澄清文件"));
@@ -135,9 +135,9 @@ public class VerificationService {
             String expected=required(override,"expected",8000);Evidence evidence=new Evidence(sourceDocument.id(),sourceDocument.name(),location,sourcePage.locationType(),quote,"confirmed-amendment:"+hash(quote).substring(0,16),1);
             Checkpoint revision=new Checkpoint(cp.id(),cp.title(),cp.category(),cp.severity(),"SEMANTIC_RESPONSE",cp.field(),cp.operator(),expected,cp.unit(),cp.required(),true,cp.enabled(),evidence);
             revisedChecks.set(revisedChecks.indexOf(cp),revision);
-            accepted.add(fields("checkpointId",cp.id(),"beforeExpected",cp.expected(),"afterExpected",expected,"source",evidence,"candidateIds",candidateIds.stream().sorted().toList(),"confirmation","USER_CONFIRMED_RULE_REVISION"));
+            accepted.add(fields("checkpointId",cp.id(),"beforeExpected",cp.expected(),"afterExpected",expected,"source",evidence,"candidateIds",cn.bidcheck.compat.Java8Api.toList(candidateIds.stream().sorted()),"confirmation","USER_CONFIRMED_RULE_REVISION"));
         }
-        checks=List.copyOf(revisedChecks);
+        checks=cn.bidcheck.compat.Java8Api.listCopyOf(revisedChecks);
         for(Checkpoint cp:checks) if(cp.source()!=null&&!allowed.contains(cp.source().documentId())) throw bad("本次资料集合必须保留已确认规则的来源文件");
         for(Map<String,Object> change:changes) {
             Set<String> confirmed=new HashSet<>();accepted.stream().filter(a->Objects.equals(a.get("checkpointId"),change.get("checkpointId"))).forEach(a->confirmed.addAll(strings(a.get("candidateIds"))));
@@ -145,11 +145,11 @@ public class VerificationService {
         }
         String date=value(body,parent,"referenceDate"),dateSource=value(body,parent,"referenceDateSourceDocumentId");
         Map<String,Object> dateEvidence=referenceDate(project,date,dateSource,allowed);
-        List<Map<String,Object>> external=store.maps("verification_external",project,null).stream()
-            .filter(r->allowed.contains(text(r,"documentId"))).toList();
+        List<Map<String,Object>> external=cn.bidcheck.compat.Java8Api.toList(store.maps("verification_external",project,null).stream()
+            .filter(r->allowed.contains(text(r,"documentId"))));
         List<Map<String,Object>> manifest=new ArrayList<>();
         for(String id:allowed) {Document d=bids.document(id);manifest.add(fields("documentId",id,"role",d.role(),"name",d.name(),"version",d.version(),"sha256",d.sha256()));}
-        Map<String,Object> pricingData=body.containsKey("pricingData")?PricingInputValidator.validate(body.get("pricingData"),allowed.stream().map(bids::document).toList()):parent==null?Map.of():map(parent.get("pricingData"));
+        Map<String,Object> pricingData=body.containsKey("pricingData")?PricingInputValidator.validate(body.get("pricingData"),cn.bidcheck.compat.Java8Api.toList(allowed.stream().map(bids::document))):parent==null?cn.bidcheck.compat.Java8Api.mapOf():map(parent.get("pricingData"));
         if(!pricingData.isEmpty()) {
             // Normalize domain Evidence values before validating inherited source scope.
             Map<String,Object> encoded=store.map(store.encode(pricingData));List<Map<String,Object>> priceSources=new ArrayList<>();priceSources.add(map(encoded.get("rosterEvidence")));
@@ -173,7 +173,7 @@ public class VerificationService {
         store.save("verification_run",id,project,parentId,run);
         store.insertNew("verification_check",project,id,checks,c->stableId(id+":rule:"+c.id()));
         if(parent!=null&&configurationIdentity.equals(parent.get("configurationIdentity"))) {
-            for(Checkpoint cp:checks) for(Map<String,Object> step:changedIds.contains(cp.id())?List.<Map<String,Object>>of():store.maps("verification_step",project,stableId(parentId+":steps:"+cp.id()))) {
+            for(Checkpoint cp:checks) for(Map<String,Object> step:changedIds.contains(cp.id())?cn.bidcheck.compat.Java8Api.<Map<String,Object>>listOf():store.maps("verification_step",project,stableId(parentId+":steps:"+cp.id()))) {
                 if(!"COMPILE".equals(step.get("type"))||!"COMPLETED".equals(step.get("status"))) continue;
                 Map<String,Object> inherited=new LinkedHashMap<>(step);inherited.put("paidInPriorRevision",true);inherited.put("originRunId",parentId);inherited.put("runId",id);
                 store.save("verification_step",stableId(id+":"+cp.id()+":step:"+text(step,"id")),project,stableId(id+":steps:"+cp.id()),inherited);
@@ -182,9 +182,9 @@ public class VerificationService {
         return run;
     }
     private Map<String,Object> referenceDate(String project,String date,String documentId,Set<String> allowed) {
-        if(date.isBlank()) {if(!documentId.isBlank()) throw bad("请同时提供核验日期");return Map.of();}
+        if(cn.bidcheck.compat.Java8Api.isBlank(date)) {if(!cn.bidcheck.compat.Java8Api.isBlank(documentId)) throw bad("请同时提供核验日期");return cn.bidcheck.compat.Java8Api.mapOf();}
         try {LocalDate.parse(date);} catch(Exception e) {throw bad("核验日期必须是有效的YYYY-MM-DD日期");}
-        if(documentId.isBlank()||!allowed.contains(documentId)) throw bad("指定截止日必须引用本次资料集合中的招标或澄清文件");
+        if(cn.bidcheck.compat.Java8Api.isBlank(documentId)||!allowed.contains(documentId)) throw bad("指定截止日必须引用本次资料集合中的招标或澄清文件");
         Document d=bids.document(documentId);
         if(!project.equals(d.projectId())||!"TENDER".equals(d.role())) throw bad("日期依据必须是本项目招标或澄清文件");
         LocalDate target=LocalDate.parse(date);
@@ -194,8 +194,8 @@ public class VerificationService {
             String[] lines=Optional.ofNullable(p.text()).orElse("").split("\\R");
             for(int i=0;i<lines.length;i++) {
                 String line=lines[i];Matcher label=deadlineLabel.matcher(line);if(!label.find()) continue;
-                String value=line.substring(label.end()).strip(),quote=line;
-                if(value.matches("[\\s：:为是]*")&&i+1<lines.length) {value=lines[i+1].strip();quote=line+"\n"+lines[i+1];}
+                String value=cn.bidcheck.compat.Java8Api.strip(line.substring(label.end())),quote=line;
+                if(value.matches("[\\s：:为是]*")&&i+1<lines.length) {value=cn.bidcheck.compat.Java8Api.strip(lines[i+1]);quote=line+"\n"+lines[i+1];}
                 // A following field is not a continuation of the deadline value.
                 Matcher otherField=Pattern.compile("(?:合同|工期|开标|答疑|澄清|保证金|购买|发售).{0,10}(?:时间|日期|起算)|[；;。]").matcher(value);
                 if(otherField.find()) value=value.substring(0,otherField.start());
@@ -213,7 +213,7 @@ public class VerificationService {
         Map<String,Object> previous=store.getMap("verification_run",runId);String project=text(previous,"projectId");
         return tx.execute(s->{store.lock("project",project);Map<String,Object> parent=store.getMap("verification_run",runId);
             if(!runId.equals(text(latestRevision(project,text(parent,"rootRunId")),"id"))) throw new ResponseStatusException(HttpStatus.CONFLICT,"已有较新修订，请从最新版本继续");
-            if(!Set.of("COMPLETED","FAILED").contains(text(parent,"status"))) throw bad("当前核验尚在执行，请完成后再创建修订");
+            if(!cn.bidcheck.compat.Java8Api.setOf("COMPLETED", "FAILED").contains(text(parent,"status"))) throw bad("当前核验尚在执行，请完成后再创建修订");
             if(body.containsKey("expectedRevision")&&number(body.get("expectedRevision"),-1)!=number(parent.get("revision"),1)) throw new ResponseStatusException(HttpStatus.CONFLICT,"版本已变化，请刷新");
             return startLocked(project,body,parent);
         });
@@ -224,10 +224,10 @@ public class VerificationService {
         Set<String> scope=new HashSet<>(strings(run.get("documentIds")));scope.addAll(evidenceDocumentIds(run));scope.add(text(run,"tenderDocumentId"));
         Stored personnel=store.mapper().get(stableId(id+":person-credentials"));
         return fields("run",run,"results",results,"summary",summary(results,number(run.get("checkCount"),0)+number(run.get("systemCheckCount"),0)),
-            "personCredentialConsistency",personnel==null?Map.of():store.map(personnel.body),
-            "documents",store.documentSummaries(project).stream().filter(d->scope.contains(text(d,"id"))).toList(),
-            "inputs",store.maps("verification_input",project,null).stream().filter(i->text(run,"rootRunId").equals(text(i,"rootRunId"))).toList(),
-            "externalRecords",run.getOrDefault("externalRecords",List.of()),"externalQueries",store.maps("verification_query",project,id));
+            "personCredentialConsistency",personnel==null?cn.bidcheck.compat.Java8Api.mapOf():store.map(personnel.body),
+            "documents",cn.bidcheck.compat.Java8Api.toList(store.documentSummaries(project).stream().filter(d->scope.contains(text(d,"id")))),
+            "inputs",cn.bidcheck.compat.Java8Api.toList(store.maps("verification_input",project,null).stream().filter(i->text(run,"rootRunId").equals(text(i,"rootRunId")))),
+            "externalRecords",run.getOrDefault("externalRecords",cn.bidcheck.compat.Java8Api.listOf()),"externalQueries",store.maps("verification_query",project,id));
     }
     public Map<String,Object> proof(String runId,String checkpointId) {
         Map<String,Object> run=store.getMap("verification_run",runId);
@@ -242,25 +242,25 @@ public class VerificationService {
     }
     public Map<String,Object> factsForReport(String runId) {
         Map<String,Object> run=store.getMap("verification_run",runId);String frozenIdentity=text(run,"factIdentity");
-        if(frozenIdentity.isBlank()) return fields("runId",runId,"available",false,"reason","本次历史核验未建立统一事实库；历史结论保持原样","summary",fields("occurrences",0,"entities",0,"relations",0,"conflicts",0,"sharedOccurrences",0),"occurrences",List.of(),"entities",List.of(),"relations",List.of(),"conflicts",List.of());
-        List<Document> docs=evidenceDocumentIds(run).stream().map(bids::document).filter(d->"BID".equals(d.role())).toList();
+        if(cn.bidcheck.compat.Java8Api.isBlank(frozenIdentity)) return fields("runId",runId,"available",false,"reason","本次历史核验未建立统一事实库；历史结论保持原样","summary",fields("occurrences",0,"entities",0,"relations",0,"conflicts",0,"sharedOccurrences",0),"occurrences",cn.bidcheck.compat.Java8Api.listOf(),"entities",cn.bidcheck.compat.Java8Api.listOf(),"relations",cn.bidcheck.compat.Java8Api.listOf(),"conflicts",cn.bidcheck.compat.Java8Api.listOf());
+        List<Document> docs=cn.bidcheck.compat.Java8Api.toList(evidenceDocumentIds(run).stream().map(bids::document).filter(d->"BID".equals(d.role())));
         Map<String,Object> view=new LinkedHashMap<>(factLedger.view(text(run,"projectId"),runId,frozenIdentity,docs));
         Stored personnel=store.mapper().get(stableId(runId+":person-credentials"));
         if(personnel!=null) {
             Map<String,Object> report=store.map(personnel.body);
             view.put("personCredentialCoverage",report.get("coverage"));
             view.put("personCredentialGroups",report.get("groups"));
-            view.put("personCredentialInformationalGroups",report.getOrDefault("informationalGroups",List.of()));
+            view.put("personCredentialInformationalGroups",report.getOrDefault("informationalGroups",cn.bidcheck.compat.Java8Api.listOf()));
             Map<String,List<String>> ids=new HashMap<>();
             for(Map<String,Object> occurrence:maps(view.get("occurrences"))) {
                 String original=text(map(occurrence.get("attributes")),"id");
-                if(!original.isBlank())ids.computeIfAbsent(original,k->new ArrayList<>()).add(text(occurrence,"occurrenceId"));
+                if(!cn.bidcheck.compat.Java8Api.isBlank(original))ids.computeIfAbsent(original,k->new ArrayList<>()).add(text(occurrence,"occurrenceId"));
             }
             List<Map<String,Object>> conflicts=new ArrayList<>(maps(view.get("conflicts")));
             for(Map<String,Object> group:maps(report.get("groups"))) {
-                List<String> linked=strings(group.get("occurrenceIds")).stream().flatMap(id->ids.getOrDefault(id,List.of()).stream()).distinct().toList();
+                List<String> linked=cn.bidcheck.compat.Java8Api.toList(strings(group.get("occurrenceIds")).stream().flatMap(id->ids.getOrDefault(id,cn.bidcheck.compat.Java8Api.listOf()).stream()).distinct());
                 conflicts.add(fields("id",text(group,"id"),"status","REVIEW_REQUIRED","field",text(group,"fieldLabel"),"reason",text(group,"reason"),
-                    "sourceRefs",group.getOrDefault("evidences",List.of()),"occurrenceIds",linked,"identityStrength","CANDIDATE","personCredentialStatus",group.get("status")));
+                    "sourceRefs",group.getOrDefault("evidences",cn.bidcheck.compat.Java8Api.listOf()),"occurrenceIds",linked,"identityStrength","CANDIDATE","personCredentialStatus",group.get("status")));
             }
             Map<String,Object> summary=new LinkedHashMap<>(map(view.get("summary")));summary.put("conflicts",conflicts.size());
             view.put("summary",summary);view.put("stats",summary);view.put("conflicts",conflicts);
@@ -286,13 +286,13 @@ public class VerificationService {
             all.add(Boolean.TRUE.equals(run.get("ocrPreparationComplete"))||!"BID".equals(source.role())?source:bids.preparePlannedDocument(task,source,checks));
         }
         if(!Boolean.TRUE.equals(run.get("ocrPreparationComplete"))) {
-            List<Map<String,Object>> prepared=all.stream().map(d->fields("documentId",d.id(),"role",d.role(),"name",d.name(),"version",d.version(),"sha256",d.sha256(),"ocrPlan",bids.ocrPlan(d.id()))).toList();
+            List<Map<String,Object>> prepared=cn.bidcheck.compat.Java8Api.toList(all.stream().map(d->fields("documentId",d.id(),"role",d.role(),"name",d.name(),"version",d.version(),"sha256",d.sha256(),"ocrPlan",bids.ocrPlan(d.id()))));
             fenced(task,()->{Map<String,Object> current=store.getMap("verification_run",runId);
-                current.put("evidenceDocumentIds",all.stream().map(Document::id).toList());current.put("preparedManifest",prepared);current.put("ocrPreparationComplete",true);
+                current.put("evidenceDocumentIds",cn.bidcheck.compat.Java8Api.toList(all.stream().map(Document::id)));current.put("preparedManifest",prepared);current.put("ocrPreparationComplete",true);
                 store.save("verification_run",runId,task.projectId,text(current,"parentRunId"),current);run.putAll(current);
             });
         }
-        List<Document> bidDocs=all.stream().filter(d->"BID".equals(d.role())).toList();Document tender=bids.document(text(run,"tenderDocumentId"));
+        List<Document> bidDocs=cn.bidcheck.compat.Java8Api.toList(all.stream().filter(d->"BID".equals(d.role())));Document tender=bids.document(text(run,"tenderDocumentId"));
         preparePersonCredentials(task,runId,bidDocs);
         change(task,runId,2,"准备资料集合和证据位置");
         List<Map<String,Object>> layoutRefs=new ArrayList<>();
@@ -305,7 +305,7 @@ public class VerificationService {
             if(previousLayout==null||!"COMPLETE".equals(store.map(previousLayout.body).get("status"))) {
                 Map<String,Object> layout;
                 try {layout=layouts.layout(doc,bids.path(doc.id()));}
-                catch(IOException ex) {layout=fields("documentId",doc.id(),"status","UNAVAILABLE","reason","原件布局不可用，保留原文定位","pages",List.of());}
+                catch(IOException ex) {layout=fields("documentId",doc.id(),"status","UNAVAILABLE","reason","原件布局不可用，保留原文定位","pages",cn.bidcheck.compat.Java8Api.listOf());}
                 Map<String,Object> saved=layout;fenced(task,()->store.save("verification_layout",layoutId,task.projectId,doc.id(),saved));
             }
             layoutRefs.add(fields("documentId",doc.id(),"layoutId",layoutId));
@@ -316,15 +316,15 @@ public class VerificationService {
         Map<String,Object> base=fields("sourceRunId",text(run,"sourceRunId"),"referenceDate",text(run,"referenceDate"),
             "referenceDateSource",text(run,"referenceDateSourceDocumentId"),"referenceDateEvidence",run.get("referenceDateEvidence"),
             "evaluationStage",run.get("evaluationStage"),"externalRecords",run.get("externalRecords"),"analysisRevision",run.get("analysisRevision"),
-            "tenderDocuments",all.stream().filter(d->"TENDER".equals(d.role())).toList(),"documentSetComplete",false,"visualObservations",List.of(),"unlimitedModelCalls",true);
+            "tenderDocuments",cn.bidcheck.compat.Java8Api.toList(all.stream().filter(d->"TENDER".equals(d.role()))),"documentSetComplete",false,"visualObservations",cn.bidcheck.compat.Java8Api.listOf(),"unlimitedModelCalls",true);
         base.put("allowModelRuleCompilation",false);
         base.put("layoutLookup",layoutIndex);
         base.put("layoutIdentity",layouts.identity());
         base.put("processingOccurrences",bids.processingOccurrences(bidDocs));
-        base.put("pricingData",run.getOrDefault("pricingData",Map.of()));
+        base.put("pricingData",run.getOrDefault("pricingData",cn.bidcheck.compat.Java8Api.mapOf()));
         base.put("sharedFactIdentity",factIdentity);
         base.put("sharedFactLookup",(Function<Map<String,Object>,List<Map<String,Object>>>)request->factLedger.lookup(task.projectId,factIdentity,bidDocs,request));
-        base.put("evidenceOperationLookup",(Function<Map<String,Object>,Map<String,Object>>)request->evidenceOperations.completed(task.projectId,text(request,"operationKey")).orElse(Map.of()));
+        base.put("evidenceOperationLookup",(Function<Map<String,Object>,Map<String,Object>>)request->evidenceOperations.completed(task.projectId,text(request,"operationKey")).orElse(cn.bidcheck.compat.Java8Api.mapOf()));
         base.put("evidenceOperationRepository",evidenceOperations);
         // This callback is a durable pre-dispatch audit and lease fence, not a quota. Every request
         // that is still needed is admitted; a stopped/stolen task still fails before a paid call.
@@ -344,10 +344,10 @@ public class VerificationService {
                 // multipart partial commits remain in the fact ledger but never become cache hits.
                 List<Map<String,Object>> coverage=maps(batch.get("fieldCoverage"));Map<String,Object> partition=map(batch.get("observationPartition"));
                 boolean completeOperation="EXTRACTED".equals(batch.get("origin"))&&number(partition.get("parts"),1)==1&&!coverage.isEmpty()
-                    &&coverage.stream().allMatch(row->Boolean.TRUE.equals(row.get("sourceScopeComplete"))&&Set.of("EXTRACTED","READ_NOT_FOUND").contains(text(row,"status")));
+                    &&coverage.stream().allMatch(row->Boolean.TRUE.equals(row.get("sourceScopeComplete"))&&cn.bidcheck.compat.Java8Api.setOf("EXTRACTED", "READ_NOT_FOUND").contains(text(row,"status")));
                 if(completeOperation&&batch.get("evidenceOperationDescriptor") instanceof Map<?,?>){
                     Map<String,Object> descriptor=map(batch.get("evidenceOperationDescriptor"));String operationKey=text(batch,"evidenceOperationKey");
-                    evidenceOperations.publishCompleted(task.projectId,operationKey,descriptor,fields("facts",batch.getOrDefault("facts",List.of()),"sources",batch.getOrDefault("sources",List.of()),"fieldCoverage",coverage,"indexed",indexed));
+                    evidenceOperations.publishCompleted(task.projectId,operationKey,descriptor,fields("facts",batch.getOrDefault("facts",cn.bidcheck.compat.Java8Api.listOf()),"sources",batch.getOrDefault("sources",cn.bidcheck.compat.Java8Api.listOf()),"fieldCoverage",coverage,"indexed",indexed));
                 }
                 String eventId=stableId(runId+":fact-event:"+cp.id()+":"+hash(store.encode(batch)));
                 store.save("verification_fact_event",eventId,task.projectId,runId,fields("checkpointId",cp.id(),"result",indexed));
@@ -355,15 +355,15 @@ public class VerificationService {
             String stepParent=stableId(runId+":steps:"+cp.id());
             context.put("priorSteps",store.maps("verification_step",task.projectId,stepParent));
             context.put("stepObserver",(Consumer<Map<String,Object>>)step->{
-                String key=text(step,"id");if(key.isBlank()) key=hash(store.encode(step));
+                String key=text(step,"id");if(cn.bidcheck.compat.Java8Api.isBlank(key)) key=hash(store.encode(step));
                 String id=stableId(runId+":"+cp.id()+":step:"+key);Map<String,Object> saved=new LinkedHashMap<>(step);
                 saved.put("checkpointId",cp.id());saved.put("runId",runId);saved.put("savedAt",now());
                 fenced(task,()->store.save("verification_step",id,task.projectId,stepParent,saved));
             });
             Map<String,Object> amendment=maps(run.get("requirementChanges")).stream().filter(c->cp.id().equals(c.get("checkpointId"))&&Boolean.TRUE.equals(c.get("requiresConfirmation"))).findFirst().orElse(null);
-            Map<String,Object> result=amendment==null?pricing.evaluate(cp,context).orElseGet(()->engine.evaluate(cp,bidDocs,tender,context)):fields("businessDecision","UNDETERMINED","complete",false,"workflowState","NEEDS_REVIEW","decisionBasis","RULE_POLICY","obligations",List.of(),
-                "gaps",List.of(diagnostic("RULE_AMENDMENT_UNCONFIRMED","选入的招标澄清可能改变该项要求，需确认新规则后自动续跑","确认澄清后的完整规则及来源","REQUIREMENT_CONFIRMED")),
-                "evidences",maps(amendment.get("candidates")).stream().map(c->c.get("evidence")).toList(),"reason","澄清变更尚未确认，保留旧规则与新原文，不沿用旧门槛判为符合");
+            Map<String,Object> result=amendment==null?pricing.evaluate(cp,context).orElseGet(()->engine.evaluate(cp,bidDocs,tender,context)):fields("businessDecision","UNDETERMINED","complete",false,"workflowState","NEEDS_REVIEW","decisionBasis","RULE_POLICY","obligations",cn.bidcheck.compat.Java8Api.listOf(),
+                "gaps",cn.bidcheck.compat.Java8Api.listOf(diagnostic("RULE_AMENDMENT_UNCONFIRMED","选入的招标澄清可能改变该项要求，需确认新规则后自动续跑","确认澄清后的完整规则及来源","REQUIREMENT_CONFIRMED")),
+                "evidences",cn.bidcheck.compat.Java8Api.toList(maps(amendment.get("candidates")).stream().map(c->c.get("evidence"))),"reason","澄清变更尚未确认，保留旧规则与新原文，不沿用旧门槛判为符合");
             List<Map<String,Object>> diagnostics=new ArrayList<>();
             List<Map<String,Object>> observations=collectVisual(task,runId,cp,result,bidDocs,diagnostics);
             List<Map<String,Object>> externalObservations=collectExternal(task,runId,result,run,diagnostics);
@@ -375,9 +375,9 @@ public class VerificationService {
             normalized.put("checkpointId",cp.id());normalized.put("title",cp.title());normalized.put("checkpoint",cp);
             normalized.put("visualObservations",observations);normalized.put("externalObservations",externalObservations);normalized.put("createdAt",now());
             normalized.put("automationDiagnostics",diagnostics);
-            normalized.put("externalQueryDiagnostics",diagnostics.stream().filter(d->text(d,"code").startsWith("EXTERNAL_")).toList());
+            normalized.put("externalQueryDiagnostics",cn.bidcheck.compat.Java8Api.toList(diagnostics.stream().filter(d->text(d,"code").startsWith("EXTERNAL_"))));
             if(!Boolean.TRUE.equals(normalized.get("complete"))&&!diagnostics.isEmpty()) {
-                List<Map<String,Object>> gaps=new ArrayList<>(maps(normalized.get("gaps")));gaps.addAll(diagnostics.stream().filter(d->!Set.of("EXTERNAL_RECORD_RECEIVED","EXTERNAL_RECORD_NOT_FOUND","EXTERNAL_RECORD_INCONCLUSIVE").contains(text(d,"code"))).toList());normalized.put("gaps",gaps);
+                List<Map<String,Object>> gaps=new ArrayList<>(maps(normalized.get("gaps")));gaps.addAll(cn.bidcheck.compat.Java8Api.toList(diagnostics.stream().filter(d->!cn.bidcheck.compat.Java8Api.setOf("EXTERNAL_RECORD_RECEIVED", "EXTERNAL_RECORD_NOT_FOUND", "EXTERNAL_RECORD_INCONCLUSIVE").contains(text(d,"code")))));normalized.put("gaps",gaps);
                 if(diagnostics.stream().anyMatch(d->text(d,"code").contains("BUDGET_EXHAUSTED"))) normalized.put("workflowState","BUDGET_EXHAUSTED");
                 else if(diagnostics.stream().anyMatch(d->ExternalCheckState.systemFailure(text(d,"code"))||text(d,"code").contains("ENGINE_FAILURE")||text(d,"code").equals("VISUAL_NOT_CONFIGURED"))) normalized.put("workflowState","ENGINE_FAILURE");
             }
@@ -390,7 +390,7 @@ public class VerificationService {
                 store.save("verification_result",text(result,"id"),task.projectId,runId,result);
                 // Persist the verified fact graph in the same fenced transaction as its conclusion.
                 Map<String,Object> encoded=store.map(store.encode(result));
-                for(String kind:List.of("facts","relations")) for(Map<String,Object> item:maps(encoded.get(kind))) {
+                for(String kind:cn.bidcheck.compat.Java8Api.listOf("facts", "relations")) for(Map<String,Object> item:maps(encoded.get(kind))) {
                     Map<String,Object> snapshot=new LinkedHashMap<>(item);snapshot.put("runId",runId);snapshot.put("checkpointId",result.get("checkpointId"));snapshot.put("analysisRevision",run.get("analysisRevision"));
                     store.save("verification_"+kind,stableId(runId+":"+result.get("checkpointId")+":"+kind+":"+text(item,"id")),task.projectId,runId,snapshot);
                 }
@@ -404,7 +404,7 @@ public class VerificationService {
             store.lock("project",task.projectId);
             Map<String,Object> factSnapshot=factLedger.snapshot(task.projectId,runId,factIdentity,bidDocs);
             Map<String,Object> current=store.getMap("verification_run",runId);Map<String,Object> sum=summary(results,checks.size()+number(current.get("systemCheckCount"),0));
-            Map<String,Object> factSummary=new LinkedHashMap<>(map(factSnapshot.getOrDefault("summary",factSnapshot.getOrDefault("stats",Map.of()))));
+            Map<String,Object> factSummary=new LinkedHashMap<>(map(factSnapshot.getOrDefault("summary",factSnapshot.getOrDefault("stats",cn.bidcheck.compat.Java8Api.mapOf()))));
             Stored personnel=store.mapper().get(stableId(runId+":person-credentials"));
             if(personnel!=null) {
                 Map<String,Object> report=store.map(personnel.body);
@@ -424,15 +424,15 @@ public class VerificationService {
     private void publishEvidenceGraph(String projectId,String runId,List<Document> manifest,Map<String,Object> run) {
         if(evidenceGraphs==null)return;
         String previousRevision="",parentRunId=text(run,"parentRunId");
-        if(!parentRunId.isBlank())try{
+        if(!cn.bidcheck.compat.Java8Api.isBlank(parentRunId))try{
             previousRevision=text(map(store.getMap("verification_run",parentRunId).get("evidenceGraph")),"revisionId");
         }catch(RuntimeException ignored){/* a missing parent cannot supply a reusable graph revision */}
-        var refreshed=evidenceGraphs.refresh(projectId,runId,factIdentity,manifest,previousRevision,List.of());
-        var graph=refreshed.graph();String bindingId=stableId("evidence-graph-binding:"+runId);
+        cn.bidcheck.verification.graph.FactLedgerEvidenceGraphBridge.RefreshResult refreshed=evidenceGraphs.refresh(projectId,runId,factIdentity,manifest,previousRevision,cn.bidcheck.compat.Java8Api.listOf());
+        cn.bidcheck.verification.graph.EvidenceGraph.BuildResult graph=refreshed.graph();String bindingId=stableId("evidence-graph-binding:"+runId);
         Map<String,Object> binding=fields("id",bindingId,"projectId",projectId,"runId",runId,
             "revisionId",graph.snapshot().revision().id(),"contentDigest",graph.snapshot().revision().contentDigest(),
             "manifestDigest",graph.snapshot().revision().manifestDigest(),"occurrenceDigest",graph.snapshot().revision().occurrenceDigest(),
-            "builderVersion",graph.snapshot().revision().builderVersion(),"sourceLedgerIdentities",List.of(factIdentity),
+            "builderVersion",graph.snapshot().revision().builderVersion(),"sourceLedgerIdentities",cn.bidcheck.compat.Java8Api.listOf(factIdentity),
             "reused",graph.reused(),"previousRevisionId",graph.previousRevisionId(),
             "changedGraphDependencyKeys",graph.changedDependencyKeys(),"diagnostics",graph.snapshot().diagnostics(),"updatedAt",now());
         store.save("evidence_graph_binding",bindingId,projectId,runId,binding);
@@ -454,16 +454,16 @@ public class VerificationService {
             Checkpoint checkpoint=new Checkpoint(checkpointId,text(group,"title"),"人员及证件检查","HIGH","FULL_TEXT_REVIEW","personCredentialConsistency","REVIEW","核对同一人员及同类证件信息","",true,true,true,null);
             results.add(fields("id",stableId(runId+":result:"+checkpointId),"runId",runId,"checkpointId",checkpointId,"checkpoint",checkpoint,
                 "title",checkpoint.title(),"businessDecision","UNDETERMINED","complete",false,"workflowState","NEEDS_REVIEW","decisionBasis","SOURCE_GROUNDED_RULES",
-                "reason",text(group,"reason"),"gaps",List.of(diagnostic("PERSON_CREDENTIAL_"+text(group,"status"),text(group,"reason"),"核对各处原文及人员关联","MANUAL_REVIEW")),
-                "evidences",group.getOrDefault("evidences",List.of()),"obligations",List.of(),"systemCheck",true,"personCredentialGroup",group,"createdAt",now()));
+                "reason",text(group,"reason"),"gaps",cn.bidcheck.compat.Java8Api.listOf(diagnostic("PERSON_CREDENTIAL_"+text(group,"status"),text(group,"reason"),"核对各处原文及人员关联","MANUAL_REVIEW")),
+                "evidences",group.getOrDefault("evidences",cn.bidcheck.compat.Java8Api.listOf()),"obligations",cn.bidcheck.compat.Java8Api.listOf(),"systemCheck",true,"personCredentialGroup",group,"createdAt",now()));
         }
         if(PersonCredentialConsistency.requiresReview(coverage)) {
             String checkpointId="system-person-credential-coverage";
             Checkpoint checkpoint=new Checkpoint(checkpointId,"人员及证件扫描存在未完成项","人员及证件检查","HIGH","FULL_TEXT_REVIEW","personCredentialConsistency","REVIEW","扫描及来源核验未完成项须处理","",true,true,true,null);
             results.add(fields("id",stableId(runId+":result:"+checkpointId),"runId",runId,"checkpointId",checkpointId,"checkpoint",checkpoint,
                 "title",checkpoint.title(),"businessDecision","UNDETERMINED","complete",false,"workflowState","NEEDS_REVIEW","decisionBasis","SOURCE_GROUNDED_RULES",
-                "reason","存在未完成的扫描、比较或来源核验，详情见处理提示。","gaps",List.of(diagnostic("PERSON_CREDENTIAL_COVERAGE_PARTIAL","人员及证件检查存在技术处理未完成项","完成相关页面的识别或来源核验后重新检查","MANUAL_REVIEW")),
-                "evidences",List.of(),"obligations",List.of(),"systemCheck",true,"personCredentialCoverage",coverage,"createdAt",now()));
+                "reason","存在未完成的扫描、比较或来源核验，详情见处理提示。","gaps",cn.bidcheck.compat.Java8Api.listOf(diagnostic("PERSON_CREDENTIAL_COVERAGE_PARTIAL","人员及证件检查存在技术处理未完成项","完成相关页面的识别或来源核验后重新检查","MANUAL_REVIEW")),
+                "evidences",cn.bidcheck.compat.Java8Api.listOf(),"obligations",cn.bidcheck.compat.Java8Api.listOf(),"systemCheck",true,"personCredentialCoverage",coverage,"createdAt",now()));
         }
         fenced(task,()->{
             store.lock("project",task.projectId);
@@ -484,7 +484,20 @@ public class VerificationService {
         final Set<Integer> deferred=new HashSet<>();
         VisualGroup(String id,String operationKey,Map<String,Object> operationDescriptor,Document document,java.nio.file.Path original,List<Integer> pages,Map<String,Object> request){this.id=id;this.operationKey=operationKey;this.operationDescriptor=operationDescriptor;this.document=document;this.original=original;this.pages=pages;this.request=request;}
     }
-    private record VisualSubmission(VisualGroup group,List<Integer> pages,boolean split){}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class VisualSubmission{
+        private final VisualGroup group;
+        private final List<Integer> pages;
+        private final boolean split;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private VisualSubmission(@com.fasterxml.jackson.annotation.JsonProperty("group") VisualGroup group, @com.fasterxml.jackson.annotation.JsonProperty("pages") List<Integer> pages, @com.fasterxml.jackson.annotation.JsonProperty("split") boolean split) { this.group = group; this.pages = pages; this.split = split; }
+        public VisualGroup group() { return group; }
+        public List<Integer> pages() { return pages; }
+        public boolean split() { return split; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; VisualSubmission that = (VisualSubmission) other; return java.util.Objects.equals(this.group, that.group) && java.util.Objects.equals(this.pages, that.pages) && java.util.Objects.equals(this.split, that.split); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.group); hash = 31 * hash + java.util.Objects.hashCode(this.pages); hash = 31 * hash + java.util.Objects.hashCode(this.split); return hash; }
+        @Override public String toString() { return "VisualSubmission[" + "group=" + group + ", pages=" + pages + ", split=" + split + "]"; }
+}
     private List<Map<String,Object>> collectVisual(TaskRow task,String runId,Checkpoint cp,Map<String,Object> result,List<Document> documents,List<Map<String,Object>> diagnostics) {
         return collectVisual(task,runId,cp,result,documents,diagnostics,false,()->true);
     }
@@ -494,8 +507,8 @@ public class VerificationService {
         return collectVisual(task,runId,cp,result,documents,diagnostics,true,permit);
     }
     private void visualWrite(TaskRow task,String runId,boolean checkRun,Runnable action){
-        if(!checkRun){DbTransactionRetry.executeWithoutResult(tx,"VERIFY_VISUAL_PUBLISH",Map.of("taskId",task.id,"runId",runId),s->{fence(task);action.run();});return;}
-        DbTransactionRetry.executeWithoutResult(tx,"CHECK_VISUAL_PUBLISH",Map.of("taskId",task.id,"runId",runId),s->{
+        if(!checkRun){DbTransactionRetry.executeWithoutResult(tx,"VERIFY_VISUAL_PUBLISH",cn.bidcheck.compat.Java8Api.mapOf("taskId", task.id, "runId", runId),s->{fence(task);action.run();});return;}
+        DbTransactionRetry.executeWithoutResult(tx,"CHECK_VISUAL_PUBLISH",cn.bidcheck.compat.Java8Api.mapOf("taskId", task.id, "runId", runId),s->{
             fence(task);TaskRow current=store.mapper().task(task.id);Map<String,Object> run=store.map(store.lock("run",runId).body);
             if(current.attempt!=task.attempt||!task.projectId.equals(text(run,"projectId"))||!task.id.equals(text(run,"taskId"))||!"RUNNING".equals(text(run,"status")))throw new TaskLeaseLostException(task.id);
             action.run();fence(task);
@@ -503,7 +516,7 @@ public class VerificationService {
     }
     private List<Map<String,Object>> collectVisual(TaskRow task,String runId,Checkpoint cp,Map<String,Object> result,List<Document> documents,List<Map<String,Object>> diagnostics,boolean checkRun,BooleanSupplier checkPermit) {
         List<Map<String,Object>> requests=maps(result.get("visualRequests"));
-        if(!visualEnabled){if(!requests.isEmpty())diagnostics.add(diagnostic("VISUAL_NOT_CONFIGURED","原图核验服务尚未启用；已有文本结论保留","启用已配置的原图核验服务","SERVICE_AVAILABLE"));return List.of();}
+        if(!visualEnabled){if(!requests.isEmpty())diagnostics.add(diagnostic("VISUAL_NOT_CONFIGURED","原图核验服务尚未启用；已有文本结论保留","启用已配置的原图核验服务","SERVICE_AVAILABLE"));return cn.bidcheck.compat.Java8Api.listOf();}
         Map<String,VisualGroup> groups=new LinkedHashMap<>();Map<String,java.nio.file.Path> originals=new HashMap<>();
         for(Map<String,Object> request:requests){
             String docId=text(request,"documentId");Document doc=documents.stream().filter(d->d.id().equals(docId)).findFirst().orElse(null);
@@ -511,12 +524,12 @@ public class VerificationService {
             if(doc==null||doc.pages()==null||doc.pages().stream().noneMatch(p->p.number()==page))continue;
             Map<String,Object> prepared=cn.bidcheck.verification.source.VisualPageWindows.withRegion(doc,page,request);
             for(List<Integer> window:cn.bidcheck.verification.source.VisualPageWindows.forPage(doc,page,prepared)){
-                List<Map<String,Object>> sourcePages=doc.pages().stream().filter(p->window.contains(p.number())).map(p->fields("documentId",doc.id(),"documentHash",doc.sha256(),"documentVersion",doc.version(),"page",p.number(),"locationType",p.locationType(),"contentHash",hash(p.number()+"\n"+p.parser()+"\n"+p.text()+"\n"+(p.layout()==null?"":p.layout().toMap())))).toList();
+                List<Map<String,Object>> sourcePages=cn.bidcheck.compat.Java8Api.toList(doc.pages().stream().filter(p->window.contains(p.number())).map(p->fields("documentId",doc.id(),"documentHash",doc.sha256(),"documentVersion",doc.version(),"page",p.number(),"locationType",p.locationType(),"contentHash",hash(p.number()+"\n"+p.parser()+"\n"+p.text()+"\n"+(p.layout()==null?"":p.layout().toMap())))));
                 // Visual output depends on the normalized image/field request, not on the checkpoint
                 // that happened to request it. Keeping obligation ids and question text out of the
                 // durable key lets later checks reuse the same source-grounded observation.
                 Map<String,Object> visualRequest=fields("requestFingerprint",visuals.requestIdentity(doc,window,prepared));
-                Map<String,Object> descriptor=EvidenceOperationRepository.descriptor(task.projectId,"VISUAL_OBSERVATION",List.of(fields("documentId",doc.id(),"documentHash",doc.sha256(),"documentVersion",doc.version())),sourcePages,visualRequest,"",visuals.identity(),visuals.structuredWireVersion(),cn.bidcheck.verification.source.VisualObservationPolicy.VERSION);
+                Map<String,Object> descriptor=EvidenceOperationRepository.descriptor(task.projectId,"VISUAL_OBSERVATION",cn.bidcheck.compat.Java8Api.listOf(fields("documentId",doc.id(),"documentHash",doc.sha256(),"documentVersion",doc.version())),sourcePages,visualRequest,"",visuals.identity(),visuals.structuredWireVersion(),cn.bidcheck.verification.source.VisualObservationPolicy.VERSION);
                 String operationKey=EvidenceOperationRepository.key(descriptor),id=stableId("visual-window:"+operationKey);VisualGroup group=groups.get(id);
                 if(group==null){
                     java.nio.file.Path original=originals.get(docId);
@@ -530,7 +543,7 @@ public class VerificationService {
         Map<String,VisualSubmission> submissions=new LinkedHashMap<>();
         List<cn.bidcheck.verification.source.VisualWorkCoordinator.Job> jobs=new ArrayList<>();
         List<EvidenceOperationRepository.Lease> visualFlights=new ArrayList<>();
-        List<VisualGroup> orderedGroups=groups.values().stream().sorted(Comparator.comparing(group->group.operationKey)).toList();
+        List<VisualGroup> orderedGroups=cn.bidcheck.compat.Java8Api.toList(groups.values().stream().sorted(Comparator.comparing(group->group.operationKey)));
         for(VisualGroup group:orderedGroups){
             loadVisualGroupState(task,group);
             if(group.completed.size()==group.pages.size())continue;
@@ -549,7 +562,7 @@ public class VerificationService {
             }catch(java.io.InterruptedIOException interrupted){Thread.currentThread().interrupt();diagnostics.add(diagnostic("VISUAL_SINGLE_FLIGHT_INTERRUPTED","等待相同原图证据操作时已中断，未重复调用模型","继续运行后重试","SERVICE_AVAILABLE"));continue;}
             if(!group.deferred.isEmpty())diagnostics.add(diagnostic("VISUAL_RETRY_PENDING","原图服务冷却中，已保留完成页面；未完成位置将在下次继续时重试","待服务冷却结束后继续","SERVICE_AVAILABLE"));
             if(group.completed.isEmpty()&&group.deferred.isEmpty())jobs.add(visualJob(group,group.pages,false,runId,submissions));
-            else for(int page:group.pages)if(!group.completed.containsKey(page)&&!group.deferred.contains(page)){group.splitPages.add(page);jobs.add(visualJob(group,List.of(page),true,runId,submissions));}
+            else for(int page:group.pages)if(!group.completed.containsKey(page)&&!group.deferred.contains(page)){group.splitPages.add(page);jobs.add(visualJob(group,cn.bidcheck.compat.Java8Api.listOf(page),true,runId,submissions));}
         }
         boolean[] exhausted={false};
         BooleanSupplier reserve=()->{
@@ -587,7 +600,7 @@ public class VerificationService {
             if(group.completed.size()==group.pages.size()){
                 Map<String,Object> saved=visualGroupResponse(group);visualWrite(task,runId,checkRun,()->{store.save("verification_visual",group.id,task.projectId,runId,saved);evidenceOperations.publishCompleted(task.projectId,group.operationKey,group.operationDescriptor,saved);});
             }else if(!exhausted[0]&&!submission.split()&&submission.pages().size()>1&&VisualVerificationService.splitRetryable(response)){
-                for(int page:submission.pages())if(!group.completed.containsKey(page)&&group.splitPages.add(page))next.add(visualJob(group,List.of(page),true,runId,submissions));
+                for(int page:submission.pages())if(!group.completed.containsKey(page)&&group.splitPages.add(page))next.add(visualJob(group,cn.bidcheck.compat.Java8Api.listOf(page),true,runId,submissions));
             }
             if(next.isEmpty()&&group.completed.size()<group.pages.size()&&!"VISUAL_BUDGET_EXHAUSTED".equals(text(response,"errorCode")))
                 diagnostics.add("RETRY_PENDING".equals(response.get("status"))
@@ -602,15 +615,15 @@ public class VerificationService {
             Page located=doc.pages().stream().filter(p->p.number()==observedPage).findFirst().orElse(null);if(located==null)continue;
             String observationId=VisualVerificationService.observationKey(observation),binding=observationId+":"+text(request,"obligationId");
             Map<String,Object> existing=observations.get(binding);
-            if(existing!=null){LinkedHashSet<String> notes=new LinkedHashSet<>(strings(existing.get("modelLimitations")));notes.addAll(strings(observation.get("modelLimitations")));existing.put("modelLimitations",List.copyOf(notes));continue;}
-            List<String> sourceIds=requests.stream().filter(r->doc.id().equals(text(r,"documentId"))&&text(request,"obligationId").equals(text(r,"obligationId"))
-                &&observedPage==number(r.getOrDefault("page",r.get("location")),0)).flatMap(r->strings(r.get("sourceIds")).stream()).distinct().toList();
+            if(existing!=null){LinkedHashSet<String> notes=new LinkedHashSet<>(strings(existing.get("modelLimitations")));notes.addAll(strings(observation.get("modelLimitations")));existing.put("modelLimitations",cn.bidcheck.compat.Java8Api.listCopyOf(notes));continue;}
+            List<String> sourceIds=cn.bidcheck.compat.Java8Api.toList(requests.stream().filter(r->doc.id().equals(text(r,"documentId"))&&text(request,"obligationId").equals(text(r,"obligationId"))
+                &&observedPage==number(r.getOrDefault("page",r.get("location")),0)).flatMap(r->strings(r.get("sourceIds")).stream()).distinct());
             Map<String,Object> o=new LinkedHashMap<>(observation);o.put("id",observationId);o.put("documentId",doc.id());o.put("page",observedPage);o.put("location",observedPage);
             o.put("observationIdentity",visuals.identity());
             o.put("obligationId",text(request,"obligationId"));o.put("checkpointId",cp.id());o.put("requestedSourceIds",sourceIds);
-            o.put("requestedTask",request.getOrDefault("task","FIELD"));o.put("requestedFields",request.getOrDefault("fields",List.of()));o.put("locationType",located.locationType());
+            o.put("requestedTask",request.getOrDefault("task","FIELD"));o.put("requestedFields",request.getOrDefault("fields",cn.bidcheck.compat.Java8Api.listOf()));o.put("locationType",located.locationType());
             o.put("source",source);o.put("imageHash",source.getOrDefault("renderedSha256",""));o.put("taskType",request.getOrDefault("task","FIELD"));
-            o.put("observedValue",o.getOrDefault("value",""));o.put("limitations",List.copyOf(group.limitations));observations.put(binding,o);
+            o.put("observedValue",o.getOrDefault("value",""));o.put("limitations",cn.bidcheck.compat.Java8Api.listCopyOf(group.limitations));observations.put(binding,o);
         }
         return new ArrayList<>(observations.values());
     }
@@ -634,7 +647,7 @@ public class VerificationService {
             if(!group.completed.containsKey(page)&&pending!=null&&"verification_visual_page_status".equals(pending.kind)&&task.projectId.equals(pending.projectId)){
                 Map<String,Object> state=store.map(pending.body);Object until=state.get("retryNotBeforeEpochMillis");
                 if("RETRY_PENDING".equals(state.get("status"))&&group.id.equals(state.get("windowId"))&&group.document.sha256().equals(state.get("documentHash"))
-                    &&group.document.version()==number(state.get("documentVersion"),-1)&&until instanceof Number n&&n.longValue()>System.currentTimeMillis())group.deferred.add(page);
+                    &&group.document.version()==number(state.get("documentVersion"),-1)&&until instanceof Number&&((Number) (until)).longValue()>System.currentTimeMillis())group.deferred.add(page);
             }
         }
     }
@@ -650,9 +663,9 @@ public class VerificationService {
             "retryNotBeforeEpochMillis","COMPLETED".equals(status)?0:response.getOrDefault("retryNotBeforeEpochMillis",System.currentTimeMillis()),"recordedAt",now());
     }
     private Map<String,Object> visualGroupResponse(VisualGroup group){
-        List<Map<String,Object>> pages=new ArrayList<>(group.completed.values());List<Map<String,Object>> observations=pages.stream().flatMap(p->maps(p.get("observations")).stream()).toList();
+        List<Map<String,Object>> pages=new ArrayList<>(group.completed.values());List<Map<String,Object>> observations=cn.bidcheck.compat.Java8Api.toList(pages.stream().flatMap(p->maps(p.get("observations")).stream()));
         return fields("status",observations.isEmpty()?"UNDETERMINED":"OBSERVED","errorCode",observations.isEmpty()?"VISUAL_NO_GROUNDED_OBSERVATIONS":"",
-            "pageResults",pages,"observations",observations,"inputPages",group.pages,"limitations",List.copyOf(group.limitations),
+            "pageResults",pages,"observations",observations,"inputPages",group.pages,"limitations",cn.bidcheck.compat.Java8Api.listCopyOf(group.limitations),
             "identity",visuals.identity(),"proofLevel","VISUAL_OBSERVATION_ONLY","authenticityVerified",false);
     }
     private static boolean validVisualPage(Document doc,List<Integer> requested,Map<String,Object> page){
@@ -670,9 +683,9 @@ public class VerificationService {
     }
     private static boolean validVisualObservation(Map<String,Object> observation,Map<String,Object> source){
         Object raw=observation.get("sourceBbox");
-        if(raw==null)return Set.of("UNREADABLE","NOT_OBSERVED").contains(text(observation,"readability"))&&text(observation,"value").isBlank();
-        if(!(raw instanceof List<?> box)||box.size()!=4)return false;double[] b=new double[4];
-        for(int i=0;i<4;i++){if(!(box.get(i) instanceof Number n)||!Double.isFinite(n.doubleValue()))return false;b[i]=n.doubleValue();}
+        if(raw==null)return cn.bidcheck.compat.Java8Api.setOf("UNREADABLE", "NOT_OBSERVED").contains(text(observation,"readability"))&&cn.bidcheck.compat.Java8Api.isBlank(text(observation,"value"));
+        if(!(raw instanceof List<?>)||((List<?>) (raw)).size()!=4)return false;double[] b=new double[4];
+        for(int i=0;i<4;i++){if(!(((List<?>) (raw)).get(i) instanceof Number)||!Double.isFinite(((Number) (((List<?>) (raw)).get(i))).doubleValue()))return false;b[i]=((Number) (((List<?>) (raw)).get(i))).doubleValue();}
         return b[0]>=0&&b[1]>=0&&b[0]<b[2]&&b[1]<b[3]&&b[2]<=number(source.get("renderedWidth"),0)&&b[3]<=number(source.get("renderedHeight"),0);
     }
 
@@ -688,12 +701,12 @@ public class VerificationService {
         List<Map<String,Object>> records=new ArrayList<>();
         for(Map<String,Object> request:maps(result.get("externalRequests"))) {
             String type=text(request,"type"),subject=text(request,"subject"),stage=text(request,"evaluationStage"),date=text(request,"referenceDate");
-            if(stage.isBlank())stage=text(run,"evaluationStage");if(date.isBlank())date=text(run,"referenceDate");
-            if("WAIT_STAGE".equals(text(result,"workflowState"))||!text(run,"evaluationStage").isBlank()&&!stage.isBlank()
+            if(cn.bidcheck.compat.Java8Api.isBlank(stage))stage=text(run,"evaluationStage");if(cn.bidcheck.compat.Java8Api.isBlank(date))date=text(run,"referenceDate");
+            if("WAIT_STAGE".equals(text(result,"workflowState"))||!cn.bidcheck.compat.Java8Api.isBlank(text(run,"evaluationStage"))&&!cn.bidcheck.compat.Java8Api.isBlank(stage)
                     &&!sameExternalStage(stage,text(run,"evaluationStage"))){
                 externalDiagnostic(diagnostics,request,"EXTERNAL_WAIT_STAGE","条款指定的核验阶段尚未到达，未执行外部查询。",false,"STAGE_CHANGED","");continue;
             }
-            if(subject.isBlank()||subject.length()>200||type.isBlank()||stage.isBlank()||date.isBlank()){
+            if(cn.bidcheck.compat.Java8Api.isBlank(subject)||subject.length()>200||cn.bidcheck.compat.Java8Api.isBlank(type)||cn.bidcheck.compat.Java8Api.isBlank(stage)||cn.bidcheck.compat.Java8Api.isBlank(date)){
                 externalDiagnostic(diagnostics,request,"EXTERNAL_QUERY_SCOPE_INCOMPLETE","外部请求缺少有效主体、来源类型、阶段或日期，系统尚未执行查询。",false,"QUERY_SCOPE_CHANGED","");continue;
             }
             if(!externalAdapter.enabledTypes().contains(type)){
@@ -703,9 +716,9 @@ public class VerificationService {
             Map<String,Object> query=fields("type",type,"subject",subject,"evaluationStage",stage,"referenceDate",date);
             // Scope participates in the durable operation key and must be confirmed by
             // the provider; a previous same-subject lookup is not an all-fields receipt.
-            for(String key:List.of("requiredProvider","requirementScopeFingerprint","requiredConditionFields"))
+            for(String key:cn.bidcheck.compat.Java8Api.listOf("requiredProvider", "requirementScopeFingerprint", "requiredConditionFields"))
                 if(request.containsKey(key))query.put(key,request.get(key));
-            Map<String,Object> descriptor=EvidenceOperationRepository.descriptor(task.projectId,"EXTERNAL_SOURCE_QUERY",List.of(),List.of(),query,"",externalAdapter.identity(),"TRUSTED_CONNECTOR_RECORD","external-source-query-1");
+            Map<String,Object> descriptor=EvidenceOperationRepository.descriptor(task.projectId,"EXTERNAL_SOURCE_QUERY",cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(),query,"",externalAdapter.identity(),"TRUSTED_CONNECTOR_RECORD","external-source-query-1");
             String operationKey=EvidenceOperationRepository.key(descriptor),id=stableId("external-query:"+operationKey);
             try(EvidenceOperationRepository.Lease ignored=evidenceOperations.coordinate(task.projectId,operationKey)) {
                 // The persistent operation is deliberately re-read after acquiring the stable-key
@@ -732,12 +745,13 @@ public class VerificationService {
                 Map<String,Object> record=map(response.get("record"));
                 if("TRUSTED_CONNECTOR".equals(record.get("provenanceStatus"))){
                     records.add(record);String sourceStatus=text(map(record.get("result")),"status");
-                    String code=switch(sourceStatus){case "NOT_FOUND"->"EXTERNAL_RECORD_NOT_FOUND";case "INCONCLUSIVE"->"EXTERNAL_RECORD_INCONCLUSIVE";default->"EXTERNAL_RECORD_RECEIVED";};
+                    String code;
+switch (sourceStatus) {case "NOT_FOUND":code = "EXTERNAL_RECORD_NOT_FOUND"; break;case "INCONCLUSIVE":code = "EXTERNAL_RECORD_INCONCLUSIVE"; break;default:code = "EXTERNAL_RECORD_RECEIVED"; break;}
                     externalDiagnostic(diagnostics,request,code,reused?"已复用同主体、同阶段和同范围的可信来源记录，仍需按业务条件重新计算。":"已取得指定来源记录，仍需按主体、范围和业务条件重新计算。",!reused&&!Boolean.FALSE.equals(response.get("queryExecuted")),"EXTERNAL_RECORD_CHANGED","");
                     diagnostics.get(diagnostics.size()-1).put("recordReused",reused);
                 }else {
                     String providerCode=text(response,"errorCode");
-                    String code=Set.of("EXTERNAL_CONNECTOR_NOT_CONFIGURED","EXTERNAL_CONFIGURATION_INVALID","EXTERNAL_REQUEST_INVALID").contains(providerCode)?providerCode:"EXTERNAL_ENGINE_FAILURE";
+                    String code=cn.bidcheck.compat.Java8Api.setOf("EXTERNAL_CONNECTOR_NOT_CONFIGURED", "EXTERNAL_CONFIGURATION_INVALID", "EXTERNAL_REQUEST_INVALID").contains(providerCode)?providerCode:"EXTERNAL_ENGINE_FAILURE";
                     externalDiagnostic(diagnostics,request,code,"外部查询未取得通过来源校验的记录，不能解释为查无记录。",Boolean.TRUE.equals(response.get("queryExecuted")),"SERVICE_AVAILABLE",providerCode);
                 }
             }catch(java.io.InterruptedIOException interrupted){Thread.currentThread().interrupt();externalDiagnostic(diagnostics,request,"EXTERNAL_SINGLE_FLIGHT_INTERRUPTED","等待相同外部证据查询时已中断，未重复调用来源服务。",false,"SERVICE_AVAILABLE","");break;}
@@ -745,18 +759,18 @@ public class VerificationService {
         return records;
     }
     private static boolean sameExternalStage(String left,String right){return canonicalExternalStage(left).equals(canonicalExternalStage(right));}
-    private static String canonicalExternalStage(String stage){return switch(stage){case "EVALUATION"->"BID_EVALUATION";case "PRE_SUBMISSION"->"BID_SUBMISSION";default->stage;};}
+    private static String canonicalExternalStage(String stage){switch (stage) {case "EVALUATION":return "BID_EVALUATION";case "PRE_SUBMISSION":return "BID_SUBMISSION";default:return stage;}}
     private static void externalDiagnostic(List<Map<String,Object>> diagnostics,Map<String,Object> request,String code,String description,boolean executed,String trigger,String providerCode){
         Map<String,Object> value=diagnostic(code,description,"系统按指定来源及查询范围处理；不要求补交投标材料。",trigger);
         value.put("queryExecuted",executed);value.put("businessComplete",false);value.put("owner","EXTERNAL_WAIT_STAGE".equals(code)?"EXTERNAL":"SYSTEM");
-        for(String key:List.of("obligationId","type","evaluationStage","referenceDate","requiredProvider","requirementScopeFingerprint"))value.put(key,text(request,key));
-        if(!providerCode.isBlank())value.put("providerErrorCode",providerCode);diagnostics.add(value);
+        for(String key:cn.bidcheck.compat.Java8Api.listOf("obligationId", "type", "evaluationStage", "referenceDate", "requiredProvider", "requirementScopeFingerprint"))value.put(key,text(request,key));
+        if(!cn.bidcheck.compat.Java8Api.isBlank(providerCode))value.put("providerErrorCode",providerCode);diagnostics.add(value);
         LOG.info("external_query_outcome type={} obligation={} code={} executed={} providerCode={} scope={}",text(request,"type"),text(request,"obligationId"),code,executed,providerCode,text(request,"requirementScopeFingerprint"));
     }
     private static Map<String,Object> diagnostic(String code,String description,String requiredInput,String resumeTrigger) {return fields("code",code,"description",description,"requiredInput",requiredInput,"resumeTrigger",resumeTrigger);}
     private static String aggregateWorkflow(List<Map<String,Object>> results) {
         if(results.stream().allMatch(r->Boolean.TRUE.equals(r.get("complete")))) return "COMPLETED";
-        for(String state:List.of("ERROR","ENGINE_FAILURE","BUDGET_EXHAUSTED","NEEDS_REVIEW","WAIT_STAGE","WAIT_INPUT")) if(results.stream().anyMatch(r->state.equals(r.get("workflowState")))) return state;
+        for(String state:cn.bidcheck.compat.Java8Api.listOf("ERROR", "ENGINE_FAILURE", "BUDGET_EXHAUSTED", "NEEDS_REVIEW", "WAIT_STAGE", "WAIT_INPUT")) if(results.stream().anyMatch(r->state.equals(r.get("workflowState")))) return state;
         return "NEEDS_REVIEW";
     }
     private void change(TaskRow task,String runId,int percent,String stage) { fenced(task,()->{
@@ -773,7 +787,7 @@ public class VerificationService {
     public Map<String,Object> uploadInput(String project,String runId,String role,String purpose,MultipartFile file) throws IOException {
         Map<String,Object> run=store.getMap("verification_run",runId);
         if(!project.equals(text(run,"projectId"))) throw bad("核验不属于本项目");
-        if(!Set.of("QUOTATION","CLARIFICATION","ATTACHMENT","OTHER").contains(purpose)) throw bad("资料用途无效");
+        if(!cn.bidcheck.compat.Java8Api.setOf("QUOTATION", "CLARIFICATION", "ATTACHMENT", "OTHER").contains(purpose)) throw bad("资料用途无效");
         if("CLARIFICATION".equals(purpose)&&!"TENDER".equals(role)) throw bad("澄清文件应选择招标资料");
         TaskRow parse=bids.upload(project,role,file);String requestId=Store.id();
         Map<String,Object> request=fields("id",requestId,"runId",runId,"rootRunId",run.get("rootRunId"),"projectId",project,"purpose",purpose,"role",role,
@@ -793,7 +807,7 @@ public class VerificationService {
                     String project=text(input,"projectId");store.lock("project",project);
                     Map<String,Object> current=store.getMap("verification_input",text(input,"id"));if(!"WAIT_PARSE".equals(current.get("status"))) return;
                     Map<String,Object> parent=latestRevision(project,text(input,"rootRunId"));
-                    if(!Set.of("COMPLETED","FAILED").contains(text(parent,"status"))) return;
+                    if(!cn.bidcheck.compat.Java8Api.setOf("COMPLETED", "FAILED").contains(text(parent,"status"))) return;
                     List<String> ids=new ArrayList<>(strings(parent.get("documentIds")));String docId=text(current,"documentId");if(!ids.contains(docId)) ids.add(docId);
                     Map<String,Object> next=startLocked(project,fields("documentIds",ids),parent);
                     current.put("status","RESUMED");current.put("resumedRunId",next.get("id"));current.put("finishedAt",now());
@@ -822,7 +836,7 @@ public class VerificationService {
             "issuer",text(body,"issuer"),"queriedAt",queried,"effectiveAt",effective,"coverage",text(body,"coverage"),"documentId",docId,"page",page,
             "quote",quote,"rawSnapshotHash",doc.sha256(),"provenanceStatus","PROVIDED_NOT_AUTHENTICATED","evaluationStage",run.get("evaluationStage"),"createdAt",now());
         return tx.execute(s->{store.lock("project",project);Map<String,Object> parent=latestRevision(project,text(run,"rootRunId"));
-            if(!Set.of("COMPLETED","FAILED").contains(text(parent,"status"))) throw bad("当前核验仍在运行，请完成后导入记录");
+            if(!cn.bidcheck.compat.Java8Api.setOf("COMPLETED", "FAILED").contains(text(parent,"status"))) throw bad("当前核验仍在运行，请完成后导入记录");
             store.save("verification_external",id,project,docId,record);List<String> ids=new ArrayList<>(strings(parent.get("documentIds")));if(!ids.contains(docId)) ids.add(docId);
             Map<String,Object> revision=startLocked(project,fields("documentIds",ids),parent);return fields("record",record,"run",revision);
         });
@@ -838,15 +852,15 @@ public class VerificationService {
             String status=text(r,"businessDecision");statuses.merge(status,1L,Long::sum);
             boolean pre="SEMANTIC_PREASSESSMENT".equals(r.get("decisionBasis"));if(pre) {quality++;if(Boolean.TRUE.equals(r.get("complete"))) qualityComplete++;}
             else if(Boolean.TRUE.equals(r.get("complete"))) automatic++;
-            if(!Boolean.TRUE.equals(r.get("complete"))) waiting++;if(Set.of("ERROR","ENGINE_FAILURE").contains(text(r,"workflowState"))) errors++;
+            if(!Boolean.TRUE.equals(r.get("complete"))) waiting++;if(cn.bidcheck.compat.Java8Api.setOf("ERROR", "ENGINE_FAILURE").contains(text(r,"workflowState"))) errors++;
         }
         return fields("total",total,"processed",results.size(),"automaticComplete",automatic,"qualityCount",quality,"qualityComplete",qualityComplete,
             "waiting",waiting,"errors",errors,"statuses",statuses,"objectiveCount",total-quality);
     }
-    private static String required(Map<String,Object> body,String key,int length) {String v=text(body,key);if(v.isBlank()||v.length()>length) throw bad("字段 "+key+" 不能为空或长度超限");return v;}
+    private static String required(Map<String,Object> body,String key,int length) {String v=text(body,key);if(cn.bidcheck.compat.Java8Api.isBlank(v)||v.length()>length) throw bad("字段 "+key+" 不能为空或长度超限");return v;}
     private static String value(Map<String,Object> body,Map<String,Object> fallback,String key) {return body.containsKey(key)?text(body,key):fallback==null?"":text(fallback,key);}
-    public static int number(Object value,int fallback) {try {return value instanceof Number n?n.intValue():Integer.parseInt(Objects.toString(value,""));}catch(Exception e){return fallback;}}
-    @SuppressWarnings("unchecked") public static Map<String,Object> map(Object value) {return value instanceof Map<?,?> m?(Map<String,Object>)m:Map.of();}
-    public static List<Map<String,Object>> maps(Object value) {return value instanceof List<?> l?l.stream().filter(v->v instanceof Map<?,?>).map(VerificationService::map).toList():List.of();}
-    public static List<String> strings(Object value) {if(!(value instanceof List<?> l)) return List.of();return l.stream().map(v->Objects.toString(v,"")).toList();}
+    public static int number(Object value,int fallback) {try {return value instanceof Number?((Number) (value)).intValue():Integer.parseInt(Objects.toString(value,""));}catch(Exception e){return fallback;}}
+    @SuppressWarnings("unchecked") public static Map<String,Object> map(Object value) {return value instanceof Map<?,?>?(Map<String,Object>)((Map<?,?>) (value)):cn.bidcheck.compat.Java8Api.mapOf();}
+    public static List<Map<String,Object>> maps(Object value) {return value instanceof List<?>?cn.bidcheck.compat.Java8Api.toList(((List<?>) (value)).stream().filter(v->v instanceof Map<?,?>).map(VerificationService::map)):cn.bidcheck.compat.Java8Api.listOf();}
+    public static List<String> strings(Object value) {if(!(value instanceof List<?>)) return cn.bidcheck.compat.Java8Api.listOf();return cn.bidcheck.compat.Java8Api.toList(((List<?>) (value)).stream().map(v->Objects.toString(v,"")));}
 }

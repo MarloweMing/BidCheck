@@ -15,8 +15,32 @@ final class LexicalIndex {
     private final double averageLength;
     private final int[] lengths;
 
-    record Chunk(Evidence evidence, String searchText, String scopeHint) { }
-    record Scored(int index, double score) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    static final class Chunk {
+        private final Evidence evidence;
+        private final String searchText;
+        private final String scopeHint;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        Chunk(@com.fasterxml.jackson.annotation.JsonProperty("evidence") Evidence evidence, @com.fasterxml.jackson.annotation.JsonProperty("searchText") String searchText, @com.fasterxml.jackson.annotation.JsonProperty("scopeHint") String scopeHint) { this.evidence = evidence; this.searchText = searchText; this.scopeHint = scopeHint; }
+        public Evidence evidence() { return evidence; }
+        public String searchText() { return searchText; }
+        public String scopeHint() { return scopeHint; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Chunk that = (Chunk) other; return java.util.Objects.equals(this.evidence, that.evidence) && java.util.Objects.equals(this.searchText, that.searchText) && java.util.Objects.equals(this.scopeHint, that.scopeHint); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.evidence); hash = 31 * hash + java.util.Objects.hashCode(this.searchText); hash = 31 * hash + java.util.Objects.hashCode(this.scopeHint); return hash; }
+        @Override public String toString() { return "Chunk[" + "evidence=" + evidence + ", searchText=" + searchText + ", scopeHint=" + scopeHint + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    static final class Scored {
+        private final int index;
+        private final double score;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        Scored(@com.fasterxml.jackson.annotation.JsonProperty("index") int index, @com.fasterxml.jackson.annotation.JsonProperty("score") double score) { this.index = index; this.score = score; }
+        public int index() { return index; }
+        public double score() { return score; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Scored that = (Scored) other; return java.util.Objects.equals(this.index, that.index) && java.util.Objects.equals(this.score, that.score); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.index); hash = 31 * hash + java.util.Objects.hashCode(this.score); return hash; }
+        @Override public String toString() { return "Scored[" + "index=" + index + ", score=" + score + "]"; }
+ }
 
     LexicalIndex(Document document) throws InterruptedIOException {
         if (document == null || document.pages() == null || document.pages().size() > 20_000) throw new IllegalArgumentException("DOCUMENT_LIMIT");
@@ -42,7 +66,7 @@ final class LexicalIndex {
                     else if (Character.isHighSurrogate(text.charAt(end - 1))) end--;
                 }
                 String quote = text.substring(start, end);
-                if (!quote.isBlank()) {
+                if (!cn.bidcheck.compat.Java8Api.isBlank(quote)) {
                     Evidence evidence = new Evidence(document.id(), document.name(), page.number(), page.locationType(), quote,
                             "p" + page.number() + "-c" + start, page.parser() != null && page.parser().contains("OCR") ? 0d : 1d);
                     String hint = scopeHint(quote);
@@ -54,9 +78,9 @@ final class LexicalIndex {
                 start = Math.max(start + 1, end - OVERLAP);
                 if (Character.isLowSurrogate(text.charAt(start))) start++;
             }
-            previous = text.strip();
+            previous = cn.bidcheck.compat.Java8Api.strip(text);
         }
-        chunks = List.copyOf(built);
+        chunks = cn.bidcheck.compat.Java8Api.listCopyOf(built);
         frequencies = new ArrayList<>(chunks.size());
         documentFrequencies = new HashMap<>();
         lengths = new int[chunks.size()];
@@ -87,12 +111,12 @@ final class LexicalIndex {
             if (score > 0) scores.add(new Scored(i, score));
         }
         scores.sort(Comparator.comparingDouble(Scored::score).reversed().thenComparingInt(Scored::index));
-        return List.copyOf(scores.subList(0, Math.min(limit, scores.size())));
+        return cn.bidcheck.compat.Java8Api.listCopyOf(scores.subList(0, Math.min(limit, scores.size())));
     }
 
     static Map<String,Integer> terms(String text) {
         Map<String,Integer> result = new HashMap<>();
-        var matcher = TERMS.matcher(text.toLowerCase(Locale.ROOT));
+        java.util.regex.Matcher matcher = TERMS.matcher(text.toLowerCase(Locale.ROOT));
         while (matcher.find()) {
             String token = matcher.group();
             int[] points = token.codePoints().toArray();

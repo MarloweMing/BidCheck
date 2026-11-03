@@ -13,31 +13,31 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 class SharedRequirementArtifactTest {
     private static final ObjectMapper JSON=new ObjectMapper();
     private static final String REGISTRATION="注册要求：具备履约能力的在中华人民共和国境内行政主管部门登记注册、根据中华人民共和国有关法律合法成立的独立法人或其他组织，经营范围未受限。须提交有效的营业执照或登记证书或其他有效证照。";
-    private Document tender(String heading,String text,int version){return new Document("tender","project","TENDER","招标文件",version,"hash-"+version,"",List.of(new Page(65,heading,"PARAGRAPH","DOCX",""),new Page(66,text,"PARAGRAPH","DOCX","")),List.of());}
+    private Document tender(String heading,String text,int version){return new Document("tender","project","TENDER","招标文件",version,"hash-"+version,"",cn.bidcheck.compat.Java8Api.listOf(new Page(65,heading,"PARAGRAPH","DOCX",""), new Page(66,text,"PARAGRAPH","DOCX","")),cn.bidcheck.compat.Java8Api.listOf());}
     private Checkpoint checkpoint(String id,String text){return new Checkpoint(id,"注册要求","资格检查","HIGH","SEMANTIC_RESPONSE","qualification","RESPONDS",text,"",true,true,true,new Evidence("tender","招标文件",66,"PARAGRAPH",text,"p66",1));}
-    private JsonNode material(String text,String subject){return JSON.valueToTree(Map.of("logic","ALL","rules",List.of(Map.of("id","model-random-id","description","说明可能改写","predicate","MATERIAL","subject",subject,"expected","营业执照","sourceQuote",text))));}
+    private JsonNode material(String text,String subject){return JSON.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("logic", "ALL", "rules", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("id", "model-random-id", "description", "说明可能改写", "predicate", "MATERIAL", "subject", subject, "expected", "营业执照", "sourceQuote", text))));}
     interface Request {JsonNode request(Map<String,Object> input)throws IOException;}
     private ModelGateway model(AtomicInteger calls,Request request){return new ModelGateway(){public boolean enabled(){return true;}public String identity(){return "model-v1";}public JsonNode request(String operation,Map<String,Object> input)throws IOException{calls.incrementAndGet();return request.request(input);}};}
-    private Map<String,Object> context(Document doc,String original,Map<String,Map<String,Object>> artifacts){Map<String,Object> ctx=new HashMap<>();ctx.put("originalRequirement",original);ctx.put("tenderDocuments",List.of(doc));ctx.put("requirementProjectId","project");ctx.put("focusedCheck",true);ctx.put("unlimitedModelCalls",true);ctx.put("allowModelRuleCompilation",true);
-        ctx.put("requirementArtifactLookup",(Function<Map<String,Object>,Map<String,Object>>)request->artifacts.getOrDefault(str(request,"artifactId"),Map.of()));
+    private Map<String,Object> context(Document doc,String original,Map<String,Map<String,Object>> artifacts){Map<String,Object> ctx=new HashMap<>();ctx.put("originalRequirement",original);ctx.put("tenderDocuments",cn.bidcheck.compat.Java8Api.listOf(doc));ctx.put("requirementProjectId","project");ctx.put("focusedCheck",true);ctx.put("unlimitedModelCalls",true);ctx.put("allowModelRuleCompilation",true);
+        ctx.put("requirementArtifactLookup",(Function<Map<String,Object>,Map<String,Object>>)request->artifacts.getOrDefault(str(request,"artifactId"),cn.bidcheck.compat.Java8Api.mapOf()));
         ctx.put("requirementArtifactPublisher",(Consumer<Map<String,Object>>)artifact->artifacts.put(str(artifact,"artifactId"),artifact));return ctx;}
     @Test void frozenRegistrationHeadingSuppliesSubjectWithoutChangingClause()throws Exception{
         Checkpoint cp=checkpoint("a",REGISTRATION);Document doc=tender("★投标人资格要求",REGISTRATION,1);AtomicInteger calls=new AtomicInteger();
         RunSession session=new RunSession(model(calls,in->material(REGISTRATION,"投标人")),context(doc,REGISTRATION,new HashMap<>()),"cp-a");Plan plan=new RequirementCompiler().compile(cp,session);
         assertEquals("MATERIAL",plan.rules().get(0).predicate());assertEquals(REGISTRATION,plan.rules().get(0).sourceQuote());assertEquals(REGISTRATION,cp.source().quote());
         JsonNode source=JSON.valueToTree(plan.requirementScope().get("sourceContext"));assertEquals("★投标人资格要求",source.path("sources").get(1).path("sourceQuote").asText());assertEquals(65,source.path("sources").get(1).path("location").asInt());
-        assertFalse(str(plan.rules().get(0).parameters(),"obligationIdentity").isBlank());
+        assertFalse(cn.bidcheck.compat.Java8Api.isBlank(str(plan.rules().get(0).parameters(),"obligationIdentity")));
     }
     @Test void interveningSectionAndOtherProjectCannotLendSubject()throws Exception{
-        Document doc=new Document("tender","project","TENDER","招标文件",1,"hash","",List.of(new Page(64,"★投标人资格要求","PARAGRAPH","DOCX",""),new Page(65,"第三章 历史项目说明","PARAGRAPH","DOCX",""),new Page(66,REGISTRATION,"PARAGRAPH","DOCX","")),List.of());
+        Document doc=new Document("tender","project","TENDER","招标文件",1,"hash","",cn.bidcheck.compat.Java8Api.listOf(new Page(64,"★投标人资格要求","PARAGRAPH","DOCX",""), new Page(65,"第三章 历史项目说明","PARAGRAPH","DOCX",""), new Page(66,REGISTRATION,"PARAGRAPH","DOCX","")),cn.bidcheck.compat.Java8Api.listOf());
         assertEquals(1,RequirementSourceContext.resolve(checkpoint("a",REGISTRATION),REGISTRATION,context(doc,REGISTRATION,new HashMap<>())).sources().size());
         Map<String,Object> wrong=context(tender("★投标人资格要求",REGISTRATION,1),REGISTRATION,new HashMap<>());wrong.put("requirementProjectId","another-project");assertTrue(RequirementSourceContext.resolve(checkpoint("a",REGISTRATION),REGISTRATION,wrong).identity().isEmpty());
     }
     @Test void sameRowHeaderIsEvidenceButAdjacentRowDoesNotSupplySubject(){
         String text="| 适用主体 | 要求 |\n| --- | --- |\n| 投标人 | 须提交营业执照 |\n|  | 须提交其他证明 |";
-        Document doc=tender("",text,1);var own=RequirementSourceContext.resolve(checkpoint("a","须提交营业执照"),"须提交营业执照",context(doc,"须提交营业执照",new HashMap<>()));
+        Document doc=tender("",text,1);cn.bidcheck.verification.engine.RequirementSourceContext.Context own=RequirementSourceContext.resolve(checkpoint("a","须提交营业执照"),"须提交营业执照",context(doc,"须提交营业执照",new HashMap<>()));
         assertEquals("TABLE_ROW_SUBJECT",own.sources().get(1).get("kind"));
-        var other=RequirementSourceContext.resolve(checkpoint("b","须提交其他证明"),"须提交其他证明",context(doc,"须提交其他证明",new HashMap<>()));assertEquals(1,other.sources().size());
+        cn.bidcheck.verification.engine.RequirementSourceContext.Context other=RequirementSourceContext.resolve(checkpoint("b","须提交其他证明"),"须提交其他证明",context(doc,"须提交其他证明",new HashMap<>()));assertEquals(1,other.sources().size());
     }
     @Test void validatedDocumentArtifactIsSharedAcrossCheckpointAndBidRun()throws Exception{
         AtomicInteger calls=new AtomicInteger();Map<String,Map<String,Object>> artifacts=new HashMap<>();Document doc=tender("★投标人资格要求",REGISTRATION,1);ModelGateway model=model(calls,in->material(REGISTRATION,"投标人"));
@@ -76,11 +76,11 @@ class SharedRequirementArtifactTest {
     }
     @Test void reviewedScopeChangeCannotReuseOtherObligationInSameOriginalRow()throws Exception{
         String first="投标人须提交营业执照。",second="投标人须提交登记证书。",original=first+second;Document doc=tender("",original,1);Map<String,Map<String,Object>> artifacts=new HashMap<>();AtomicInteger calls=new AtomicInteger();
-        ModelGateway gateway=model(calls,in->{String quote=str(in,"requirement");return JSON.valueToTree(Map.of("logic","ALL","rules",List.of(Map.of("id","same-model-id","predicate","MATERIAL","subject","投标人","expected",quote.contains("营业执照")?"营业执照":"登记证书","sourceQuote",quote))));});
+        ModelGateway gateway=model(calls,in->{String quote=str(in,"requirement");return JSON.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("logic", "ALL", "rules", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("id", "same-model-id", "predicate", "MATERIAL", "subject", "投标人", "expected", quote.contains("营业执照")?"营业执照":"登记证书", "sourceQuote", quote))));});
         Checkpoint base=checkpoint("same-checkpoint",original);Checkpoint a=new Checkpoint(base.id(),base.title(),base.category(),base.severity(),base.type(),base.field(),base.operator(),first,base.unit(),true,true,true,base.source());
         Checkpoint b=new Checkpoint(base.id(),base.title(),base.category(),base.severity(),base.type(),base.field(),base.operator(),second,base.unit(),true,true,true,base.source());
         Plan before=new RequirementCompiler().compile(a,new RunSession(gateway,context(doc,original,artifacts),"a"));Plan after=new RequirementCompiler().compile(b,new RunSession(gateway,context(doc,original,artifacts),"b"));
         assertEquals(2,calls.get());assertEquals(2,artifacts.size());assertNotEquals(before.requirementScope().get("artifactId"),after.requirementScope().get("artifactId"));assertNotEquals(before.rules().get(0).parameters().get("obligationIdentity"),after.rules().get(0).parameters().get("obligationIdentity"));
     }
-    @Test void retrievalExecutionsPreserveRepeatedDiagnostics(){RunSession s=new RunSession(model(new AtomicInteger(),in->JSON.createObjectNode()),Map.of(),"x");s.record("RETRIEVE_0",Map.of("query","same"),Map.of("diagnostics",Map.of("elapsedMs",12)));s.record("RETRIEVE_0",Map.of("query","same"),Map.of("diagnostics",Map.of("elapsedMs",14)));assertNotEquals(s.steps.get(0).get("id"),s.steps.get(1).get("id"));assertEquals(s.steps.get(0).get("inputFingerprint"),s.steps.get(1).get("inputFingerprint"));assertNotEquals(s.steps.get(0).get("executionId"),s.steps.get(1).get("executionId"));}
+    @Test void retrievalExecutionsPreserveRepeatedDiagnostics(){RunSession s=new RunSession(model(new AtomicInteger(),in->JSON.createObjectNode()),cn.bidcheck.compat.Java8Api.mapOf(),"x");s.record("RETRIEVE_0",cn.bidcheck.compat.Java8Api.mapOf("query", "same"),cn.bidcheck.compat.Java8Api.mapOf("diagnostics", cn.bidcheck.compat.Java8Api.mapOf("elapsedMs", 12)));s.record("RETRIEVE_0",cn.bidcheck.compat.Java8Api.mapOf("query", "same"),cn.bidcheck.compat.Java8Api.mapOf("diagnostics", cn.bidcheck.compat.Java8Api.mapOf("elapsedMs", 14)));assertNotEquals(s.steps.get(0).get("id"),s.steps.get(1).get("id"));assertEquals(s.steps.get(0).get("inputFingerprint"),s.steps.get(1).get("inputFingerprint"));assertNotEquals(s.steps.get(0).get("executionId"),s.steps.get(1).get("executionId"));}
 }

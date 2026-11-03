@@ -1,4 +1,5 @@
 package cn.bidcheck.consistency;
+import cn.bidcheck.compat.HexFormat;
 
 import cn.bidcheck.domain.Domain.*;
 import cn.bidcheck.document.TableRelationIndex;
@@ -12,7 +13,7 @@ import java.util.regex.*;
 /** Source-bound whole-document occurrences. A completed scan never asserts that all facts were recognized. */
 public final class ConsistencyEngine {
     public static final String VERSION = "consistency-8-source-bound-context-recovery";
-    private static final Set<String> FIELDS = Set.of("companyName", "totalPrice", "openingTime", "personName", "personRole");
+    private static final Set<String> FIELDS = cn.bidcheck.compat.Java8Api.setOf("companyName", "totalPrice", "openingTime", "personName", "personRole");
     private static final String ROLES = "项目负责人|项目经理|技术负责人|授权代表|被授权人|法定代表人|安全负责人|质量负责人|财务负责人";
     private static final String SEPARATOR = "[\\s:：=|｜]+";
     private static final Pattern COMPANY = Pattern.compile("((?:投标人|投标单位|响应人|响应单位|供应商)(?:名称)?|企业名称|公司名称)" + SEPARATOR + "([^|｜\\t;；。]+)");
@@ -29,7 +30,7 @@ public final class ConsistencyEngine {
     public Map<String,Object> scan(Document document, List<Map<String,Object>> supplementalFacts) {
         Objects.requireNonNull(document, "document");
         List<Map<String,Object>> occurrences = new ArrayList<>();
-        List<Page> pages = document.pages() == null ? List.of() : document.pages();
+        List<Page> pages = document.pages() == null ? cn.bidcheck.compat.Java8Api.listOf() : document.pages();
         DocumentContextIndex contextIndex=DocumentContextIndex.build(document);
         TableRelationIndex tableIndex=TableRelationIndex.build(document);
         Context context = new Context();
@@ -37,7 +38,7 @@ public final class ConsistencyEngine {
         for (Page page : pages) {
             interrupted();
             if (occurrences.size() >= MAX_OCCURRENCES) { skipped++; continue; }
-            if (page.text() == null || page.text().isBlank()) { unresolved++; continue; }
+            if (page.text() == null || cn.bidcheck.compat.Java8Api.isBlank(page.text())) { unresolved++; continue; }
             scanned++;
             if (incomplete(page)) unresolved++;
             String[] lines = page.text().split("\\R", -1);
@@ -62,9 +63,9 @@ public final class ConsistencyEngine {
                     Located tableSource = tableQuote.length() <= 10000 ? new Located(document, page, tableHeaderAt + 1, tableQuote, context.copy()) : source;
                     Evidence headerEvidence = new Evidence(document.id(), document.name(), page.number(), page.locationType(), lines[tableHeaderAt], "p" + page.number() + "-l" + (tableHeaderAt + 1), 0.98);
                     table(tableSource, tableHeader, cells, occurrences, headerEvidence, at + 1);
-                } else if (cells.length < 2 && !line.isBlank()) tableHeader = null;
+                } else if (cells.length < 2 && !cn.bidcheck.compat.Java8Api.isBlank(line)) tableHeader = null;
                 // Vertical key/value cells retain one contiguous quote, including the actual newline.
-                if (at + 1 < lines.length && labelOnly(line) && !lines[at + 1].isBlank()) {
+                if (at + 1 < lines.length && labelOnly(line) && !cn.bidcheck.compat.Java8Api.isBlank(lines[at + 1])) {
                     int start = nthLineStart(page.text(), at), end = nthLineEnd(page.text(), at + 1);
                     String quote = page.text().substring(start, end);
                     extract(new Located(document, page, at + 1, quote, context.copy()), occurrences);
@@ -79,12 +80,12 @@ public final class ConsistencyEngine {
             Context tableContext=new Context();tableContext.bind(contextIndex.at(page,row.line()));
             Located source=new Located(document,page,row.line(),page.text().substring(row.start(),row.end()),tableContext);
             String[] headers=row.associations().stream().map(a->TableFactSupport.semanticHeader(row,a)).toArray(String[]::new);
-            String[] values=row.associations().stream().map(a->a.rawValue().strip()).toArray(String[]::new);
+            String[] values=row.associations().stream().map(a->cn.bidcheck.compat.Java8Api.strip(a.rawValue())).toArray(String[]::new);
             int first=occurrences.size();
             table(source,headers,values,occurrences,TableFactSupport.header(document,page,row),row.line());
             TableFactSupport.bind(document,page,row,occurrences,first);
         }
-        for (Map<String,Object> input : supplementalFacts == null ? List.<Map<String,Object>>of() : supplementalFacts) {
+        for (Map<String,Object> input : supplementalFacts == null ? cn.bidcheck.compat.Java8Api.<Map<String,Object>>listOf() : supplementalFacts) {
             interrupted();
             if (occurrences.size() >= MAX_OCCURRENCES) break;
             if (!FIELDS.contains(text(input, "field"))) continue;
@@ -108,12 +109,10 @@ public final class ConsistencyEngine {
                 "modelFactsAccepted", modelAccepted, "modelFactsRejected", modelRejected,
                 "occurrencesTruncated", truncated,
                 "status", pages.isEmpty() || unresolved > 0 || truncated || documentIncomplete(document) ? "PARTIAL" : "TEXT_SCANNED",
-                "fields", List.of("companyName", "totalPrice", "openingTime", "personName", "personRole"));
+                "fields", cn.bidcheck.compat.Java8Api.listOf("companyName", "totalPrice", "openingTime", "personName", "personRole"));
         Map<String,Object> report = map("version", VERSION, "documentId", document.id(), "documentVersion", document.version(),
                 "overall", "REVIEW_REQUIRED", "occurrences", occurrences, "groups", groups, "coverage", coverage,
-                "limitations", List.of("已扫描可提取文字及已有 OCR 转录；扫描完成不等于全部事实均已识别。",
-                        "仅比较可对齐的主体、标段和口径；历史业绩、第三方、未知范围及失效版本不会自动判定为本次投标冲突。",
-                        "简称、更名、多人岗位、文件更正及图像识别差异需结合原文复核；没有差异组不代表全文通过。"));
+                "limitations", cn.bidcheck.compat.Java8Api.listOf("已扫描可提取文字及已有 OCR 转录；扫描完成不等于全部事实均已识别。", "仅比较可对齐的主体、标段和口径；历史业绩、第三方、未知范围及失效版本不会自动判定为本次投标冲突。", "简称、更名、多人岗位、文件更正及图像识别差异需结合原文复核；没有差异组不代表全文通过。"));
         report=mergePersonCredentials(mergeExpanded(report, new ExpandedConsistencyEngine().scan(document, supplementalFacts,contextIndex,tableIndex)),
                 new PersonCredentialConsistency().scan(document));
         ConsistencyRunSupport.map(report.get("coverage")).put("tableRelations",tableIndex.summary());
@@ -123,13 +122,13 @@ public final class ConsistencyEngine {
 
     private static void attachContextSummary(Document document,DocumentContextIndex index,Map<String,Object> report) {
         Map<String,Map<String,Object>> byId=new LinkedHashMap<>();Map<String,Integer> counts=new LinkedHashMap<>();
-        for(String status:List.of("EXPLICIT","INHERITED","DOCUMENT_DEFAULT","UNRESOLVED"))counts.put(status,0);
+        for(String status:cn.bidcheck.compat.Java8Api.listOf("EXPLICIT", "INHERITED", "DOCUMENT_DEFAULT", "UNRESOLVED"))counts.put(status,0);
         for(Map<String,Object> occurrence:ConsistencyRunSupport.maps(report.get("occurrences"))) {
             if(!(occurrence.get("contextAssignment") instanceof Map<?,?>)) {
                 Evidence evidence=evidence(occurrence.get("evidence"));
                 Page page=evidence==null?null:document.pages().stream().filter(p->p.number()==evidence.page()&&Objects.equals(p.locationType(),evidence.locationType())).findFirst().orElse(null);
                 if(page!=null&&page.text()!=null) {
-                    int offset=occurrence.get("sourceOffset") instanceof Number number?number.intValue():page.text().indexOf(evidence.quote());
+                    int offset=occurrence.get("sourceOffset") instanceof Number?((Number) (occurrence.get("sourceOffset"))).intValue():page.text().indexOf(evidence.quote());
                     // A repeated quote without an exact offset cannot borrow the first occurrence's section.
                     if(!(occurrence.get("sourceOffset") instanceof Number)&&offset>=0&&page.text().indexOf(evidence.quote(),offset+1)>=0)offset=-1;
                     DocumentContextIndex.Assignment assignment=index.at(page,offset>=0?physicalLine(page.text(),offset):0);
@@ -141,8 +140,8 @@ public final class ConsistencyEngine {
         }
         for(Map<String,Object> group:ConsistencyRunSupport.maps(report.get("groups"))) {
             List<Map<String,Object>> assignments=new ArrayList<>();
-            if(group.get("occurrenceIds") instanceof List<?> ids)for(Object id:ids) {
-                Map<String,Object> entry=new LinkedHashMap<>(byId.getOrDefault(id.toString(),Map.of("status","UNRESOLVED")));
+            if(group.get("occurrenceIds") instanceof List<?>)for(Object id:((List<?>) (group.get("occurrenceIds")))) {
+                Map<String,Object> entry=new LinkedHashMap<>(byId.getOrDefault(id.toString(),cn.bidcheck.compat.Java8Api.mapOf("status", "UNRESOLVED")));
                 entry.put("occurrenceId",id);assignments.add(entry);
             }
             group.put("contextAssignments",assignments);
@@ -167,13 +166,13 @@ public final class ConsistencyEngine {
         if(!information.isEmpty()&&!PersonCredentialConsistency.requiresReview(personCoverage))personCoverage.put("attentionStatus","INFORMATION_ONLY");
         report.put("personCredentialInformationalGroups",information);
         coverage.put("occurrencesCount",occurrences.size());coverage.put("comparisonGroupsCount",groups.size());
-        coverage.put("observedFields",occurrences.stream().map(o->text(o,"field")).distinct().toList());
-        int old=coverage.get("pagesUnparsed") instanceof Number n?n.intValue():0;
-        int added=personCoverage.get("actionablePages") instanceof Number n?n.intValue():0;
+        coverage.put("observedFields",cn.bidcheck.compat.Java8Api.toList(occurrences.stream().map(o->text(o,"field")).distinct()));
+        int old=coverage.get("pagesUnparsed") instanceof Number?((Number) (coverage.get("pagesUnparsed"))).intValue():0;
+        int added=personCoverage.get("actionablePages") instanceof Number?((Number) (personCoverage.get("actionablePages"))).intValue():0;
         coverage.put("pagesUnparsed",Math.max(old,added));
         // Personnel extraction detail stays PARTIAL in its own coverage. Informational gaps are not unread pages.
         if(PersonCredentialConsistency.requiresReview(personCoverage))coverage.put("status","PARTIAL");
-        for(Map<String,Object> category:ConsistencyRunSupport.maps(coverage.get("categories"))) if(Set.of("personnel","qualification").contains(category.get("id"))) {
+        for(Map<String,Object> category:ConsistencyRunSupport.maps(coverage.get("categories"))) if(cn.bidcheck.compat.Java8Api.setOf("personnel", "qualification").contains(category.get("id"))) {
             String categoryId=text(category,"id");
             long facts=occurrences.stream().filter(o->categoryId.equals(o.get("categoryId"))).count();
             long issues=groups.stream().filter(g->categoryId.equals(g.get("categoryId"))).count();
@@ -184,7 +183,7 @@ public final class ConsistencyEngine {
         List<String> limitations=new ArrayList<>();
         for(Object value:(List<?>)report.get("limitations")) limitations.add(value.toString());
         for(Object value:(List<?>)persons.get("limitations")) limitations.add(value.toString());
-        report.put("occurrences",occurrences);report.put("groups",groups);report.put("limitations",limitations.stream().distinct().toList());
+        report.put("occurrences",occurrences);report.put("groups",groups);report.put("limitations",cn.bidcheck.compat.Java8Api.toList(limitations.stream().distinct()));
         return report;
     }
 
@@ -197,9 +196,9 @@ public final class ConsistencyEngine {
                 &&!text(person,"rawValue").matches("(?s).*(?:公司|集团|企业|事务所|合作社|委员会|事业单位).*"))personalRecords.add(text(person,"recordKey"));
         List<Map<String,Object>> retained=new ArrayList<>();
         for(Map<String,Object> group:groups) {
-            if(!"EVIDENCE_INSUFFICIENT".equals(group.get("status"))||!(group.get("occurrenceIds") instanceof List<?> ids)) {retained.add(group);continue;}
+            if(!"EVIDENCE_INSUFFICIENT".equals(group.get("status"))||!(group.get("occurrenceIds") instanceof List<?>)) {retained.add(group);continue;}
             List<Map<String,Object>> known=new ArrayList<>(),other=new ArrayList<>();boolean missing=false;
-            for(Object id:ids) {
+            for(Object id:((List<?>) (group.get("occurrenceIds")))) {
                 Map<String,Object> occurrence=byId.get(Objects.toString(id,""));
                 if(occurrence==null){missing=true;break;}
                 (personnelCertificateSource(occurrence,persons,personalRecords)?known:other).add(occurrence);
@@ -212,14 +211,15 @@ public final class ConsistencyEngine {
     }
 
     private static boolean personnelCertificateSource(Map<String,Object> generic,List<Map<String,Object>> persons,Set<String> personalRecords) {
-        String personField=switch(text(generic,"field")){case "certificateNumber"->"personCertificateNumber";case "certificateHolder"->"credentialPersonName";case "qualificationGrade"->"certificateLevel";case "certificateExpiry"->"credentialValidUntil";default->"";};
-        if(personField.isBlank()||!(generic.get("evidence") instanceof Evidence source)||!(generic.get("sourceOffset") instanceof Number offset))return false;
+        String personField;
+switch (text(generic,"field")) {case "certificateNumber":personField = "personCertificateNumber"; break;case "certificateHolder":personField = "credentialPersonName"; break;case "qualificationGrade":personField = "certificateLevel"; break;case "certificateExpiry":personField = "credentialValidUntil"; break;default:personField = ""; break;}
+        if(cn.bidcheck.compat.Java8Api.isBlank(personField)||!(generic.get("evidence") instanceof Evidence)||!(generic.get("sourceOffset") instanceof Number))return false;
         for(Map<String,Object> person:persons) {
-            if(!personalRecords.contains(text(person,"recordKey"))||!personField.equals(person.get("field"))||!text(generic,"rawValue").equals(text(person,"rawValue"))||!(person.get("evidence") instanceof Evidence own))continue;
-            if(!source.documentId().equals(own.documentId())||source.page()!=own.page()||!source.locationType().equals(own.locationType())||!own.quote().contains(source.quote()))continue;
+            if(!personalRecords.contains(text(person,"recordKey"))||!personField.equals(person.get("field"))||!text(generic,"rawValue").equals(text(person,"rawValue"))||!(person.get("evidence") instanceof Evidence))continue;
+            if(!((Evidence) (generic.get("evidence"))).documentId().equals(((Evidence) (person.get("evidence"))).documentId())||((Evidence) (generic.get("evidence"))).page()!=((Evidence) (person.get("evidence"))).page()||!((Evidence) (generic.get("evidence"))).locationType().equals(((Evidence) (person.get("evidence"))).locationType())||!((Evidence) (person.get("evidence"))).quote().contains(((Evidence) (generic.get("evidence"))).quote()))continue;
             Map<String,Object> context=ConsistencyRunSupport.map(person.get("personCredentialContext"));
             try {int start=Integer.parseInt(text(context,"recordStart")),end=Integer.parseInt(text(context,"recordEnd"));
-                if(offset.intValue()>=start&&(long)offset.intValue()+source.quote().length()<=end)return true;
+                if(((Number) (generic.get("sourceOffset"))).intValue()>=start&&(long)((Number) (generic.get("sourceOffset"))).intValue()+((Evidence) (generic.get("evidence"))).quote().length()<=end)return true;
             }catch(NumberFormatException ignored){}
         }
         return false;
@@ -227,11 +227,11 @@ public final class ConsistencyEngine {
 
     private static Map<String,Object> sourceSubset(Map<String,Object> original,List<Map<String,Object>> occurrences,boolean information) {
         Map<String,Object> result=new LinkedHashMap<>(original);List<Evidence> evidence=new ArrayList<>();
-        for(Map<String,Object> occurrence:occurrences){if(occurrence.get("evidence") instanceof Evidence e)evidence.add(e);if(occurrence.get("contextEvidences") instanceof List<?> refs)for(Object ref:refs)if(ref instanceof Evidence e)evidence.add(e);}
-        result.put("occurrenceIds",occurrences.stream().map(o->o.get("id")).toList());result.put("evidences",evidence.stream().distinct().toList());
-        result.put("values",occurrences.stream().map(o->o.get("value")).distinct().toList());
-        result.put("sourcePages",evidence.stream().map(Evidence::page).distinct().sorted().toList());
-        result.put("sourceLocations",evidence.stream().map(e->map("documentId",e.documentId(),"documentName",e.documentName(),"page",e.page(),"locationType",e.locationType())).distinct().toList());
+        for(Map<String,Object> occurrence:occurrences){if(occurrence.get("evidence") instanceof Evidence)evidence.add(((Evidence) (occurrence.get("evidence"))));if(occurrence.get("contextEvidences") instanceof List<?>)for(Object ref:((List<?>) (occurrence.get("contextEvidences"))))if(ref instanceof Evidence)evidence.add(((Evidence) (ref)));}
+        result.put("occurrenceIds",cn.bidcheck.compat.Java8Api.toList(occurrences.stream().map(o->o.get("id"))));result.put("evidences",cn.bidcheck.compat.Java8Api.toList(evidence.stream().distinct()));
+        result.put("values",cn.bidcheck.compat.Java8Api.toList(occurrences.stream().map(o->o.get("value")).distinct()));
+        result.put("sourcePages",cn.bidcheck.compat.Java8Api.toList(evidence.stream().map(Evidence::page).distinct().sorted()));
+        result.put("sourceLocations",cn.bidcheck.compat.Java8Api.toList(evidence.stream().map(e->map("documentId",e.documentId(),"documentName",e.documentName(),"page",e.page(),"locationType",e.locationType())).distinct()));
         if(information){result.put("id",text(original,"id")+"-person-information");result.put("severity","INFO");result.put("requiresReview",false);result.put("title",text(original,"fieldLabel")+"提取说明");result.put("reason","此字段已定位到人员证件原文；类别或关联条件不完整仅作提取说明，其他明确字段继续检查。");}
         return result;
     }
@@ -244,7 +244,7 @@ public final class ConsistencyEngine {
             Map<String,Object> definition=ConsistencyCatalog.definition(text(occurrence,"field"));
             occurrence.put("categoryId",definition.getOrDefault("categoryId","project_identity"));
             occurrence.put("fieldLabel",occurrence.get("title"));
-            occurrence.put("dimensions",Map.of());
+            occurrence.put("dimensions",cn.bidcheck.compat.Java8Api.mapOf());
         }
         for(Map<String,Object> group:groups) {
             Map<String,Object> definition=ConsistencyCatalog.definition(text(group,"field"));
@@ -262,22 +262,22 @@ public final class ConsistencyEngine {
         if(occurrences.size()>MAX_OCCURRENCES)occurrences=new ArrayList<>(occurrences.subList(0,MAX_OCCURRENCES));
         Set<String> retained=new HashSet<>();for(Map<String,Object> occurrence:occurrences)retained.add(text(occurrence,"id"));
         int before=groups.size();
-        groups.removeIf(group->!(group.get("occurrenceIds") instanceof List<?> ids)||ids.isEmpty()||!ids.stream().allMatch(id->retained.contains(Objects.toString(id,""))));
+        groups.removeIf(group->!(group.get("occurrenceIds") instanceof List<?>)||((List<?>) (group.get("occurrenceIds"))).isEmpty()||!((List<?>) (group.get("occurrenceIds"))).stream().allMatch(id->retained.contains(Objects.toString(id,""))));
         coverage.put("groupsOmittedByBudget",before-groups.size());
         coverage.put("occurrencesTruncated",truncated);
-        int oldUnparsed=coverage.get("pagesUnparsed") instanceof Number n?n.intValue():0;
-        int expandedUnparsed=extraCoverage.get("pagesUnparsed") instanceof Number n?n.intValue():0;
+        int oldUnparsed=coverage.get("pagesUnparsed") instanceof Number?((Number) (coverage.get("pagesUnparsed"))).intValue():0;
+        int expandedUnparsed=extraCoverage.get("pagesUnparsed") instanceof Number?((Number) (extraCoverage.get("pagesUnparsed"))).intValue():0;
         coverage.put("pagesUnparsed",Math.max(oldUnparsed,expandedUnparsed));
         if(truncated||expandedUnparsed>0||"PARTIAL".equals(extraCoverage.get("status")))coverage.put("status","PARTIAL");
         coverage.put("occurrencesCount",occurrences.size());
-        coverage.put("comparableOccurrencesCount",(int)occurrences.stream().filter(o->Set.of("STRONG","WEAK").contains(text(o,"comparability"))&&!text(o,"subject").equals("UNRESOLVED")).count());
+        coverage.put("comparableOccurrencesCount",(int)occurrences.stream().filter(o->cn.bidcheck.compat.Java8Api.setOf("STRONG", "WEAK").contains(text(o,"comparability"))&&!text(o,"subject").equals("UNRESOLVED")).count());
         coverage.put("comparisonGroupsCount",groups.size());
-        coverage.put("fields",ConsistencyCatalog.fields().stream().filter(f->!f.equals("custom")).toList());
-        coverage.put("observedFields",occurrences.stream().map(o->text(o,"field")).distinct().toList());
-        coverage.put("dynamicFields",occurrences.stream().map(o->text(o,"field")).filter(f->f.startsWith("dynamic.")).distinct().toList());
-        for(String key:List.of("modelFactsAccepted","modelFactsRejected")) {
-            int old=coverage.get(key) instanceof Number n?n.intValue():0;
-            int added=extraCoverage.get(key) instanceof Number n?n.intValue():0;
+        coverage.put("fields",cn.bidcheck.compat.Java8Api.toList(ConsistencyCatalog.fields().stream().filter(f->!f.equals("custom"))));
+        coverage.put("observedFields",cn.bidcheck.compat.Java8Api.toList(occurrences.stream().map(o->text(o,"field")).distinct()));
+        coverage.put("dynamicFields",cn.bidcheck.compat.Java8Api.toList(occurrences.stream().map(o->text(o,"field")).filter(f->f.startsWith("dynamic.")).distinct()));
+        for(String key:cn.bidcheck.compat.Java8Api.listOf("modelFactsAccepted", "modelFactsRejected")) {
+            int old=coverage.get(key) instanceof Number?((Number) (coverage.get(key))).intValue():0;
+            int added=extraCoverage.get(key) instanceof Number?((Number) (extraCoverage.get(key))).intValue():0;
             coverage.put(key,old+added);
         }
         coverage.put("expanded",extraCoverage);
@@ -288,15 +288,15 @@ public final class ConsistencyEngine {
             boolean gaps=groups.stream().anyMatch(g->categoryId.equals(text(g,"categoryId"))&&"EVIDENCE_INSUFFICIENT".equals(text(g,"status")));
             categories.add(map("id",categoryId,"title",ConsistencyCatalog.categoryTitle(categoryId),"capability","RULES_AND_MODEL",
                     "status",gaps?"NEEDS_CONTEXT":facts>0?"OBSERVED":"NO_FACTS","occurrences",facts,"groups",issues,
-                    "limitations",List.of("本地识别明确标签和简单表格；复杂表述需模型辅助，仍须核对适用对象、条件和版本。")));
+                    "limitations",cn.bidcheck.compat.Java8Api.listOf("本地识别明确标签和简单表格；复杂表述需模型辅助，仍须核对适用对象、条件和版本。")));
         }
         coverage.put("categories",categories);
         List<String> limitations=new ArrayList<>();
-        if(report.get("limitations") instanceof List<?> list)list.forEach(v->limitations.add(Objects.toString(v,"")));
+        if(report.get("limitations") instanceof List<?>)((List<?>) (report.get("limitations"))).forEach(v->limitations.add(Objects.toString(v,"")));
         limitations.add("目录支持18类事项；未提取到事实不代表该类已核验，模型补充和自然语言差异仅作待复核线索。");
-        if(expanded.get("limitations") instanceof List<?> list)list.forEach(v->limitations.add(Objects.toString(v,"")));
+        if(expanded.get("limitations") instanceof List<?>)((List<?>) (expanded.get("limitations"))).forEach(v->limitations.add(Objects.toString(v,"")));
         report.put("catalogVersion",ConsistencyCatalog.VERSION);report.put("occurrences",occurrences);report.put("groups",groups);
-        report.put("limitations",limitations.stream().distinct().toList());
+        report.put("limitations",cn.bidcheck.compat.Java8Api.toList(limitations.stream().distinct()));
         return report;
     }
 
@@ -312,7 +312,7 @@ public final class ConsistencyEngine {
         while (price.find()) {
             String raw = price.group(2).trim();
             String unit = unit(raw);
-            if (unit.isBlank()) {
+            if (cn.bidcheck.compat.Java8Api.isBlank(unit)) {
                 Matcher headerUnit = Pattern.compile("[（(]\\s*(亿元|万元|元)\\s*[）)]").matcher(price.group(1));
                 if (headerUnit.find()) unit = headerUnit.group(1);
             }
@@ -333,7 +333,7 @@ public final class ConsistencyEngine {
         Matcher nameRole = NAME_ROLE.matcher(line);
         while (nameRole.find()) {
             String name = trimPerson(nameRole.group(1)), role = trimPerson(nameRole.group(2));
-            if (!validPerson(name) || role.isBlank()) continue;
+            if (!validPerson(name) || cn.bidcheck.compat.Java8Api.isBlank(role)) continue;
             add(out, source, "personRole", normalize(name), role, "STRONG", "同名人员仍需结合证件核对身份", "");
             if (role.matches(ROLES)) add(out, source, "personName", normalizeRole(role), name, "STRONG", "", "");
         }
@@ -341,7 +341,7 @@ public final class ConsistencyEngine {
 
     private Map<String,Object> add(List<Map<String,Object>> out, Located located, String field, String subject,
                                    String raw, String strength, String reason, String suppliedUnit) {
-        if (raw == null || raw.isBlank() || raw.length() > 500 || PLACEHOLDER.matcher(raw.trim()).matches() || !located.text().contains(raw) || out.size() >= MAX_OCCURRENCES) return null;
+        if (raw == null || cn.bidcheck.compat.Java8Api.isBlank(raw) || raw.length() > 500 || PLACEHOLDER.matcher(raw.trim()).matches() || !located.text().contains(raw) || out.size() >= MAX_OCCURRENCES) return null;
         // Flattened tables may place a company or another column heading after a role.
         // These are extraction candidates, not person/company facts; keep the source page intact.
         if (field.equals("personName") && !validPerson(raw.trim())) return null;
@@ -352,7 +352,7 @@ public final class ConsistencyEngine {
         }
         Context context = located.context();
         String scope = context.scope, lot = lot(located.text());
-        if (lot.isBlank()) lot = context.lot;
+        if (cn.bidcheck.compat.Java8Api.isBlank(lot)) lot = context.lot;
         if (historical(located.text())) scope = "HISTORICAL_PROJECT";
         if (located.text().matches("(?s).*(?:招标人|采购人|甲方|业主|发包人)(?:公司|企业)?名称.*") && field.equals("companyName")
                 && !located.text().matches("(?s).*(?:投标人|投标单位|响应人|响应单位).*")) scope = "THIRD_PARTY";
@@ -363,7 +363,7 @@ public final class ConsistencyEngine {
         String normalized = normalized(field, raw, suppliedUnit);
         boolean ocr = Objects.toString(located.page().parser(), "").toUpperCase(Locale.ROOT).contains("OCR");
         double confidence = ocr ? 0.78 : 0.98;
-        String comparison = normalized.isBlank() ? "INVALID" : strength;
+        String comparison = cn.bidcheck.compat.Java8Api.isBlank(normalized) ? "INVALID" : strength;
         if (incomplete(located.page()) || ocr) comparison = "WEAK";
         Evidence evidence = new Evidence(located.doc().id(), located.doc().name(), located.page().number(), located.page().locationType(),
                 located.text(), "p" + located.page().number() + "-l" + located.line(), confidence);
@@ -371,7 +371,7 @@ public final class ConsistencyEngine {
                 "field", field, "title", title(field), "subject", subject, "scope", scope, "lot", lot, "basis", basis,
                 "time", "", "rawValue", raw, "value", normalized, "evidence", evidence, "extractionMethod", ocr ? "OCR_TRANSCRIPT_RULE" : "TEXT_RULE",
                 "confidence", confidence, "comparability", comparison, "scopeReason", reason, "revision", revision,
-                "unit", field.equals("totalPrice") ? suppliedUnit.isBlank() ? unit(raw) : suppliedUnit : "");
+                "unit", field.equals("totalPrice") ? cn.bidcheck.compat.Java8Api.isBlank(suppliedUnit) ? unit(raw) : suppliedUnit : "");
         if (field.equals("openingTime")) result.put("precision", precision(raw));
         if(context.assignment!=null) {
             result.put("contextAssignment",context.assignment.asMap());result.put("sectionId",context.assignment.sectionId());
@@ -390,12 +390,12 @@ public final class ConsistencyEngine {
         int first = out.size();
         for (int i = 0; i < headings.length; i++) if (headings[i].matches("标段|标包|包件|包号")) {
             rowLot = lot(values[i]);
-            if (rowLot.isBlank()) rowLot = lot(headings[i] + " " + values[i]);
+            if (cn.bidcheck.compat.Java8Api.isBlank(rowLot)) rowLot = lot(headings[i] + " " + values[i]);
         }
         for (int i = 0; i < headings.length; i++) {
             int beforeColumn=out.size();
             String label = headings[i].trim(), value = values[i].trim();
-            if (value.isBlank() || !source.text().contains(value)) continue;
+            if (cn.bidcheck.compat.Java8Api.isBlank(value) || !source.text().contains(value)) continue;
             if (label.matches("(?:投标人|投标单位|响应人|响应单位|供应商)(?:名称)?")) add(out, source, "companyName", "BIDDER", value, "STRONG", "表头与本行单元格绑定", "");
             if (label.matches("(?:开标时间|开标日期)")) add(out, source, "openingTime", "PROJECT_OPENING", value, "STRONG", "表头与本行单元格绑定", "");
             if (label.matches("(?:投标总报价|投标报价|投标总价|总报价|总价).{0,12}")) {
@@ -408,39 +408,39 @@ public final class ConsistencyEngine {
             if (label.matches("岗位|职务|拟任职务|担任职务|本项目职务|在本项目中担任职务")){role=value;roleColumn=i+1;}
             for(int added=beforeColumn;added<out.size();added++)out.get(added).put("sourceColumn",i+1);
         }
-        if (validPerson(name) && !role.isBlank()) {
+        if (validPerson(name) && !cn.bidcheck.compat.Java8Api.isBlank(role)) {
             Map<String,Object> roleFact=add(out, source, "personRole", normalize(name), role, "STRONG", "表头与本行单元格绑定；同名人员需核对身份", "");if(roleFact!=null)roleFact.put("sourceColumn",roleColumn);
             if (role.matches(ROLES)){Map<String,Object> nameFact=add(out, source, "personName", normalizeRole(role), name, "STRONG", "表头与本行单元格绑定", "");if(nameFact!=null)nameFact.put("sourceColumn",nameColumn);}
         }
         for (int i = first; i < out.size(); i++) {
             Map<String,Object> occurrence = out.get(i);
             List<Evidence> references=new ArrayList<>();
-            if(occurrence.get("contextEvidences") instanceof List<?> refs)for(Object reference:refs)if(reference instanceof Evidence e)references.add(e);
-            references.add(headerEvidence);occurrence.put("contextEvidences",references.stream().distinct().limit(12).toList());
+            if(occurrence.get("contextEvidences") instanceof List<?>)for(Object reference:((List<?>) (occurrence.get("contextEvidences"))))if(reference instanceof Evidence)references.add(((Evidence) (reference)));
+            references.add(headerEvidence);occurrence.put("contextEvidences",cn.bidcheck.compat.Java8Api.toList(references.stream().distinct().limit(12)));
             occurrence.put("id", "occ-" + hash(text(occurrence, "id") + "|row:" + rowLine));
             occurrence.put("sourceRowLine", rowLine);
-            if (!rowLot.isBlank()) occurrence.put("lot", rowLot);
+            if (!cn.bidcheck.compat.Java8Api.isBlank(rowLot)) occurrence.put("lot", rowLot);
         }
     }
 
     private Map<String,Object> supplemental(Document doc, Map<String,Object> input) {
         if (input == null || !FIELDS.contains(text(input, "field"))) return null;
         Evidence evidence = evidence(input.get("evidence"));
-        if (evidence == null || !Objects.equals(doc.id(), evidence.documentId()) || evidence.quote() == null || evidence.quote().isBlank() || evidence.quote().length() > 12000) return null;
-        Page page = (doc.pages() == null ? List.<Page>of() : doc.pages()).stream().filter(p -> p.number() == evidence.page() && Objects.equals(p.locationType(), evidence.locationType())).findFirst().orElse(null);
+        if (evidence == null || !Objects.equals(doc.id(), evidence.documentId()) || evidence.quote() == null || cn.bidcheck.compat.Java8Api.isBlank(evidence.quote()) || evidence.quote().length() > 12000) return null;
+        Page page = (doc.pages() == null ? cn.bidcheck.compat.Java8Api.<Page>listOf() : doc.pages()).stream().filter(p -> p.number() == evidence.page() && Objects.equals(p.locationType(), evidence.locationType())).findFirst().orElse(null);
         String raw = text(input, "rawValue");
-        if (page == null || page.text() == null || !page.text().contains(evidence.quote()) || raw.isBlank() || raw.length() > 500 || !evidence.quote().contains(raw)) return null;
+        if (page == null || page.text() == null || !page.text().contains(evidence.quote()) || cn.bidcheck.compat.Java8Api.isBlank(raw) || raw.length() > 500 || !evidence.quote().contains(raw)) return null;
         int sourceOffset = page.text().indexOf(evidence.quote());
-        if (input.get("sourceOffset") instanceof Number number) {
-            int requestedOffset = number.intValue();
+        if (input.get("sourceOffset") instanceof Number) {
+            int requestedOffset = ((Number) (input.get("sourceOffset"))).intValue();
             if (requestedOffset < 0 || requestedOffset + evidence.quote().length() > page.text().length() || !page.text().startsWith(evidence.quote(), requestedOffset)) return null;
             sourceOffset = requestedOffset;
         }
         String field = text(input, "field"), subject = text(input, "subject");
         String contextQuote = text(input, "contextQuote");
-        if (contextQuote.length() > 6000 || !contextQuote.isBlank() && !page.text().contains(contextQuote)) return null;
+        if (contextQuote.length() > 6000 || !cn.bidcheck.compat.Java8Api.isBlank(contextQuote) && !page.text().contains(contextQuote)) return null;
         // The contextual subject/scope must enclose this value's quote, not another occurrence elsewhere on the page.
-        if (!contextQuote.isBlank()) {
+        if (!cn.bidcheck.compat.Java8Api.isBlank(contextQuote)) {
             int inContext = contextQuote.indexOf(evidence.quote());
             boolean bound = false;
             while (inContext >= 0) {
@@ -451,8 +451,8 @@ public final class ConsistencyEngine {
             if (!bound) contextQuote = "";
         }
         String semanticSource = evidence.quote() + "\n" + contextQuote;
-        subject = switch (field) { case "companyName" -> "BIDDER"; case "totalPrice" -> "BID_TOTAL"; case "openingTime" -> "PROJECT_OPENING"; default -> subject; };
-        if ((field.equals("personName") || field.equals("personRole")) && (subject.isBlank() || !semanticSource.contains(subject))) subject = "UNRESOLVED";
+        switch (field) {case "companyName":subject = "BIDDER"; break;case "totalPrice":subject = "BID_TOTAL"; break;case "openingTime":subject = "PROJECT_OPENING"; break;default:subject = subject; break;}
+        if ((field.equals("personName") || field.equals("personRole")) && (cn.bidcheck.compat.Java8Api.isBlank(subject) || !semanticSource.contains(subject))) subject = "UNRESOLVED";
         if (field.equals("personName")) subject = normalizeRole(subject);
         if (field.equals("personRole")) subject = normalize(subject);
         Context context = new Context();
@@ -463,19 +463,19 @@ public final class ConsistencyEngine {
         else if (scope.equals("CURRENT_PROJECT") && semanticSource.matches("(?s).*(?:本项目|本次投标|投标人|投标报价|投标总价|开标时间|开标日期|拟任|项目经理|项目负责人).*")) context.scope = "CURRENT_PROJECT";
         context.lot = lot(semanticSource);
         String requestedLot = text(input, "lot");
-        if (!requestedLot.isBlank() && context.lot.isBlank()) context.scope = "UNRESOLVED";
+        if (!cn.bidcheck.compat.Java8Api.isBlank(requestedLot) && cn.bidcheck.compat.Java8Api.isBlank(context.lot)) context.scope = "UNRESOLVED";
         List<Map<String,Object>> target = new ArrayList<>();
         Map<String,Object> result = add(target, new Located(doc, page, physicalLine(page.text(), sourceOffset), evidence.quote(), context), field,
                 subject, raw, "WEAK", "模型补充事实；来源已核对，主体、范围和角色对应仍需复核", "");
-        if (result == null || text(result, "value").isBlank()) return null;
+        if (result == null || cn.bidcheck.compat.Java8Api.isBlank(text(result, "value"))) return null;
         result.put("extractionMethod", "MODEL_SOURCE_VERIFIED");
         result.put("confidence", Math.min(0.8, finiteConfidence(evidence.confidence())));
         result.put("comparability", "WEAK");
         if (field.equals("companyName") && context.scope.equals("CURRENT_PROJECT") && text(result, "scope").equals("UNRESOLVED")) result.put("scope", "CURRENT_PROJECT");
         if (field.equals("totalPrice")) result.put("basis", tax(semanticSource) + "|" + cycle(semanticSource));
-        if (!contextQuote.isBlank()) {
+        if (!cn.bidcheck.compat.Java8Api.isBlank(contextQuote)) {
             result.put("contextQuote", contextQuote);
-            result.put("contextEvidences", List.of(new Evidence(doc.id(), doc.name(), page.number(), page.locationType(), contextQuote,
+            result.put("contextEvidences", cn.bidcheck.compat.Java8Api.listOf(new Evidence(doc.id(), doc.name(), page.number(), page.locationType(), contextQuote,
                     "p" + page.number() + "-l" + physicalLine(page.text(), page.text().indexOf(contextQuote)), 0)));
         }
         result.put("sourceOffset", sourceOffset);
@@ -492,12 +492,12 @@ public final class ConsistencyEngine {
             buckets.computeIfAbsent(key, ignored -> new ArrayList<>()).add(occurrence);
         }
         List<Map<String,Object>> groups = new ArrayList<>();
-        for (var bucket : buckets.entrySet()) {
+        for (java.util.Map.Entry<java.lang.String, java.util.List<java.util.Map<java.lang.String, java.lang.Object>>> bucket : buckets.entrySet()) {
             interrupted();
             List<Map<String,Object>> items = bucket.getValue();
             if (items.size() < 2) continue;
             String field = text(items.get(0), "field");
-            Map<String,Object> reference = items.stream().max(Comparator.comparingInt(o -> precisionRank(text(o, "precision")))).orElseThrow();
+            Map<String,Object> reference = items.stream().max(Comparator.comparingInt(o -> precisionRank(text(o, "precision")))).orElseThrow(java.util.NoSuchElementException::new);
             boolean difference = items.stream().anyMatch(item -> incompatible(field, reference, item));
             if (!difference) continue;
             boolean weak = items.stream().anyMatch(o -> !text(o, "comparability").equals("STRONG") || !text(o, "revision").equals("CURRENT"))
@@ -512,21 +512,21 @@ public final class ConsistencyEngine {
             List<Evidence> evidence = new ArrayList<>();
             for (Map<String,Object> item : items) {
                 evidence.add((Evidence)item.get("evidence"));
-                if (item.get("contextEvidences") instanceof List<?> refs) for (Object ref : refs) if (ref instanceof Evidence source) evidence.add(source);
+                if (item.get("contextEvidences") instanceof List<?>) for (Object ref : ((List<?>) (item.get("contextEvidences")))) if (ref instanceof Evidence) evidence.add(((Evidence) (ref)));
             }
-            evidence = evidence.stream().distinct().toList();
+            evidence = cn.bidcheck.compat.Java8Api.toList(evidence.stream().distinct());
             groups.add(map("id", "conflict-" + hash(bucket.getKey()), "field", field, "title", title(field) + "存在" + (weak ? "疑似差异" : "不一致"),
                     "subject", items.get(0).get("subject"), "scope", items.get(0).get("scope"), "lot", items.get(0).get("lot"), "basis", items.get(0).get("basis"),
                     "status", weak ? "SUSPECTED" : "CONFLICT", "reason", reason,
-                    "occurrenceIds", items.stream().map(o -> o.get("id")).toList(), "evidences", evidence,
-                    "values", items.stream().map(o -> o.get("value")).distinct().toList()));
+                    "occurrenceIds", cn.bidcheck.compat.Java8Api.toList(items.stream().map(o -> o.get("id"))), "evidences", evidence,
+                    "values", cn.bidcheck.compat.Java8Api.toList(items.stream().map(o -> o.get("value")).distinct())));
         }
         return groups;
     }
 
     private boolean eligible(Map<String,Object> occurrence) {
-        if (!text(occurrence, "scope").equals("CURRENT_PROJECT") || text(occurrence, "value").isBlank() || Set.of("INVALID","INCOMPLETE").contains(text(occurrence, "comparability")) || text(occurrence, "subject").equals("UNRESOLVED")) return false;
-        return !text(occurrence, "field").equals("totalPrice") || !text(occurrence, "unit").isBlank();
+        if (!text(occurrence, "scope").equals("CURRENT_PROJECT") || cn.bidcheck.compat.Java8Api.isBlank(text(occurrence, "value")) || cn.bidcheck.compat.Java8Api.setOf("INVALID", "INCOMPLETE").contains(text(occurrence, "comparability")) || text(occurrence, "subject").equals("UNRESOLVED")) return false;
+        return !text(occurrence, "field").equals("totalPrice") || !cn.bidcheck.compat.Java8Api.isBlank(text(occurrence, "unit"));
     }
 
     private boolean incompatible(String field, Map<String,Object> left, Map<String,Object> right) {
@@ -551,7 +551,7 @@ public final class ConsistencyEngine {
 
     private static void applyDeclaredAliases(List<Map<String,Object>> occurrences) {
         Map<String,Set<String>> aliases = new HashMap<>();
-        for (Map<String,Object> occurrence : occurrences) if (text(occurrence, "field").equals("companyName") && !text(occurrence, "declaredAlias").isBlank()) {
+        for (Map<String,Object> occurrence : occurrences) if (text(occurrence, "field").equals("companyName") && !cn.bidcheck.compat.Java8Api.isBlank(text(occurrence, "declaredAlias"))) {
             String key = text(occurrence, "scope") + "|" + text(occurrence, "lot") + "|" + text(occurrence, "declaredAlias");
             aliases.computeIfAbsent(key, ignored -> new HashSet<>()).add(text(occurrence, "value"));
         }
@@ -571,7 +571,7 @@ public final class ConsistencyEngine {
             String unit = number.group(2) == null ? suppliedUnit : number.group(2);
             try {
                 BigDecimal value = new BigDecimal(number.group(1).replace(",", ""));
-                if (Set.of("万", "万元").contains(unit)) value = value.multiply(new BigDecimal("10000"));
+                if (cn.bidcheck.compat.Java8Api.setOf("万", "万元").contains(unit)) value = value.multiply(new BigDecimal("10000"));
                 if (unit.equals("亿元")) value = value.multiply(new BigDecimal("100000000"));
                 return value.stripTrailingZeros().toPlainString();
             } catch (RuntimeException ignored) { return ""; }
@@ -608,7 +608,7 @@ public final class ConsistencyEngine {
                 && !value.matches(".*(?:公司|分公司|资格证书|考核合格证|京建安|发包人|承包人).*")
                 && !value.matches("(?:是指|指甲方|指乙方|指投标人|应当|应具备|必须).*");
     }
-    private static String title(String field) { return switch (field) { case "companyName" -> "投标企业名称"; case "totalPrice" -> "投标总报价"; case "openingTime" -> "开标时间"; case "personName" -> "关键岗位人员"; case "personRole" -> "人员职务"; default -> field; }; }
+    private static String title(String field) { switch (field) {case "companyName":return "投标企业名称";case "totalPrice":return "投标总报价";case "openingTime":return "开标时间";case "personName":return "关键岗位人员";case "personRole":return "人员职务";default:return field;} }
     private static boolean historical(String value) { return value.matches("(?s).*(?:历史项目|历史合同|过往项目|过往合同|类似项目业绩|类似项目合同|业绩项目|合同业绩|业绩合同|已完成项目|已完成合同|既往项目|既往合同|历史业绩).*"); }
     private static boolean revision(String value) { return value.matches("(?s).*(?:原定|原开标|原报价|调整为|更正为|变更为|修改为|现定|修订版|更正公告|补遗).*"); }
     private static String localClause(String line, int start, int end) {
@@ -642,31 +642,48 @@ public final class ConsistencyEngine {
     private static String hash(String value) { try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))).substring(0, 24); } catch (Exception e) { throw new IllegalStateException(e); } }
     private static double finiteConfidence(double value) { return Double.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0; }
     private static Evidence evidence(Object value) {
-        if (value instanceof Evidence evidence) return evidence;
-        if (!(value instanceof Map<?,?> input)) return null;
-        try { return new Evidence(Objects.toString(input.get("documentId"), ""), Objects.toString(input.get("documentName"), ""), Integer.parseInt(Objects.toString(input.get("page"), "0")), Objects.toString(input.get("locationType"), ""), Objects.toString(input.get("quote"), ""), Objects.toString(input.get("anchor"), ""), Double.parseDouble(Objects.toString(input.get("confidence"), "0.7"))); }
+        if (value instanceof Evidence) return ((Evidence) (value));
+        if (!(value instanceof Map<?,?>)) return null;
+        try { return new Evidence(Objects.toString(((Map<?,?>) (value)).get("documentId"), ""), Objects.toString(((Map<?,?>) (value)).get("documentName"), ""), Integer.parseInt(Objects.toString(((Map<?,?>) (value)).get("page"), "0")), Objects.toString(((Map<?,?>) (value)).get("locationType"), ""), Objects.toString(((Map<?,?>) (value)).get("quote"), ""), Objects.toString(((Map<?,?>) (value)).get("anchor"), ""), Double.parseDouble(Objects.toString(((Map<?,?>) (value)).get("confidence"), "0.7"))); }
         catch (RuntimeException ignored) { return null; }
     }
 
-    private record Located(Document doc, Page page, int line, String text, Context context) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Located {
+        private final Document doc;
+        private final Page page;
+        private final int line;
+        private final String text;
+        private final Context context;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Located(@com.fasterxml.jackson.annotation.JsonProperty("doc") Document doc, @com.fasterxml.jackson.annotation.JsonProperty("page") Page page, @com.fasterxml.jackson.annotation.JsonProperty("line") int line, @com.fasterxml.jackson.annotation.JsonProperty("text") String text, @com.fasterxml.jackson.annotation.JsonProperty("context") Context context) { this.doc = doc; this.page = page; this.line = line; this.text = text; this.context = context; }
+        public Document doc() { return doc; }
+        public Page page() { return page; }
+        public int line() { return line; }
+        public String text() { return text; }
+        public Context context() { return context; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Located that = (Located) other; return java.util.Objects.equals(this.doc, that.doc) && java.util.Objects.equals(this.page, that.page) && java.util.Objects.equals(this.line, that.line) && java.util.Objects.equals(this.text, that.text) && java.util.Objects.equals(this.context, that.context); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.doc); hash = 31 * hash + java.util.Objects.hashCode(this.page); hash = 31 * hash + java.util.Objects.hashCode(this.line); hash = 31 * hash + java.util.Objects.hashCode(this.text); hash = 31 * hash + java.util.Objects.hashCode(this.context); return hash; }
+        @Override public String toString() { return "Located[" + "doc=" + doc + ", page=" + page + ", line=" + line + ", text=" + text + ", context=" + context + "]"; }
+ }
     private static final class Context {
         String scope = "CURRENT_PROJECT", lot = ""; boolean revision;
         DocumentContextIndex.Assignment assignment;
         Context copy() { Context copy = new Context(); copy.scope = scope; copy.lot = lot; copy.revision = revision;copy.assignment=assignment;return copy; }
         void bind(DocumentContextIndex.Assignment value){assignment=value;scope=value.scope();lot=value.lot();}
         void advance(String line) {
-            String clean = line.trim().replaceFirst("[:：]$", "").stripTrailing();
+            String clean = cn.bidcheck.compat.Java8Api.stripTrailing(line.trim().replaceFirst("[:：]$", ""));
             boolean heading = clean.length() < 90 && !clean.matches(".*[:：=|｜\\t].*");
             String foundLot = ConsistencyEngine.lot(clean);
             if (heading && (historical(clean) || clean.matches(".*(?:业绩情况|业绩证明|业绩材料|合同复印件|类似业绩|合同协议书).*"))) scope = "HISTORICAL_PROJECT";
             else if (heading && clean.matches(".*(?:投标函|投标人基本情况|本项目人员|拟投入.*人员|本项目报价|开标一览表|投标报价表|授权委托书|项目管理机构|人员配置表|法定代表人身份证明|本项目汇总|项目总计|全部标段).*")) {
                 scope = "CURRENT_PROJECT"; revision = false;
-                if (foundLot.isBlank() && clean.matches(".*(?:本项目汇总|项目总计|全部标段).*")) lot = "";
-                else if (foundLot.isBlank() && !lot.isBlank()) lot = "UNRESOLVED";
+                if (cn.bidcheck.compat.Java8Api.isBlank(foundLot) && clean.matches(".*(?:本项目汇总|项目总计|全部标段).*")) lot = "";
+                else if (cn.bidcheck.compat.Java8Api.isBlank(foundLot) && !cn.bidcheck.compat.Java8Api.isBlank(lot)) lot = "UNRESOLVED";
             }
             else if (heading && clean.contains("合同")) scope = "UNRESOLVED";
             if (heading && ConsistencyEngine.revision(clean)) revision = true;
-            if (heading && !foundLot.isBlank()) lot = foundLot;
+            if (heading && !cn.bidcheck.compat.Java8Api.isBlank(foundLot)) lot = foundLot;
         }
     }
 }

@@ -7,7 +7,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.HexFormat;
+import cn.bidcheck.compat.HexFormat;
 
 /** Canonical, content-addressed identities for the deterministic template pipeline. */
 final class TemplateIdentity {
@@ -19,7 +19,7 @@ final class TemplateIdentity {
 
     static String digest(String namespace, Object value) {
         try {
-            byte[] canonical = JSON.writeValueAsBytes(java.util.Map.of("namespace", namespace, "value", value));
+            byte[] canonical = JSON.writeValueAsBytes(cn.bidcheck.compat.Java8Api.mapOf("namespace", namespace, "value", value));
             return sha256(canonical);
         } catch (Exception error) {
             throw new IllegalStateException("Template identity cannot be serialized", error);
@@ -34,7 +34,7 @@ final class TemplateIdentity {
         String resource = "/" + type.getName().replace('.', '/') + ".class";
         try (InputStream input = type.getResourceAsStream(resource)) {
             if (input == null) return digest("missing-class-resource", type.getName());
-            return sha256(input.readAllBytes());
+            return sha256(cn.bidcheck.compat.Java8Api.readAllBytes(input));
         } catch (Exception error) {
             throw new IllegalStateException("Cannot fingerprint evaluator implementation " + type.getName(), error);
         }

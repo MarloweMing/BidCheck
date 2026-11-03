@@ -16,9 +16,9 @@ class DeterministicRequirementPackageTest {
     private ModelGateway model(String identity){return new ModelGateway(){public boolean enabled(){return true;}public String identity(){return identity;}public JsonNode request(String operation,Map<String,Object> input){throw new AssertionError("local package must never call the model");}};}
     private Checkpoint checkpoint(String source,String title){return new Checkpoint(title,title,"资格","HIGH","SEMANTIC_RESPONSE","qualification","",source,"",true,true,true,new Evidence("t","招标",1,"BLOCK",source,"p1",1));}
     private Map<String,Object> context(String source,int version){
-        Document doc=new Document("t","p","TENDER","招标",version,"hash-"+version,"",List.of(new Page(1,source,"BLOCK","NATIVE","")),List.of());
-        Map<String,Object> context=new LinkedHashMap<>();context.put("originalRequirement",source);context.put("tenderDocuments",List.of(doc));context.put("requirementProjectId","p");
-        context.put("requirementArtifactLookup",(Function<Map<String,Object>,Map<String,Object>>)request->artifacts.getOrDefault(str(request,"artifactId"),Map.of()));
+        Document doc=new Document("t","p","TENDER","招标",version,"hash-"+version,"",cn.bidcheck.compat.Java8Api.listOf(new Page(1,source,"BLOCK","NATIVE","")),cn.bidcheck.compat.Java8Api.listOf());
+        Map<String,Object> context=new LinkedHashMap<>();context.put("originalRequirement",source);context.put("tenderDocuments",cn.bidcheck.compat.Java8Api.listOf(doc));context.put("requirementProjectId","p");
+        context.put("requirementArtifactLookup",(Function<Map<String,Object>,Map<String,Object>>)request->artifacts.getOrDefault(str(request,"artifactId"),cn.bidcheck.compat.Java8Api.mapOf()));
         context.put("requirementArtifactPublisher",(Consumer<Map<String,Object>>)artifact->artifacts.put(str(artifact,"artifactId"),artifact));return context;
     }
     private Plan compile(String source,String title,String model,int version)throws Exception{return new RequirementCompiler().compile(checkpoint(source,title),new RunSession(model(model),context(source,version),"run-"+title));}
@@ -35,7 +35,7 @@ class DeterministicRequirementPackageTest {
         Plan first=compile(SOURCE,"资格","model-a",1);
         Plan changed=compile(SOURCE,"资格","model-a",2);
         assertNotEquals(first.requirementScope().get("artifactId"),changed.requirementScope().get("artifactId"));
-        Map<String,Object> focus=context(SOURCE,2);focus.put("focusedCheck",true);focus.put("atomicDomains",List.of("qualification"));
+        Map<String,Object> focus=context(SOURCE,2);focus.put("focusedCheck",true);focus.put("atomicDomains",cn.bidcheck.compat.Java8Api.listOf("qualification"));
         Plan focused=new RequirementCompiler().compile(checkpoint(SOURCE,"资格"),new RunSession(model("model-a"),focus,"focused"));
         assertNotEquals(changed.requirementScope().get("artifactId"),focused.requirementScope().get("artifactId"));assertEquals(3,artifacts.size());
     }
@@ -43,7 +43,7 @@ class DeterministicRequirementPackageTest {
         compile(SOURCE,"资格","model-a",1);
         // The source span hash participates even if a caller incorrectly retained the document label/hash.
         compile("施工单位须提交营业执照。","资格","model-a",1);
-        Map<String,Object> ctx=context(SOURCE,1);ctx.put("externalAdapterBySource",Map.of("信用中国","CREDIT_CHINA"));
+        Map<String,Object> ctx=context(SOURCE,1);ctx.put("externalAdapterBySource",cn.bidcheck.compat.Java8Api.mapOf("信用中国", "CREDIT_CHINA"));
         new RequirementCompiler().compile(checkpoint(SOURCE,"资格"),new RunSession(model("model-a"),ctx,"adapter"));
         assertEquals(3,artifacts.size());
     }
@@ -66,7 +66,7 @@ class DeterministicRequirementPackageTest {
     @Test void previouslyValidatedArtifactThatFailsCurrentSourceValidationIsRecompiled()throws Exception{
         compile(SOURCE,"资格","model-a",1);String key=artifacts.keySet().iterator().next();
         Map<String,Object> invalid=new LinkedHashMap<>(artifacts.get(key));
-        invalid.put("rawResponse",Map.of("logic","ALL","rules",List.of(Map.of("id","invalid","predicate","MATERIAL","subject","设计单位","expected","营业执照","sourceQuote","不存在于本项目的要求"))));
+        invalid.put("rawResponse",cn.bidcheck.compat.Java8Api.mapOf("logic", "ALL", "rules", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("id", "invalid", "predicate", "MATERIAL", "subject", "设计单位", "expected", "营业执照", "sourceQuote", "不存在于本项目的要求"))));
         artifacts.put(key,invalid);
         Plan repaired=compile(SOURCE,"资格","model-b",1);
         assertNotEquals("DETERMINISTIC_PACKAGE_REUSED",repaired.method());
@@ -77,7 +77,7 @@ class DeterministicRequirementPackageTest {
     @Test void intactDigestDoesNotReplaceCurrentSourceValidation()throws Exception{
         compile(SOURCE,"资格","model-a",1);String key=artifacts.keySet().iterator().next();
         Map<String,Object> invalid=new LinkedHashMap<>(artifacts.get(key));
-        Map<String,Object> raw=Map.of("logic","ALL","rules",List.of(Map.of("id","legacy","predicate","MATERIAL","subject","设计单位","expected","营业执照","sourceQuote","旧校验器接受过的其他要求")));
+        Map<String,Object> raw=cn.bidcheck.compat.Java8Api.mapOf("logic", "ALL", "rules", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("id", "legacy", "predicate", "MATERIAL", "subject", "设计单位", "expected", "营业执照", "sourceQuote", "旧校验器接受过的其他要求")));
         invalid.put("rawResponse",raw);
         invalid.put("responseDigest",identity(new ObjectMapper().enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS).writeValueAsString(raw)));
         artifacts.put(key,invalid);
@@ -86,7 +86,7 @@ class DeterministicRequirementPackageTest {
         assertTrue(RequirementCompiler.leaves(repaired.rules()).stream().noneMatch(r->r.predicate().equals("UNSUPPORTED")));
     }
     @Test void missingIdentityOrDigestCannotBeAdopted()throws Exception{
-        for(String missing:List.of("documentHash","modelIdentity","inputFingerprint","responseDigest")){
+        for(String missing:cn.bidcheck.compat.Java8Api.listOf("documentHash", "modelIdentity", "inputFingerprint", "responseDigest")){
             artifacts.clear();compile(SOURCE,"资格","model-a",1);String key=artifacts.keySet().iterator().next();
             Map<String,Object> incomplete=new LinkedHashMap<>(artifacts.get(key));incomplete.remove(missing);artifacts.put(key,incomplete);
             Plan fresh=compile(SOURCE,"资格","model-b",1);assertNotEquals("DETERMINISTIC_PACKAGE_REUSED",fresh.method(),missing);

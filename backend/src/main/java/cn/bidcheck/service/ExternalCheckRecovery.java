@@ -18,20 +18,34 @@ import java.util.function.Supplier;
  * second recomputation in the same run.
  */
 final class ExternalCheckRecovery {
-    record Outcome(Map<String,Object> context,List<Map<String,Object>> newRecords,
-                   Finding finding,boolean recomputed) {}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    static final class Outcome {
+        private final Map<String,Object> context;
+        private final List<Map<String,Object>> newRecords;
+        private final Finding finding;
+        private final boolean recomputed;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        Outcome(@com.fasterxml.jackson.annotation.JsonProperty("context") Map<String,Object> context, @com.fasterxml.jackson.annotation.JsonProperty("newRecords") List<Map<String,Object>> newRecords, @com.fasterxml.jackson.annotation.JsonProperty("finding") Finding finding, @com.fasterxml.jackson.annotation.JsonProperty("recomputed") boolean recomputed) { this.context = context; this.newRecords = newRecords; this.finding = finding; this.recomputed = recomputed; }
+        public Map<String,Object> context() { return context; }
+        public List<Map<String,Object>> newRecords() { return newRecords; }
+        public Finding finding() { return finding; }
+        public boolean recomputed() { return recomputed; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Outcome that = (Outcome) other; return java.util.Objects.equals(this.context, that.context) && java.util.Objects.equals(this.newRecords, that.newRecords) && java.util.Objects.equals(this.finding, that.finding) && java.util.Objects.equals(this.recomputed, that.recomputed); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.context); hash = 31 * hash + java.util.Objects.hashCode(this.newRecords); hash = 31 * hash + java.util.Objects.hashCode(this.finding); hash = 31 * hash + java.util.Objects.hashCode(this.recomputed); return hash; }
+        @Override public String toString() { return "Outcome[" + "context=" + context + ", newRecords=" + newRecords + ", finding=" + finding + ", recomputed=" + recomputed + "]"; }
+}
 
     private ExternalCheckRecovery() {}
 
     /** Preserve a failed/skipped query receipt even when no new evidence permits recomputation.
      * This updates diagnostics only: callers must not count a new Finding instance as a re-evaluation. */
     static Finding attachDiagnostics(Finding finding,List<Map<String,Object>> diagnostics) {
-        List<Map<String,Object>> external=diagnostics==null?List.of():diagnostics.stream()
-            .filter(row->text(row.get("code")).startsWith("EXTERNAL_")).map(Map::copyOf).toList();
+        List<Map<String,Object>> external=diagnostics==null?cn.bidcheck.compat.Java8Api.listOf():cn.bidcheck.compat.Java8Api.toList(diagnostics.stream()
+            .filter(row->text(row.get("code")).startsWith("EXTERNAL_")).map(cn.bidcheck.compat.Java8Api::mapCopyOf));
         if(external.isEmpty())return finding;
         Map<String,Object> assessment=new LinkedHashMap<>(CheckResolution.map(finding.assessment()));
         assessment.put("externalQueryDiagnostics",external);
-        assessment.put("externalQueryUpdate",Map.of("evidenceChanged",false,"conclusionRecomputed",false,"diagnosticsUpdated",true));
+        assessment.put("externalQueryUpdate",cn.bidcheck.compat.Java8Api.mapOf("evidenceChanged", false, "conclusionRecomputed", false, "diagnosticsUpdated", true));
         return new Finding(finding.id(),finding.runId(),finding.checkpoint(),finding.evaluation(),
             FocusedCheckEvaluator.reconcileAssessment(finding.evaluation(),assessment));
     }
@@ -43,31 +57,31 @@ final class ExternalCheckRecovery {
         Objects.requireNonNull(publisher);Objects.requireNonNull(contextLoader);
         Objects.requireNonNull(evaluator);Objects.requireNonNull(before);
         List<Map<String,Object>> accepted=new ArrayList<>();
-        if(collected!=null)for(Map<String,Object> record:collected)if(trusted(record))accepted.add(Map.copyOf(record));
-        if(!accepted.isEmpty())publisher.accept(List.copyOf(accepted));
+        if(collected!=null)for(Map<String,Object> record:collected)if(trusted(record))accepted.add(cn.bidcheck.compat.Java8Api.mapCopyOf(record));
+        if(!accepted.isEmpty())publisher.accept(cn.bidcheck.compat.Java8Api.listCopyOf(accepted));
         Map<String,Object> context=new LinkedHashMap<>(Objects.requireNonNull(contextLoader.get()));
         List<Map<String,Object>> changed=RecoveryInputs.changedExternalRecords(previous,
                 maps(context.get("externalRecords")));
-        if(changed.isEmpty())return new Outcome(context,List.of(),before,false);
+        if(changed.isEmpty())return new Outcome(context,cn.bidcheck.compat.Java8Api.listOf(),before,false);
         RecoveryInputs.changedExternalInputs(context,before,changed);
         return new Outcome(context,changed,Objects.requireNonNull(evaluator.apply(context)),true);
     }
 
     private static boolean trusted(Map<String,Object> record) {
         if(record==null||!"TRUSTED_CONNECTOR".equals(text(record.get("provenanceStatus"))))return false;
-        for(String key:List.of("type","subject","source","queriedAt","effectiveAt","evaluationStage","rawSnapshotHash"))
-            if(text(record.get(key)).isBlank())return false;
-        if(!(record.get("coverageComplete") instanceof Boolean)||!(record.get("result") instanceof Map<?,?> result))return false;
-        String status=text(result.get("status"));
+        for(String key:cn.bidcheck.compat.Java8Api.listOf("type", "subject", "source", "queriedAt", "effectiveAt", "evaluationStage", "rawSnapshotHash"))
+            if(cn.bidcheck.compat.Java8Api.isBlank(text(record.get(key))))return false;
+        if(!(record.get("coverageComplete") instanceof Boolean)||!(record.get("result") instanceof Map<?,?>))return false;
+        String status=text(((Map<?,?>) (record.get("result"))).get("status"));
         // Partial authoritative receipts are new evidence too. The evaluator retains coverage
         // gaps; an incomplete negative search cannot claim absence.
-        return List.of("VERIFIED","NOT_FOUND","INCONCLUSIVE").contains(status)
+        return cn.bidcheck.compat.Java8Api.listOf("VERIFIED", "NOT_FOUND", "INCONCLUSIVE").contains(status)
             &&(!"NOT_FOUND".equals(status)||Boolean.TRUE.equals(record.get("coverageComplete")));
     }
 
     @SuppressWarnings("unchecked") private static List<Map<String,Object>> maps(Object value){
-        if(!(value instanceof Collection<?> rows))return List.of();
-        return rows.stream().filter(Map.class::isInstance).map(row->(Map<String,Object>)row).toList();
+        if(!(value instanceof Collection<?>))return cn.bidcheck.compat.Java8Api.listOf();
+        return cn.bidcheck.compat.Java8Api.toList(((Collection<?>) (value)).stream().filter(Map.class::isInstance).map(row->(Map<String,Object>)row));
     }
-    private static String text(Object value){return Objects.toString(value,"").strip();}
+    private static String text(Object value){return cn.bidcheck.compat.Java8Api.strip(Objects.toString(value,""));}
 }

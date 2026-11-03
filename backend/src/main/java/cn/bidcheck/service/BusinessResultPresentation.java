@@ -18,7 +18,7 @@ public final class BusinessResultPresentation {
 
     /** A system-owned gap is not an active job. Only persisted job identity and state indicate recovery. */
     public static Map<String,Object> describe(Evaluation evaluation,Map<String,Object> assessment,Map<String,Object> resolutionJob) {
-        Map<String,Object> a=assessment==null?Map.of():assessment,atomic=map(a.get("atomicCheck")),ocr=map(a.get("ocrReview"));
+        Map<String,Object> a=assessment==null?cn.bidcheck.compat.Java8Api.mapOf():assessment,atomic=map(a.get("atomicCheck")),ocr=map(a.get("ocrReview"));
         TrustedVisualReview.Result visualReview=TrustedVisualReview.inspect(a);
         ResultProjection template=template(a);boolean templateFinal=template!=null&&template.finalReconciled();
         String status=evaluation.status();Set<String> codes=new HashSet<>();
@@ -32,45 +32,41 @@ public final class BusinessResultPresentation {
         boolean resolvedInventory=codes.contains("REQUIREMENT_COMPLETENESS_UNPROVEN")&&Boolean.TRUE.equals(completeness.get("inventoryResolved"))&&!Boolean.TRUE.equals(completeness.get("coreRequirementDeferred"));
         String atomicState=text(FocusedCheckEvaluator.presentation(atomic),"state");
         boolean finalMismatch="UNDETERMINED".equals(status)&&"COMPLETED".equals(atomic.get("workflowState"))&&Boolean.TRUE.equals(atomic.get("complete"));
-        boolean recoveryFailed=resolutionJob!=null&&!text(resolutionJob,"id").isBlank()&&"FAILED".equals(text(resolutionJob,"status"));
-        boolean templateProcessing=templateFinal&&"UNDETERMINED".equals(status)&&(template.execution()!=null&&Set.of(TemplateTypes.ExecutionState.FAILED,TemplateTypes.ExecutionState.BLOCKED).contains(template.execution().state())
-            ||template.action()!=null&&template.action().owner()==TemplateTypes.ActionOwner.SYSTEM&&Set.of("FIX_CHECK_SPEC","RETRY_TEMPLATE","CLARIFY_REQUIREMENT").contains(Objects.toString(template.action().type(),""))
+        boolean recoveryFailed=resolutionJob!=null&&!cn.bidcheck.compat.Java8Api.isBlank(text(resolutionJob,"id"))&&"FAILED".equals(text(resolutionJob,"status"));
+        boolean templateProcessing=templateFinal&&"UNDETERMINED".equals(status)&&(template.execution()!=null&&cn.bidcheck.compat.Java8Api.setOf(TemplateTypes.ExecutionState.FAILED, TemplateTypes.ExecutionState.BLOCKED).contains(template.execution().state())
+            ||template.action()!=null&&template.action().owner()==TemplateTypes.ActionOwner.SYSTEM&&cn.bidcheck.compat.Java8Api.setOf("FIX_CHECK_SPEC", "RETRY_TEMPLATE", "CLARIFY_REQUIREMENT").contains(Objects.toString(template.action().type(),""))
             ||template.missingInputs().stream().anyMatch(value->value.startsWith("system.")));
-        boolean processing=Boolean.TRUE.equals(externalState.get("systemOwned"))||templateProcessing||recoveryFailed||codes.contains("EXTERNAL_CONNECTOR_FAILED")||RecoveryTransition.hasProcessingFailure(new cn.bidcheck.domain.Domain.Finding("","",null,evaluation,a))||codes.contains("UNIQUE_PRICE_SCOPE_REQUIRED")||codes.stream().anyMatch(FocusedCheckEvaluator::mappingPending)||Set.of("SYSTEM_REQUIREMENT","SYSTEM_RETRIEVAL","SYSTEM_RELATION").contains(gapKind)||maps(atomic.get("fieldCoverage")).stream().anyMatch(row->"UNREAD".equals(text(row,"status"))||RecoveryTransition.fieldProcessingFailure(row))
+        boolean processing=Boolean.TRUE.equals(externalState.get("systemOwned"))||templateProcessing||recoveryFailed||codes.contains("EXTERNAL_CONNECTOR_FAILED")||RecoveryTransition.hasProcessingFailure(new cn.bidcheck.domain.Domain.Finding("","",null,evaluation,a))||codes.contains("UNIQUE_PRICE_SCOPE_REQUIRED")||codes.stream().anyMatch(FocusedCheckEvaluator::mappingPending)||cn.bidcheck.compat.Java8Api.setOf("SYSTEM_REQUIREMENT", "SYSTEM_RETRIEVAL", "SYSTEM_RELATION").contains(gapKind)||maps(atomic.get("fieldCoverage")).stream().anyMatch(row->"UNREAD".equals(text(row,"status"))||RecoveryTransition.fieldProcessingFailure(row))
             ||"RULE_UNSUPPORTED".equals(text(map(a.get("model")),"decision"))||finalMismatch||maps(completeness.get("itemResults")).stream().anyMatch(item->"REQUIREMENT_UNRESOLVED".equals(text(item,"status")))
-            ||Set.of("PROCESSING_FAILED","REQUIREMENT_UNPARSED").contains(atomicState)
-            ||Set.of("ENGINE_FAILURE","ERROR").contains(text(atomic,"workflowState"))
+            ||cn.bidcheck.compat.Java8Api.setOf("PROCESSING_FAILED", "REQUIREMENT_UNPARSED").contains(atomicState)
+            ||cn.bidcheck.compat.Java8Api.setOf("ENGINE_FAILURE", "ERROR").contains(text(atomic,"workflowState"))
             ||codes.stream().anyMatch(code->code.startsWith("TEMPLATE_")&&code.endsWith("INVALID"))
             ||"UNAVAILABLE".equals(text(map(a.get("model")),"state"))
             ||codes.stream().filter(code->!resolvedInventory||!"REQUIREMENT_COMPLETENESS_UNPROVEN".equals(code)).anyMatch(code->code.startsWith("MODEL_")||code.startsWith("HTTP_")||code.contains("COMPILATION")||code.startsWith("REQUIREMENT_")
-                ||code.contains("GROUNDING")||code.endsWith("UNGROUNDED")||Set.of("CONTEXT_BUDGET_EXCEEDED","CHECKLIST_BATCH_REQUIRED","INPUT_INVALID","EVIDENCE_SCOPE_INCOMPLETE","OCR_COVERAGE_DEFERRED","OCR_SOURCE_DEFERRED","OUTPUT_SCHEMA_INVALID","OUTPUT_JSON_INVALID").contains(code))
+                ||code.contains("GROUNDING")||code.endsWith("UNGROUNDED")||cn.bidcheck.compat.Java8Api.setOf("CONTEXT_BUDGET_EXCEEDED", "CHECKLIST_BATCH_REQUIRED", "INPUT_INVALID", "EVIDENCE_SCOPE_INCOMPLETE", "OCR_COVERAGE_DEFERRED", "OCR_SOURCE_DEFERRED", "OUTPUT_SCHEMA_INVALID", "OUTPUT_JSON_INVALID").contains(code))
             ||"SUPPLEMENT_ANALYSIS_REQUIRED".equals(evaluation.method())||"SUPPLEMENT_EVALUATOR_UNAVAILABLE".equals(text(map(a.get("publicationGuard")),"code"))
             ||Boolean.TRUE.equals(ocr.get("incomplete"));
         boolean scoringReview=verifiedScoringReview(atomic);
         boolean external=scoringReview||templateFinal&&(template.verificationMode()==TemplateTypes.VerificationMode.EXTERNAL||template.action()!=null&&template.action().owner()==TemplateTypes.ActionOwner.EXTERNAL)
             ||"EXTERNAL_INPUT".equals(gapKind)||!maps(atomic.get("externalRequests")).isEmpty()||"WAIT_STAGE".equals(atomic.get("workflowState"))
-            ||codes.stream().anyMatch(code->Set.of("EXTERNAL_RECORD_REQUIRED","EXTERNAL_VERIFICATION_REQUIRED","USER_INPUT_REQUIRED","REFERENCE_TIME_REQUIRED","APPLICABILITY_TIME_PENDING","MISSING_TENDER_ATTACHMENT","COST_APPLICABILITY_REQUIRED","CAPABILITY_CRITERIA_REQUIRED").contains(code));
+            ||codes.stream().anyMatch(code->cn.bidcheck.compat.Java8Api.setOf("EXTERNAL_RECORD_REQUIRED", "EXTERNAL_VERIFICATION_REQUIRED", "USER_INPUT_REQUIRED", "REFERENCE_TIME_REQUIRED", "APPLICABILITY_TIME_PENDING", "MISSING_TENDER_ATTACHMENT", "COST_APPLICABILITY_REQUIRED", "CAPABILITY_CRITERIA_REQUIRED").contains(code));
         String beforeVisual=statusOf(a.containsKey("preOcrEvaluation")?a.get("preOcrEvaluation"):a.get("rawEvaluation"));
-        boolean templateEvidencePending=templateFinal&&"UNDETERMINED".equals(status)&&template.evidence()!=null&&Set.of(TemplateTypes.EvidenceState.PARTIAL,TemplateTypes.EvidenceState.NOT_LOCATED,TemplateTypes.EvidenceState.CONFLICTING).contains(template.evidence().state());
-        boolean evidencePending=templateEvidencePending||"EXTERNAL_INPUT_REQUIRED".equals(text(map(a.get("model")),"decision"))||resolvedInventory||"UNDETERMINED".equals(beforeVisual)||Set.of("RELATION_UNCONFIRMED","EVIDENCE_NOT_FOUND").contains(atomicState)
+        boolean templateEvidencePending=templateFinal&&"UNDETERMINED".equals(status)&&template.evidence()!=null&&cn.bidcheck.compat.Java8Api.setOf(TemplateTypes.EvidenceState.PARTIAL, TemplateTypes.EvidenceState.NOT_LOCATED, TemplateTypes.EvidenceState.CONFLICTING).contains(template.evidence().state());
+        boolean evidencePending=templateEvidencePending||"EXTERNAL_INPUT_REQUIRED".equals(text(map(a.get("model")),"decision"))||resolvedInventory||"UNDETERMINED".equals(beforeVisual)||cn.bidcheck.compat.Java8Api.setOf("RELATION_UNCONFIRMED", "EVIDENCE_NOT_FOUND").contains(atomicState)
             ||codes.contains("VISUAL_MARK_UNREADABLE")&&!visualReview.unreadableOnly()
-            ||codes.stream().anyMatch(code->Set.of("EVIDENCE_MISSING","PERSONNEL_COVERAGE_INCOMPLETE","NO_CANDIDATE_EVIDENCE","EVIDENCE_NOT_FOUND").contains(code));
+            ||codes.stream().anyMatch(code->cn.bidcheck.compat.Java8Api.setOf("EVIDENCE_MISSING", "PERSONNEL_COVERAGE_INCOMPLETE", "NO_CANDIDATE_EVIDENCE", "EVIDENCE_NOT_FOUND").contains(code));
         boolean visual=Boolean.TRUE.equals(ocr.get("required"));
-        String state=switch(status){case "PASS"->"SATISFIED";case "FAIL","WARNING"->"RISK";case "NOT_APPLICABLE"->"NOT_APPLICABLE";case "NEEDS_CONFIRMATION"->processing?"SYSTEM_INCOMPLETE":"USER_ACTION";
-            default->processing?"SYSTEM_INCOMPLETE":!externalState.isEmpty()?"WAIT_EXTERNAL":external||visualReview.unreadableOnly()?"USER_ACTION":evidencePending?"EVIDENCE_PENDING":visual?"USER_ACTION":"EVIDENCE_PENDING";};
-        String label=switch(state){case "SATISFIED"->"满足要求";case "RISK"->"存在风险";case "SYSTEM_INCOMPLETE"->"系统未完成";case "USER_ACTION"->"需你确认";case "WAIT_EXTERNAL"->"待外部条件";case "NOT_APPLICABLE"->"不适用";default->"待补证据";};
+        String state;
+switch (status) {case "PASS":state = "SATISFIED"; break;case "FAIL":case "WARNING":state = "RISK"; break;case "NOT_APPLICABLE":state = "NOT_APPLICABLE"; break;case "NEEDS_CONFIRMATION":state = processing?"SYSTEM_INCOMPLETE":"USER_ACTION"; break;default:state = processing?"SYSTEM_INCOMPLETE":!externalState.isEmpty()?"WAIT_EXTERNAL":external||visualReview.unreadableOnly()?"USER_ACTION":evidencePending?"EVIDENCE_PENDING":visual?"USER_ACTION":"EVIDENCE_PENDING"; break;}
+        String label;
+switch (state) {case "SATISFIED":label = "满足要求"; break;case "RISK":label = "存在风险"; break;case "SYSTEM_INCOMPLETE":label = "系统未完成"; break;case "USER_ACTION":label = "需你确认"; break;case "WAIT_EXTERNAL":label = "待外部条件"; break;case "NOT_APPLICABLE":label = "不适用"; break;default:label = "待补证据"; break;}
         boolean userAction="USER_ACTION".equals(state)||"RISK".equals(state)||"SATISFIED".equals(state)&&visual;
-        String owner=switch(state){case "SYSTEM_INCOMPLETE","EVIDENCE_PENDING"->"SYSTEM";case "WAIT_EXTERNAL"->"EXTERNAL";case "USER_ACTION","RISK"->"USER";default->userAction?"USER":"NONE";};
-        String next=switch(state){
-            case "SYSTEM_INCOMPLETE"->"需继续处理条款、证据校验或失败请求；当前不要求补交材料，也不计入人工核对待办。";
-            case "EVIDENCE_PENDING"->"需继续检索并关联现有文件中的证据；只有确认具体缺口后才要求补充材料。";
-            case "USER_ACTION"->"按下方说明补充外部信息、确认核验时点或核对原图。";
-            case "WAIT_EXTERNAL"->text(externalState,"nextStep");
-            case "RISK"->"对照所列原文确认风险，并记录复核结论。";
-            case "SATISFIED"->visual?"文字要求已得到支持；另有原图复核事项，请核对下方指定位置。":"本项已形成满足要求的结论，依据保留供追溯。";
-            default->"本项不适用于当前条件，适用依据保留供追溯。";};
-        boolean stopped=resolutionJob!=null&&!text(resolutionJob,"id").isBlank()&&Set.of("BLOCKED_NO_PROGRESS","FAILED").contains(text(resolutionJob,"status"));
-        if(stopped&&Set.of("SYSTEM_INCOMPLETE","EVIDENCE_PENDING").contains(state))
+        String owner;
+switch (state) {case "SYSTEM_INCOMPLETE":case "EVIDENCE_PENDING":owner = "SYSTEM"; break;case "WAIT_EXTERNAL":owner = "EXTERNAL"; break;case "USER_ACTION":case "RISK":owner = "USER"; break;default:owner = userAction?"USER":"NONE"; break;}
+        String next;
+switch (state) {case "SYSTEM_INCOMPLETE":next = "需继续处理条款、证据校验或失败请求；当前不要求补交材料，也不计入人工核对待办。"; break;case "EVIDENCE_PENDING":next = "需继续检索并关联现有文件中的证据；只有确认具体缺口后才要求补充材料。"; break;case "USER_ACTION":next = "按下方说明补充外部信息、确认核验时点或核对原图。"; break;case "WAIT_EXTERNAL":next = text(externalState,"nextStep"); break;case "RISK":next = "对照所列原文确认风险，并记录复核结论。"; break;case "SATISFIED":next = visual?"文字要求已得到支持；另有原图复核事项，请核对下方指定位置。":"本项已形成满足要求的结论，依据保留供追溯。"; break;default:next = "本项不适用于当前条件，适用依据保留供追溯。"; break;}
+        boolean stopped=resolutionJob!=null&&!cn.bidcheck.compat.Java8Api.isBlank(text(resolutionJob,"id"))&&cn.bidcheck.compat.Java8Api.setOf("BLOCKED_NO_PROGRESS", "FAILED").contains(text(resolutionJob,"status"));
+        if(stopped&&cn.bidcheck.compat.Java8Api.setOf("SYSTEM_INCOMPLETE", "EVIDENCE_PENDING").contains(state))
             next="本轮自动补查已停止，需修复处理环节或补足检索条件后再启动；当前不据此要求补交材料。";
         if("USER_ACTION".equals(state)&&"EXTERNAL_INPUT".equals(gapKind))next="需取得招标条款要求的外部记录或现场核验结果；现有文件检索不能替代该记录。";
         if("USER_ACTION".equals(state)&&codes.contains("INFERENCE_CONFIRMATION_REQUIRED"))next="核对推断卡片的实际主体、字段取值与引用原文；确认或否定后由系统重算，确认操作不会直接判通过。";
@@ -91,11 +87,11 @@ public final class BusinessResultPresentation {
             next=codes.contains("SCORE_SOURCE_LIST_AMBIGUOUS")?"招标清单含重复项目，已保留原文及逐项核对结果；需确认计分口径，不据此要求补交材料。":"客观内容范围已核对；请按所列评分分档评价针对性、可行性等主观要求。材料齐全不代表达到最高档。";
         }
         if("SYSTEM_INCOMPLETE".equals(state)&&!stopped&&codes.contains("UNIQUE_PRICE_SCOPE_REQUIRED"))next="系统尚未核全本项目的报价与备选方案范围；已识别报价一致仅作局部结果，当前不要求补交材料。";
-        if(templateFinal&&!Objects.toString(template.nextStep(),"").isBlank()&&!Set.of("SYSTEM_INCOMPLETE","WAIT_EXTERNAL").contains(state))next=template.nextStep();
+        if(templateFinal&&!cn.bidcheck.compat.Java8Api.isBlank(Objects.toString(template.nextStep(),""))&&!cn.bidcheck.compat.Java8Api.setOf("SYSTEM_INCOMPLETE", "WAIT_EXTERNAL").contains(state))next=template.nextStep();
         if("USER_ACTION".equals(state)&&visualReview.unreadableOnly())next="指定原图已检查，但签章无法辨清；请确认所列签署位置，或提供该页清晰图像。相同页面不再自动重复识别。";
         if("RISK".equals(state)&&visualReview.negative())next="指定原图已检查，未观察到要求签章；请对照所列位置确认签署风险。本项不自动作出否决投标结论。";
         Map<String,Object> scope=proofScope(evaluation,a);
-        if("SATISFIED".equals(state)&&!text(scope,"label").isBlank()){
+        if("SATISFIED".equals(state)&&!cn.bidcheck.compat.Java8Api.isBlank(text(scope,"label"))){
             label=text(scope,"label");
             if("WRITTEN_RESPONSE".equals(text(scope,"state")))next="已核对所引文件的书面响应；这不等于实际资格状态或外部查询结果已核实。";
             if("OBSERVED_OCCURRENCES".equals(text(scope,"state")))next="已识别的同对象同口径记录未见差异；结论范围仅为所列出现记录。";
@@ -111,30 +107,32 @@ public final class BusinessResultPresentation {
         if("SYSTEM_INCOMPLETE".equals(state)&&!finalMismatch&&!recoveryFailed&&"RELATION_UNCONFIRMED".equals(atomicState)){
             Optional<Map<String,Object>> mapping=maps(atomic.get("gaps")).stream().filter(gap->FocusedCheckEvaluator.mappingPending(text(gap,"code"))).findFirst();
             if(mapping.isPresent()){
-                if(!text(mapping.get(),"description").isBlank())reason=text(mapping.get(),"description");
+                if(!cn.bidcheck.compat.Java8Api.isBlank(text(mapping.get(),"description")))reason=text(mapping.get(),"description");
                 if(!stopped)next="系统需继续完成证据字段或人员单位对应；当前不要求补交材料，也不计入人工核对待办。";
             }
         }
         Map<String,Object> out=new LinkedHashMap<>();out.put("version",VERSION);out.put("state",state);out.put("label",label);out.put("owner",owner);
         out.put("reason",reason);out.put("nextStep",next);out.put("userActionRequired",userAction);out.put("finalStatus",status);
         if(!externalState.isEmpty())out.put("externalState",externalState);
-        if(visualReview.reviewed())out.put("visualReview",Map.of("reviewed",true,"unreadableOnly",visualReview.unreadableOnly(),"negative",visualReview.negative(),"observations",visualReview.observations(),"automaticRejection",false));
+        if(visualReview.reviewed())out.put("visualReview",cn.bidcheck.compat.Java8Api.mapOf("reviewed", true, "unreadableOnly", visualReview.unreadableOnly(), "negative", visualReview.negative(), "observations", visualReview.observations(), "automaticRejection", false));
         out.put("projectionVersion","business-dimensions-3");
         out.put("dimensions",dimensions(evaluation,a,resolutionJob));return out;
     }
 
     public static Map<String,Object> dimensions(Evaluation evaluation,Map<String,Object> assessment,Map<String,Object> resolutionJob) {
-        Map<String,Object> a=assessment==null?Map.of():assessment,job=resolutionJob==null?Map.of():resolutionJob;
+        Map<String,Object> a=assessment==null?cn.bidcheck.compat.Java8Api.mapOf():assessment,job=resolutionJob==null?cn.bidcheck.compat.Java8Api.mapOf():resolutionJob;
         ResultProjection template=template(a);
-        if(template!=null&&template.finalReconciled()&&text(job,"id").isBlank())return templateDimensions(template);
+        if(template!=null&&template.finalReconciled()&&cn.bidcheck.compat.Java8Api.isBlank(text(job,"id")))return templateDimensions(template);
         Map<String,Object> completeness=map(map(a.get("coverage")).get("completeness"));
         String finalStatus=evaluation.status(),jobStatus=text(job,"status"),execution="FINISHED";
-        if(!text(job,"id").isBlank()&&Set.of("QUEUED","RUNNING","RETRY_WAIT","SUCCEEDED","BLOCKED_NO_PROGRESS","WAITING_USER","WAITING_EXTERNAL","FAILED").contains(jobStatus))
+        if(!cn.bidcheck.compat.Java8Api.isBlank(text(job,"id"))&&cn.bidcheck.compat.Java8Api.setOf("QUEUED", "RUNNING", "RETRY_WAIT", "SUCCEEDED", "BLOCKED_NO_PROGRESS", "WAITING_USER", "WAITING_EXTERNAL", "FAILED").contains(jobStatus))
             execution="SUCCEEDED".equals(jobStatus)?"FINISHED":jobStatus;
-        String executionLabel=switch(execution){case "QUEUED"->"补查已排队";case "RUNNING"->"自动补查中";case "RETRY_WAIT"->"等待重试";
-            case "BLOCKED_NO_PROGRESS"->"补查已停止：无新进展";case "WAITING_USER"->"等待必要信息";case "WAITING_EXTERNAL"->"等待外部条件";case "FAILED"->"本轮补查失败";default->"本轮已结束";};
-        String conclusion=switch(finalStatus){case "PASS"->"SATISFIED";case "FAIL"->"NOT_SATISFIED";case "WARNING"->"SUSPECTED_RISK";case "NOT_APPLICABLE"->"NOT_APPLICABLE";default->"UNDETERMINED";};
-        String conclusionLabel=switch(conclusion){case "SATISFIED"->"满足要求";case "NOT_SATISFIED"->"不满足要求";case "SUSPECTED_RISK"->"疑似风险，待确认";case "NOT_APPLICABLE"->"不适用";default->"尚不能判断";};
+        String executionLabel;
+switch (execution) {case "QUEUED":executionLabel = "补查已排队"; break;case "RUNNING":executionLabel = "自动补查中"; break;case "RETRY_WAIT":executionLabel = "等待重试"; break;case "BLOCKED_NO_PROGRESS":executionLabel = "补查已停止：无新进展"; break;case "WAITING_USER":executionLabel = "等待必要信息"; break;case "WAITING_EXTERNAL":executionLabel = "等待外部条件"; break;case "FAILED":executionLabel = "本轮补查失败"; break;default:executionLabel = "本轮已结束"; break;}
+        String conclusion;
+switch (finalStatus) {case "PASS":conclusion = "SATISFIED"; break;case "FAIL":conclusion = "NOT_SATISFIED"; break;case "WARNING":conclusion = "SUSPECTED_RISK"; break;case "NOT_APPLICABLE":conclusion = "NOT_APPLICABLE"; break;default:conclusion = "UNDETERMINED"; break;}
+        String conclusionLabel;
+switch (conclusion) {case "SATISFIED":conclusionLabel = "满足要求"; break;case "NOT_SATISFIED":conclusionLabel = "不满足要求"; break;case "SUSPECTED_RISK":conclusionLabel = "疑似风险，待确认"; break;case "NOT_APPLICABLE":conclusionLabel = "不适用"; break;default:conclusionLabel = "尚不能判断"; break;}
         boolean inventoryUnknown=Boolean.FALSE.equals(completeness.get("inventoryResolved"))||Boolean.TRUE.equals(completeness.get("coreRequirementDeferred"))
             ||maps(completeness.get("itemResults")).stream().anyMatch(item->"REQUIREMENT_UNRESOLVED".equals(text(item,"status")));
         boolean references=evaluation.evidences()!=null&&!evaluation.evidences().isEmpty();
@@ -142,89 +140,92 @@ public final class BusinessResultPresentation {
         TrustedVisualReview.Result visualReview=TrustedVisualReview.inspect(a);
         boolean hasVisualTask=Boolean.TRUE.equals(map(a.get("ocrReview")).get("required"))&&!(visualReview.negative()&&Boolean.TRUE.equals(map(a.get("atomicCheck")).get("complete")));
         String evidence="NOT_APPLICABLE".equals(finalStatus)?"NOT_APPLICABLE":inventoryUnknown?"SCOPE_UNRESOLVED":
-            Set.of("PASS","FAIL").contains(finalStatus)&&references&&!hasVisualTask?"SUFFICIENT":references||hasBodyProof?"PARTIAL":"NOT_RETRIEVED";
-        String evidenceLabel=switch(evidence){case "NOT_APPLICABLE"->"不适用";case "SCOPE_UNRESOLVED"->"要求范围尚未明确";case "SUFFICIENT"->"判断依据已记录";
-            case "PARTIAL"->hasBodyProof?"部分义务已有证明":"证据尚未核全";default->"尚未取得充分依据";};
+            cn.bidcheck.compat.Java8Api.setOf("PASS", "FAIL").contains(finalStatus)&&references&&!hasVisualTask?"SUFFICIENT":references||hasBodyProof?"PARTIAL":"NOT_RETRIEVED";
+        String evidenceLabel;
+switch (evidence) {case "NOT_APPLICABLE":evidenceLabel = "不适用"; break;case "SCOPE_UNRESOLVED":evidenceLabel = "要求范围尚未明确"; break;case "SUFFICIENT":evidenceLabel = "判断依据已记录"; break;case "PARTIAL":evidenceLabel = hasBodyProof?"部分义务已有证明":"证据尚未核全"; break;default:evidenceLabel = "尚未取得充分依据"; break;}
         if(visualReview.unreadableOnly()){evidence="REVIEWED_UNREADABLE";evidenceLabel="指定原图已检查，签章无法辨清";}
         if(verifiedScoringReview(map(a.get("atomicCheck")))&&"UNDETERMINED".equals(finalStatus))evidenceLabel="客观内容范围已核对，评分尚待评定";
         Map<String,Object> executionValue=new LinkedHashMap<>();executionValue.put("state",execution);executionValue.put("label",executionLabel);
-        executionValue.put("jobId",text(job,"id"));executionValue.put("active",Set.of("QUEUED","RUNNING","RETRY_WAIT").contains(execution));
-        executionValue.put("reason",text(job,"stopReason").isBlank()?text(job,"reason"):text(job,"stopReason"));executionValue.put("nextAction",text(job,"nextAction"));
+        executionValue.put("jobId",text(job,"id"));executionValue.put("active",cn.bidcheck.compat.Java8Api.setOf("QUEUED", "RUNNING", "RETRY_WAIT").contains(execution));
+        executionValue.put("reason",cn.bidcheck.compat.Java8Api.isBlank(text(job,"stopReason"))?text(job,"reason"):text(job,"stopReason"));executionValue.put("nextAction",text(job,"nextAction"));
         Map<String,Object> scope=proofScope(evaluation,a);
-        if("SATISFIED".equals(conclusion)&&!text(scope,"label").isBlank())conclusionLabel=text(scope,"label");
-        return Map.of("execution",executionValue,"evidence",Map.of("state",evidence,"label",evidenceLabel),"proofScope",scope,
-            "conclusion",Map.of("state",conclusion,"label",conclusionLabel,"determined",Set.of("SATISFIED","NOT_SATISFIED","NOT_APPLICABLE").contains(conclusion)));
+        if("SATISFIED".equals(conclusion)&&!cn.bidcheck.compat.Java8Api.isBlank(text(scope,"label")))conclusionLabel=text(scope,"label");
+        return cn.bidcheck.compat.Java8Api.mapOf("execution", executionValue, "evidence", cn.bidcheck.compat.Java8Api.mapOf("state", evidence, "label", evidenceLabel), "proofScope", scope, "conclusion", cn.bidcheck.compat.Java8Api.mapOf("state", conclusion, "label", conclusionLabel, "determined", cn.bidcheck.compat.Java8Api.setOf("SATISFIED", "NOT_SATISFIED", "NOT_APPLICABLE").contains(conclusion)));
     }
     /** A declaration proves a written response; it does not establish an external fact. */
     static Map<String,Object> proofScope(Evaluation evaluation,Map<String,Object> assessment){
-        Map<String,Object> unknown=Map.of("state","UNSPECIFIED","label","");if(!"PASS".equals(evaluation.status()))return unknown;
+        Map<String,Object> unknown=cn.bidcheck.compat.Java8Api.mapOf("state", "UNSPECIFIED", "label", "");if(!"PASS".equals(evaluation.status()))return unknown;
         ResultProjection projection=template(assessment);
         if(projection!=null&&projection.finalReconciled()&&projection.conclusion()!=null){
             String scope=projection.conclusion().proofScope()==null?"":projection.conclusion().proofScope().name();
-            String label=switch(scope){case "MATERIAL_SUBMISSION"->"材料提交要求已满足";case "WRITTEN_COMMITMENT"->"书面承诺要求已满足";case "FACTUAL_CONDITION"->"业务条件已验证";case "OBSERVED_CONSISTENCY"->"已识别记录一致";case "QUALITY_ADVISORY"->"评分建议";default->"";};
-            if(!label.isBlank())return Map.of("state",scope,"label",label);
+            String label;
+switch (scope) {case "MATERIAL_SUBMISSION":label = "材料提交要求已满足"; break;case "WRITTEN_COMMITMENT":label = "书面承诺要求已满足"; break;case "FACTUAL_CONDITION":label = "业务条件已验证"; break;case "OBSERVED_CONSISTENCY":label = "已识别记录一致"; break;case "QUALITY_ADVISORY":label = "评分建议"; break;default:label = ""; break;}
+            if(!cn.bidcheck.compat.Java8Api.isBlank(label))return cn.bidcheck.compat.Java8Api.mapOf("state", scope, "label", label);
         }
         Map<String,Object> derived=map(assessment.get("derivedConclusion"));
         if("PASS".equals(text(derived,"status"))&&"OBSERVED_OCCURRENCES".equals(text(derived,"proofScope"))&&Boolean.TRUE.equals(derived.get("comparisonCoverageComplete"))
-                &&derived.get("unresolvedOccurrenceIds") instanceof Collection<?> unresolved&&unresolved.isEmpty()
-                &&derived.get("originalOccurrenceIds") instanceof Collection<?> original&&!original.isEmpty())
-            return Map.of("state","OBSERVED_OCCURRENCES","label","已识别记录一致");
+                &&derived.get("unresolvedOccurrenceIds") instanceof Collection<?>&&((Collection<?>) (derived.get("unresolvedOccurrenceIds"))).isEmpty()
+                &&derived.get("originalOccurrenceIds") instanceof Collection<?>&&!((Collection<?>) (derived.get("originalOccurrenceIds"))).isEmpty())
+            return cn.bidcheck.compat.Java8Api.mapOf("state", "OBSERVED_OCCURRENCES", "label", "已识别记录一致");
         Map<String,Object> semantic=map(map(assessment.get("coverage")).get("semanticProof"));
         if(evaluation.evidences()!=null&&!evaluation.evidences().isEmpty()&&Boolean.TRUE.equals(semantic.get("validated"))&&"WRITTEN_RESPONSE".equals(text(semantic,"scope"))
-                &&semantic.get("evidenceIds") instanceof Collection<?> ids&&!ids.isEmpty())return Map.of("state","WRITTEN_RESPONSE","label","书面要求已满足");
-        List<Map<String,Object>> conditions=maps(map(assessment.get("atomicCheck")).get("conditions")).stream().filter(c->"REQUIREMENT".equals(text(c,"conditionRole"))).filter(c->!"NOT_APPLICABLE".equals(text(c,"status"))).toList();
-        if(conditions.isEmpty()||conditions.stream().anyMatch(c->!"PASS".equals(text(c,"status"))||!Boolean.TRUE.equals(c.get("evaluated"))||map(c.get("proof")).isEmpty()||!(c.get("evidences") instanceof Collection<?> refs)||refs.isEmpty()||!maps(c.get("gaps")).isEmpty()))return unknown;
+                &&semantic.get("evidenceIds") instanceof Collection<?>&&!((Collection<?>) (semantic.get("evidenceIds"))).isEmpty())return cn.bidcheck.compat.Java8Api.mapOf("state", "WRITTEN_RESPONSE", "label", "书面要求已满足");
+        List<Map<String,Object>> conditions=cn.bidcheck.compat.Java8Api.toList(maps(map(assessment.get("atomicCheck")).get("conditions")).stream().filter(c->"REQUIREMENT".equals(text(c,"conditionRole"))).filter(c->!"NOT_APPLICABLE".equals(text(c,"status"))));
+        if(conditions.isEmpty()||conditions.stream().anyMatch(c->!"PASS".equals(text(c,"status"))||!Boolean.TRUE.equals(c.get("evaluated"))||map(c.get("proof")).isEmpty()||!(c.get("evidences") instanceof Collection<?>)||((Collection<?>) (c.get("evidences"))).isEmpty()||!maps(c.get("gaps")).isEmpty()))return unknown;
         Map<String,Object> atomic=map(assessment.get("atomicCheck"));
         if(Boolean.TRUE.equals(atomic.get("complete"))&&maps(atomic.get("gaps")).isEmpty()){
-            for(var entry:Map.of("QUALITY_UNDERTAKING_ONLY","质量承诺已响应","BID_VALIDITY_UNDERTAKING_ONLY","投标有效期已响应","CONDITIONAL_MATERIAL_SUBMISSION_ONLY","材料提交要求已满足").entrySet())
-                if(conditions.stream().allMatch(c->entry.getKey().equals(text(map(c.get("proof")),"proofScope"))))return Map.of("state",entry.getKey(),"label",entry.getValue());
+            for(java.util.Map.Entry<java.lang.String, java.lang.String> entry:cn.bidcheck.compat.Java8Api.mapOf("QUALITY_UNDERTAKING_ONLY", "质量承诺已响应", "BID_VALIDITY_UNDERTAKING_ONLY", "投标有效期已响应", "CONDITIONAL_MATERIAL_SUBMISSION_ONLY", "材料提交要求已满足").entrySet())
+                if(conditions.stream().allMatch(c->entry.getKey().equals(text(map(c.get("proof")),"proofScope"))))return cn.bidcheck.compat.Java8Api.mapOf("state", entry.getKey(), "label", entry.getValue());
         }
         if(Boolean.TRUE.equals(atomic.get("complete"))&&maps(atomic.get("gaps")).isEmpty()
             &&conditions.stream().allMatch(c->"DURATION_UNDERTAKING_ONLY".equals(text(map(c.get("proof")),"proofScope"))))
-            return Map.of("state","DURATION_UNDERTAKING_ONLY","label","工期承诺已响应");
+            return cn.bidcheck.compat.Java8Api.mapOf("state", "DURATION_UNDERTAKING_ONLY", "label", "工期承诺已响应");
         if(Boolean.TRUE.equals(atomic.get("complete"))&&maps(atomic.get("gaps")).isEmpty()
             &&conditions.stream().allMatch(c->"PERSON_COUNT".equals(text(c,"predicate"))&&"ROLE_CONFIGURATION_ONLY".equals(text(map(c.get("proof")),"proofScope"))))
-            return Map.of("state","ROLE_CONFIGURATION_ONLY","label","岗位配置已确认");
-        Set<String> written=Set.of("MATERIAL","DECLARATION","SECTION","VISUAL"),factual=Set.of("NUMBER","CERTIFICATE","VALIDITY","DATE_RANGE","MONTHS","PERSON_ROLE","RELATION","FIELD","SAME_FIELD","CONTRACT");
-        if(conditions.stream().allMatch(c->written.contains(text(c,"predicate"))))return Map.of("state","WRITTEN_RESPONSE","label","书面要求已满足");
-        if(conditions.stream().allMatch(c->factual.contains(text(c,"predicate"))))return Map.of("state","BUSINESS_CONDITIONS","label","业务条件已验证");
+            return cn.bidcheck.compat.Java8Api.mapOf("state", "ROLE_CONFIGURATION_ONLY", "label", "岗位配置已确认");
+        Set<String> written=cn.bidcheck.compat.Java8Api.setOf("MATERIAL", "DECLARATION", "SECTION", "VISUAL"),factual=cn.bidcheck.compat.Java8Api.setOf("NUMBER", "CERTIFICATE", "VALIDITY", "DATE_RANGE", "MONTHS", "PERSON_ROLE", "RELATION", "FIELD", "SAME_FIELD", "CONTRACT");
+        if(conditions.stream().allMatch(c->written.contains(text(c,"predicate"))))return cn.bidcheck.compat.Java8Api.mapOf("state", "WRITTEN_RESPONSE", "label", "书面要求已满足");
+        if(conditions.stream().allMatch(c->factual.contains(text(c,"predicate"))))return cn.bidcheck.compat.Java8Api.mapOf("state", "BUSINESS_CONDITIONS", "label", "业务条件已验证");
         return unknown;
     }
     private static boolean verifiedScoringReview(Map<String,Object> atomic){
-        Set<String> reviewCodes=Set.of("QUALITY_GRADE_REVIEW_REQUIRED","SCORE_SOURCE_LIST_AMBIGUOUS");
+        Set<String> reviewCodes=cn.bidcheck.compat.Java8Api.setOf("QUALITY_GRADE_REVIEW_REQUIRED", "SCORE_SOURCE_LIST_AMBIGUOUS");
         List<Map<String,Object>> gaps=maps(atomic.get("gaps"));
         if(gaps.isEmpty()||gaps.stream().anyMatch(g->!reviewCodes.contains(text(g,"code"))))return false;
         return maps(atomic.get("conditions")).stream().anyMatch(c->Boolean.TRUE.equals(c.get("evaluated"))&&"REQUIREMENT".equals(text(c,"conditionRole"))
             &&"PROGRAM_STRUCTURAL_COVERAGE".equals(text(map(c.get("proof")),"decisionBasis"))&&Boolean.TRUE.equals(map(c.get("proof")).get("coverageComplete"))
-            &&c.get("evidences") instanceof Collection<?> evidence&&!evidence.isEmpty()
+            &&c.get("evidences") instanceof Collection<?>&&!((Collection<?>) (c.get("evidences"))).isEmpty()
             &&maps(c.get("gaps")).stream().anyMatch(g->reviewCodes.contains(text(g,"code"))));
     }
-    @SuppressWarnings("unchecked") private static Map<String,Object> map(Object raw){return raw instanceof Map<?,?>?(Map<String,Object>)raw:Map.of();}
-    private static List<Map<String,Object>> maps(Object raw){return raw instanceof Collection<?> list?list.stream().filter(Map.class::isInstance).map(BusinessResultPresentation::map).toList():List.of();}
+    @SuppressWarnings("unchecked") private static Map<String,Object> map(Object raw){return raw instanceof Map<?,?>?(Map<String,Object>)raw:cn.bidcheck.compat.Java8Api.mapOf();}
+    private static List<Map<String,Object>> maps(Object raw){return raw instanceof Collection<?>?cn.bidcheck.compat.Java8Api.toList(((Collection<?>) (raw)).stream().filter(Map.class::isInstance).map(BusinessResultPresentation::map)):cn.bidcheck.compat.Java8Api.listOf();}
     private static String text(Map<String,Object> value,String key){return Objects.toString(value.get(key),"");}
-    private static String statusOf(Object value){return value instanceof Evaluation e?e.status():text(map(value),"status");}
+    private static String statusOf(Object value){return value instanceof Evaluation?((Evaluation) (value)).status():text(map(value),"status");}
     private static ResultProjection template(Map<String,Object> assessment){
         Object direct=assessment==null?null:assessment.get("resultProjection");
-        if(direct instanceof ResultProjection projection)return projection;
-        if(direct instanceof Map<?,?> values&&"template-result-v1".equals(Objects.toString(values.get("schemaVersion"),"")))try{return JSON.convertValue(values,ResultProjection.class);}catch(IllegalArgumentException ignored){}
+        if(direct instanceof ResultProjection)return ((ResultProjection) (direct));
+        if(direct instanceof Map<?,?>&&"template-result-v1".equals(Objects.toString(((Map<?,?>) (direct)).get("schemaVersion"),"")))try{return JSON.convertValue(((Map<?,?>) (direct)),ResultProjection.class);}catch(IllegalArgumentException ignored){}
         Object fallback=assessment==null?null:assessment.get("templateResult");
-        if(fallback instanceof ResultProjection projection)return projection;
-        if(fallback instanceof Map<?,?> values&&"template-result-v1".equals(Objects.toString(values.get("schemaVersion"),"")))try{return JSON.convertValue(values,ResultProjection.class);}catch(IllegalArgumentException ignored){}
+        if(fallback instanceof ResultProjection)return ((ResultProjection) (fallback));
+        if(fallback instanceof Map<?,?>&&"template-result-v1".equals(Objects.toString(((Map<?,?>) (fallback)).get("schemaVersion"),"")))try{return JSON.convertValue(((Map<?,?>) (fallback)),ResultProjection.class);}catch(IllegalArgumentException ignored){}
         return null;
     }
     private static Map<String,Object> templateDimensions(ResultProjection projection){
         String execution=projection.execution()==null?"FINISHED":projection.execution().state().name();
-        String executionLabel=switch(execution){case "QUEUED"->"补查已排队";case "RUNNING"->"自动补查中";case "RETRY_WAIT"->"等待重试";case "BLOCKED"->"等待系统补齐输入";case "FAILED"->"本轮处理失败";default->"本轮已结束";};
+        String executionLabel;
+switch (execution) {case "QUEUED":executionLabel = "补查已排队"; break;case "RUNNING":executionLabel = "自动补查中"; break;case "RETRY_WAIT":executionLabel = "等待重试"; break;case "BLOCKED":executionLabel = "等待系统补齐输入"; break;case "FAILED":executionLabel = "本轮处理失败"; break;default:executionLabel = "本轮已结束"; break;}
         String conclusion=projection.conclusion()==null?"UNDETERMINED":projection.conclusion().state().name();
-        String conclusionLabel=switch(conclusion){case "SATISFIED"->"满足要求";case "NOT_SATISFIED"->"不满足要求";case "SUSPECTED_RISK"->"疑似风险，待确认";case "NOT_APPLICABLE"->"不适用";default->"尚不能判断";};
+        String conclusionLabel;
+switch (conclusion) {case "SATISFIED":conclusionLabel = "满足要求"; break;case "NOT_SATISFIED":conclusionLabel = "不满足要求"; break;case "SUSPECTED_RISK":conclusionLabel = "疑似风险，待确认"; break;case "NOT_APPLICABLE":conclusionLabel = "不适用"; break;default:conclusionLabel = "尚不能判断"; break;}
         String evidence=projection.evidence()==null?"NOT_LOCATED":projection.evidence().state().name();
-        String evidenceLabel=switch(evidence){case "SUFFICIENT"->"判断依据已记录";case "PARTIAL"->"证据尚未核全";case "CONFLICTING"->"证据存在冲突";case "SCOPE_UNRESOLVED"->"要求范围尚未明确";case "NOT_APPLICABLE"->"不适用";default->"尚未取得充分依据";};
+        String evidenceLabel;
+switch (evidence) {case "SUFFICIENT":evidenceLabel = "判断依据已记录"; break;case "PARTIAL":evidenceLabel = "证据尚未核全"; break;case "CONFLICTING":evidenceLabel = "证据存在冲突"; break;case "SCOPE_UNRESOLVED":evidenceLabel = "要求范围尚未明确"; break;case "NOT_APPLICABLE":evidenceLabel = "不适用"; break;default:evidenceLabel = "尚未取得充分依据"; break;}
         String proof=projection.conclusion()==null||projection.conclusion().proofScope()==null?"UNSPECIFIED":projection.conclusion().proofScope().name();
-        String proofLabel=switch(proof){case "MATERIAL_SUBMISSION"->"材料提交要求";case "WRITTEN_COMMITMENT"->"书面承诺要求";case "FACTUAL_CONDITION"->"业务事实条件";case "OBSERVED_CONSISTENCY"->"已识别记录范围";case "QUALITY_ADVISORY"->"评分建议";default->"";};
+        String proofLabel;
+switch (proof) {case "MATERIAL_SUBMISSION":proofLabel = "材料提交要求"; break;case "WRITTEN_COMMITMENT":proofLabel = "书面承诺要求"; break;case "FACTUAL_CONDITION":proofLabel = "业务事实条件"; break;case "OBSERVED_CONSISTENCY":proofLabel = "已识别记录范围"; break;case "QUALITY_ADVISORY":proofLabel = "评分建议"; break;default:proofLabel = ""; break;}
         Map<String,Object> executionValue=new LinkedHashMap<>();executionValue.put("state",execution);executionValue.put("label",executionLabel);
-        executionValue.put("jobId",projection.execution()==null||projection.execution().jobId()==null?"":projection.execution().jobId());executionValue.put("active",Set.of("QUEUED","RUNNING","RETRY_WAIT").contains(execution));
+        executionValue.put("jobId",projection.execution()==null||projection.execution().jobId()==null?"":projection.execution().jobId());executionValue.put("active",cn.bidcheck.compat.Java8Api.setOf("QUEUED", "RUNNING", "RETRY_WAIT").contains(execution));
         executionValue.put("reason",projection.conclusion()==null?"":Objects.toString(projection.conclusion().summary(),""));executionValue.put("nextAction",projection.nextStep());
-        return Map.of("execution",executionValue,"evidence",Map.of("state",evidence,"label",evidenceLabel),"proofScope",Map.of("state",proof,"label",proofLabel),
-            "conclusion",Map.of("state",conclusion,"label",conclusionLabel,"determined",Set.of("SATISFIED","NOT_SATISFIED","NOT_APPLICABLE").contains(conclusion)));
+        return cn.bidcheck.compat.Java8Api.mapOf("execution", executionValue, "evidence", cn.bidcheck.compat.Java8Api.mapOf("state", evidence, "label", evidenceLabel), "proofScope", cn.bidcheck.compat.Java8Api.mapOf("state", proof, "label", proofLabel), "conclusion", cn.bidcheck.compat.Java8Api.mapOf("state", conclusion, "label", conclusionLabel, "determined", cn.bidcheck.compat.Java8Api.setOf("SATISFIED", "NOT_SATISFIED", "NOT_APPLICABLE").contains(conclusion)));
     }
 }

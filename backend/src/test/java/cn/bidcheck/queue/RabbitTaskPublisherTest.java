@@ -13,7 +13,7 @@ import static org.mockito.Mockito.*;
 class RabbitTaskPublisherTest {
     @Test void sendsOnlyTaskIdAsPersistentNotificationAndWaitsForPublisherConfirm() {
         RabbitTemplate template=mock(RabbitTemplate.class);
-        doAnswer(a->{CorrelationData c=a.getArgument(3);c.getFuture().complete(new CorrelationData.Confirm(true,null));return null;})
+        doAnswer(a->{CorrelationData c=a.getArgument(3);c.getFuture().set(new CorrelationData.Confirm(true,null));return null;})
             .when(template).send(eq("tasks"),eq("ready"),any(Message.class),any(CorrelationData.class));
         assertThat(new RabbitTaskPublisher(template,"tasks","ready",100).publishConfirmed("task-id")).isTrue();
         ArgumentCaptor<Message> body=ArgumentCaptor.forClass(Message.class);
@@ -23,7 +23,7 @@ class RabbitTaskPublisherTest {
     }
     @Test void exchangeAckWithMandatoryReturnIsNotTreatedAsDelivered() {
         RabbitTemplate template=mock(RabbitTemplate.class);
-        doAnswer(a->{CorrelationData c=a.getArgument(3);c.setReturned(new ReturnedMessage(a.getArgument(2),312,"NO_ROUTE","tasks","ready"));c.getFuture().complete(new CorrelationData.Confirm(true,null));return null;})
+        doAnswer(a->{CorrelationData c=a.getArgument(3);c.setReturned(new ReturnedMessage(a.getArgument(2),312,"NO_ROUTE","tasks","ready"));c.getFuture().set(new CorrelationData.Confirm(true,null));return null;})
             .when(template).send(eq("tasks"),eq("ready"),any(Message.class),any(CorrelationData.class));
         assertThat(new RabbitTaskPublisher(template,"tasks","ready",100).publishConfirmed("task-id")).isFalse();
     }
@@ -35,7 +35,7 @@ class RabbitTaskPublisherTest {
     }
     @Test void negativeConfirmUsesDatabaseFallbackAndDoesNotHammerTheBroker() {
         RabbitTemplate template=mock(RabbitTemplate.class);
-        doAnswer(a->{CorrelationData c=a.getArgument(3);c.getFuture().complete(new CorrelationData.Confirm(false,"queue overflow"));return null;})
+        doAnswer(a->{CorrelationData c=a.getArgument(3);c.getFuture().set(new CorrelationData.Confirm(false,"queue overflow"));return null;})
             .when(template).send(anyString(),anyString(),any(Message.class),any(CorrelationData.class));
         RabbitTaskPublisher publisher=new RabbitTaskPublisher(template,"tasks","ready",100);
         assertThat(publisher.publishConfirmed("first")).isFalse();assertThat(publisher.publishConfirmed("second")).isFalse();

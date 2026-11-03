@@ -17,6 +17,7 @@ import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -27,13 +28,13 @@ class ConfiguredArtifactStorageTest {
     @TempDir Path directory;
 
     @Test void largerOriginalsRemainStreamedAndIntegrityChecked() throws Exception {
-        var storage = new ConfiguredArtifactStorage(directory.toString(), "local", null, "bidcheck");
+        cn.bidcheck.storage.ConfiguredArtifactStorage storage = new ConfiguredArtifactStorage(directory.toString(), "local", null, "bidcheck");
         String id = UUID.randomUUID().toString();
         Path stage = storage.stagePath(id);
         try (RandomAccessFile file = new RandomAccessFile(stage.toFile(), "rw")) { file.setLength(32L * 1024 * 1024); }
-        var digest = java.security.MessageDigest.getInstance("SHA-256");
-        try (var in = new java.security.DigestInputStream(Files.newInputStream(stage), digest)) { in.transferTo(java.io.OutputStream.nullOutputStream()); }
-        String hash = java.util.HexFormat.of().formatHex(digest.digest());
+        java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+        try (java.security.DigestInputStream in = new java.security.DigestInputStream(Files.newInputStream(stage), digest)) { cn.bidcheck.compat.Java8Api.transferTo(in, cn.bidcheck.compat.Java8Extras.nullOutputStream()); }
+        String hash = cn.bidcheck.compat.HexFormat.of().formatHex(digest.digest());
         storage.commit(id);
         assertEquals(stage, storage.materialize(id, hash));
         try (RandomAccessFile file = new RandomAccessFile(stage.toFile(), "rw")) { file.seek(file.length()-1); file.write(1); }
@@ -41,14 +42,14 @@ class ConfiguredArtifactStorageTest {
     }
 
     @Test void localModeCommitsWithoutCopyingAndNeverDeletesCommittedOriginals() throws Exception {
-        var storage = new ConfiguredArtifactStorage(directory.toString(), "local", "invalid endpoint", "", "", "ignored");
+        cn.bidcheck.storage.ConfiguredArtifactStorage storage = new ConfiguredArtifactStorage(directory.toString(), "local", "invalid endpoint", "", "", "ignored");
         String id = UUID.randomUUID().toString();
         Path stage = storage.stagePath(id);
-        Files.writeString(stage, "原始证据");
+        cn.bidcheck.compat.Java8Api.writeString(stage, "原始证据");
         assertThrows(IOException.class, () -> storage.materialize(id));
         storage.commit(id);
         assertEquals(stage, storage.materialize(id));
-        try (var input = storage.open(id)) { assertEquals("原始证据", new String(input.readAllBytes(), StandardCharsets.UTF_8)); }
+        try (java.io.InputStream input = storage.open(id)) { assertEquals("原始证据", new String(cn.bidcheck.compat.Java8Api.readAllBytes(input), StandardCharsets.UTF_8)); }
         storage.discardStaging(id);
         assertTrue(Files.exists(stage));
         assertThrows(IOException.class, () -> storage.stagePath(id));
@@ -57,10 +58,10 @@ class ConfiguredArtifactStorageTest {
     }
 
     @Test void discardsOnlyUncommittedUploadsAndRejectsArbitraryPaths() throws Exception {
-        var storage = new ConfiguredArtifactStorage(directory.toString(), "local", null, "bidcheck");
+        cn.bidcheck.storage.ConfiguredArtifactStorage storage = new ConfiguredArtifactStorage(directory.toString(), "local", null, "bidcheck");
         String id = UUID.randomUUID().toString();
         Path stage = storage.stagePath(id);
-        Files.writeString(stage, "duplicate");
+        cn.bidcheck.compat.Java8Api.writeString(stage, "duplicate");
         storage.discardStaging(id);
         assertFalse(Files.exists(stage));
         assertFalse(Files.exists(directory.resolve("files").resolve(id + ".pending")));
@@ -73,12 +74,18 @@ class ConfiguredArtifactStorageTest {
 
     @Test void rejectsEmptyAndOversizedFilesBeforeAnyRemoteWrite() throws Exception {
         MinioClient client = mock(MinioClient.class);
-        var storage = new ConfiguredArtifactStorage(directory.toString(), "minio", client, "bidcheck");
+        cn.bidcheck.storage.ConfiguredArtifactStorage storage = new ConfiguredArtifactStorage(directory.toString(), "minio", client, "bidcheck");
         String id = UUID.randomUUID().toString();
         Path stage = storage.stagePath(id);
         Files.createFile(stage);
         assertThrows(IOException.class, () -> storage.commit(id));
-        try (RandomAccessFile file = new RandomAccessFile(stage.toFile(), "rw")) { file.setLength(ConfiguredArtifactStorage.MAX_BYTES + 1); }
+        Files.delete(stage);
+        try (java.nio.channels.SeekableByteChannel file = Files.newByteChannel(stage,
+                java.util.EnumSet.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, StandardOpenOption.SPARSE))) {
+            file.position(ConfiguredArtifactStorage.MAX_BYTES);
+            file.write(java.nio.ByteBuffer.wrap(new byte[]{0}));
+        }
+        assertEquals(ConfiguredArtifactStorage.MAX_BYTES + 1, Files.size(stage));
         assertThrows(IOException.class, () -> storage.commit(id));
         verifyNoInteractions(client);
     }
@@ -86,14 +93,14 @@ class ConfiguredArtifactStorageTest {
     @Test void uploadsToDedicatedBucketBeforeMakingDocumentReadable() throws Exception {
         MinioClient client = mock(MinioClient.class);
         when(client.bucketExists(any(BucketExistsArgs.class))).thenReturn(false);
-        var storage = new ConfiguredArtifactStorage(directory.toString(), "minio", client, "bidcheck");
+        cn.bidcheck.storage.ConfiguredArtifactStorage storage = new ConfiguredArtifactStorage(directory.toString(), "minio", client, "bidcheck");
         String id = UUID.randomUUID().toString();
         Path stage = storage.stagePath(id);
-        Files.writeString(stage, "proof");
+        cn.bidcheck.compat.Java8Api.writeString(stage, "proof");
         assertFalse(storage.available());
         storage.commit(id);
         assertTrue(storage.available());
-        var sequence = inOrder(client);
+        org.mockito.InOrder sequence = inOrder(client);
         sequence.verify(client).bucketExists(any(BucketExistsArgs.class));
         sequence.verify(client).makeBucket(any(MakeBucketArgs.class));
         ArgumentCaptor<UploadObjectArgs> upload = ArgumentCaptor.forClass(UploadObjectArgs.class);
@@ -111,10 +118,10 @@ class ConfiguredArtifactStorageTest {
         MinioClient client = mock(MinioClient.class);
         when(client.bucketExists(any(BucketExistsArgs.class))).thenReturn(true);
         when(client.uploadObject(any(UploadObjectArgs.class))).thenThrow(new IOException("private-secret-in-sdk-error"));
-        var storage = new ConfiguredArtifactStorage(directory.toString(), "minio", client, "bidcheck");
+        cn.bidcheck.storage.ConfiguredArtifactStorage storage = new ConfiguredArtifactStorage(directory.toString(), "minio", client, "bidcheck");
         String id = UUID.randomUUID().toString();
         Path stage = storage.stagePath(id);
-        Files.writeString(stage, "proof");
+        cn.bidcheck.compat.Java8Api.writeString(stage, "proof");
         IOException failure = assertThrows(IOException.class, () -> storage.commit(id));
         assertFalse(failure.toString().contains("private-secret"));
         assertNull(failure.getCause());
@@ -132,7 +139,7 @@ class ConfiguredArtifactStorageTest {
         when(client.getObject(any(GetObjectArgs.class))).thenReturn(new GetObjectResponse(
                 new Headers.Builder().add("Content-Length", Integer.toString(bytes.length)).build(),
                 "bidcheck", "", "documents/" + id + "/original.bin", new ByteArrayInputStream(bytes)));
-        var storage = new ConfiguredArtifactStorage(directory.toString(), "minio", client, "bidcheck");
+        cn.bidcheck.storage.ConfiguredArtifactStorage storage = new ConfiguredArtifactStorage(directory.toString(), "minio", client, "bidcheck");
         Path cached = storage.materialize(id);
         assertArrayEquals(bytes, Files.readAllBytes(cached));
         assertEquals(cached, storage.materialize(id));
@@ -141,7 +148,7 @@ class ConfiguredArtifactStorageTest {
         verify(client).getObject(args.capture());
         assertEquals("documents/" + id + "/original.bin", args.getValue().object());
         verifyNoMoreInteractions(client);
-        try (var remaining = Files.list(directory.resolve("files"))) {
+        try (java.util.stream.Stream<java.nio.file.Path> remaining = Files.list(directory.resolve("files"))) {
             assertEquals(1, remaining.count());
         }
     }
@@ -152,25 +159,25 @@ class ConfiguredArtifactStorageTest {
         when(client.getObject(any(GetObjectArgs.class))).thenReturn(new GetObjectResponse(
                 new Headers.Builder().add("Content-Length", Long.toString(ConfiguredArtifactStorage.MAX_BYTES + 1)).build(),
                 "bidcheck", "", "documents/" + id + "/original.bin", new ByteArrayInputStream(new byte[]{1})));
-        var storage = new ConfiguredArtifactStorage(directory.toString(), "minio", client, "bidcheck");
+        cn.bidcheck.storage.ConfiguredArtifactStorage storage = new ConfiguredArtifactStorage(directory.toString(), "minio", client, "bidcheck");
         assertThrows(IOException.class, () -> storage.materialize(id));
         assertFalse(Files.exists(directory.resolve("files").resolve(id + ".bin")));
-        try (var remaining = Files.list(directory.resolve("files"))) { assertEquals(0, remaining.count()); }
+        try (java.util.stream.Stream<java.nio.file.Path> remaining = Files.list(directory.resolve("files"))) { assertEquals(0, remaining.count()); }
         assertFalse(storage.available());
         assertThrows(IOException.class, () -> new ConfiguredArtifactStorage(directory.toString(), "minio", client, "external-bucket"));
     }
 
     @Test void verifiesRegisteredHashEvenIfACachedFileHasTheSameSizeAndTimestamp() throws Exception {
-        var storage = new ConfiguredArtifactStorage(directory.toString(), "local", null, "bidcheck");
+        cn.bidcheck.storage.ConfiguredArtifactStorage storage = new ConfiguredArtifactStorage(directory.toString(), "local", null, "bidcheck");
         String id = UUID.randomUUID().toString();
         Path stage = storage.stagePath(id);
         byte[] original = "proof-one".getBytes(StandardCharsets.UTF_8);
         Files.write(stage, original);
         storage.commit(id);
-        String hash = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(original));
+        String hash = cn.bidcheck.compat.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(original));
         assertEquals(stage, storage.materialize(id, hash));
-        var modified = Files.getLastModifiedTime(stage);
-        Files.writeString(stage, "proof-two");
+        java.nio.file.attribute.FileTime modified = Files.getLastModifiedTime(stage);
+        cn.bidcheck.compat.Java8Api.writeString(stage, "proof-two");
         Files.setLastModifiedTime(stage, modified);
         assertTrue(assertThrows(IOException.class, () -> storage.materialize(id, hash)).getMessage().contains("SHA-256"));
         assertThrows(IOException.class, () -> storage.materialize(id, ""));
@@ -183,8 +190,8 @@ class ConfiguredArtifactStorageTest {
         when(client.getObject(any(GetObjectArgs.class))).thenReturn(new GetObjectResponse(
                 new Headers.Builder().add("Content-Length", "100").build(), "bidcheck", "", "documents/" + id + "/original.bin",
                 new ByteArrayInputStream(new byte[]{1, 2, 3})));
-        var storage = new ConfiguredArtifactStorage(directory.toString(), "minio", client, "bidcheck");
+        cn.bidcheck.storage.ConfiguredArtifactStorage storage = new ConfiguredArtifactStorage(directory.toString(), "minio", client, "bidcheck");
         assertThrows(IOException.class, () -> storage.materialize(id));
-        try (var remaining = Files.list(directory.resolve("files"))) { assertEquals(0, remaining.count()); }
+        try (java.util.stream.Stream<java.nio.file.Path> remaining = Files.list(directory.resolve("files"))) { assertEquals(0, remaining.count()); }
     }
 }

@@ -1,4 +1,5 @@
 package cn.bidcheck.persistence;
+import cn.bidcheck.compat.HexFormat;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -34,9 +35,20 @@ public class Store {
         Stored previous=mapper.get(id); Stored row=new Stored(); row.id=id; row.kind=kind;
         row.projectId=project; row.parentId=parent==null?"":parent; row.body=StoredBodyCodec.encode(kind,encode(value));
         row.createdAt=previous==null?System.currentTimeMillis():previous.createdAt; mapper.save(row);
-        if("document".equals(kind) && value instanceof Document document) saveSummary(document);
+        if("document".equals(kind) && value instanceof Document) saveSummary(((Document) (value)));
     }
-    public record ImmutableInsertResult(boolean inserted,String contentDigest) {}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public static final class ImmutableInsertResult {
+        private final boolean inserted;
+        private final String contentDigest;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public ImmutableInsertResult(@com.fasterxml.jackson.annotation.JsonProperty("inserted") boolean inserted, @com.fasterxml.jackson.annotation.JsonProperty("contentDigest") String contentDigest) { this.inserted = inserted; this.contentDigest = contentDigest; }
+        public boolean inserted() { return inserted; }
+        public String contentDigest() { return contentDigest; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; ImmutableInsertResult that = (ImmutableInsertResult) other; return java.util.Objects.equals(this.inserted, that.inserted) && java.util.Objects.equals(this.contentDigest, that.contentDigest); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.inserted); hash = 31 * hash + java.util.Objects.hashCode(this.contentDigest); return hash; }
+        @Override public String toString() { return "ImmutableInsertResult[" + "inserted=" + inserted + ", contentDigest=" + contentDigest + "]"; }
+}
     /**
      * Publishes an immutable record exactly once. A repeated publication is accepted only when
      * identity, scope and encoded content are byte-for-byte identical; mutable save semantics are
@@ -92,7 +104,7 @@ public class Store {
         summary.put("name",d.name()); summary.put("version",d.version()); summary.put("sha256",d.sha256());
         summary.put("createdAt",d.createdAt()); summary.put("warnings",d.warnings());
         summary.put("pageCount",d.pages().size()); summary.put("locationType",d.pages().isEmpty()?"BLOCK":d.pages().get(0).locationType());
-        summary.put("readableText",d.pages().stream().anyMatch(p->p.text()!=null&&!p.text().isBlank()));
+        summary.put("readableText",d.pages().stream().anyMatch(p->p.text()!=null&&!cn.bidcheck.compat.Java8Api.isBlank(p.text())));
         summary.put("contentIncluded",false);
         summary.put("ocrPages",d.pages().stream().filter(p->p.parser()!=null&&p.parser().contains("OCR")).count());
         summary.put("ocrIncomplete",d.warnings().stream().anyMatch(w->w.contains("[OCR未完成]")));
@@ -132,14 +144,14 @@ public class Store {
     public Map<String,Object> getMap(String kind,String id) { return map(require(kind,id).body); }
     /** Bounded reads preserve kind and project isolation; missing rows are never cached. */
     public Map<String,Map<String,Object>> mapsByIds(String kind,String project,Collection<String> ids) {
-        List<String> keys=ids.stream().filter(Objects::nonNull).distinct().toList();Map<String,Map<String,Object>> out=new LinkedHashMap<>();
+        List<String> keys=cn.bidcheck.compat.Java8Api.toList(ids.stream().filter(Objects::nonNull).distinct());Map<String,Map<String,Object>> out=new LinkedHashMap<>();
         for(int at=0;at<keys.size();at+=100){List<String> part=keys.subList(at,Math.min(keys.size(),at+100));
-            if(mapper==null){for(String id:part)try{Map<String,Object> value=getMap(kind,id);if(project==null||!value.containsKey("projectId")||project.equals(value.get("projectId")))out.put(id,value);}catch(ResponseStatusException missing){if(missing.getStatusCode().value()!=404)throw missing;}}
+            if(mapper==null){for(String id:part)try{Map<String,Object> value=getMap(kind,id);if(project==null||!value.containsKey("projectId")||project.equals(value.get("projectId")))out.put(id,value);}catch(ResponseStatusException missing){if(missing.getStatus().value()!=404)throw missing;}}
             else for(Stored row:mapper.getMany(part))if(kind.equals(row.kind)&&(project==null||project.equals(row.projectId)))out.put(row.id,map(row.body));
         }return out;
     }
     public Map<String,List<Map<String,Object>>> mapsByParents(String kind,String project,Collection<String> parents) {
-        List<String> keys=parents.stream().filter(Objects::nonNull).distinct().toList();Map<String,List<Map<String,Object>>> out=new LinkedHashMap<>();
+        List<String> keys=cn.bidcheck.compat.Java8Api.toList(parents.stream().filter(Objects::nonNull).distinct());Map<String,List<Map<String,Object>>> out=new LinkedHashMap<>();
         for(int at=0;at<keys.size();at+=100){List<String> part=keys.subList(at,Math.min(keys.size(),at+100));
             if(mapper==null)for(String parent:part)out.put(parent,maps(kind,project,parent));
             else for(Stored row:mapper.listParents(kind,project,part))out.computeIfAbsent(row.parentId,k->new ArrayList<>()).add(map(row.body));
@@ -154,9 +166,9 @@ public class Store {
         Stored row=new Stored();row.id=id;row.kind=kind;row.projectId=project;row.parentId=parent==null?"":parent;row.body=StoredBodyCodec.encode(kind,encode(value));row.createdAt=System.currentTimeMillis();return row;
     }
     public <T> List<T> list(String kind,String project,String parent,Class<T> type) {
-        return mapper.list(kind,project,parent).stream().map(x->decode(x.body,type)).toList();
+        return cn.bidcheck.compat.Java8Api.toList(mapper.list(kind,project,parent).stream().map(x->decode(x.body,type)));
     }
     public List<Map<String,Object>> maps(String kind,String project,String parent) {
-        return mapper.list(kind,project,parent).stream().map(x->map(x.body)).toList();
+        return cn.bidcheck.compat.Java8Api.toList(mapper.list(kind,project,parent).stream().map(x->map(x.body)));
     }
 }

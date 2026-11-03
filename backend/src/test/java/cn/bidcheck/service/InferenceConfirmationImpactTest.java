@@ -7,23 +7,23 @@ import static cn.bidcheck.service.BidService.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class InferenceConfirmationImpactTest {
-    final List<Map<String,Object>> versions=List.of(Map.of("id","claim","revision",1));
-    Map<String,Object> decision(String status){return fields("id","claim","revision",1,"status",status,"proposedFact",fields("kind","RELATION","subject","张国超","field","同一人","value","张*超","scope","CURRENT_PROJECT","sourceIds",List.of("s22","s31"),"attributes",Map.of("object","张*超")),"evidences",List.of(Map.of("sourceId","s22"),Map.of("sourceId","s31")));}
-    Map<String,Object> dependency(String predicate,String subject,List<String> names,String source){return fields("obligationId","r","observationKey","key","target",fields("predicate",predicate,"subject",subject,"field","number","unit","","parameters",Map.of()),"resolvedSubjects",names,"sourceIds",source.isBlank()?List.of():List.of(source));}
-    Finding finding(String id,List<Map<String,Object>> dependencies){Checkpoint cp=new Checkpoint(id,id,"资格","HIGH","SEMANTIC_RESPONSE","role","EXISTS","要求","",true,true,true,null);return new Finding(id,"parent",cp,new Evaluation("PASS","通过","",List.of(),0,"RULE"),Map.of("atomicCheck",fields("complete",true,"gaps",List.of(),"recoveryEvidenceDependencies",dependencies)));}
+    final List<Map<String,Object>> versions=cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("id", "claim", "revision", 1));
+    Map<String,Object> decision(String status){return fields("id","claim","revision",1,"status",status,"proposedFact",fields("kind","RELATION","subject","张国超","field","同一人","value","张*超","scope","CURRENT_PROJECT","sourceIds",cn.bidcheck.compat.Java8Api.listOf("s22", "s31"),"attributes",cn.bidcheck.compat.Java8Api.mapOf("object", "张*超")),"evidences",cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("sourceId", "s22"), cn.bidcheck.compat.Java8Api.mapOf("sourceId", "s31")));}
+    Map<String,Object> dependency(String predicate,String subject,List<String> names,String source){return fields("obligationId","r","observationKey","key","target",fields("predicate",predicate,"subject",subject,"field","number","unit","","parameters",cn.bidcheck.compat.Java8Api.mapOf()),"resolvedSubjects",names,"sourceIds",cn.bidcheck.compat.Java8Api.isBlank(source)?cn.bidcheck.compat.Java8Api.listOf():cn.bidcheck.compat.Java8Api.listOf(source));}
+    Finding finding(String id,List<Map<String,Object>> dependencies){Checkpoint cp=new Checkpoint(id,id,"资格","HIGH","SEMANTIC_RESPONSE","role","EXISTS","要求","",true,true,true,null);return new Finding(id,"parent",cp,new Evaluation("PASS","通过","",cn.bidcheck.compat.Java8Api.listOf(),0,"RULE"),cn.bidcheck.compat.Java8Api.mapOf("atomicCheck", fields("complete",true,"gaps",cn.bidcheck.compat.Java8Api.listOf(),"recoveryEvidenceDependencies",dependencies)));}
     @Test void newIdentityConfirmationInvalidatesPassedCredentialAndCountButNotUnrelatedPrice(){
-        Finding certificate=finding("certificate",List.of(dependency("CERTIFICATE","项目负责人",List.of("张国超"),"")));
-        Finding count=finding("count",List.of(dependency("PERSON_COUNT","技术人员",List.of(),"")));
-        Finding price=finding("price",List.of(dependency("NUMBER","报价单位",List.of(),"price-source")));
-        assertEquals(Set.of("certificate","count"),InferenceConfirmationImpact.affected(List.of(certificate,count,price),List.of(),versions,List.of(decision("CONFIRMED"))));
+        Finding certificate=finding("certificate",cn.bidcheck.compat.Java8Api.listOf(dependency("CERTIFICATE","项目负责人",cn.bidcheck.compat.Java8Api.listOf("张国超"),"")));
+        Finding count=finding("count",cn.bidcheck.compat.Java8Api.listOf(dependency("PERSON_COUNT","技术人员",cn.bidcheck.compat.Java8Api.listOf(),"")));
+        Finding price=finding("price",cn.bidcheck.compat.Java8Api.listOf(dependency("NUMBER","报价单位",cn.bidcheck.compat.Java8Api.listOf(),"price-source")));
+        assertEquals(cn.bidcheck.compat.Java8Api.setOf("certificate", "count"),InferenceConfirmationImpact.affected(cn.bidcheck.compat.Java8Api.listOf(certificate, count, price),cn.bidcheck.compat.Java8Api.listOf(),versions,cn.bidcheck.compat.Java8Api.listOf(decision("CONFIRMED"))));
     }
     @Test void sourceOverlapAndMissingIndexAreConservativeDependencies(){
-        Finding overlap=finding("overlap",List.of(dependency("CERTIFICATE","另一字段",List.of(),"s31")));Finding legacy=finding("legacy",List.of());
-        assertEquals(Set.of("overlap","legacy"),InferenceConfirmationImpact.affected(List.of(overlap,legacy),List.of(),versions,List.of(decision("CONFIRMED"))));
+        Finding overlap=finding("overlap",cn.bidcheck.compat.Java8Api.listOf(dependency("CERTIFICATE","另一字段",cn.bidcheck.compat.Java8Api.listOf(),"s31")));Finding legacy=finding("legacy",cn.bidcheck.compat.Java8Api.listOf());
+        assertEquals(cn.bidcheck.compat.Java8Api.setOf("overlap", "legacy"),InferenceConfirmationImpact.affected(cn.bidcheck.compat.Java8Api.listOf(overlap, legacy),cn.bidcheck.compat.Java8Api.listOf(),versions,cn.bidcheck.compat.Java8Api.listOf(decision("CONFIRMED"))));
     }
-    @Test void rejectedUnchangedOrUnfrozenDecisionsDoNotInvalidatePasses(){List<Finding> passed=List.of(finding("legacy",List.of()));
-        assertTrue(InferenceConfirmationImpact.affected(passed,List.of(),versions,List.of(decision("REJECTED"))).isEmpty());
-        assertTrue(InferenceConfirmationImpact.affected(passed,versions,versions,List.of(decision("CONFIRMED"))).isEmpty());
-        assertTrue(InferenceConfirmationImpact.affected(passed,List.of(),List.of(),List.of(decision("CONFIRMED"))).isEmpty());
+    @Test void rejectedUnchangedOrUnfrozenDecisionsDoNotInvalidatePasses(){List<Finding> passed=cn.bidcheck.compat.Java8Api.listOf(finding("legacy",cn.bidcheck.compat.Java8Api.listOf()));
+        assertTrue(InferenceConfirmationImpact.affected(passed,cn.bidcheck.compat.Java8Api.listOf(),versions,cn.bidcheck.compat.Java8Api.listOf(decision("REJECTED"))).isEmpty());
+        assertTrue(InferenceConfirmationImpact.affected(passed,versions,versions,cn.bidcheck.compat.Java8Api.listOf(decision("CONFIRMED"))).isEmpty());
+        assertTrue(InferenceConfirmationImpact.affected(passed,cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(decision("CONFIRMED"))).isEmpty());
     }
 }

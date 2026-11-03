@@ -18,10 +18,10 @@ class ApiEvidenceGraphControllerTest {
     @Test void exposesRunScopedGraphAndProofWithoutChangingLegacyConstructor() throws Exception {
         EvidenceGraphReadService reads=mock(EvidenceGraphReadService.class);
         EvidenceGraph.Revision revision=new EvidenceGraph.Revision("revision-a","project-a","engine","manifest","occurrences",
-                "evidence-graph-1","content",List.of(),"2026-10-19T00:00:00Z");
-        when(reads.graph(eq("run-a"),any())).thenReturn(new EvidenceGraphReadService.GraphView(revision,List.of(),List.of()));
+                "evidence-graph-1","content",cn.bidcheck.compat.Java8Api.listOf(),"2026-10-19T00:00:00Z");
+        when(reads.graph(eq("run-a"),any())).thenReturn(new EvidenceGraphReadService.GraphView(revision,cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf()));
         when(reads.proof(eq("run-a"),eq("person:a"),eq("company:a"),any(),eq(2)))
-                .thenReturn(new EvidenceGraph.ProofPath(false,"revision-a","person:a","company:a",List.of(),List.of(),"NO_SUPPORTED_PATH"));
+                .thenReturn(new EvidenceGraph.ProofPath(false,"revision-a","person:a","company:a",cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(),"NO_SUPPORTED_PATH"));
         ApiController controller=new ApiController(mock(BidService.class),null,null,mock(HybridRetriever.class));
         controller.configureEvidenceGraphReads(reads);
         MockMvc mvc=MockMvcBuilders.standaloneSetup(controller).build();
@@ -46,8 +46,8 @@ class ApiEvidenceGraphControllerTest {
     @Test void delegatesVerificationRunIdsToTheSharedGraphReader() throws Exception {
         EvidenceGraphReadService reads=mock(EvidenceGraphReadService.class);
         EvidenceGraph.Revision revision=new EvidenceGraph.Revision("revision-v","project-v","engine","manifest","occurrences",
-                "evidence-graph-1","content",List.of(),"2026-10-20T00:00:00Z");
-        when(reads.graph(eq("verification-v"),any())).thenReturn(new EvidenceGraphReadService.GraphView(revision,List.of(),List.of()));
+                "evidence-graph-1","content",cn.bidcheck.compat.Java8Api.listOf(),"2026-10-20T00:00:00Z");
+        when(reads.graph(eq("verification-v"),any())).thenReturn(new EvidenceGraphReadService.GraphView(revision,cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf()));
         ApiController controller=new ApiController(mock(BidService.class),null,null,mock(HybridRetriever.class));controller.configureEvidenceGraphReads(reads);
         MockMvc mvc=MockMvcBuilders.standaloneSetup(controller).build();
 

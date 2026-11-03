@@ -19,17 +19,32 @@ public final class StructuredHtmlTableFacts {
     private static final Pattern TABLE_CLOSE = Pattern.compile("(?is)</table\\s*>");
     private static final Pattern TAG = Pattern.compile("(?is)<(/?)([a-z][a-z0-9]*)([^<>]*)>");
     private static final Pattern ATTRIBUTE = Pattern.compile("\\s+([A-Za-z_:][-A-Za-z0-9_:]*)(?:\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s\"'=<>`]+)))?");
-    private static final List<String> FIELDS = List.of("insuranceSequence", "insuredPersonName", "socialSecurityNumber",
-            "insuranceType", "contributionStart", "contributionEnd", "paidMonths");
+    private static final List<String> FIELDS = cn.bidcheck.compat.Java8Api.listOf("insuranceSequence", "insuredPersonName", "socialSecurityNumber", "insuranceType", "contributionStart", "contributionEnd", "paidMonths");
     private StructuredHtmlTableFacts() { }
 
-    public record Result(boolean complete, String schema, List<Fact> facts, List<String> issues) {
-        public Result { facts = List.copyOf(facts); issues = List.copyOf(issues); }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public static final class Result {
+        private final boolean complete;
+        private final String schema;
+        private final List<Fact> facts;
+        private final List<String> issues;
+        public boolean complete() { return complete; }
+        public String schema() { return schema; }
+        public List<Fact> facts() { return facts; }
+        public List<String> issues() { return issues; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Result that = (Result) other; return java.util.Objects.equals(this.complete, that.complete) && java.util.Objects.equals(this.schema, that.schema) && java.util.Objects.equals(this.facts, that.facts) && java.util.Objects.equals(this.issues, that.issues); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.complete); hash = 31 * hash + java.util.Objects.hashCode(this.schema); hash = 31 * hash + java.util.Objects.hashCode(this.facts); hash = 31 * hash + java.util.Objects.hashCode(this.issues); return hash; }
+        @Override public String toString() { return "Result[" + "complete=" + complete + ", schema=" + schema + ", facts=" + facts + ", issues=" + issues + "]"; }
+
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public Result(@com.fasterxml.jackson.annotation.JsonProperty("complete") boolean complete, @com.fasterxml.jackson.annotation.JsonProperty("schema") String schema, @com.fasterxml.jackson.annotation.JsonProperty("facts") List<Fact> facts, @com.fasterxml.jackson.annotation.JsonProperty("issues") List<String> issues) { facts = cn.bidcheck.compat.Java8Api.listCopyOf(facts); issues = cn.bidcheck.compat.Java8Api.listCopyOf(issues);
+            this.complete = complete; this.schema = schema; this.facts = facts; this.issues = issues;
+        }
     }
 
     public static Result analyze(Document document, Page page) {
         if (page != null && page.text() != null && !TABLE_HINT.matcher(page.text()).find())
-            return new Result(false, "", List.of(), List.of());
+            return new Result(false, "", cn.bidcheck.compat.Java8Api.listOf(), cn.bidcheck.compat.Java8Api.listOf());
         if (document == null || page == null || page.text() == null || document.pages() == null
                 || document.pages().stream().noneMatch(p -> p.number() == page.number() && Objects.equals(p.locationType(), page.locationType())
                 && Objects.equals(p.text(), page.text()))) return rejected("HTML_TABLE_SOURCE_INVALID");
@@ -60,17 +75,17 @@ public final class StructuredHtmlTableFacts {
                     if (cell.columnSpan != 1 || c >= 3 && (cell.row != r || cell.rowSpan != 1))
                         throw invalid("HTML_TABLE_DATA_SPAN_UNSUPPORTED");
                 }
-                boolean anonymous = sequence.value.isBlank() && name.value.isBlank() && number.value.isBlank();
+                boolean anonymous = cn.bidcheck.compat.Java8Api.isBlank(sequence.value) && cn.bidcheck.compat.Java8Api.isBlank(name.value) && cn.bidcheck.compat.Java8Api.isBlank(number.value);
                 if (anonymous) issues.add("存在身份信息为空的缴费记录，未关联到任何人员，需人工核对。");
-                else if (sequence.value.isBlank() || name.value.isBlank() || number.value.isBlank())
+                else if (cn.bidcheck.compat.Java8Api.isBlank(sequence.value) || cn.bidcheck.compat.Java8Api.isBlank(name.value) || cn.bidcheck.compat.Java8Api.isBlank(number.value))
                     throw invalid("HTML_TABLE_PARTIAL_IDENTITY");
                 if (!anonymous && !sequence.value.matches("[0-9]{1,5}")) throw invalid("HTML_TABLE_SEQUENCE_UNSUPPORTED");
                 // Labels constrain the interpretation. Dates and counts remain exactly what the source
                 // states; they are not expanded into months, attributed to a role, or treated as a total.
-                if (grid[r][3].value.isBlank() || grid[r][6].value.isBlank()) throw invalid("HTML_TABLE_REQUIRED_VALUE_MISSING");
+                if (cn.bidcheck.compat.Java8Api.isBlank(grid[r][3].value) || cn.bidcheck.compat.Java8Api.isBlank(grid[r][6].value)) throw invalid("HTML_TABLE_REQUIRED_VALUE_MISSING");
                 if (!grid[r][6].value.matches("[0-9]{1,4}")) throw invalid("HTML_TABLE_MONTH_VALUE_UNSUPPORTED");
                 for (Cell cell : rows.get(r)) {
-                    if (cell.value.isBlank()) continue;
+                    if (cn.bidcheck.compat.Java8Api.isBlank(cell.value)) continue;
                     if (cell.value.length() > 200 || cell.raw.length() > 500) throw invalid("HTML_TABLE_VALUE_LIMIT");
                     // One occurrence for each physical source cell. Rowspan inheritance is validated
                     // by the grid above, but must never multiply a name into several extracted facts.
@@ -93,41 +108,36 @@ public final class StructuredHtmlTableFacts {
         Matcher tags = TAG.matcher(html); int at = 0, cells = 0; Cell pending = null;
         while (tags.find()) {
             String between = html.substring(at, tags.start());
-            if (pending == null && !between.isBlank() || between.contains("<") || between.contains(">")) throw invalid("HTML_TABLE_INCOMPLETE");
+            if (pending == null && !cn.bidcheck.compat.Java8Api.isBlank(between) || between.contains("<") || between.contains(">")) throw invalid("HTML_TABLE_INCOMPLETE");
             String tag = tags.group(2).toLowerCase(Locale.ROOT), tail = tags.group(3);
             boolean closing = !tags.group(1).isEmpty();
             if (tag.equals("br") && !closing && pending != null && tail.matches("\\s*/?\\s*")) { at = tags.end(); continue; }
-            if (!Set.of("table", "thead", "tbody", "tfoot", "tr", "td", "th").contains(tag)) throw invalid("HTML_TABLE_TAG_UNSUPPORTED");
+            if (!cn.bidcheck.compat.Java8Api.setOf("table", "thead", "tbody", "tfoot", "tr", "td", "th").contains(tag)) throw invalid("HTML_TABLE_TAG_UNSUPPORTED");
             if (closing) {
-                if (!tail.isBlank() || stack.isEmpty() || !stack.pop().equals(tag)) throw invalid("HTML_TABLE_INCOMPLETE");
+                if (!cn.bidcheck.compat.Java8Api.isBlank(tail) || stack.isEmpty() || !stack.pop().equals(tag)) throw invalid("HTML_TABLE_INCOMPLETE");
                 if (tag.equals("td") || tag.equals("th")) {
                     if (pending == null) throw invalid("HTML_TABLE_INCOMPLETE");
-                    pending.end = tags.start(); pending.raw = html.substring(pending.start, pending.end).strip();
+                    pending.end = tags.start(); pending.raw = cn.bidcheck.compat.Java8Api.strip(html.substring(pending.start, pending.end));
                     pending.value = visible(pending.raw); rows.get(rows.size() - 1).add(pending); pending = null;
                 }
                 if (tag.equals("tr") && rows.get(rows.size() - 1).isEmpty()) throw invalid("HTML_TABLE_EMPTY_ROW");
             } else {
                 Map<String, String> attributes = attributes(tail);
                 String parent = stack.peek();
-                switch (tag) {
-                    case "table" -> { if (parent != null || !rows.isEmpty()) throw invalid("HTML_TABLE_NESTED"); }
-                    case "thead", "tbody", "tfoot" -> { if (!"table".equals(parent)) throw invalid("HTML_TABLE_INCOMPLETE"); }
-                    case "tr" -> {
-                        if (!Set.of("table", "thead", "tbody", "tfoot").contains(Objects.toString(parent, ""))) throw invalid("HTML_TABLE_INCOMPLETE");
+                switch (tag) {case "table":{ if (parent != null || !rows.isEmpty()) throw invalid("HTML_TABLE_NESTED"); } break;case "thead":case "tbody":case "tfoot":{ if (!"table".equals(parent)) throw invalid("HTML_TABLE_INCOMPLETE"); } break;case "tr":{
+                        if (!cn.bidcheck.compat.Java8Api.setOf("table", "thead", "tbody", "tfoot").contains(Objects.toString(parent, ""))) throw invalid("HTML_TABLE_INCOMPLETE");
                         if (rows.size() >= MAX_ROWS) throw invalid("HTML_TABLE_LIMIT"); rows.add(new ArrayList<>());
-                    }
-                    case "td", "th" -> {
+                    } break;case "td":case "th":{
                         if (!"tr".equals(parent) || pending != null) throw invalid("HTML_TABLE_INCOMPLETE");
                         if (++cells > MAX_CELLS) throw invalid("HTML_TABLE_LIMIT");
                         pending = new Cell(rows.size() - 1, span(attributes, "rowspan", MAX_ROWS), span(attributes, "colspan", COLUMNS), tags.end());
-                    }
-                }
-                if (!Set.of("td", "th").contains(tag) && (attributes.containsKey("rowspan") || attributes.containsKey("colspan"))) throw invalid("HTML_TABLE_ATTRIBUTE_INVALID");
+                    } break;}
+                if (!cn.bidcheck.compat.Java8Api.setOf("td", "th").contains(tag) && (attributes.containsKey("rowspan") || attributes.containsKey("colspan"))) throw invalid("HTML_TABLE_ATTRIBUTE_INVALID");
                 stack.push(tag);
             }
             at = tags.end();
         }
-        if (!stack.isEmpty() || pending != null || !html.substring(at).isBlank() || rows.isEmpty()) throw invalid("HTML_TABLE_INCOMPLETE");
+        if (!stack.isEmpty() || pending != null || !cn.bidcheck.compat.Java8Api.isBlank(html.substring(at)) || rows.isEmpty()) throw invalid("HTML_TABLE_INCOMPLETE");
         return rows;
     }
 
@@ -140,7 +150,7 @@ public final class StructuredHtmlTableFacts {
             if (result.putIfAbsent(key, value) != null) throw invalid("HTML_TABLE_ATTRIBUTE_INVALID");
             at = matcher.end();
         }
-        if (!text.substring(at).isBlank()) throw invalid("HTML_TABLE_ATTRIBUTE_INVALID");
+        if (!cn.bidcheck.compat.Java8Api.isBlank(text.substring(at))) throw invalid("HTML_TABLE_ATTRIBUTE_INVALID");
         return result;
     }
 
@@ -169,7 +179,7 @@ public final class StructuredHtmlTableFacts {
     }
 
     private static int headers(Cell[][] grid) {
-        List<String> one = List.of("序号", "姓名", "社会保障号码", "险种", "起始年月", "截止年月", "本单位实际缴费月数");
+        List<String> one = cn.bidcheck.compat.Java8Api.listOf("序号", "姓名", "社会保障号码", "险种", "起始年月", "截止年月", "本单位实际缴费月数");
         boolean single = true;
         for (int c = 0; c < COLUMNS; c++) single &= grid[0][c].value.equals(one.get(c)) && grid[0][c].rowSpan == 1 && grid[0][c].columnSpan == 1;
         if (single) return 1;
@@ -196,9 +206,9 @@ public final class StructuredHtmlTableFacts {
         // Decode only bounded, explicitly supported text escapes. Nothing is executed or fetched.
         value = value.replace("&nbsp;", " ").replace("&#160;", " ").replace("&lt;", "<").replace("&gt;", ">")
                 .replace("&quot;", "\"").replace("&#39;", "'").replace("&apos;", "'").replace("&amp;", "&");
-        return value.replaceAll("[\\s\\p{Z}]+", " ").strip();
+        return cn.bidcheck.compat.Java8Api.strip(value.replaceAll("[\\s\\p{Z}]+", " "));
     }
-    private static Result rejected(String issue) { return new Result(false, SCHEMA, List.of(), List.of(issue)); }
+    private static Result rejected(String issue) { return new Result(false, SCHEMA, cn.bidcheck.compat.Java8Api.listOf(), cn.bidcheck.compat.Java8Api.listOf(issue)); }
     private static Invalid invalid(String issue) { return new Invalid(issue); }
     private static final class Invalid extends RuntimeException { Invalid(String issue) { super(issue); } }
     private static final class Cell {

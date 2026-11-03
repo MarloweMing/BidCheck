@@ -18,23 +18,23 @@ final class BidLetterResponse {
         else if(text.matches("投标有效期[:：]?满足招标文件规定[。.]?[（(]见投标函[）)][。.]?")){field="bidValidityResponse";expected="满足招标文件规定";}
         else return null;
         return new Rule("LETTER-"+identity(source).substring(0,16),field.equals("bidQualityResponse")?"投标函质量响应":"投标函有效期响应","DECLARATION","",field,"=",expected,"",
-            Map.of("deterministicFamily","BID_LETTER_RESPONSE","responseVersion",VERSION),source,"",List.of());
+            cn.bidcheck.compat.Java8Api.mapOf("deterministicFamily", "BID_LETTER_RESPONSE", "responseVersion", VERSION),source,"",cn.bidcheck.compat.Java8Api.listOf());
     }
     static boolean applies(Rule rule){return VERSION.equals(rule.parameters().get("responseVersion"))&&rule.predicate().equals("DECLARATION");}
     static Decision evaluate(Rule rule,RuleEvaluator evaluator){
         Rule rebuilt=compile(rule.sourceQuote());
         if(rebuilt==null||!rebuilt.field().equals(rule.field())||!rebuilt.expected().equals(rule.expected())||!rebuilt.operator().equals(rule.operator())||!rule.children().isEmpty())
-            return pending(rule,"RULE_SOURCE_VALIDATION","投标函响应规则与原文要求不一致，不能沿用修改后的字段或比较值",List.of(),Map.of());
-        Document tender=tender(rule,evaluator);if(tender==null)return pending(rule,"REQUIREMENT_SOURCE_REQUIRED","投标函响应未绑定当前冻结招标要求",List.of(),Map.of());
-        List<Source> letters=evaluator.corpus.all.stream().filter(s->!s.index()&&!s.historical()&&!s.scopeContext().blocked())
-            .filter(s->Set.of("CURRENT_PROJECT","CURRENT_DOCUMENT","CURRENT_BID_SECTION").contains(s.scopeContext().status()))
-            .filter(s->!s.scopeContext().projectName().isBlank()&&tender.pages().stream().limit(12).anyMatch(p->clean(p.text()).contains(clean(s.scopeContext().projectName()))))
+            return pending(rule,"RULE_SOURCE_VALIDATION","投标函响应规则与原文要求不一致，不能沿用修改后的字段或比较值",cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.mapOf());
+        Document tender=tender(rule,evaluator);if(tender==null)return pending(rule,"REQUIREMENT_SOURCE_REQUIRED","投标函响应未绑定当前冻结招标要求",cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.mapOf());
+        List<Source> letters=cn.bidcheck.compat.Java8Api.toList(evaluator.corpus.all.stream().filter(s->!s.index()&&!s.historical()&&!s.scopeContext().blocked())
+            .filter(s->cn.bidcheck.compat.Java8Api.setOf("CURRENT_PROJECT", "CURRENT_DOCUMENT", "CURRENT_BID_SECTION").contains(s.scopeContext().status()))
+            .filter(s->!cn.bidcheck.compat.Java8Api.isBlank(s.scopeContext().projectName())&&tender.pages().stream().limit(12).anyMatch(p->clean(p.text()).contains(clean(s.scopeContext().projectName()))))
             .filter(s->clean(s.evidence().quote()).contains(clean(s.scopeContext().projectName()))&&clean(s.opening()).contains("投标函"))
-            .filter(s->!s.evidence().quote().matches("(?s).*(?:填写示例|空白模板|示范文本|仅供参考).*" )).toList();
+            .filter(s->!s.evidence().quote().matches("(?s).*(?:填写示例|空白模板|示范文本|仅供参考).*" )));
         boolean quality=rule.field().equals("bidQualityResponse");
         List<Evidence> evidence=new ArrayList<>();Set<String> observed=new LinkedHashSet<>();
         for(Source source:letters){Matcher matcher=(quality?QUALITY:VALIDITY).matcher(body(source));while(matcher.find()){observed.add(matcher.group(1));evidence.add(source.evidence());}}
-        Map<String,Object> proof=linked("executor",VERSION,"proofScope",quality?"QUALITY_UNDERTAKING_ONLY":"BID_VALIDITY_UNDERTAKING_ONLY","observedValues",List.copyOf(observed),"numericObservationSynthesized",false,"doesNotProveSignatureOrActualPerformance",true,"programSourceRead",ProgramSourceRead.receipt(evaluator.corpus,letters));
+        Map<String,Object> proof=linked("executor",VERSION,"proofScope",quality?"QUALITY_UNDERTAKING_ONLY":"BID_VALIDITY_UNDERTAKING_ONLY","observedValues",cn.bidcheck.compat.Java8Api.listCopyOf(observed),"numericObservationSynthesized",false,"doesNotProveSignatureOrActualPerformance",true,"programSourceRead",ProgramSourceRead.receipt(evaluator.corpus,letters));
         if(observed.isEmpty())return pending(rule,"BID_LETTER_FIELD_REQUIRED","尚未定位本项目投标函中实际填写的"+(quality?"质量":"投标有效期")+"字段；填写说明或空栏不作为响应",evidence,proof);
         if(observed.size()!=1)return pending(rule,"BID_LETTER_FIELD_CONFLICT","本项目投标函的同一响应字段存在不同取值",evidence,proof);
         boolean pass;
@@ -47,7 +47,7 @@ final class BidLetterResponse {
                 if(!text.matches("(?:[0-9]+(?:[.][0-9]+)*[、.]?)?投标有效期.*")||text.matches(".*(?:示例|例如|延长|保证金|填写).*"))continue;
                 Matcher matcher=VALIDITY.matcher(text);while(matcher.find()){required.add(matcher.group(1));evidence.add(new Evidence(tender.id(),tender.name(),page.number(),page.locationType(),page.text(),"chars:0-"+page.text().length(),1));}
             }
-            proof.put("requirementValues",List.copyOf(required));
+            proof.put("requirementValues",cn.bidcheck.compat.Java8Api.listCopyOf(required));
             if(required.size()!=1)return pending(rule,"BID_VALIDITY_BASELINE_REQUIRED","招标投标有效期数值尚未唯一定位，不能以通用“满足”代替数值核验",evidence,proof);
             Set<String> requiredStarts=new LinkedHashSet<>(),observedStarts=new LinkedHashSet<>();
             for(Page page:tender.pages()){
@@ -57,14 +57,14 @@ final class BidLetterResponse {
             }
             for(Source letter:letters)observedStarts.addAll(validityStarts(body(letter)));
             boolean incorporated=letters.stream().anyMatch(s->body(s).contains("在招标文件规定的投标有效期"));
-            proof.putAll(linked("requiredStartEvents",List.copyOf(requiredStarts),"observedStartEvents",List.copyOf(observedStarts),"startEventIncorporatedByReference",incorporated&&observedStarts.isEmpty()));
+            proof.putAll(linked("requiredStartEvents",cn.bidcheck.compat.Java8Api.listCopyOf(requiredStarts),"observedStartEvents",cn.bidcheck.compat.Java8Api.listCopyOf(observedStarts),"startEventIncorporatedByReference",incorporated&&observedStarts.isEmpty()));
             if(requiredStarts.size()>1||observedStarts.size()>1||!observedStarts.isEmpty()&&requiredStarts.isEmpty()||!requiredStarts.isEmpty()&&observedStarts.isEmpty()&&!incorporated)
                 return pending(rule,"BID_VALIDITY_START_REQUIRED","有效期起算事件尚未唯一对应，不能仅凭天数作出完整响应结论",evidence,proof);
             if(!requiredStarts.isEmpty()&&!observedStarts.isEmpty()&&!requiredStarts.equals(observedStarts))
-                return new Decision(rule.id(),rule.description(),"FAIL","投标函有效期起算事件与招标要求不一致",evidence.stream().distinct().toList(),List.of(),proof);
+                return new Decision(rule.id(),rule.description(),"FAIL","投标函有效期起算事件与招标要求不一致",cn.bidcheck.compat.Java8Api.toList(evidence.stream().distinct()),cn.bidcheck.compat.Java8Api.listOf(),proof);
             pass=new BigDecimal(observed.iterator().next()).compareTo(new BigDecimal(required.iterator().next()))>=0;
         }
-        return new Decision(rule.id(),rule.description(),pass?"PASS":"FAIL",pass?"本项目投标函的实际填写字段满足对应招标要求；仅证明承诺响应":"本项目投标函的实际填写字段不满足对应招标要求",evidence.stream().distinct().toList(),List.of(),proof);
+        return new Decision(rule.id(),rule.description(),pass?"PASS":"FAIL",pass?"本项目投标函的实际填写字段满足对应招标要求；仅证明承诺响应":"本项目投标函的实际填写字段不满足对应招标要求",cn.bidcheck.compat.Java8Api.toList(evidence.stream().distinct()),cn.bidcheck.compat.Java8Api.listOf(),proof);
     }
     private static String body(Source source){return clean(source.evidence().quote().split("(?:编制及签署要求|填写说明|编制说明)",2)[0]);}
     private static Set<String> validityStarts(String text){
@@ -77,13 +77,13 @@ final class BidLetterResponse {
         return result;
     }
     private static Document tender(Rule rule,RuleEvaluator evaluator){
-        if(!(rule.parameters().get("requirementSourceContext") instanceof Map<?,?> context)||!(context.get("identity") instanceof Map<?,?> id)||!(evaluator.context.get("tenderDocuments") instanceof List<?> documents))return null;
-        for(Object value:documents)if(value instanceof Document d&&d.role().equals("TENDER")&&d.id().equals(id.get("documentId"))&&d.sha256().equals(id.get("documentHash"))&&Objects.equals(d.version(),id.get("documentVersion"))&&d.projectId().equals(id.get("projectId"))&&evaluator.corpus.documents.stream().allMatch(b->b.projectId().equals(d.projectId())))
-            for(Page p:d.pages())if(id.get("location") instanceof Number location&&p.number()==location.intValue()&&p.locationType().equals(id.get("locationType"))&&id.get("start") instanceof Number a&&id.get("end") instanceof Number b){
-                int start=a.intValue(),end=b.intValue();if(start<0||end<=start||end>p.text().length())continue;
-                String quote=p.text().substring(start,end);if(identity(quote).equals(id.get("sourceHash"))&&RequirementContextBindings.uniqueOffset(quote,rule.sourceQuote())>=0)return d;
+        if(!(rule.parameters().get("requirementSourceContext") instanceof Map<?,?>)||!(((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity") instanceof Map<?,?>)||!(evaluator.context.get("tenderDocuments") instanceof List<?>))return null;
+        for(Object value:((List<?>) (evaluator.context.get("tenderDocuments"))))if(value instanceof Document&&((Document) (value)).role().equals("TENDER")&&((Document) (value)).id().equals(((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("documentId"))&&((Document) (value)).sha256().equals(((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("documentHash"))&&Objects.equals(((Document) (value)).version(),((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("documentVersion"))&&((Document) (value)).projectId().equals(((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("projectId"))&&evaluator.corpus.documents.stream().allMatch(b->b.projectId().equals(((Document) (value)).projectId())))
+            for(Page p:((Document) (value)).pages())if(((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("location") instanceof Number&&p.number()==((Number) (((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("location"))).intValue()&&p.locationType().equals(((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("locationType"))&&((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("start") instanceof Number&&((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("end") instanceof Number){
+                int start=((Number) (((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("start"))).intValue(),end=((Number) (((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("end"))).intValue();if(start<0||end<=start||end>p.text().length())continue;
+                String quote=p.text().substring(start,end);if(identity(quote).equals(((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("sourceHash"))&&RequirementContextBindings.uniqueOffset(quote,rule.sourceQuote())>=0)return ((Document) (value));
             }
         return null;
     }
-    private static Decision pending(Rule rule,String code,String reason,List<Evidence> evidence,Map<String,Object> proof){return new Decision(rule.id(),rule.description(),"UNDETERMINED",reason,evidence.stream().distinct().toList(),List.of(gap(code,reason)),proof);}
+    private static Decision pending(Rule rule,String code,String reason,List<Evidence> evidence,Map<String,Object> proof){return new Decision(rule.id(),rule.description(),"UNDETERMINED",reason,cn.bidcheck.compat.Java8Api.toList(evidence.stream().distinct()),cn.bidcheck.compat.Java8Api.listOf(gap(code,reason)),proof);}
 }

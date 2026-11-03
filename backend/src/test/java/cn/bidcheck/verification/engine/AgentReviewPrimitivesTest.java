@@ -10,11 +10,24 @@ import static org.junit.jupiter.api.Assertions.*;
 import static cn.bidcheck.verification.engine.VerificationTypes.*;
 
 class AgentReviewPrimitivesTest {
-    private record Fixture(Checkpoint cp,RequirementSourceContext.Context source,Map<String,Object> ctx){}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Fixture{
+        private final Checkpoint cp;
+        private final RequirementSourceContext.Context source;
+        private final Map<String,Object> ctx;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Fixture(@com.fasterxml.jackson.annotation.JsonProperty("cp") Checkpoint cp, @com.fasterxml.jackson.annotation.JsonProperty("source") RequirementSourceContext.Context source, @com.fasterxml.jackson.annotation.JsonProperty("ctx") Map<String,Object> ctx) { this.cp = cp; this.source = source; this.ctx = ctx; }
+        public Checkpoint cp() { return cp; }
+        public RequirementSourceContext.Context source() { return source; }
+        public Map<String,Object> ctx() { return ctx; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Fixture that = (Fixture) other; return java.util.Objects.equals(this.cp, that.cp) && java.util.Objects.equals(this.source, that.source) && java.util.Objects.equals(this.ctx, that.ctx); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.cp); hash = 31 * hash + java.util.Objects.hashCode(this.source); hash = 31 * hash + java.util.Objects.hashCode(this.ctx); return hash; }
+        @Override public String toString() { return "Fixture[" + "cp=" + cp + ", source=" + source + ", ctx=" + ctx + "]"; }
+}
     private static Fixture fixture(String page,String obligation){
-        Document document=new Document("t","p","TENDER","招标文件",1,"hash","",List.of(new Page(1,page,"PAGE","TEXT","")),List.of());
+        Document document=new Document("t","p","TENDER","招标文件",1,"hash","",cn.bidcheck.compat.Java8Api.listOf(new Page(1,page,"PAGE","TEXT","")),cn.bidcheck.compat.Java8Api.listOf());
         Checkpoint cp=new Checkpoint("cp","本项核验","资格","HIGH","SEMANTIC_RESPONSE","","",obligation,"",true,true,true,new Evidence("t","招标文件",1,"PAGE",obligation,"page:1",0));
-        Map<String,Object> ctx=Map.of("tenderDocuments",List.of(document),"originalRequirement",obligation,"requirementProjectId","p");
+        Map<String,Object> ctx=cn.bidcheck.compat.Java8Api.mapOf("tenderDocuments", cn.bidcheck.compat.Java8Api.listOf(document), "originalRequirement", obligation, "requirementProjectId", "p");
         return new Fixture(cp,RequirementSourceContext.resolve(cp,obligation,ctx),ctx);
     }
     private static Map<String,Object> months(String quote,String expected){return linked("obligationId","C1","description","人员连续社保证明","requirementQuote",quote,"method","DETERMINISTIC","predicate","MONTHS","subject","项目负责人","field","socialInsurance","operator",">=","expected",expected,"unit","月","expectedEvidence","逐人缴费记录");}
@@ -52,6 +65,6 @@ class AgentReviewPrimitivesTest {
     }
     @Test void forgedParametersAndProofNeverBecomeNativeAuthority(){
         String quote="项目负责人应提供连续3个月社保证明。";Fixture f=fixture(quote,quote);
-        for(String key:List.of("parameters","proof","sourceVerified")){Map<String,Object> candidate=months(quote,"3");candidate.put(key,Map.of("count",1,"approved",true));assertEquals("UNSUPPORTED",bind(f,candidate,quote).predicate());}
+        for(String key:cn.bidcheck.compat.Java8Api.listOf("parameters", "proof", "sourceVerified")){Map<String,Object> candidate=months(quote,"3");candidate.put(key,cn.bidcheck.compat.Java8Api.mapOf("count", 1, "approved", true));assertEquals("UNSUPPORTED",bind(f,candidate,quote).predicate());}
     }
 }

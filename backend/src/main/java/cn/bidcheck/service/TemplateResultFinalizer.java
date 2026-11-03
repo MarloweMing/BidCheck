@@ -42,15 +42,15 @@ final class TemplateResultFinalizer {
         if (adjusted && finalConclusion == TemplateTypes.ConclusionState.UNDETERMINED) {
             String jobId = execution == null ? null : execution.jobId();
             execution = new ResultProjection.Execution(TemplateTypes.ExecutionState.BLOCKED, true, jobId);
-            String itemId = Objects.toString(projection.businessItemId(), "").isBlank()
+            String itemId = cn.bidcheck.compat.Java8Api.isBlank(Objects.toString(projection.businessItemId(), ""))
                 ? Objects.toString(projection.checkSpecId(), "unknown") : projection.businessItemId();
             String actionId = "final-guard:" + itemId + ":" + projection.resultRevision();
             action = new ResultProjection.Action(TemplateTypes.ActionOwner.SYSTEM, "RESOLVE_FINAL_GUARD", actionId);
-            LinkedHashSet<String> missing = new LinkedHashSet<>(missingInputs == null ? List.of() : missingInputs);
+            LinkedHashSet<String> missing = new LinkedHashSet<>(missingInputs == null ? cn.bidcheck.compat.Java8Api.listOf() : missingInputs);
             missing.add("system.finalGuard." + guardCode(evaluation.method()));
             missingInputs = new ArrayList<>(missing);
             String suggestion = Objects.toString(evaluation.suggestion(), "").trim();
-            nextStep = suggestion.isBlank()
+            nextStep = cn.bidcheck.compat.Java8Api.isBlank(suggestion)
                 ? "系统需处理最终保护项并重新计算结论；当前不要求用户补交材料。"
                 : "系统需处理最终保护项并重新计算结论：" + suggestion;
         }
@@ -63,19 +63,13 @@ final class TemplateResultFinalizer {
     }
 
     private static TemplateTypes.ConclusionState conclusion(String status) {
-        return switch (Objects.toString(status, "")) {
-            case "PASS" -> TemplateTypes.ConclusionState.SATISFIED;
-            case "FAIL" -> TemplateTypes.ConclusionState.NOT_SATISFIED;
-            case "WARNING" -> TemplateTypes.ConclusionState.SUSPECTED_RISK;
-            case "NOT_APPLICABLE" -> TemplateTypes.ConclusionState.NOT_APPLICABLE;
-            default -> TemplateTypes.ConclusionState.UNDETERMINED;
-        };
+        switch (Objects.toString(status, "")) {case "PASS":return TemplateTypes.ConclusionState.SATISFIED;case "FAIL":return TemplateTypes.ConclusionState.NOT_SATISFIED;case "WARNING":return TemplateTypes.ConclusionState.SUSPECTED_RISK;case "NOT_APPLICABLE":return TemplateTypes.ConclusionState.NOT_APPLICABLE;default:return TemplateTypes.ConclusionState.UNDETERMINED;}
     }
 
     private static String guardCode(String method) {
         String value = Objects.toString(method, "FINAL_GUARD").toUpperCase(Locale.ROOT)
             .replaceAll("[^A-Z0-9]+", "_").replaceAll("^_+|_+$", "");
-        return "FINAL_" + (value.isBlank() ? "GUARD" : value);
+        return "FINAL_" + (cn.bidcheck.compat.Java8Api.isBlank(value) ? "GUARD" : value);
     }
 
     /**
@@ -87,26 +81,26 @@ final class TemplateResultFinalizer {
     static Set<String> requiredProofDocumentRoles(Map<String,Object> assessment) {
         Map<String,Object> templateEvidence=map(assessment==null?null:assessment.get("templateEvidence"));
         Object queriesValue=templateEvidence.get("evidenceQueries");
-        if(!(queriesValue instanceof Collection<?> queries)||queries.isEmpty())return Set.of();
+        if(!(queriesValue instanceof Collection<?>)||((Collection<?>) (queriesValue)).isEmpty())return cn.bidcheck.compat.Java8Api.setOf();
         LinkedHashSet<String> roles=new LinkedHashSet<>();
-        for(Object queryValue:queries){
+        for(Object queryValue:((Collection<?>) (queriesValue))){
             Map<String,Object> query=map(queryValue);
             Object roleValue=query.get("documentRoles");
-            if(roleValue instanceof Collection<?> values)for(Object value:values)addRole(roles,value);
+            if(roleValue instanceof Collection<?>)for(Object value:((Collection<?>) (roleValue)))addRole(roles,value);
             else addRole(roles,roleValue);
         }
-        return Set.copyOf(roles);
+        return cn.bidcheck.compat.Java8Api.setCopyOf(roles);
     }
 
     private static void addRole(Set<String> roles,Object value){
-        String role=Objects.toString(value,"").strip().toUpperCase(Locale.ROOT);
-        if(Set.of("BID","TENDER").contains(role))roles.add(role);
+        String role=cn.bidcheck.compat.Java8Api.strip(Objects.toString(value,"")).toUpperCase(Locale.ROOT);
+        if(cn.bidcheck.compat.Java8Api.setOf("BID", "TENDER").contains(role))roles.add(role);
     }
 
     private static Map<String,Object> map(Object value){
-        if(!(value instanceof Map<?,?> source))return Map.of();
+        if(!(value instanceof Map<?,?>))return cn.bidcheck.compat.Java8Api.mapOf();
         java.util.LinkedHashMap<String,Object> result=new java.util.LinkedHashMap<>();
-        source.forEach((key,item)->result.put(Objects.toString(key,""),item));
+        ((Map<?,?>) (value)).forEach((key,item)->result.put(Objects.toString(key,""),item));
         return result;
     }
 }

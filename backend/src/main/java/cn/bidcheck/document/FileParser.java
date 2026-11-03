@@ -119,7 +119,7 @@ public class FileParser {
                 batchPolicy(ocr).enabled() ? 64_000_000L : 12_000_000L);
     }
     private static OcrBatchPolicy batchPolicy(OcrClient client) {
-        return Objects.requireNonNullElse(Objects.requireNonNull(client).batchPolicy(), OcrBatchPolicy.single());
+        return cn.bidcheck.compat.Java8Api.requireNonNullElse(Objects.requireNonNull(client).batchPolicy(), OcrBatchPolicy.single());
     }
     FileParser(OcrClient ocr, int maxOcrImages, int concurrency, long bytesBudget, long pixelsBudget) {
         this(ocr, PdfOcrClient.disabled(), maxOcrImages, concurrency, bytesBudget, pixelsBudget,
@@ -204,7 +204,7 @@ public class FileParser {
         } catch (ProgressAborted e) {
             throw e.original;
         } catch (ObserverAborted e) {
-            if (e.original instanceof IOException failure) throw failure;
+            if (e.original instanceof IOException) throw ((IOException) (e.original));
             throw (RuntimeException) e.original;
         } catch (InterruptedIOException e) {
             throw e;
@@ -251,7 +251,7 @@ public class FileParser {
         checkInterrupted();
         PDPage sourcePage = document.getPage(page - 1);
         new PdfStreamBudget().checkPage(sourcePage);
-        var box = sourcePage.getCropBox();
+        org.apache.pdfbox.pdmodel.common.PDRectangle box = sourcePage.getCropBox();
         double width = box.getWidth(), height = box.getHeight();
         if (!Double.isFinite(width) || !Double.isFinite(height) || width <= 0 || height <= 0) {
             throw new DocumentParseException("PDF 页面尺寸无效，无法预览。");
@@ -306,11 +306,24 @@ public class FileParser {
             }
             while (!pending.isEmpty()) remaining = appendPdfPage(pending.removeFirst(), pipeline, pages, warnings, remaining, document.getNumberOfPages());
             pipeline.finish();
-            return new ParsedDocument(List.copyOf(pages), List.copyOf(warnings));
+            return new ParsedDocument(cn.bidcheck.compat.Java8Api.listCopyOf(pages), cn.bidcheck.compat.Java8Api.listCopyOf(warnings));
         }
     }
 
-    private record PendingPdfPage(int number, String nativeText, Future<OcrOutcome> recognition) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class PendingPdfPage {
+        private final int number;
+        private final String nativeText;
+        private final Future<OcrOutcome> recognition;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private PendingPdfPage(@com.fasterxml.jackson.annotation.JsonProperty("number") int number, @com.fasterxml.jackson.annotation.JsonProperty("nativeText") String nativeText, @com.fasterxml.jackson.annotation.JsonProperty("recognition") Future<OcrOutcome> recognition) { this.number = number; this.nativeText = nativeText; this.recognition = recognition; }
+        public int number() { return number; }
+        public String nativeText() { return nativeText; }
+        public Future<OcrOutcome> recognition() { return recognition; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; PendingPdfPage that = (PendingPdfPage) other; return java.util.Objects.equals(this.number, that.number) && java.util.Objects.equals(this.nativeText, that.nativeText) && java.util.Objects.equals(this.recognition, that.recognition); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.number); hash = 31 * hash + java.util.Objects.hashCode(this.nativeText); hash = 31 * hash + java.util.Objects.hashCode(this.recognition); return hash; }
+        @Override public String toString() { return "PendingPdfPage[" + "number=" + number + ", nativeText=" + nativeText + ", recognition=" + recognition + "]"; }
+ }
 
     /** PDF packets contain only selected original pages; PDFBox and durable callbacks never cross workers. */
     private ParsedDocument parsePdfBatches(Path path, ParseSession session) throws IOException {
@@ -331,17 +344,17 @@ public class FileParser {
             session.resolve();
             try (PdfPipeline pipeline = new PdfPipeline(document, session)) { pipeline.run(); }
             List<Page> pages = new ArrayList<>(); List<String> warnings = new ArrayList<>();
-            for (var location : session.nativeMap.values()) {
+            for (cn.bidcheck.document.ExtractionPlan.NativeLocation location : session.nativeMap.values()) {
                 int number = location.position();
                 OcrOutcome outcome = session.outcomes.get(ExtractionPlan.unitKey("PAGE", number, 1));
                 Page page = completedPdfPage(location, outcome);
                 remaining -= page.text().length() - location.text().length();
                 if (remaining < 0) throw tooMuchText();
                 session.progress(40 + number * 60 / document.getNumberOfPages(), "已解析第 " + number + " 页");
-                if (!page.warning().isBlank()) warnings.add(page.warning());
+                if (!cn.bidcheck.compat.Java8Api.isBlank(page.warning())) warnings.add(page.warning());
                 pages.add(page);
             }
-            return new ParsedDocument(List.copyOf(pages), List.copyOf(warnings));
+            return new ParsedDocument(cn.bidcheck.compat.Java8Api.listCopyOf(pages), cn.bidcheck.compat.Java8Api.listCopyOf(warnings));
         }
     }
 
@@ -355,18 +368,18 @@ public class FileParser {
                 text = mergePdfText(text, outcome.text);
             }
         }
-        var layout = outcome == null ? null : outcome.layout.source("p" + number + "_", "PDF_RENDER", number);
+        cn.bidcheck.ocr.OcrLayout layout = outcome == null ? null : outcome.layout.source("p" + number + "_", "PDF_RENDER", number);
         return new Page(number, text, "PAGE", parser, warning, layout);
     }
 
     private static String mergePdfText(String nativeText, String recognized) {
-        if (nativeText.isBlank()) return recognized;
-        if (recognized.isBlank()) return nativeText;
+        if (cn.bidcheck.compat.Java8Api.isBlank(nativeText)) return recognized;
+        if (cn.bidcheck.compat.Java8Api.isBlank(recognized)) return nativeText;
         // PDF document_parsing includes native text. Preserve its table/figure order, adding only
         // native lines that are absent; never remove repeated table rows within provider output.
-        Set<String> present = recognized.lines().map(String::strip).filter(s -> !s.isBlank()).collect(Collectors.toSet());
-        String missing = nativeText.lines().map(String::strip).filter(s -> !s.isBlank() && !present.contains(s)).collect(Collectors.joining("\n"));
-        return missing.isBlank() ? recognized : missing + "\n\n【PDF识别文字】\n" + recognized;
+        Set<String> present = cn.bidcheck.compat.Java8Extras.lines(recognized).map(cn.bidcheck.compat.Java8Api::strip).filter(s -> !cn.bidcheck.compat.Java8Api.isBlank(s)).collect(Collectors.toSet());
+        String missing = cn.bidcheck.compat.Java8Extras.lines(nativeText).map(cn.bidcheck.compat.Java8Api::strip).filter(s -> !cn.bidcheck.compat.Java8Api.isBlank(s) && !present.contains(s)).collect(Collectors.joining("\n"));
+        return cn.bidcheck.compat.Java8Api.isBlank(missing) ? recognized : missing + "\n\n【PDF识别文字】\n" + recognized;
     }
 
     private final class PdfPipeline implements AutoCloseable {
@@ -402,7 +415,7 @@ public class FileParser {
 
         private void run() throws IOException {
             List<Integer> selected = new ArrayList<>();
-            for (var location : session.nativeMap.values()) {
+            for (cn.bidcheck.document.ExtractionPlan.NativeLocation location : session.nativeMap.values()) {
                 checkInterrupted();
                 if (location.ocrUnits() == 0) { session.pageCompleted(completedPdfPage(location, null)); continue; }
                 int page = location.position();
@@ -418,13 +431,9 @@ public class FileParser {
             }
             // Preserve source identity and ordering within a priority. Independent PDF transcription
             // packets can bring known certificate/table evidence forward without joining its facts.
-            selected.sort(java.util.Comparator.comparingInt(page -> switch (session.routes.get(ExtractionPlan.unitKey("PAGE", page, 1)).priority()) {
-                case "HIGH" -> 0;
-                case "LOW" -> 2;
-                default -> 1;
-            }));
+            selected.sort(java.util.Comparator.comparingInt(page -> { switch (session.routes.get(ExtractionPlan.unitKey("PAGE", page, 1)).priority()) {case "HIGH":return 0;case "LOW":return 2;default:return 1;} }));
             for (int start = 0; start < selected.size(); start += batchPages)
-                packets.addLast(List.copyOf(selected.subList(start, Math.min(selected.size(), start + batchPages))));
+                packets.addLast(cn.bidcheck.compat.Java8Api.listCopyOf(selected.subList(start, Math.min(selected.size(), start + batchPages))));
             while (!packets.isEmpty() || !fallback.isEmpty() || !active.isEmpty()) {
                 checkInterrupted(); heartbeat();
                 boolean added = false;
@@ -450,10 +459,10 @@ public class FileParser {
                         Unit unit = new Unit("PAGE", page, 1, previous.hash, image.width, image.height, image.bytes.length, false);
                         units.put(page, unit);
                         // Keep physical table/seal hints even when plain transcription has no table markup.
-                        var location = session.nativeMap.get(ExtractionPlan.locationKey("PAGE", page));
+                        cn.bidcheck.document.ExtractionPlan.NativeLocation location = session.nativeMap.get(ExtractionPlan.locationKey("PAGE", page));
                         session.routes.put(ExtractionPlan.unitKey("PAGE", page, 1),
                                 PageClassifier.classify(location.text(), location.imageCount(), image.bytes));
-                        PdfWork work = work(List.of(page), true, cost, sha256(image.bytes));
+                        PdfWork work = work(cn.bidcheck.compat.Java8Api.listOf(page), true, cost, sha256(image.bytes));
                         begin(work);
                         Future<PdfResponse> future = completions.submit(() -> {
                             checkInterrupted();
@@ -495,8 +504,8 @@ public class FileParser {
                             if (pages.size() == 1) fallback.addLast(pages.get(0));
                             else {
                                 int half = pages.size() / 2;
-                                packets.addFirst(List.copyOf(pages.subList(half, pages.size())));
-                                packets.addFirst(List.copyOf(pages.subList(0, half)));
+                                packets.addFirst(cn.bidcheck.compat.Java8Api.listCopyOf(pages.subList(half, pages.size())));
+                                packets.addFirst(cn.bidcheck.compat.Java8Api.listCopyOf(pages.subList(0, half)));
                             }
                             continue;
                         }
@@ -517,18 +526,7 @@ public class FileParser {
                 if (!active.isEmpty()) collect();
                 else if (!added && (!packets.isEmpty() || !fallback.isEmpty())) throw new IOException("PDF OCR 资源调度无法继续。");
             }
-            session.pdfReport = Map.ofEntries(Map.entry("enabled", true), Map.entry("model", safeModelName(pdfOcr.modelName())),
-                    Map.entry("batchPages", batchPages), Map.entry("concurrency", concurrency), Map.entry("submittedBatches", pdfRequests),
-                    Map.entry("singlePageFallbackCalls", singleApiCalls.get()), Map.entry("singlePageFallbackUnits", singleRequests), Map.entry("pdfRecognizedPages", pdfSucceeded),
-                    Map.entry("singlePageRetryCalls", singleRetryCalls.get()),
-                    Map.entry("singlePageRecoveryPolicy", PDF_RECOVERY_POLICY),
-                    Map.entry("singlePageRecoveryModel", safeModelName(recovery.modelName())),
-                    Map.entry("singlePageRecoveryIdentity", sha256(recoveryIdentity.getBytes(StandardCharsets.UTF_8))),
-                    Map.entry("singleRecognizedPages", singleSucceeded), Map.entry("restoredPages", restored),
-                    Map.entry("nativeOnlyPages", session.nativeMap.values().stream().filter(l -> l.ocrUnits() == 0).count()),
-                    Map.entry("traversedPages", document.getNumberOfPages()), Map.entry("peakActiveBytes", peakBytes),
-                    Map.entry("peakConcurrency", peakConcurrency), Map.entry("maxBytes", pdfBytesBudget), Map.entry("providerMetrics", List.copyOf(providerMetrics)),
-                    Map.entry("qualityRejectedPages", qualityRejected.entrySet().stream().map(e -> Map.of("page", e.getKey(), "code", e.getValue())).toList()));
+            session.pdfReport = cn.bidcheck.compat.Java8Api.mapOfEntries(cn.bidcheck.compat.Java8Api.entry("enabled", true), cn.bidcheck.compat.Java8Api.entry("model", safeModelName(pdfOcr.modelName())), cn.bidcheck.compat.Java8Api.entry("batchPages", batchPages), cn.bidcheck.compat.Java8Api.entry("concurrency", concurrency), cn.bidcheck.compat.Java8Api.entry("submittedBatches", pdfRequests), cn.bidcheck.compat.Java8Api.entry("singlePageFallbackCalls", singleApiCalls.get()), cn.bidcheck.compat.Java8Api.entry("singlePageFallbackUnits", singleRequests), cn.bidcheck.compat.Java8Api.entry("pdfRecognizedPages", pdfSucceeded), cn.bidcheck.compat.Java8Api.entry("singlePageRetryCalls", singleRetryCalls.get()), cn.bidcheck.compat.Java8Api.entry("singlePageRecoveryPolicy", PDF_RECOVERY_POLICY), cn.bidcheck.compat.Java8Api.entry("singlePageRecoveryModel", safeModelName(recovery.modelName())), cn.bidcheck.compat.Java8Api.entry("singlePageRecoveryIdentity", sha256(recoveryIdentity.getBytes(StandardCharsets.UTF_8))), cn.bidcheck.compat.Java8Api.entry("singleRecognizedPages", singleSucceeded), cn.bidcheck.compat.Java8Api.entry("restoredPages", restored), cn.bidcheck.compat.Java8Api.entry("nativeOnlyPages", session.nativeMap.values().stream().filter(l -> l.ocrUnits() == 0).count()), cn.bidcheck.compat.Java8Api.entry("traversedPages", document.getNumberOfPages()), cn.bidcheck.compat.Java8Api.entry("peakActiveBytes", peakBytes), cn.bidcheck.compat.Java8Api.entry("peakConcurrency", peakConcurrency), cn.bidcheck.compat.Java8Api.entry("maxBytes", pdfBytesBudget), cn.bidcheck.compat.Java8Api.entry("providerMetrics", cn.bidcheck.compat.Java8Api.listCopyOf(providerMetrics)), cn.bidcheck.compat.Java8Api.entry("qualityRejectedPages", cn.bidcheck.compat.Java8Api.toList(qualityRejected.entrySet().stream().map(e -> cn.bidcheck.compat.Java8Api.mapOf("page", e.getKey(), "code", e.getValue())))));
         }
 
         private PdfWork work(List<Integer> pages, boolean single, long bytes, String packetHash) {
@@ -557,9 +555,9 @@ public class FileParser {
             catch (InterruptedException stopped) { Thread.currentThread().interrupt(); throw interrupted(); }
             catch (java.util.concurrent.CancellationException stopped) { throw interrupted(); }
             catch (ExecutionException failure) {
-                if (failure.getCause() instanceof InterruptedIOException stopped) throw stopped;
+                if (failure.getCause() instanceof InterruptedIOException) throw ((InterruptedIOException) (failure.getCause()));
                 if (failure.getCause() instanceof java.util.concurrent.CancellationException || failure.getCause() instanceof InterruptedException) throw interrupted();
-                if (failure.getCause() instanceof Error error) throw error;
+                if (failure.getCause() instanceof Error) throw ((Error) (failure.getCause()));
                 requestFailure = failure.getCause();
                 // Only a completed non-cancellation request may enter single-page recovery.
             }
@@ -633,11 +631,11 @@ public class FileParser {
             session.progress(40 + Math.min(59, completed * 60 / Math.max(1, document.getNumberOfPages())), "正在识别 PDF：已保存 " + completed + " 页");
         }
         private void batch(PdfWork work, String status, String error) throws InterruptedIOException {
-            session.observeBatch(new OcrBatch.Event(work.id, work.parentId, status, work.pages.stream().map(p -> "PAGE:" + p + ":1").toList(),
+            session.observeBatch(new OcrBatch.Event(work.id, work.parentId, status, cn.bidcheck.compat.Java8Api.toList(work.pages.stream().map(p -> "PAGE:" + p + ":1")),
                     safeModelName(work.single ? recovery.modelName() : pdfOcr.modelName()), "PDF_SOURCE_PAGES_V1", work.hash, 0, 0, elapsed(work), error));
         }
         private Unit pdfUnit(int page) throws IOException {
-            var box = document.getPage(page - 1).getCropBox();
+            org.apache.pdfbox.pdmodel.common.PDRectangle box = document.getPage(page - 1).getCropBox();
             double width = box.getWidth(), height = box.getHeight();
             if (!Double.isFinite(width) || !Double.isFinite(height) || width <= 0 || height <= 0) throw new IOException("PDF 页面尺寸无效。");
             double scale = Math.min(3d, Math.min(2400d / Math.max(width, height), Math.sqrt(4_000_000d / (width * height))));
@@ -647,9 +645,9 @@ public class FileParser {
             return new Unit("PAGE", page, 1, hash, w, h, 0, false);
         }
         private OcrOutcome restore(Unit unit) throws IOException {
-            var candidate = session.restoreCandidate(unit);
-            if (candidate == null || candidate.isEmpty()) return null;
-            var result = candidate.get();
+            java.util.Optional<cn.bidcheck.document.OcrUnitObserver.Result> candidate = session.restoreCandidate(unit);
+            if (candidate == null || (!candidate.isPresent())) return null;
+            cn.bidcheck.document.OcrUnitObserver.Result result = candidate.get();
             if (result.layout() == null) return null;
             if (result.layout().frames().isEmpty()) return ParseSession.validateRestored(result, unit);
             // A previous single-image recovery has real image coordinates. Re-render only this
@@ -671,47 +669,78 @@ public class FileParser {
 
     private OcrOutcome pdfOutcome(cn.bidcheck.ocr.OcrResult result) {
         String text = result == null || result.text() == null ? "" : normalize(result.text());
-        if (text.isBlank() || text.length() > 50_000 || text.indexOf('\0') >= 0 || pageNumberOnly(text) || !OcrEvidenceGuard.code(text).isEmpty()) return null;
+        if (cn.bidcheck.compat.Java8Api.isBlank(text) || text.length() > 50_000 || text.indexOf('\0') >= 0 || pageNumberOnly(text) || !OcrEvidenceGuard.code(text).isEmpty()) return null;
         // Document coordinates differ from rendered-image coordinates; text has page identity,
         // but never fabricate pixel boxes from provider PDF layout or relative page numbers.
-        var layout = cn.bidcheck.ocr.OcrLayout.unavailable("PDF 原页转录已绑定；没有经过图像来源校验的像素坐标。");
+        cn.bidcheck.ocr.OcrLayout layout = cn.bidcheck.ocr.OcrLayout.unavailable("PDF 原页转录已绑定；没有经过图像来源校验的像素坐标。");
         return new OcrOutcome(text, "[PDF_OCR][OCR已识别] 模型：" + safeModelName(pdfOcr.modelName()) + "；" + OCR_SUCCESS_WARNING + "。" + layoutWarning(layout), true, layout);
     }
     private static Map<String, Object> safePdfMetrics(Map<String, Object> metrics) {
-        var safe = new java.util.LinkedHashMap<String, Object>();
-        for (String key : List.of("elapsedMillis", "requestCount", "cachedPages", "inputTokens", "outputTokens", "totalTokens", "figureCount", "pages", "cached", "cacheHit",
-                "httpRequests", "policyRequests", "uploadRequests", "ocrRequests", "retries", "policyMillis", "uploadMillis", "ocrMillis", "httpStatus", "resultPages", "errorPages")) {
+        java.util.LinkedHashMap<java.lang.String, java.lang.Object> safe = new java.util.LinkedHashMap<String, Object>();
+        for (String key : cn.bidcheck.compat.Java8Api.listOf("elapsedMillis", "requestCount", "cachedPages", "inputTokens", "outputTokens", "totalTokens", "figureCount", "pages", "cached", "cacheHit", "httpRequests", "policyRequests", "uploadRequests", "ocrRequests", "retries", "policyMillis", "uploadMillis", "ocrMillis", "httpStatus", "resultPages", "errorPages")) {
             Object value = metrics.get(key);
             if (value instanceof Number || value instanceof Boolean) safe.put(key, value);
         }
-        if (metrics.get("usage") instanceof Map<?, ?> usage) {
-            var tokens = new java.util.LinkedHashMap<String, Object>();
-            for (String key : List.of("input_tokens", "output_tokens", "total_tokens", "image_tokens", "text_tokens"))
-                if (usage.get(key) instanceof Number value) tokens.put(key, value);
-            if (!tokens.isEmpty()) safe.put("usage", Map.copyOf(tokens));
+        if (metrics.get("usage") instanceof Map<?, ?>) {
+            java.util.LinkedHashMap<java.lang.String, java.lang.Object> tokens = new java.util.LinkedHashMap<String, Object>();
+            for (String key : cn.bidcheck.compat.Java8Api.listOf("input_tokens", "output_tokens", "total_tokens", "image_tokens", "text_tokens"))
+                if (((Map<?, ?>) (metrics.get("usage"))).get(key) instanceof Number) tokens.put(key, ((Number) (((Map<?, ?>) (metrics.get("usage"))).get(key))));
+            if (!tokens.isEmpty()) safe.put("usage", cn.bidcheck.compat.Java8Api.mapCopyOf(tokens));
         }
-        return Map.copyOf(safe);
+        return cn.bidcheck.compat.Java8Api.mapCopyOf(safe);
     }
     private static boolean serviceFailure(Throwable failure) {
-        if (!(failure instanceof cn.bidcheck.ocr.OcrFailure safe)) return false;
-        Integer status = safe.httpStatus();
+        if (!(failure instanceof cn.bidcheck.ocr.OcrFailure)) return false;
+        Integer status = ((cn.bidcheck.ocr.OcrFailure) (failure)).httpStatus();
         if (status != null) return status == 401 || status == 402 || status == 403 || status == 404 || status == 429 || status >= 500;
         // Local admission expiry affects this packet only; recovery remains bounded by the scheduler.
-        if ("QUEUE_TIMEOUT".equals(safe.code())) return false;
-        String code = safe.code();
-        return code != null && (code.contains("TRANSPORT") && !safe.temporary() || code.contains("QUEUE") || code.contains("BUSY") || code.contains("CIRCUIT")
+        if ("QUEUE_TIMEOUT".equals(((cn.bidcheck.ocr.OcrFailure) (failure)).code())) return false;
+        String code = ((cn.bidcheck.ocr.OcrFailure) (failure)).code();
+        return code != null && (code.contains("TRANSPORT") && !((cn.bidcheck.ocr.OcrFailure) (failure)).temporary() || code.contains("QUEUE") || code.contains("BUSY") || code.contains("CIRCUIT")
                 || code.contains("QUOTA") || code.contains("AUTH") || code.contains("CREDENTIAL") || code.contains("UPLOAD_HOST") || code.contains("UPLOAD_POLICY"));
     }
     private static boolean transientOcrFailure(IOException failure){
-        if(failure instanceof cn.bidcheck.ocr.OcrFailure safe)return safe.temporary();
-        return failure instanceof java.net.SocketException||failure instanceof java.net.http.HttpTimeoutException||failure instanceof java.io.EOFException;
+        if(failure instanceof cn.bidcheck.ocr.OcrFailure)return ((cn.bidcheck.ocr.OcrFailure) (failure)).temporary();
+        return failure instanceof java.net.SocketException||failure instanceof cn.bidcheck.compat.http.HttpTimeoutException||failure instanceof java.io.EOFException;
     }
     private static String safeFailureCode(Throwable failure) {
-        String code = failure instanceof cn.bidcheck.ocr.OcrFailure safe ? safe.code() : "PDF_SERVICE_UNAVAILABLE";
+        String code = failure instanceof cn.bidcheck.ocr.OcrFailure ? ((cn.bidcheck.ocr.OcrFailure) (failure)).code() : "PDF_SERVICE_UNAVAILABLE";
         return code != null && code.matches("[A-Z0-9_]{1,80}") ? code : "PDF_SERVICE_UNAVAILABLE";
     }
-    private record PdfWork(List<Integer> pages, boolean single, long bytes, String id, String parentId, String hash, long started) { }
-    private record PdfResponse(PdfOcrClient.BatchResult pdf, OcrOutcome single) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class PdfWork {
+        private final List<Integer> pages;
+        private final boolean single;
+        private final long bytes;
+        private final String id;
+        private final String parentId;
+        private final String hash;
+        private final long started;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private PdfWork(@com.fasterxml.jackson.annotation.JsonProperty("pages") List<Integer> pages, @com.fasterxml.jackson.annotation.JsonProperty("single") boolean single, @com.fasterxml.jackson.annotation.JsonProperty("bytes") long bytes, @com.fasterxml.jackson.annotation.JsonProperty("id") String id, @com.fasterxml.jackson.annotation.JsonProperty("parentId") String parentId, @com.fasterxml.jackson.annotation.JsonProperty("hash") String hash, @com.fasterxml.jackson.annotation.JsonProperty("started") long started) { this.pages = pages; this.single = single; this.bytes = bytes; this.id = id; this.parentId = parentId; this.hash = hash; this.started = started; }
+        public List<Integer> pages() { return pages; }
+        public boolean single() { return single; }
+        public long bytes() { return bytes; }
+        public String id() { return id; }
+        public String parentId() { return parentId; }
+        public String hash() { return hash; }
+        public long started() { return started; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; PdfWork that = (PdfWork) other; return java.util.Objects.equals(this.pages, that.pages) && java.util.Objects.equals(this.single, that.single) && java.util.Objects.equals(this.bytes, that.bytes) && java.util.Objects.equals(this.id, that.id) && java.util.Objects.equals(this.parentId, that.parentId) && java.util.Objects.equals(this.hash, that.hash) && java.util.Objects.equals(this.started, that.started); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.pages); hash = 31 * hash + java.util.Objects.hashCode(this.single); hash = 31 * hash + java.util.Objects.hashCode(this.bytes); hash = 31 * hash + java.util.Objects.hashCode(this.id); hash = 31 * hash + java.util.Objects.hashCode(this.parentId); hash = 31 * hash + java.util.Objects.hashCode(this.hash); hash = 31 * hash + java.util.Objects.hashCode(this.started); return hash; }
+        @Override public String toString() { return "PdfWork[" + "pages=" + pages + ", single=" + single + ", bytes=" + bytes + ", id=" + id + ", parentId=" + parentId + ", hash=" + hash + ", started=" + started + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class PdfResponse {
+        private final PdfOcrClient.BatchResult pdf;
+        private final OcrOutcome single;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private PdfResponse(@com.fasterxml.jackson.annotation.JsonProperty("pdf") PdfOcrClient.BatchResult pdf, @com.fasterxml.jackson.annotation.JsonProperty("single") OcrOutcome single) { this.pdf = pdf; this.single = single; }
+        public PdfOcrClient.BatchResult pdf() { return pdf; }
+        public OcrOutcome single() { return single; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; PdfResponse that = (PdfResponse) other; return java.util.Objects.equals(this.pdf, that.pdf) && java.util.Objects.equals(this.single, that.single); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.pdf); hash = 31 * hash + java.util.Objects.hashCode(this.single); return hash; }
+        @Override public String toString() { return "PdfResponse[" + "pdf=" + pdf + ", single=" + single + "]"; }
+ }
     private static long elapsed(PdfWork work) { return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - work.started); }
 
     /** Package-private for offline packet/source-isolation regression tests. */
@@ -732,8 +761,8 @@ public class FileParser {
             for (int index = 0; index < originals.size(); index++) {
                 PDPage original = originals.get(index), imported = importedPages.get(index);
                 org.apache.pdfbox.cos.COSArray annotations = new org.apache.pdfbox.cos.COSArray();
-                for (var annotation : original.getAnnotations()) {
-                    var detached = new org.apache.pdfbox.cos.COSDictionary(annotation.getCOSObject());
+                for (org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation annotation : original.getAnnotations()) {
+                    org.apache.pdfbox.cos.COSDictionary detached = new org.apache.pdfbox.cos.COSDictionary(annotation.getCOSObject());
                     detached.setItem(COSName.P, original.getCOSObject());
                     // Deep-clone appearance streams and nested annotation objects into the packet;
                     // /P and internal destinations resolve only to this packet's selected pages.
@@ -751,13 +780,13 @@ public class FileParser {
             super(destination); this.pageCopies = pageCopies;
         }
         @Override @SuppressWarnings("unchecked") public <T extends COSBase> T cloneForNewDocument(T original) throws IOException {
-            if (original instanceof org.apache.pdfbox.cos.COSDictionary dictionary) {
-                if (COSName.PAGE.equals(dictionary.getCOSName(COSName.TYPE)))
-                    return (T) (pageCopies.containsKey(dictionary) ? pageCopies.get(dictionary) : org.apache.pdfbox.cos.COSNull.NULL);
-                if (COSName.PAGES.equals(dictionary.getCOSName(COSName.TYPE))) return (T) org.apache.pdfbox.cos.COSNull.NULL;
-                if (COSName.ANNOT.equals(dictionary.getCOSName(COSName.TYPE))
-                        && dictionary.getDictionaryObject(COSName.P) instanceof org.apache.pdfbox.cos.COSDictionary page
-                        && !pageCopies.containsKey(page)) return (T) org.apache.pdfbox.cos.COSNull.NULL;
+            if (original instanceof org.apache.pdfbox.cos.COSDictionary) {
+                if (COSName.PAGE.equals(((org.apache.pdfbox.cos.COSDictionary) (original)).getCOSName(COSName.TYPE)))
+                    return (T) (pageCopies.containsKey(((org.apache.pdfbox.cos.COSDictionary) (original))) ? pageCopies.get(((org.apache.pdfbox.cos.COSDictionary) (original))) : org.apache.pdfbox.cos.COSNull.NULL);
+                if (COSName.PAGES.equals(((org.apache.pdfbox.cos.COSDictionary) (original)).getCOSName(COSName.TYPE))) return (T) org.apache.pdfbox.cos.COSNull.NULL;
+                if (COSName.ANNOT.equals(((org.apache.pdfbox.cos.COSDictionary) (original)).getCOSName(COSName.TYPE))
+                        && ((org.apache.pdfbox.cos.COSDictionary) (original)).getDictionaryObject(COSName.P) instanceof org.apache.pdfbox.cos.COSDictionary
+                        && !pageCopies.containsKey(((org.apache.pdfbox.cos.COSDictionary) (((org.apache.pdfbox.cos.COSDictionary) (original)).getDictionaryObject(COSName.P))))) return (T) org.apache.pdfbox.cos.COSNull.NULL;
             }
             return super.cloneForNewDocument(original);
         }
@@ -808,7 +837,7 @@ public class FileParser {
             }
             while (!pending.isEmpty()) remaining = appendPdfPage(pending.removeFirst(), pipeline, pages, warnings, remaining, document.getNumberOfPages());
             pipeline.finish();
-            return new ParsedDocument(List.copyOf(pages), List.copyOf(warnings));
+            return new ParsedDocument(cn.bidcheck.compat.Java8Api.listCopyOf(pages), cn.bidcheck.compat.Java8Api.listCopyOf(warnings));
         }
     }
 
@@ -820,7 +849,7 @@ public class FileParser {
         if (remaining < 0) throw tooMuchText();
         // The listener performs the lease fence before any result is appended, and always runs on the caller thread.
         pipeline.session.workProgress(pending.number * 100 / totalPages, "已解析第 " + pending.number + " 页");
-        if (!page.warning().isBlank()) warnings.add(page.warning());
+        if (!cn.bidcheck.compat.Java8Api.isBlank(page.warning())) warnings.add(page.warning());
         pages.add(page);
         pipeline.session.pageCompleted(page);
         return remaining;
@@ -831,11 +860,11 @@ public class FileParser {
         if (outcome != null) {
             warning = "第 " + number + " 页" + outcome.warning;
             if (outcome.success) {
-                parser = text.isBlank() ? "PDFBOX_OCR" : "PDFBOX_NATIVE_WITH_OCR";
+                parser = cn.bidcheck.compat.Java8Api.isBlank(text) ? "PDFBOX_OCR" : "PDFBOX_NATIVE_WITH_OCR";
                 text = withOcr(text, outcome.text, "OCR识别文字");
             }
         }
-        var layout = outcome == null ? null : outcome.layout.source("p" + number + "_", "PDF_RENDER", number);
+        cn.bidcheck.ocr.OcrLayout layout = outcome == null ? null : outcome.layout.source("p" + number + "_", "PDF_RENDER", number);
         return new Page(number, text, "PAGE", parser, warning, layout);
     }
 
@@ -866,7 +895,7 @@ public class FileParser {
         private Future<OcrOutcome> submit(String type, int position, int imageIndex, ImageSource source, String location) throws IOException {
             tick();
             String unitKey = ExtractionPlan.unitKey(type, position, imageIndex);
-            var nativeLocation = session.nativeMap.get(ExtractionPlan.locationKey(type, position));
+            cn.bidcheck.document.ExtractionPlan.NativeLocation nativeLocation = session.nativeMap.get(ExtractionPlan.locationKey(type, position));
             String nativeText = nativeLocation == null ? "" : nativeLocation.text();
             int imageCount = nativeLocation == null ? 1 : nativeLocation.imageCount();
             session.routes.put(unitKey, PageClassifier.classify(nativeText, imageCount, null));
@@ -928,16 +957,16 @@ public class FileParser {
         private void tick() throws IOException {
             while (collect(false, "已完成图像")) { }
             long now = System.nanoTime();
-            for (Group group : List.copyOf(groups.values())) {
+            for (Group group : cn.bidcheck.compat.Java8Api.listCopyOf(groups.values())) {
                 if (TimeUnit.NANOSECONDS.toMillis(now - group.created) >= policy.maxWaitMillis()) flush(group);
             }
         }
-        private void flushAll() throws IOException { for (Group group : List.copyOf(groups.values())) flush(group); }
+        private void flushAll() throws IOException { for (Group group : cn.bidcheck.compat.Java8Api.listCopyOf(groups.values())) flush(group); }
         private void flush(Group group) throws IOException {
             if (group.work.isEmpty() || groups.get(group.key) != group) return;
             while (pending.size() >= concurrency) collect(true, "批次处理");
             groups.remove(group.key);
-            Batch batch = new Batch(List.copyOf(group.work), group.bytes, group.pixels);
+            Batch batch = new Batch(cn.bidcheck.compat.Java8Api.listCopyOf(group.work), group.bytes, group.pixels);
             for (Work work : batch.work) {
                 session.progress(session.percent, "正在识别" + work.location);
                 for (Unit unit : work.units) session.observe(unit, "RUNNING", null, 0);
@@ -959,8 +988,8 @@ public class FileParser {
             Set<String> emitted = java.util.concurrent.ConcurrentHashMap.newKeySet();
             Map<String, String> lastErrors = new java.util.concurrent.ConcurrentHashMap<>();
             try {
-                List<OcrBatch.Input> inputs = batch.work.stream().map(work -> new OcrBatch.Input(work.id, work.image.bytes,
-                        mime(work.image.bytes), work.image.width, work.image.height, work.route.pageType(), work.route.schema())).toList();
+                List<OcrBatch.Input> inputs = cn.bidcheck.compat.Java8Api.toList(batch.work.stream().map(work -> new OcrBatch.Input(work.id, work.image.bytes,
+                        mime(work.image.bytes), work.image.width, work.image.height, work.route.pageType(), work.route.schema())));
                 if (batch.work.size() == 1 && (batch.work.get(0).route.independent() || !policy.enabled())) {
                     Work work = batch.work.get(0); OcrBatch.Input input = inputs.get(0);
                     OcrOutcome outcome = new ParseSession(session.client, null, 1).result(session.client.recognize(input.image(), input.mimeType()), input.image(), work.location);
@@ -1020,8 +1049,8 @@ public class FileParser {
             if (event.batch != null) {
                 pending.remove(event.batch); heldBytes -= event.batch.bytes; heldPixels -= event.batch.pixels;
                 for (Work work : event.batch.work) work.image = null;
-                if (event.failure instanceof InterruptedIOException stopped) throw stopped;
-                if (event.failure instanceof Error error) throw error;
+                if (event.failure instanceof InterruptedIOException) throw ((InterruptedIOException) (event.failure));
+                if (event.failure instanceof Error) throw ((Error) (event.failure));
             }
             return true;
         }
@@ -1034,7 +1063,7 @@ public class FileParser {
                     : outcome.warning.contains("[OCR未完成]") ? "PARTIAL_SUCCEEDED" : "SUCCEEDED";
             session.observe(unit, state, outcome, elapsed);
             if (unit.type.equals("PAGE")) {
-                var location = session.nativeMap.get(ExtractionPlan.locationKey(unit.type, unit.position));
+                cn.bidcheck.document.ExtractionPlan.NativeLocation location = session.nativeMap.get(ExtractionPlan.locationKey(unit.type, unit.position));
                 session.pageCompleted(completedImagePdfPage(unit.position, location.text(), outcome));
             }
         }
@@ -1055,7 +1084,24 @@ public class FileParser {
         private static String mime(byte[] bytes) { return bytes.length >= 2 && (bytes[0] & 255) == 255 && (bytes[1] & 255) == 216 ? "image/jpeg" : "image/png"; }
         private static String safeCode(String code) { return code != null && code.matches("[A-Z][A-Z0-9_]{0,63}") ? code : "OCR_UNIT_FAILED"; }
         private static OcrOutcome failed(String code) { return new OcrOutcome("", "[OCR未完成][" + safeCode(code) + "] OCR失败：图像识别未完成，请对照原图核对。", false); }
-        private record BatchKey(String type, String schema, String resolution, boolean context, boolean independent) { }
+        @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class BatchKey {
+        private final String type;
+        private final String schema;
+        private final String resolution;
+        private final boolean context;
+        private final boolean independent;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private BatchKey(@com.fasterxml.jackson.annotation.JsonProperty("type") String type, @com.fasterxml.jackson.annotation.JsonProperty("schema") String schema, @com.fasterxml.jackson.annotation.JsonProperty("resolution") String resolution, @com.fasterxml.jackson.annotation.JsonProperty("context") boolean context, @com.fasterxml.jackson.annotation.JsonProperty("independent") boolean independent) { this.type = type; this.schema = schema; this.resolution = resolution; this.context = context; this.independent = independent; }
+        public String type() { return type; }
+        public String schema() { return schema; }
+        public String resolution() { return resolution; }
+        public boolean context() { return context; }
+        public boolean independent() { return independent; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; BatchKey that = (BatchKey) other; return java.util.Objects.equals(this.type, that.type) && java.util.Objects.equals(this.schema, that.schema) && java.util.Objects.equals(this.resolution, that.resolution) && java.util.Objects.equals(this.context, that.context) && java.util.Objects.equals(this.independent, that.independent); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.type); hash = 31 * hash + java.util.Objects.hashCode(this.schema); hash = 31 * hash + java.util.Objects.hashCode(this.resolution); hash = 31 * hash + java.util.Objects.hashCode(this.context); hash = 31 * hash + java.util.Objects.hashCode(this.independent); return hash; }
+        @Override public String toString() { return "BatchKey[" + "type=" + type + ", schema=" + schema + ", resolution=" + resolution + ", context=" + context + ", independent=" + independent + "]"; }
+ }
         private static final class Group {
             final BatchKey key; final long created = System.nanoTime(); final List<Work> work = new ArrayList<>();
             long bytes, pixels; int tokens = OcrBatch.PROMPT_ESTIMATED_TOKENS;
@@ -1074,21 +1120,76 @@ public class FileParser {
             final List<Work> work; final long bytes, pixels; Future<?> future;
             Batch(List<Work> work, long bytes, long pixels) { this.work = work; this.bytes = bytes; this.pixels = pixels; }
         }
-        private record Completion(Work work, OcrOutcome outcome, Batch batch, Throwable failure, OcrBatch.Event metadata) { }
+        @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Completion {
+        private final Work work;
+        private final OcrOutcome outcome;
+        private final Batch batch;
+        private final Throwable failure;
+        private final OcrBatch.Event metadata;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Completion(@com.fasterxml.jackson.annotation.JsonProperty("work") Work work, @com.fasterxml.jackson.annotation.JsonProperty("outcome") OcrOutcome outcome, @com.fasterxml.jackson.annotation.JsonProperty("batch") Batch batch, @com.fasterxml.jackson.annotation.JsonProperty("failure") Throwable failure, @com.fasterxml.jackson.annotation.JsonProperty("metadata") OcrBatch.Event metadata) { this.work = work; this.outcome = outcome; this.batch = batch; this.failure = failure; this.metadata = metadata; }
+        public Work work() { return work; }
+        public OcrOutcome outcome() { return outcome; }
+        public Batch batch() { return batch; }
+        public Throwable failure() { return failure; }
+        public OcrBatch.Event metadata() { return metadata; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Completion that = (Completion) other; return java.util.Objects.equals(this.work, that.work) && java.util.Objects.equals(this.outcome, that.outcome) && java.util.Objects.equals(this.batch, that.batch) && java.util.Objects.equals(this.failure, that.failure) && java.util.Objects.equals(this.metadata, that.metadata); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.work); hash = 31 * hash + java.util.Objects.hashCode(this.outcome); hash = 31 * hash + java.util.Objects.hashCode(this.batch); hash = 31 * hash + java.util.Objects.hashCode(this.failure); hash = 31 * hash + java.util.Objects.hashCode(this.metadata); return hash; }
+        @Override public String toString() { return "Completion[" + "work=" + work + ", outcome=" + outcome + ", batch=" + batch + ", failure=" + failure + ", metadata=" + metadata + "]"; }
+ }
     }
 
-    private record Unit(String type, int position, int index, String hash, int width, int height, long bytes, boolean cached) {
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Unit {
+        private final String type;
+        private final int position;
+        private final int index;
+        private final String hash;
+        private final int width;
+        private final int height;
+        private final long bytes;
+        private final boolean cached;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Unit(@com.fasterxml.jackson.annotation.JsonProperty("type") String type, @com.fasterxml.jackson.annotation.JsonProperty("position") int position, @com.fasterxml.jackson.annotation.JsonProperty("index") int index, @com.fasterxml.jackson.annotation.JsonProperty("hash") String hash, @com.fasterxml.jackson.annotation.JsonProperty("width") int width, @com.fasterxml.jackson.annotation.JsonProperty("height") int height, @com.fasterxml.jackson.annotation.JsonProperty("bytes") long bytes, @com.fasterxml.jackson.annotation.JsonProperty("cached") boolean cached) { this.type = type; this.position = position; this.index = index; this.hash = hash; this.width = width; this.height = height; this.bytes = bytes; this.cached = cached; }
+        public String type() { return type; }
+        public int position() { return position; }
+        public int index() { return index; }
+        public String hash() { return hash; }
+        public int width() { return width; }
+        public int height() { return height; }
+        public long bytes() { return bytes; }
+        public boolean cached() { return cached; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Unit that = (Unit) other; return java.util.Objects.equals(this.type, that.type) && java.util.Objects.equals(this.position, that.position) && java.util.Objects.equals(this.index, that.index) && java.util.Objects.equals(this.hash, that.hash) && java.util.Objects.equals(this.width, that.width) && java.util.Objects.equals(this.height, that.height) && java.util.Objects.equals(this.bytes, that.bytes) && java.util.Objects.equals(this.cached, that.cached); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.type); hash = 31 * hash + java.util.Objects.hashCode(this.position); hash = 31 * hash + java.util.Objects.hashCode(this.index); hash = 31 * hash + java.util.Objects.hashCode(this.hash); hash = 31 * hash + java.util.Objects.hashCode(this.width); hash = 31 * hash + java.util.Objects.hashCode(this.height); hash = 31 * hash + java.util.Objects.hashCode(this.bytes); hash = 31 * hash + java.util.Objects.hashCode(this.cached); return hash; }
+        @Override public String toString() { return "Unit[" + "type=" + type + ", position=" + position + ", index=" + index + ", hash=" + hash + ", width=" + width + ", height=" + height + ", bytes=" + bytes + ", cached=" + cached + "]"; }
+
         Unit cachedCopy() { return new Unit(type, position, index, hash, width, height, bytes, true); }
     }
-    private record PreparedImage(byte[] bytes, String hash, int width, int height) {
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class PreparedImage {
+        private final byte[] bytes;
+        private final String hash;
+        private final int width;
+        private final int height;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private PreparedImage(@com.fasterxml.jackson.annotation.JsonProperty("bytes") byte[] bytes, @com.fasterxml.jackson.annotation.JsonProperty("hash") String hash, @com.fasterxml.jackson.annotation.JsonProperty("width") int width, @com.fasterxml.jackson.annotation.JsonProperty("height") int height) { this.bytes = bytes; this.hash = hash; this.width = width; this.height = height; }
+        public byte[] bytes() { return bytes; }
+        public String hash() { return hash; }
+        public int width() { return width; }
+        public int height() { return height; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; PreparedImage that = (PreparedImage) other; return java.util.Objects.equals(this.bytes, that.bytes) && java.util.Objects.equals(this.hash, that.hash) && java.util.Objects.equals(this.width, that.width) && java.util.Objects.equals(this.height, that.height); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.bytes); hash = 31 * hash + java.util.Objects.hashCode(this.hash); hash = 31 * hash + java.util.Objects.hashCode(this.width); hash = 31 * hash + java.util.Objects.hashCode(this.height); return hash; }
+        @Override public String toString() { return "PreparedImage[" + "bytes=" + bytes + ", hash=" + hash + ", width=" + width + ", height=" + height + "]"; }
+
         long pixels() { return (long) width * height; }
     }
     private static PreparedImage prepareImage(byte[] input) throws IOException {
         byte[] bytes = input.length > 6 * 1024 * 1024 ? jpegForOcr(input) : input;
         try (ImageInputStream stream = new MemoryCacheImageInputStream(new ByteArrayInputStream(bytes))) {
-            var readers = ImageIO.getImageReaders(stream);
+            java.util.Iterator<javax.imageio.ImageReader> readers = ImageIO.getImageReaders(stream);
             if (!readers.hasNext()) throw new IOException("Invalid OCR image");
-            var reader = readers.next();
+            javax.imageio.ImageReader reader = readers.next();
             try {
                 reader.setInput(stream, true, true);
                 int width = reader.getWidth(0), height = reader.getHeight(0);
@@ -1127,27 +1228,27 @@ public class FileParser {
                 session.nativeLocation(1, "BLOCK", "", 0, 0);
                 session.pageCompleted(page);
             }
-            return new ParsedDocument(List.copyOf(output.pages), List.copyOf(output.warnings));
+            return new ParsedDocument(cn.bidcheck.compat.Java8Api.listCopyOf(output.pages), cn.bidcheck.compat.Java8Api.listCopyOf(output.warnings));
         }
     }
 
     private void appendWord(XWPFDocument document, WordBlocks output) throws IOException {
         output.totalBlocks = countBlocks(document.getBodyElements());
-        for (var header : document.getHeaderList()) output.totalBlocks += countBlocks(header.getBodyElements());
-        for (var footer : document.getFooterList()) output.totalBlocks += countBlocks(footer.getBodyElements());
+        for (org.apache.poi.xwpf.usermodel.XWPFHeader header : document.getHeaderList()) output.totalBlocks += countBlocks(header.getBodyElements());
+        for (org.apache.poi.xwpf.usermodel.XWPFFooter footer : document.getFooterList()) output.totalBlocks += countBlocks(footer.getBodyElements());
         appendBody(document.getBodyElements(), output, 0);
-        for (var header : document.getHeaderList()) appendBody(header.getBodyElements(), output, 0);
-        for (var footer : document.getFooterList()) appendBody(footer.getBodyElements(), output, 0);
+        for (org.apache.poi.xwpf.usermodel.XWPFHeader header : document.getHeaderList()) appendBody(header.getBodyElements(), output, 0);
+        for (org.apache.poi.xwpf.usermodel.XWPFFooter footer : document.getFooterList()) appendBody(footer.getBodyElements(), output, 0);
     }
 
     private static int countBlocks(List<IBodyElement> elements) {
         int count = 0;
         for (IBodyElement element : elements) {
-            if (element instanceof XWPFTable table) {
-                for (XWPFTableRow row : table.getRows()) {
+            if (element instanceof XWPFTable) {
+                for (XWPFTableRow row : ((XWPFTable) (element)).getRows()) {
                     count++;
                     for (XWPFTableCell cell : row.getTableCells()) {
-                        for (XWPFTable nested : cell.getTables()) count += countBlocks(List.of(nested));
+                        for (XWPFTable nested : cell.getTables()) count += countBlocks(cn.bidcheck.compat.Java8Api.listOf(nested));
                     }
                 }
             } else count++;
@@ -1156,25 +1257,25 @@ public class FileParser {
     }
 
     private static List<XWPFPicture> pictures(XWPFParagraph paragraph) {
-        return paragraph.getRuns().stream().flatMap(run -> run.getEmbeddedPictures().stream()).toList();
+        return cn.bidcheck.compat.Java8Api.toList(paragraph.getRuns().stream().flatMap(run -> run.getEmbeddedPictures().stream()));
     }
 
     private void appendBody(List<IBodyElement> elements, WordBlocks output, int depth) throws IOException {
         if (depth > 20) throw new DocumentParseException("Word 文档嵌套层级过深，无法安全解析。");
         for (IBodyElement element : elements) {
-            if (element instanceof XWPFParagraph paragraph) {
-                List<XWPFPicture> images = pictures(paragraph);
-                WordParagraph content = wordParagraph(paragraph, images);
+            if (element instanceof XWPFParagraph) {
+                List<XWPFPicture> images = pictures(((XWPFParagraph) (element)));
+                WordParagraph content = wordParagraph(((XWPFParagraph) (element)), images);
                 String warning = "";
                 if (content.incomplete()) {
                     warning = "包含文本框或修订内容，当前正文文本可能不完整，请人工核对。";
                 }
                 if (content.unresolvedImage()) warning += "[OCR未完成] 包含外链或旧式图像，无法定位识别，请对照原文件核对。";
                 output.add(content.text(), images.isEmpty() ? "PARAGRAPH" : "BLOCK", warning, images, content.keepPosition());
-            } else if (element instanceof XWPFTable table) {
-                appendTable(table, output, depth + 1);
-            } else if (element instanceof XWPFSDT control) {
-                output.add(control.getContent().getText(), "BLOCK", "", List.of());
+            } else if (element instanceof XWPFTable) {
+                appendTable(((XWPFTable) (element)), output, depth + 1);
+            } else if (element instanceof XWPFSDT) {
+                output.add(((XWPFSDT) (element)).getContent().getText(), "BLOCK", "", cn.bidcheck.compat.Java8Api.listOf());
             } else {
                 output.warnings.add("Word 文件包含未支持的内容块，请人工核对原文件。");
             }
@@ -1183,7 +1284,7 @@ public class FileParser {
 
     private void appendTable(XWPFTable table, WordBlocks output, int depth) throws IOException {
         if (depth > 20) throw new DocumentParseException("Word 文档表格嵌套层级过深，无法安全解析。");
-        List<String> headers = List.of();
+        List<String> headers = cn.bidcheck.compat.Java8Api.listOf();
         for (int rowIndex = 0; rowIndex < table.getRows().size(); rowIndex++) {
             XWPFTableRow row = table.getRow(rowIndex);
             List<String> values = new ArrayList<>();
@@ -1198,7 +1299,7 @@ public class FileParser {
                 for (XWPFParagraph paragraph : cell.getParagraphs()) {
                     List<XWPFPicture> paragraphImages = pictures(paragraph);
                     WordParagraph content = wordParagraph(paragraph, paragraphImages);
-                    if (!content.text().isBlank()) cellText.add(content.text());
+                    if (!cn.bidcheck.compat.Java8Api.isBlank(content.text())) cellText.add(content.text());
                     images.addAll(paragraphImages);
                     incomplete |= content.incomplete();
                     unresolvedImage |= content.unresolvedImage();
@@ -1207,11 +1308,11 @@ public class FileParser {
                 values.add(String.join(" / ", cellText));
                 nested |= !cell.getTables().isEmpty();
             }
-            if (rowIndex == 0 && looksLikeHeader(values, row.isRepeatHeader())) headers = List.copyOf(values);
+            if (rowIndex == 0 && looksLikeHeader(values, row.isRepeatHeader())) headers = cn.bidcheck.compat.Java8Api.listCopyOf(values);
             StringBuilder text = new StringBuilder(String.join("\t", values));
             if (rowIndex > 0 && headers.size() == values.size()) {
                 for (int column = 0; column < headers.size(); column++) {
-                    if (!headers.get(column).isBlank() && !values.get(column).isBlank()) {
+                    if (!cn.bidcheck.compat.Java8Api.isBlank(headers.get(column)) && !cn.bidcheck.compat.Java8Api.isBlank(values.get(column))) {
                         text.append('\n').append(headers.get(column)).append('：').append(values.get(column));
                     }
                 }
@@ -1241,14 +1342,29 @@ public class FileParser {
     private static final String MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
     private static final String REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     private static final String DRAWING_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
-    private record WordParagraph(String text, boolean incomplete, boolean unresolvedImage, boolean keepPosition) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class WordParagraph {
+        private final String text;
+        private final boolean incomplete;
+        private final boolean unresolvedImage;
+        private final boolean keepPosition;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private WordParagraph(@com.fasterxml.jackson.annotation.JsonProperty("text") String text, @com.fasterxml.jackson.annotation.JsonProperty("incomplete") boolean incomplete, @com.fasterxml.jackson.annotation.JsonProperty("unresolvedImage") boolean unresolvedImage, @com.fasterxml.jackson.annotation.JsonProperty("keepPosition") boolean keepPosition) { this.text = text; this.incomplete = incomplete; this.unresolvedImage = unresolvedImage; this.keepPosition = keepPosition; }
+        public String text() { return text; }
+        public boolean incomplete() { return incomplete; }
+        public boolean unresolvedImage() { return unresolvedImage; }
+        public boolean keepPosition() { return keepPosition; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; WordParagraph that = (WordParagraph) other; return java.util.Objects.equals(this.text, that.text) && java.util.Objects.equals(this.incomplete, that.incomplete) && java.util.Objects.equals(this.unresolvedImage, that.unresolvedImage) && java.util.Objects.equals(this.keepPosition, that.keepPosition); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.text); hash = 31 * hash + java.util.Objects.hashCode(this.incomplete); hash = 31 * hash + java.util.Objects.hashCode(this.unresolvedImage); hash = 31 * hash + java.util.Objects.hashCode(this.keepPosition); return hash; }
+        @Override public String toString() { return "WordParagraph[" + "text=" + text + ", incomplete=" + incomplete + ", unresolvedImage=" + unresolvedImage + ", keepPosition=" + keepPosition + "]"; }
+ }
     private static final class WordExtras {
         private final List<String> text = new ArrayList<>();
         private boolean incomplete, unresolvedImage;
         private int characters;
         private void add(String label, String value) throws IOException {
             value = normalize(value);
-            if (value.isBlank()) return;
+            if (cn.bidcheck.compat.Java8Api.isBlank(value)) return;
             characters += value.length() + label.length() + 2;
             if (characters > MAX_CHARACTERS) throw tooMuchText();
             text.add(label + "\n" + value);
@@ -1258,7 +1374,7 @@ public class FileParser {
     private static WordParagraph wordParagraph(XWPFParagraph paragraph, List<XWPFPicture> pictures) throws IOException {
         Set<String> handledImages = new HashSet<>();
         for (XWPFPicture image : pictures) {
-            var fill = image.getCTPicture().getBlipFill();
+            org.openxmlformats.schemas.drawingml.x2006.main.CTBlipFillProperties fill = image.getCTPicture().getBlipFill();
             if (fill != null && fill.getBlip() != null) handledImages.add(fill.getBlip().getEmbed());
         }
         WordExtras extra = new WordExtras();
@@ -1267,7 +1383,7 @@ public class FileParser {
         // POI already exposes some plain VML boxes; supplement only the ones its paragraph API omitted.
         String supplemental = extra.text.stream().filter(value -> !nativeText.contains(value.substring(value.indexOf('\n') + 1)))
                 .collect(Collectors.joining("\n\n"));
-        String text = nativeText + (nativeText.isBlank() || supplemental.isBlank() ? "" : "\n\n") + supplemental;
+        String text = nativeText + (cn.bidcheck.compat.Java8Api.isBlank(nativeText) || cn.bidcheck.compat.Java8Api.isBlank(supplemental) ? "" : "\n\n") + supplemental;
         return new WordParagraph(text, extra.incomplete, extra.unresolvedImage, legacyWordPlaceholder(paragraph.getCTP().getDomNode(), 0));
     }
 
@@ -1303,12 +1419,12 @@ public class FileParser {
         if (isNode(node, VML_NS, "textpath")) extra.add("【艺术字/水印原文】", attribute(node, "", "string"));
         if (isNode(node, VML_NS, "imagedata")) {
             // Word emits empty imagedata tags inside native text shapes; these have no image to OCR.
-            for (String name : List.of("id", "embed", "link")) if (!attribute(node, REL_NS, name).isBlank()) extra.unresolvedImage = true;
-            if (!attribute(node, "", "src").isBlank() || !attribute(node, "urn:schemas-microsoft-com:office:office", "relid").isBlank()) extra.unresolvedImage = true;
+            for (String name : cn.bidcheck.compat.Java8Api.listOf("id", "embed", "link")) if (!cn.bidcheck.compat.Java8Api.isBlank(attribute(node, REL_NS, name))) extra.unresolvedImage = true;
+            if (!cn.bidcheck.compat.Java8Api.isBlank(attribute(node, "", "src")) || !cn.bidcheck.compat.Java8Api.isBlank(attribute(node, "urn:schemas-microsoft-com:office:office", "relid"))) extra.unresolvedImage = true;
         }
         if (isNode(node, DRAWING_NS, "blip")) {
             String embed = attribute(node, REL_NS, "embed");
-            if (!attribute(node, REL_NS, "link").isBlank() || (!embed.isBlank() && !handledImages.contains(embed))) extra.unresolvedImage = true;
+            if (!cn.bidcheck.compat.Java8Api.isBlank(attribute(node, REL_NS, "link")) || (!cn.bidcheck.compat.Java8Api.isBlank(embed) && !handledImages.contains(embed))) extra.unresolvedImage = true;
         }
         if (inTextBox && (isNode(node, WORD_NS, "object") || "http://schemas.openxmlformats.org/officeDocument/2006/math".equals(node.getNamespaceURI()))) extra.incomplete = true;
         for (Node child = node.getFirstChild(); child != null; child = child.getNextSibling()) inspectWordNode(child, extra, handledImages, inTextBox, depth + 1);
@@ -1338,11 +1454,11 @@ public class FileParser {
             if (isNode(branch, MC_NS, "Fallback")) fallback = branch;
             if (!isNode(branch, MC_NS, "Choice")) continue;
             String requires = attribute(branch, "", "Requires");
-            if (requires.isBlank()) continue;
+            if (cn.bidcheck.compat.Java8Api.isBlank(requires)) continue;
             boolean supported = true;
-            for (String prefix : requires.strip().split("\\s+")) {
+            for (String prefix : cn.bidcheck.compat.Java8Api.strip(requires).split("\\s+")) {
                 String namespace = namespaceFor(branch, prefix);
-                if (!Set.of("http://schemas.microsoft.com/office/word/2010/wordprocessingShape", WORD_NS, DRAWING_NS).contains(namespace)) supported = false;
+                if (!cn.bidcheck.compat.Java8Api.setOf("http://schemas.microsoft.com/office/word/2010/wordprocessingShape", WORD_NS, DRAWING_NS).contains(namespace)) supported = false;
             }
             if (supported) return branch;
         }
@@ -1369,7 +1485,7 @@ public class FileParser {
     private ParsedDocument parseText(Path path, ParseSession session) throws IOException {
         StringBuilder rawText = new StringBuilder();
         int pageCount = 1;
-        try (var reader = new InputStreamReader(Files.newInputStream(path), StandardCharsets.UTF_8.newDecoder()
+        try (java.io.InputStreamReader reader = new InputStreamReader(Files.newInputStream(path), StandardCharsets.UTF_8.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT))) {
             char[] buffer = new char[8192];
             int read;
@@ -1391,15 +1507,15 @@ public class FileParser {
         for (int i = 0; i < parts.length; i++) {
             session.progress(i * 100 / parts.length, "正在解析文本第 " + (i + 1) + " 页");
             String content = normalize(parts[i]);
-            String warning = content.isBlank() ? "第 " + (i + 1) + " 个文本分页没有内容。" : "";
-            if (!warning.isBlank()) warnings.add(warning);
+            String warning = cn.bidcheck.compat.Java8Api.isBlank(content) ? "第 " + (i + 1) + " 个文本分页没有内容。" : "";
+            if (!cn.bidcheck.compat.Java8Api.isBlank(warning)) warnings.add(warning);
             Page page = new Page(i + 1, content, "PAGE", "UTF8_TEXT", warning);
             pages.add(page);
             session.nativeLocation(i + 1, "PAGE", content, 0, 0);
             session.pageCompleted(page);
         }
         if (session.planned()) session.resolve();
-        return new ParsedDocument(List.copyOf(pages), List.copyOf(warnings));
+        return new ParsedDocument(cn.bidcheck.compat.Java8Api.listCopyOf(pages), cn.bidcheck.compat.Java8Api.listCopyOf(warnings));
     }
 
     private ParsedDocument parseImage(Path path, ParseSession session) throws IOException {
@@ -1418,7 +1534,7 @@ public class FileParser {
         Page page = new Page(1, text, "IMAGE", outcome.success ? "IMAGE_OCR" : "IMAGE", warning,
                 outcome.layout.source("", "UPLOADED_IMAGE", 1));
         session.pageCompleted(page);
-        return new ParsedDocument(List.of(page), List.of(warning));
+        return new ParsedDocument(cn.bidcheck.compat.Java8Api.listOf(page), cn.bidcheck.compat.Java8Api.listOf(warning));
     }
 
     /** Safe source preview for standalone PNG/JPEG uploads; always returns a PNG. */
@@ -1485,10 +1601,10 @@ public class FileParser {
     }
 
     private static byte[] pictureBytes(XWPFPicture picture) throws IOException {
-        var data = picture.getPictureData();
+        org.apache.poi.xwpf.usermodel.XWPFPictureData data = picture.getPictureData();
         if (data == null) throw new DocumentParseException("图片引用无效或位于外部链接，不能读取。");
         try (InputStream input = data.getPackagePart().getInputStream()) {
-            byte[] bytes = input.readNBytes((int) MAX_ZIP_ENTRY_BYTES + 1);
+            byte[] bytes = cn.bidcheck.compat.Java8Api.readNBytes(input, (int) MAX_ZIP_ENTRY_BYTES + 1);
             if (bytes.length > MAX_ZIP_ENTRY_BYTES) throw new DocumentParseException("Word 图片文件过大，无法安全解析。");
             return bytes;
         }
@@ -1503,19 +1619,19 @@ public class FileParser {
 
     private static BufferedImage readSafeImage(ImageInputStream input) throws IOException {
         checkInterrupted();
-        var readers = ImageIO.getImageReaders(input);
+        java.util.Iterator<javax.imageio.ImageReader> readers = ImageIO.getImageReaders(input);
         if (!readers.hasNext()) throw new DocumentParseException("图像损坏或格式不受支持，仅支持 PNG、JPG 图片。");
-        var reader = readers.next();
+        javax.imageio.ImageReader reader = readers.next();
         try {
             String format = reader.getFormatName().toLowerCase(Locale.ROOT);
-            if (!Set.of("png", "jpeg", "jpg").contains(format)) throw new DocumentParseException("嵌入图像格式不受支持，仅支持 PNG、JPG 图片。");
+            if (!cn.bidcheck.compat.Java8Api.setOf("png", "jpeg", "jpg").contains(format)) throw new DocumentParseException("嵌入图像格式不受支持，仅支持 PNG、JPG 图片。");
             reader.setInput(input, true, true);
             int width = reader.getWidth(0), height = reader.getHeight(0);
             if (width < 1 || height < 1 || width > 32_768 || height > 32_768 || (long) width * height > MAX_IMAGE_PIXELS) {
                 throw new DocumentParseException("图像像素超过安全限制（1600 万像素），请降低分辨率后上传。");
             }
             double scale = Math.min(1d, Math.min(2400d / Math.max(width, height), Math.sqrt(4_000_000d / ((long) width * height))));
-            var parameters = reader.getDefaultReadParam();
+            javax.imageio.ImageReadParam parameters = reader.getDefaultReadParam();
             int sample = Math.max(1, (int) Math.floor(1d / scale));
             parameters.setSourceSubsampling(sample, sample, 0, 0);
             BufferedImage source = reader.read(0, parameters);
@@ -1547,7 +1663,7 @@ public class FileParser {
     }
 
     private static String withOcr(String nativeText, String recognized, String label) {
-        return (nativeText.isBlank() ? "" : "【原生文字】\n" + nativeText + "\n\n") + "【" + label + "】\n" + recognized;
+        return (cn.bidcheck.compat.Java8Api.isBlank(nativeText) ? "" : "【原生文字】\n" + nativeText + "\n\n") + "【" + label + "】\n" + recognized;
     }
 
     private static void validateFile(Path path) throws IOException {
@@ -1559,7 +1675,7 @@ public class FileParser {
 
     private static String fileSha256(Path path) throws IOException {
         try {
-            var digest = java.security.MessageDigest.getInstance("SHA-256");
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
             try (InputStream input = Files.newInputStream(path)) {
                 byte[] buffer = new byte[65536]; int read; long bytes = 0;
                 while ((read = input.read(buffer)) != -1) {
@@ -1568,7 +1684,7 @@ public class FileParser {
                     digest.update(buffer, 0, read);
                 }
             }
-            return java.util.HexFormat.of().formatHex(digest.digest());
+            return cn.bidcheck.compat.HexFormat.of().formatHex(digest.digest());
         } catch (java.security.NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
     }
 
@@ -1580,7 +1696,7 @@ public class FileParser {
 
     private static void checkZipSafety(Path path) throws IOException {
         byte[] signature;
-        try (InputStream input = Files.newInputStream(path)) { signature = input.readNBytes(8); }
+        try (InputStream input = Files.newInputStream(path)) { signature = cn.bidcheck.compat.Java8Api.readNBytes(input, 8); }
         if (signature.length >= 4 && (signature[0] & 0xff) == 0xd0 && (signature[1] & 0xff) == 0xcf) {
             throw new DocumentParseException("此文件可能是加密 Word 或旧版 DOC，请解除保护并另存为 DOCX 后上传。");
         }
@@ -1593,7 +1709,7 @@ public class FileParser {
             int[] xmlBudget = {0, 0};
             Set<String> entryNames = new HashSet<>();
             byte[] buffer = new byte[8192];
-            var entries = zip.entries();
+            java.util.Enumeration<? extends java.util.zip.ZipEntry> entries = zip.entries();
             while (entries.hasMoreElements()) {
                 checkInterrupted();
                 ZipEntry entry = entries.nextElement();
@@ -1628,24 +1744,24 @@ public class FileParser {
     }
 
     private static String normalize(String value) {
-        return value == null ? "" : value.replace("\r\n", "\n").replace('\r', '\n').strip();
+        return value == null ? "" : cn.bidcheck.compat.Java8Api.strip(value.replace("\r\n", "\n").replace('\r', '\n'));
     }
 
     /** Word may export identical duplicate bibliography namespace declarations in unused custom metadata. */
     private static InputStream bibliographyValidationView(InputStream input) throws IOException {
-        byte[] bytes = input.readNBytes(8 * 1024 * 1024 + 1);
+        byte[] bytes = cn.bidcheck.compat.Java8Api.readNBytes(input, 8 * 1024 * 1024 + 1);
         if (bytes.length > 8 * 1024 * 1024) throw new DocumentParseException("DOCX 单个 XML 内容过大，请精简后上传。");
         // ISO-8859-1 provides a byte-preserving view: only known ASCII attribute bytes are removed.
         String xml = new String(bytes, StandardCharsets.ISO_8859_1);
-        var root = java.util.regex.Pattern.compile("(?s)\\A(?:\u00ef\u00bb\u00bf)?\\s*(?:<\\?xml[^?]*\\?>\\s*)?(<b:Sources\\b[^<>]*>)").matcher(xml);
+        java.util.regex.Matcher root = java.util.regex.Pattern.compile("(?s)\\A(?:\u00ef\u00bb\u00bf)?\\s*(?:<\\?xml[^?]*\\?>\\s*)?(<b:Sources\\b[^<>]*>)").matcher(xml);
         if (root.find()) {
             String tag = root.group(1);
-            var declaration = java.util.regex.Pattern.compile("\\s+xmlns:b\\s*=\\s*(['\"])http://schemas\\.openxmlformats\\.org/officeDocument/2006/bibliography\\1").matcher(tag);
-            long total = java.util.regex.Pattern.compile("\\s+xmlns:b\\s*=").matcher(tag).results().count();
-            long identical = declaration.results().count();
+            java.util.regex.Matcher declaration = java.util.regex.Pattern.compile("\\s+xmlns:b\\s*=\\s*(['\"])http://schemas\\.openxmlformats\\.org/officeDocument/2006/bibliography\\1").matcher(tag);
+            long total = cn.bidcheck.compat.Java8Extras.matchCount(java.util.regex.Pattern.compile("\\s+xmlns:b\\s*=").matcher(tag));
+            long identical = cn.bidcheck.compat.Java8Extras.matchCount(declaration);
             if (total > 1 && total == identical) {
                 declaration.reset();
-                StringBuilder deduplicated = new StringBuilder();
+                StringBuffer deduplicated = new StringBuffer();
                 boolean first = true;
                 while (declaration.find()) {
                     declaration.appendReplacement(deduplicated, first ? java.util.regex.Matcher.quoteReplacement(declaration.group()) : "");
@@ -1699,24 +1815,24 @@ public class FileParser {
             if (pipeline != null) pipeline.tick();
             session.workProgress(Math.min(99, visitedBlocks++ * 100 / Math.max(1, totalBlocks)), "正在解析 Word 内容块");
             String text = normalize(value);
-            if (text.isBlank() && warning.isBlank() && images.isEmpty() && !keepPosition) return;
+            if (cn.bidcheck.compat.Java8Api.isBlank(text) && cn.bidcheck.compat.Java8Api.isBlank(warning) && images.isEmpty() && !keepPosition) return;
             if (blockCount >= MAX_WORD_BLOCKS) throw new DocumentParseException("Word 内容块超过 20000 个，请拆分后上传。");
             while (pending.size() >= 32) append(pending.removeFirst());
             int number = ++blockCount;
             session.nativeLocation(number, location, text, images.size(), images.size());
-            if (previewOnly && !images.isEmpty()) blockPictures.put(number, List.copyOf(images));
-            if (!warning.isBlank() && !images.isEmpty() && !warning.contains("[OCR未完成]")) warning = "[OCR未完成] 部分内容未纳入识别；" + warning;
+            if (previewOnly && !images.isEmpty()) blockPictures.put(number, cn.bidcheck.compat.Java8Api.listCopyOf(images));
+            if (!cn.bidcheck.compat.Java8Api.isBlank(warning) && !images.isEmpty() && !warning.contains("[OCR未完成]")) warning = "[OCR未完成] 部分内容未纳入识别；" + warning;
             characters += text.length();
             if (characters > MAX_CHARACTERS) throw tooMuchText();
             List<Future<OcrOutcome>> recognitions = new ArrayList<>();
             for (int i = 0; i < images.size(); i++) {
                 XWPFPicture picture = images.get(i);
-                var data = picture.getPictureData();
+                org.apache.poi.xwpf.usermodel.XWPFPictureData data = picture.getPictureData();
                 if (data != null) pictureParts.add(data.getPackagePart().getPartName().getName());
                 if (previewOnly) continue;
                 recognitions.add(pipeline.submit(location, number, i + 1, () -> normalizedPicture(picture), "Word 第 " + number + " 个内容块图片 " + (i + 1)));
             }
-            pending.addLast(new PendingWordBlock(number, text, location, warning, List.copyOf(recognitions)));
+            pending.addLast(new PendingWordBlock(number, text, location, warning, cn.bidcheck.compat.Java8Api.listCopyOf(recognitions)));
             while (!pending.isEmpty() && pending.peekFirst().recognitions.stream().allMatch(Future::isDone)) append(pending.removeFirst());
         }
 
@@ -1730,33 +1846,65 @@ public class FileParser {
             for (int i = 0; i < block.recognitions.size(); i++) {
                 OcrOutcome outcome = pipeline.await(block.recognitions.get(i), "Word 第 " + number + " 个内容块图片 " + (i + 1));
                 imageLayouts.add(outcome.layout.source("i" + (i + 1) + "_", "WORD_EMBEDDED", i + 1));
-                if (!imageWarnings.isEmpty()) imageWarnings.append('\n');
+                if (!(imageWarnings.length() == 0)) imageWarnings.append('\n');
                 imageWarnings.append("图片 ").append(i + 1).append('：').append(outcome.warning);
                 if (outcome.success) {
                     parser = "WORD_NATIVE_WITH_OCR";
-                    if (!recognized.isEmpty()) recognized.append("\n\n");
+                    if (!(recognized.length() == 0)) recognized.append("\n\n");
                     if ((long) characters + recognized.length() + outcome.text.length() + 80 > MAX_CHARACTERS) throw tooMuchText();
                     recognized.append("【图片 ").append(i + 1).append(" OCR识别文字】\n").append(outcome.text);
                 }
             }
-            if (!recognized.isEmpty()) text = (text.isBlank() ? "" : "【原生文字】\n" + text + "\n\n") + recognized;
+            if (!(recognized.length() == 0)) text = (cn.bidcheck.compat.Java8Api.isBlank(text) ? "" : "【原生文字】\n" + text + "\n\n") + recognized;
             String warning = imageWarnings.toString();
             characters += text.length() - block.text.length();
             if (characters > MAX_CHARACTERS) throw tooMuchText();
-            String locatedWarning = warning.isBlank() ? "" : "第 " + number + " 个内容块" + warning;
-            if (!locatedWarning.isBlank()) warnings.add(locatedWarning);
+            String locatedWarning = cn.bidcheck.compat.Java8Api.isBlank(warning) ? "" : "第 " + number + " 个内容块" + warning;
+            if (!cn.bidcheck.compat.Java8Api.isBlank(locatedWarning)) warnings.add(locatedWarning);
             cn.bidcheck.ocr.OcrLayout layout = block.recognitions.isEmpty() || previewOnly ? null
-                    : cn.bidcheck.ocr.OcrLayout.merge(imageLayouts, !block.text.isBlank(), text);
+                    : cn.bidcheck.ocr.OcrLayout.merge(imageLayouts, !cn.bidcheck.compat.Java8Api.isBlank(block.text), text);
             Page page = new Page(number, text, block.location, parser, locatedWarning, layout);
             pages.add(page);
             if (!previewOnly) session.pageCompleted(page);
             session.workProgress(Math.min(99, visitedBlocks * 100 / Math.max(1, totalBlocks)), "已解析 Word 第 " + number + " 个内容块");
         }
-        private record PendingWordBlock(int number, String text, String location, String warning, List<Future<OcrOutcome>> recognitions) { }
+        @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class PendingWordBlock {
+        private final int number;
+        private final String text;
+        private final String location;
+        private final String warning;
+        private final List<Future<OcrOutcome>> recognitions;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private PendingWordBlock(@com.fasterxml.jackson.annotation.JsonProperty("number") int number, @com.fasterxml.jackson.annotation.JsonProperty("text") String text, @com.fasterxml.jackson.annotation.JsonProperty("location") String location, @com.fasterxml.jackson.annotation.JsonProperty("warning") String warning, @com.fasterxml.jackson.annotation.JsonProperty("recognitions") List<Future<OcrOutcome>> recognitions) { this.number = number; this.text = text; this.location = location; this.warning = warning; this.recognitions = recognitions; }
+        public int number() { return number; }
+        public String text() { return text; }
+        public String location() { return location; }
+        public String warning() { return warning; }
+        public List<Future<OcrOutcome>> recognitions() { return recognitions; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; PendingWordBlock that = (PendingWordBlock) other; return java.util.Objects.equals(this.number, that.number) && java.util.Objects.equals(this.text, that.text) && java.util.Objects.equals(this.location, that.location) && java.util.Objects.equals(this.warning, that.warning) && java.util.Objects.equals(this.recognitions, that.recognitions); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.number); hash = 31 * hash + java.util.Objects.hashCode(this.text); hash = 31 * hash + java.util.Objects.hashCode(this.location); hash = 31 * hash + java.util.Objects.hashCode(this.warning); hash = 31 * hash + java.util.Objects.hashCode(this.recognitions); return hash; }
+        @Override public String toString() { return "PendingWordBlock[" + "number=" + number + ", text=" + text + ", location=" + location + ", warning=" + warning + ", recognitions=" + recognitions + "]"; }
+ }
     }
 
     @FunctionalInterface private interface ImageSource { byte[] read() throws IOException; }
-    private record OcrOutcome(String text, String warning, boolean success, cn.bidcheck.ocr.OcrLayout layout) {
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class OcrOutcome {
+        private final String text;
+        private final String warning;
+        private final boolean success;
+        private final cn.bidcheck.ocr.OcrLayout layout;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private OcrOutcome(@com.fasterxml.jackson.annotation.JsonProperty("text") String text, @com.fasterxml.jackson.annotation.JsonProperty("warning") String warning, @com.fasterxml.jackson.annotation.JsonProperty("success") boolean success, @com.fasterxml.jackson.annotation.JsonProperty("layout") cn.bidcheck.ocr.OcrLayout layout) { this.text = text; this.warning = warning; this.success = success; this.layout = layout; }
+        public String text() { return text; }
+        public String warning() { return warning; }
+        public boolean success() { return success; }
+        public cn.bidcheck.ocr.OcrLayout layout() { return layout; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; OcrOutcome that = (OcrOutcome) other; return java.util.Objects.equals(this.text, that.text) && java.util.Objects.equals(this.warning, that.warning) && java.util.Objects.equals(this.success, that.success) && java.util.Objects.equals(this.layout, that.layout); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.text); hash = 31 * hash + java.util.Objects.hashCode(this.warning); hash = 31 * hash + java.util.Objects.hashCode(this.success); hash = 31 * hash + java.util.Objects.hashCode(this.layout); return hash; }
+        @Override public String toString() { return "OcrOutcome[" + "text=" + text + ", warning=" + warning + ", success=" + success + ", layout=" + layout + "]"; }
+
         private OcrOutcome(String text, String warning, boolean success) {
             this(text, warning, success, cn.bidcheck.ocr.OcrLayout.unavailable("未获得可用图像结构，请对照原图。"));
         }
@@ -1802,7 +1950,7 @@ public class FileParser {
         private boolean planned() { return plan.mode() != ExtractionPlan.Mode.FULL; }
         private void nativeLocation(int position, String type, String text, int images, int units) throws InterruptedIOException {
             if (nativeMap.putIfAbsent(ExtractionPlan.locationKey(type, position), new ExtractionPlan.NativeLocation(position, type, text, images, units)) == null) {
-                var route = PageClassifier.nativeOnly(text, images);
+                cn.bidcheck.document.PageClassifier.Decision route = PageClassifier.nativeOnly(text, images);
                 routes.put(ExtractionPlan.unitKey(type, position, 1), route);
                 checkInterrupted();
                 try { observer.onClassified(type, position, route); }
@@ -1811,14 +1959,14 @@ public class FileParser {
             }
         }
         private void resolve() throws InterruptedIOException {
-            resolved = plan.resolve(List.copyOf(nativeMap.values()), maximumImages);
+            resolved = plan.resolve(cn.bidcheck.compat.Java8Api.listCopyOf(nativeMap.values()), maximumImages);
             progress(40, "原生文档地图已完成，已确定本次识别与延期位置");
         }
         private void workProgress(int value, String stage) throws InterruptedIOException {
             progress(planned() ? (mapping ? value * 40 / 100 : 40 + value * 60 / 100) : value, stage);
         }
         private ExtractionPlan.Decision decision(String type, int position, int image) {
-            if (!planned()) return new ExtractionPlan.Decision(true, "FULL_EXTRACTION", List.of("按完整识别策略处理"), List.of());
+            if (!planned()) return new ExtractionPlan.Decision(true, "FULL_EXTRACTION", cn.bidcheck.compat.Java8Api.listOf("按完整识别策略处理"), cn.bidcheck.compat.Java8Api.listOf());
             if (resolved == null) throw new IllegalStateException("Native map must precede OCR selection");
             ExtractionPlan.Decision value = resolved.decisions().get(ExtractionPlan.unitKey(type, position, image));
             if (value == null) throw new IllegalStateException("OCR unit absent from native map");
@@ -1837,7 +1985,7 @@ public class FileParser {
                 }
                 if (outcome.success) {
                     String key = ExtractionPlan.unitKey(type, position, image);
-                    var location = nativeMap.get(ExtractionPlan.locationKey(type, position));
+                    cn.bidcheck.document.ExtractionPlan.NativeLocation location = nativeMap.get(ExtractionPlan.locationKey(type, position));
                     routes.put(key, PageClassifier.afterRecognition(routes.get(key),
                             (location == null ? "" : location.text()) + "\n" + outcome.text,
                             location == null ? 1 : location.imageCount()));
@@ -1850,13 +1998,13 @@ public class FileParser {
             if (completedPages.contains(locationKey)) return;
             completedCharacters += page.text().length();
             if (completedCharacters > MAX_CHARACTERS) throw tooMuchText();
-            var location = nativeMap.get(locationKey);
-            var route = routes.getOrDefault(ExtractionPlan.unitKey(page.locationType(), page.number(), 1),
+            cn.bidcheck.document.ExtractionPlan.NativeLocation location = nativeMap.get(locationKey);
+            cn.bidcheck.document.PageClassifier.Decision route = routes.getOrDefault(ExtractionPlan.unitKey(page.locationType(), page.number(), 1),
                     PageClassifier.nativeOnly(page.text(), location == null ? 0 : location.imageCount()));
             // A Word block can contain several independently recognized materials. Retain the
             // highest-priority material route; every image still has its own routing in the report.
             if (location != null) for (int image = 2; image <= location.ocrUnits(); image++) {
-                var candidate = routes.get(ExtractionPlan.unitKey(page.locationType(), page.number(), image));
+                cn.bidcheck.document.PageClassifier.Decision candidate = routes.get(ExtractionPlan.unitKey(page.locationType(), page.number(), image));
                 if (candidate != null && !route.priority().equals("HIGH") && candidate.priority().equals("HIGH")) route = candidate;
             }
             try { observer.onPage(page, route); }
@@ -1866,8 +2014,8 @@ public class FileParser {
             checkInterrupted();
         }
         private OcrOutcome restore(Unit unit) {
-            var candidate = restoreCandidate(unit);
-            return candidate == null || candidate.isEmpty() ? null : validateRestored(candidate.get(), unit);
+            java.util.Optional<cn.bidcheck.document.OcrUnitObserver.Result> candidate = restoreCandidate(unit);
+            return candidate == null || (!candidate.isPresent()) ? null : validateRestored(candidate.get(), unit);
         }
         private java.util.Optional<OcrUnitObserver.Result> restoreCandidate(Unit unit) {
             java.util.Optional<OcrUnitObserver.Result> candidate;
@@ -1880,11 +2028,11 @@ public class FileParser {
             // geometry before it can bypass a fresh recognition call.
             try {
                 String text = result.text(), warning = result.warning();
-                if (text == null || text.isBlank() || text.length() > 50_000 || text.indexOf('\0') >= 0 || pageNumberOnly(text) || !OcrEvidenceGuard.code(text).isEmpty()
+                if (text == null || cn.bidcheck.compat.Java8Api.isBlank(text) || text.length() > 50_000 || text.indexOf('\0') >= 0 || pageNumberOnly(text) || !OcrEvidenceGuard.code(text).isEmpty()
                         || warning == null || warning.length() > 4_000 || warning.indexOf('\0') >= 0 || warning.contains("[OCR未完成]")
                         || warning.contains("[OCR_DEFERRED]") || result.layout() == null) return null;
-                var layout = result.layout().validated(text);
-                for (var frame : layout.frames()) {
+                cn.bidcheck.ocr.OcrLayout layout = result.layout().validated(text);
+                for (cn.bidcheck.ocr.OcrLayout.Frame frame : layout.frames()) {
                     if (frame.crop() == null) {
                         if (!unit.hash.equals(frame.imageHash()) || unit.width != frame.width() || unit.height != frame.height()) return null;
                     } else if (frame.parentWidth() == null || frame.parentWidth() != unit.width || frame.parentHeight() != unit.height) return null;
@@ -1908,7 +2056,7 @@ public class FileParser {
             checkInterrupted();
         }
         private Map<String, Object> report(ParsedDocument document) {
-            var report = new java.util.LinkedHashMap<String, Object>(plan.describe(document.pages()));
+            java.util.LinkedHashMap<java.lang.String, java.lang.Object> report = new java.util.LinkedHashMap<String, Object>(plan.describe(document.pages()));
             report.put("actualSourceSha256", sourceHash);
             report.put("sourceBoundPlanHash", plan.sourceBoundHash(sourceHash));
             report.put("parserImageBudget", maximumImages);
@@ -1916,19 +2064,14 @@ public class FileParser {
             report.put("pageRoutingVersion", PageClassifier.VERSION);
             report.put("completedPageNotifications", completedPages.size());
             if (pdfReport != null) report.put("pdfOcrScheduler", pdfReport);
-            report.put("ocrPipeline", Map.of("submittedImages", imageCount, "restoredImages", restoredImages,
-                    "deduplicatedImages", deduplicatedImages, "peakActiveBytes", peakOcrBytes,
-                    "peakActivePixels", peakOcrPixels, "peakConcurrency", peakOcrConcurrency, "maximumPendingLocations", 32));
-            report.put("ocrBatchScheduler", Map.of("enabled", batchPolicy(client).enabled(), "submittedBatches", submittedBatches,
-                    "peakBatchPages", peakBatchPages, "peakBatchBytes", peakBatchBytes, "peakBatchPixels", peakBatchPixels,
-                    "peakBatchEstimatedTokens", peakBatchTokens, "maxPages", batchPolicy(client).maxPages(),
-                    "maxWaitMillis", batchPolicy(client).maxWaitMillis(), "completionQueueCapacity", 256));
+            report.put("ocrPipeline", cn.bidcheck.compat.Java8Api.mapOf("submittedImages", imageCount, "restoredImages", restoredImages, "deduplicatedImages", deduplicatedImages, "peakActiveBytes", peakOcrBytes, "peakActivePixels", peakOcrPixels, "peakConcurrency", peakOcrConcurrency, "maximumPendingLocations", 32));
+            report.put("ocrBatchScheduler", cn.bidcheck.compat.Java8Api.mapOf("enabled", batchPolicy(client).enabled(), "submittedBatches", submittedBatches, "peakBatchPages", peakBatchPages, "peakBatchBytes", peakBatchBytes, "peakBatchPixels", peakBatchPixels, "peakBatchEstimatedTokens", peakBatchTokens, "maxPages", batchPolicy(client).maxPages(), "maxWaitMillis", batchPolicy(client).maxWaitMillis(), "completionQueueCapacity", 256));
             List<Map<String, Object>> locations = new ArrayList<>(), selected = new ArrayList<>(), deferred = new ArrayList<>();
             long recognized = 0, failed = 0;
-            for (var location : nativeMap.values()) {
-                String pageClass = location.imageCount() > 0 ? (location.text().isBlank() ? "SCAN_PAGE" : "MIXED_PAGE")
-                        : location.text().isBlank() ? "UNKNOWN_PAGE" : "TEXT_PAGE";
-                var locationReport = new java.util.LinkedHashMap<String, Object>();
+            for (cn.bidcheck.document.ExtractionPlan.NativeLocation location : nativeMap.values()) {
+                String pageClass = location.imageCount() > 0 ? (cn.bidcheck.compat.Java8Api.isBlank(location.text()) ? "SCAN_PAGE" : "MIXED_PAGE")
+                        : cn.bidcheck.compat.Java8Api.isBlank(location.text()) ? "UNKNOWN_PAGE" : "TEXT_PAGE";
+                java.util.LinkedHashMap<java.lang.String, java.lang.Object> locationReport = new java.util.LinkedHashMap<String, Object>();
                 locationReport.put("position", location.position()); locationReport.put("locationType", location.locationType());
                 locationReport.put("nativeCharacters", location.text().length()); locationReport.put("imageCount", location.imageCount());
                 locationReport.put("ocrUnits", location.ocrUnits()); locationReport.put("pageClass", pageClass);
@@ -1936,9 +2079,9 @@ public class FileParser {
                         routes.getOrDefault(ExtractionPlan.unitKey(location.locationType(), location.position(), 1), PageClassifier.nativeOnly(location.text(), location.imageCount()))));
                 locations.add(locationReport);
                 for (int index = 1; index <= location.ocrUnits(); index++) {
-                    var decision = decision(location.locationType(), location.position(), index);
+                    cn.bidcheck.document.ExtractionPlan.Decision decision = decision(location.locationType(), location.position(), index);
                     OcrOutcome outcome = outcomes.get(ExtractionPlan.unitKey(location.locationType(), location.position(), index));
-                    var unit = new java.util.LinkedHashMap<String, Object>();
+                    java.util.LinkedHashMap<java.lang.String, java.lang.Object> unit = new java.util.LinkedHashMap<String, Object>();
                     unit.put("position", location.position()); unit.put("locationType", location.locationType()); unit.put("imageIndex", index);
                     routeFields(unit, routes.getOrDefault(ExtractionPlan.unitKey(location.locationType(), location.position(), index), PageClassifier.nativeOnly(location.text(), location.imageCount())));
                     unit.put("code", decision.code()); unit.put("reasons", decision.reasons()); unit.put("checkpointIds", decision.checkpointIds());
@@ -1949,11 +2092,11 @@ public class FileParser {
                     else deferred.add(unit);
                 }
             }
-            report.put("nativeMap", List.copyOf(locations));
-            report.put("selectedPositions", List.copyOf(selected)); report.put("deferredPositions", List.copyOf(deferred));
+            report.put("nativeMap", cn.bidcheck.compat.Java8Api.listCopyOf(locations));
+            report.put("selectedPositions", cn.bidcheck.compat.Java8Api.listCopyOf(selected)); report.put("deferredPositions", cn.bidcheck.compat.Java8Api.listCopyOf(deferred));
             report.put("selectedImageCount", selected.size()); report.put("deferredImageCount", deferred.size());
             report.put("recognizedImageCount", recognized); report.put("failedImageCount", failed);
-            var unresolved = resolved == null ? List.of() : resolved.unresolvedSelections();
+            java.util.List<? extends java.lang.Object> unresolved = resolved == null ? cn.bidcheck.compat.Java8Api.listOf() : resolved.unresolvedSelections();
             report.put("unresolvedSelections", unresolved); report.put("allPositionsTraversed", true);
             report.put("ocrCoverageComplete", deferred.isEmpty() && failed == 0 && unresolved.isEmpty()
                     && document.warnings().stream().noneMatch(w -> w.contains("[OCR未完成]")));
@@ -1977,12 +2120,12 @@ public class FileParser {
         private OcrOutcome result(cn.bidcheck.ocr.OcrResult result, byte[] image, String location) throws IOException {
             checkInterrupted();
             String text = result == null ? "" : normalize(result.text());
-            if (text.isBlank()) return new OcrOutcome("", "[OCR未完成] OCR未识别到可用文字，请对照原图确认。", false);
+            if (cn.bidcheck.compat.Java8Api.isBlank(text)) return new OcrOutcome("", "[OCR未完成] OCR未识别到可用文字，请对照原图确认。", false);
             if (text.length() > 50_000 || text.indexOf('\0') >= 0) return new OcrOutcome("", "[OCR未完成] OCR输出超限或格式异常，请对照原图确认。", false);
             String evidenceCode = OcrEvidenceGuard.code(text);
             if (!evidenceCode.isEmpty()) return generatedEvidence(evidenceCode);
             if (pageNumberOnly(text)) return recognizeSparseImage(image, text, location);
-            var layout = validatedLayout(result, text);
+            cn.bidcheck.ocr.OcrLayout layout = validatedLayout(result, text);
             return new OcrOutcome(text, "[OCR已识别] 模型：" + safeModelName(client.modelName()) + "；" + OCR_SUCCESS_WARNING + "。" + layoutWarning(layout), true, layout);
         }
 
@@ -2007,15 +2150,15 @@ public class FileParser {
                             byte[] encoded = png(crop);
                             String mime = "image/png";
                             if (encoded.length > 6 * 1024 * 1024) { encoded = jpegForOcr(encoded); mime = "image/jpeg"; }
-                            var response = client.recognize(encoded, mime);
+                            cn.bidcheck.ocr.OcrResult response = client.recognize(encoded, mime);
                             checkInterrupted();
                             String text = response == null ? "" : normalize(response.text());
                             String evidenceCode = OcrEvidenceGuard.code(text);
                             if (!evidenceCode.isEmpty()) return generatedEvidence(evidenceCode);
-                            if (text.isBlank() || pageNumberOnly(text) || text.length() > 50_000 || text.indexOf('\0') >= 0) missing++;
+                            if (cn.bidcheck.compat.Java8Api.isBlank(text) || pageNumberOnly(text) || text.length() > 50_000 || text.indexOf('\0') >= 0) missing++;
                             else {
                                 if ((long) original.length() + recovered.length() + text.length() + 160 > 50_000) return sparseIncomplete();
-                                if (!recovered.isEmpty()) recovered.append("\n\n");
+                                if (!(recovered.length() == 0)) recovered.append("\n\n");
                                 recovered.append(half == 0 ? "【上半幅 OCR，边界有重叠】\n" : "【下半幅 OCR，边界有重叠】\n").append(text);
                                 layouts.add(validatedLayout(response, text).crop(image.getWidth(), height,
                                         new cn.bidcheck.ocr.OcrLayout.Box(0, top, image.getWidth(), bottom - top))
@@ -2027,12 +2170,12 @@ public class FileParser {
                     }
                 } finally { image.flush(); }
             }
-            if (recovered.isEmpty()) return sparseIncomplete();
+            if ((recovered.length() == 0)) return sparseIncomplete();
             String warning = "[OCR已识别] 整页仅识别到页码，已补识别上下分区；边界可能重复，不能直接合计或恢复表格关系。模型："
                     + safeModelName(client.modelName()) + "；" + OCR_SUCCESS_WARNING + "。";
             if (missing > 0) warning += "[OCR未完成] " + missing + " 个分区未识别到正文，请核对原图。";
             String text = "【整页初次识别】\n" + original + "\n\n" + recovered;
-            var layout = cn.bidcheck.ocr.OcrLayout.merge(layouts, true, text);
+            cn.bidcheck.ocr.OcrLayout layout = cn.bidcheck.ocr.OcrLayout.merge(layouts, true, text);
             return new OcrOutcome(text, warning + layoutWarning(layout), true, layout);
         }
 
@@ -2065,7 +2208,7 @@ public class FileParser {
     private static String layoutWarning(cn.bidcheck.ocr.OcrLayout layout) {
         if ("COMPLETE".equals(layout.status())) return "";
         String diagnostic = layout.warnings().stream().map(note -> {
-            var code = java.util.regex.Pattern.compile("\\[LAYOUT_[A-Z0-9_]{1,48}\\]").matcher(note);
+            java.util.regex.Matcher code = java.util.regex.Pattern.compile("\\[LAYOUT_[A-Z0-9_]{1,48}\\]").matcher(note);
             return code.find() ? code.group() : "";
         }).filter(code -> !code.isEmpty()).distinct().limit(3).collect(Collectors.joining(" "));
         return "[OCR结构未完成]" + (diagnostic.isEmpty() ? "" : " " + diagnostic) + " 转录已保留，部分文字或表格关系没有可靠布局，请对照原图。";
@@ -2082,25 +2225,25 @@ public class FileParser {
     }
 
     private static String safeModelName(String value) {
-        String model = value == null ? "未知" : value.replaceAll("[\\p{Cntrl}\\[\\]]", "").strip();
-        return model.isBlank() ? "未知" : model.substring(0, Math.min(120, model.length()));
+        String model = value == null ? "未知" : cn.bidcheck.compat.Java8Api.strip(value.replaceAll("[\\p{Cntrl}\\[\\]]", ""));
+        return cn.bidcheck.compat.Java8Api.isBlank(model) ? "未知" : model.substring(0, Math.min(120, model.length()));
     }
 
     private static String sha256(byte[] bytes) {
-        try { return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes)); }
+        try { return cn.bidcheck.compat.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes)); }
         catch (java.security.NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
     }
 
     private static byte[] jpegForOcr(byte[] png) throws IOException {
         try (ImageInputStream input = new MemoryCacheImageInputStream(new ByteArrayInputStream(png))) {
             BufferedImage image = readSafeImage(input);
-            var writers = ImageIO.getImageWritersByFormatName("jpeg");
+            java.util.Iterator<javax.imageio.ImageWriter> writers = ImageIO.getImageWritersByFormatName("jpeg");
             if (!writers.hasNext()) { image.flush(); throw new DocumentParseException("无法压缩 OCR 图像。"); }
-            var writer = writers.next();
+            javax.imageio.ImageWriter writer = writers.next();
             try (ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-                 var output = new javax.imageio.stream.MemoryCacheImageOutputStream(bytes)) {
+                 javax.imageio.stream.MemoryCacheImageOutputStream output = new javax.imageio.stream.MemoryCacheImageOutputStream(bytes)) {
                 writer.setOutput(output);
-                var parameters = writer.getDefaultWriteParam();
+                javax.imageio.ImageWriteParam parameters = writer.getDefaultWriteParam();
                 parameters.setCompressionMode(javax.imageio.ImageWriteParam.MODE_EXPLICIT);
                 parameters.setCompressionQuality(0.9f);
                 writer.write(null, new javax.imageio.IIOImage(image, null, null), parameters);
@@ -2138,8 +2281,8 @@ public class FileParser {
             if (Thread.currentThread().isInterrupted()) throw new PdfInterrupted();
             if (++operators > MAX_PDF_OPERATORS_PER_PAGE) throw new PdfBudgetExceeded();
             if ("BI".equals(operator.getName())) { hasImage = true; imageCount++; }
-            if ("Do".equals(operator.getName()) && !operands.isEmpty() && operands.get(0) instanceof COSName name
-                    && getResources() != null && getResources().getXObject(name) instanceof PDImageXObject) {
+            if ("Do".equals(operator.getName()) && !operands.isEmpty() && operands.get(0) instanceof COSName
+                    && getResources() != null && getResources().getXObject(((COSName) (operands.get(0)))) instanceof PDImageXObject) {
                 hasImage = true;
                 imageCount++;
             }
@@ -2164,7 +2307,7 @@ public class FileParser {
             factory.setProperty(XMLInputFactory.SUPPORT_DTD, false);
             factory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
             factory.setXMLResolver((publicId, systemId, base, namespace) -> { throw new javax.xml.stream.XMLStreamException("External entities disabled"); });
-            var reader = factory.createXMLStreamReader(input);
+            javax.xml.stream.XMLStreamReader reader = factory.createXMLStreamReader(input);
             int depth = 0;
             try {
                 while (reader.hasNext()) {
@@ -2173,7 +2316,7 @@ public class FileParser {
                     if (event == XMLStreamConstants.DTD) throw new DocumentParseException("DOCX 不允许包含 DTD 或外部实体。");
                     if (event == XMLStreamConstants.START_ELEMENT) {
                         if (++depth > 64 || ++budget[0] > 200_000) throw new DocumentParseException("DOCX 结构过于复杂，请拆分后上传。");
-                        if (Set.of("p", "tr").contains(reader.getLocalName()) && ++budget[1] > MAX_WORD_BLOCKS) throw new DocumentParseException("Word 内容块过多，请拆分后上传。");
+                        if (cn.bidcheck.compat.Java8Api.setOf("p", "tr").contains(reader.getLocalName()) && ++budget[1] > MAX_WORD_BLOCKS) throw new DocumentParseException("Word 内容块过多，请拆分后上传。");
                     } else if (event == XMLStreamConstants.END_ELEMENT) depth--;
                 }
             } finally { reader.close(); }
@@ -2185,7 +2328,7 @@ public class FileParser {
         private final Set<COSBase> visited = Collections.newSetFromMap(new IdentityHashMap<>());
         private long total;
         private void checkPage(PDPage page) throws IOException {
-            var streams = page.getContentStreams();
+            java.util.Iterator<org.apache.pdfbox.pdmodel.common.PDStream> streams = page.getContentStreams();
             while (streams.hasNext()) checkStream(streams.next());
             checkResources(page.getResources(), 0);
         }
@@ -2198,7 +2341,7 @@ public class FileParser {
             // Other supported filters use the document's disk-backed scratch cache and the same processing limit.
             InputStream decoded;
             if (filters == null || filters.isEmpty()) decoded = stream.getCOSObject().createRawInputStream();
-            else if (filters.size() == 1 && Set.of("FlateDecode", "Fl").contains(filters.get(0).getName())) {
+            else if (filters.size() == 1 && cn.bidcheck.compat.Java8Api.setOf("FlateDecode", "Fl").contains(filters.get(0).getName())) {
                 decoded = new java.util.zip.InflaterInputStream(stream.getCOSObject().createRawInputStream());
             } else decoded = stream.createInputStream();
             try (InputStream input = decoded) {
@@ -2216,10 +2359,10 @@ public class FileParser {
             if (resources == null || !visited.add(resources.getCOSObject())) return;
             if (depth > 20 || visited.size() > 10_000) throw new DocumentParseException("PDF 资源嵌套过深或数量过多。");
             for (COSName name : resources.getXObjectNames()) {
-                var object = resources.getXObject(name);
-                if (object instanceof PDFormXObject form) {
-                    checkStream(form.getContentStream());
-                    checkResources(form.getResources(), depth + 1);
+                org.apache.pdfbox.pdmodel.graphics.PDXObject object = resources.getXObject(name);
+                if (object instanceof PDFormXObject) {
+                    checkStream(((PDFormXObject) (object)).getContentStream());
+                    checkResources(((PDFormXObject) (object)).getResources(), depth + 1);
                 }
             }
         }
@@ -2233,13 +2376,13 @@ public class FileParser {
                 private int operators;
                 private int formDepth;
                 @Override public void showAnnotation(org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation annotation) throws IOException {
-                    if (annotation instanceof org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink link
+                    if (annotation instanceof org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink
                             && !annotation.getCOSObject().containsKey(COSName.AP)) {
-                        if (invisibleNavigationLink(link)) return;
+                        if (invisibleNavigationLink(((org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink) (annotation)))) return;
                         // Keep visible link borders. Generate only their missing appearance on an
                         // isolated memory document; the parsed source and its disk streams stay untouched.
                         try (PDDocument appearanceOwner = new PDDocument()) {
-                            var copy = new org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink(
+                            org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink copy = new org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink(
                                     new org.apache.pdfbox.cos.COSDictionary(annotation.getCOSObject()));
                             copy.constructAppearances(appearanceOwner);
                             if (copy.getNormalAppearanceStream() == null) throw new IOException("PDF 链接外观无法安全生成。");
@@ -2271,31 +2414,31 @@ public class FileParser {
     }
 
     private static boolean invisibleNavigationLink(org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink link) {
-        var style = link.getBorderStyle();
+        org.apache.pdfbox.pdmodel.interactive.annotation.PDBorderStyleDictionary style = link.getBorderStyle();
         if (style != null) return style.getWidth() == 0;
-        var border = link.getBorder();
-        return border != null && border.size() >= 3 && border.getObject(2) instanceof org.apache.pdfbox.cos.COSNumber width && width.floatValue() == 0;
+        org.apache.pdfbox.cos.COSArray border = link.getBorder();
+        return border != null && border.size() >= 3 && border.getObject(2) instanceof org.apache.pdfbox.cos.COSNumber && ((org.apache.pdfbox.cos.COSNumber) (border.getObject(2))).floatValue() == 0;
     }
 
     /** Permit common high-resolution JPEG scans, while retaining the stricter bound for all other rasters. */
     private static void validateLargePdfJpeg(PDImage image) throws IOException {
-        if (!(image instanceof PDImageXObject jpeg) || image.getBitsPerComponent() != 8
-                || jpeg.getCOSObject().containsKey(COSName.SMASK) || jpeg.getCOSObject().containsKey(COSName.MASK)) {
+        if (!(image instanceof PDImageXObject) || image.getBitsPerComponent() != 8
+                || ((PDImageXObject) (image)).getCOSObject().containsKey(COSName.SMASK) || ((PDImageXObject) (image)).getCOSObject().containsKey(COSName.MASK)) {
             throw new PdfBudgetExceeded();
         }
-        COSBase color = jpeg.getCOSObject().getDictionaryObject(COSName.COLORSPACE);
-        if (!(color instanceof COSName name) || !Set.of("DeviceRGB", "DeviceGray").contains(name.getName())) throw new PdfBudgetExceeded();
-        List<COSName> filters = jpeg.getStream().getFilters();
-        if (filters == null || filters.size() != 1 || !Set.of("DCTDecode", "DCT").contains(filters.get(0).getName())) throw new PdfBudgetExceeded();
+        COSBase color = ((PDImageXObject) (image)).getCOSObject().getDictionaryObject(COSName.COLORSPACE);
+        if (!(color instanceof COSName) || !cn.bidcheck.compat.Java8Api.setOf("DeviceRGB", "DeviceGray").contains(((COSName) (color)).getName())) throw new PdfBudgetExceeded();
+        List<COSName> filters = ((PDImageXObject) (image)).getStream().getFilters();
+        if (filters == null || filters.size() != 1 || !cn.bidcheck.compat.Java8Api.setOf("DCTDecode", "DCT").contains(filters.get(0).getName())) throw new PdfBudgetExceeded();
         // Inspect the actual JPEG header before PDFBox allocates a raster. A forged PDF /Width is insufficient.
         byte[] header;
-        try (InputStream raw = jpeg.getCOSObject().createRawInputStream()) { header = raw.readNBytes(1024 * 1024); }
+        try (InputStream raw = ((PDImageXObject) (image)).getCOSObject().createRawInputStream()) { header = cn.bidcheck.compat.Java8Api.readNBytes(raw, 1024 * 1024); }
         try (ImageInputStream input = new MemoryCacheImageInputStream(new ByteArrayInputStream(header))) {
-            var readers = ImageIO.getImageReaders(input);
+            java.util.Iterator<javax.imageio.ImageReader> readers = ImageIO.getImageReaders(input);
             if (!readers.hasNext()) throw new PdfBudgetExceeded();
-            var reader = readers.next();
+            javax.imageio.ImageReader reader = readers.next();
             try {
-                if (!Set.of("jpeg", "jpg").contains(reader.getFormatName().toLowerCase(Locale.ROOT))) throw new PdfBudgetExceeded();
+                if (!cn.bidcheck.compat.Java8Api.setOf("jpeg", "jpg").contains(reader.getFormatName().toLowerCase(Locale.ROOT))) throw new PdfBudgetExceeded();
                 reader.setInput(input, true, true);
                 int width = reader.getWidth(0), height = reader.getHeight(0);
                 if (width != image.getWidth() || height != image.getHeight() || width > 8192 || height > 8192

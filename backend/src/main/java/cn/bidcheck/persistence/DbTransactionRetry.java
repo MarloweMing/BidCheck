@@ -54,7 +54,7 @@ public final class DbTransactionRetry {
         Set<Throwable> seen=Collections.newSetFromMap(new IdentityHashMap<>());
         for(Throwable current=failure;current!=null&&seen.add(current);current=current.getCause()){
             if(current instanceof CancellationException||current instanceof cn.bidcheck.infrastructure.queue.TaskLeaseLostException)return null;
-            if(current instanceof SQLException sql&&(sql.getErrorCode()==1213||"40001".equals(sql.getSQLState())))return sql;
+            if(current instanceof SQLException&&(((SQLException) (current)).getErrorCode()==1213||"40001".equals(((SQLException) (current)).getSQLState())))return ((SQLException) (current));
             // Failure during rollback leaves the outcome uncertain. Never infer a safe retry from
             // the original deadlock hidden behind a rollback/transaction-system failure.
             if(current instanceof org.springframework.transaction.TransactionSystemException)return null;

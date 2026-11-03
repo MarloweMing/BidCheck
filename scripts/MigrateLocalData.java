@@ -12,6 +12,8 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -21,17 +23,17 @@ import java.sql.ResultSetMetaData;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
-import java.util.HexFormat;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
-/** Standalone Java 17 source launcher. Never starts Spring or reads application configuration files. */
+/** Standalone Java 8 command-line tool. Never starts Spring or reads application configuration files. */
 public class MigrateLocalData {
-    private static final List<String> TABLES = List.of("qc_record", "qc_task");
+    private static final List<String> TABLES = Arrays.asList("qc_record", "qc_task");
     private static final long MAX_BYTES = 30L * 1024 * 1024;
     private static final String BUCKET = "bidcheck";
     private static String phase = "VALIDATION";
@@ -49,13 +51,13 @@ public class MigrateLocalData {
     }
 
     private static void migrate(String[] arguments) throws Exception {
-        if (arguments.length < 2 || arguments.length > 3) throw new SafeFailure("Usage: MigrateLocalData.java <backed-up-H2-base-path> <source-files-directory> [schema-mysql.sql]");
-        Path h2Base = Path.of(arguments[0]).toAbsolutePath().normalize();
+        if (arguments.length < 2 || arguments.length > 3) throw new SafeFailure("Usage: MigrateLocalData <backed-up-H2-base-path> <source-files-directory> [schema-mysql.sql]");
+        Path h2Base = Paths.get(arguments[0]).toAbsolutePath().normalize();
         if (h2Base.toString().contains(";") || h2Base.toString().contains("\n") || h2Base.toString().endsWith(".mv.db")) {
             throw new SafeFailure("Use the H2 database base path without .mv.db or JDBC options.");
         }
-        if (!Files.isRegularFile(Path.of(h2Base + ".mv.db"), LinkOption.NOFOLLOW_LINKS)) throw new SafeFailure("The backed-up H2 database file was not found.");
-        Path sourceFiles = Path.of(arguments[1]).toRealPath();
+        if (!Files.isRegularFile(Paths.get(h2Base + ".mv.db"), LinkOption.NOFOLLOW_LINKS)) throw new SafeFailure("The backed-up H2 database file was not found.");
+        Path sourceFiles = Paths.get(arguments[1]).toRealPath();
         if (!Files.isDirectory(sourceFiles)) throw new SafeFailure("The original files directory was not found.");
         String mysqlUrl = env("BIDCHECK_MYSQL_URL", false);
         if (!mysqlUrl.startsWith("jdbc:mysql:")) throw new SafeFailure("BIDCHECK_MYSQL_URL must be a MySQL JDBC URL.");
@@ -77,7 +79,7 @@ public class MigrateLocalData {
             for (String table : TABLES) {
                 if (tableExists(target, table) && count(target, table) != 0) throw new SafeFailure("Target qc_record or qc_task is not empty; migration refused without overwriting data.");
             }
-            if (arguments.length == 3) createSchema(target, Path.of(arguments[2]));
+            if (arguments.length == 3) createSchema(target, Paths.get(arguments[2]));
             for (String table : TABLES) {
                 if (!tableExists(target, table)) throw new SafeFailure("Target schema is incomplete; create schema-mysql.sql or pass its path as the third argument.");
                 requireTransactionalTable(target, table);
@@ -176,9 +178,9 @@ public class MigrateLocalData {
         List<Column> common = new ArrayList<>();
         for (Column column : sourceColumns.values()) if (destinationColumns.containsKey(column.name())) common.add(column);
         if (common.isEmpty() || common.stream().noneMatch(column -> column.name().equals("id"))) throw new SafeFailure("A migration table has no compatible primary key columns.");
-        String names = String.join(",", common.stream().map(Column::name).toList());
+        String names = String.join(",", common.stream().map(Column::name).collect(Collectors.toList()));
         String placeholders = String.join(",", java.util.Collections.nCopies(common.size(), "?"));
-        String destinationNames = String.join(",", common.stream().map(column -> "`" + column.name() + "`").toList());
+        String destinationNames = String.join(",", common.stream().map(column -> "`" + column.name() + "`").collect(Collectors.toList()));
         try (Statement select = source.createStatement();
              ResultSet rows = select.executeQuery("SELECT " + names + " FROM " + table + " ORDER BY id");
              PreparedStatement insert = target.prepareStatement("INSERT INTO " + table + " (" + destinationNames + ") VALUES (" + placeholders + ")")) {
@@ -186,10 +188,13 @@ public class MigrateLocalData {
             while (rows.next()) {
                 for (int i = 0; i < common.size(); i++) {
                     int type = common.get(i).type();
-                    Object value = switch (type) {
-                        case Types.CLOB, Types.NCLOB, Types.LONGVARCHAR, Types.LONGNVARCHAR, Types.VARCHAR, Types.NVARCHAR, Types.CHAR, Types.NCHAR -> rows.getString(i + 1);
-                        default -> rows.getObject(i + 1);
-                    };
+                    Object value;
+                    switch (type) {
+                        case Types.CLOB: case Types.NCLOB: case Types.LONGVARCHAR: case Types.LONGNVARCHAR:
+                        case Types.VARCHAR: case Types.NVARCHAR: case Types.CHAR: case Types.NCHAR:
+                            value = rows.getString(i + 1); break;
+                        default: value = rows.getObject(i + 1);
+                    }
                     insert.setObject(i + 1, value);
                 }
                 insert.addBatch();
@@ -247,11 +252,11 @@ public class MigrateLocalData {
 
     private static void createSchema(Connection connection, Path schema) throws Exception {
         phase = "CREATE_EMPTY_SCHEMA";
-        String text = Files.readString(schema);
+        String text = new String(Files.readAllBytes(schema), StandardCharsets.UTF_8);
         if (text.length() > 32_000) throw new SafeFailure("Schema file is unexpectedly large.");
         for (String part : text.split(";")) {
-            String sql = part.strip();
-            if (sql.isBlank()) continue;
+            String sql = part.trim();
+            if (sql.isEmpty()) continue;
             if (!sql.matches("(?is)^CREATE\\s+TABLE\\s+IF\\s+NOT\\s+EXISTS\\s+(qc_record|qc_task)\\s*\\(.*")
                     || sql.contains("--") || sql.contains("/*")) throw new SafeFailure("Schema may contain only CREATE TABLE IF NOT EXISTS for qc_record and qc_task.");
             try (Statement statement = connection.createStatement()) { statement.execute(sql); }
@@ -270,7 +275,7 @@ public class MigrateLocalData {
             minio.statObject(StatObjectArgs.builder().bucket(BUCKET).object(key).build());
             return true;
         } catch (ErrorResponseException failure) {
-            if (Set.of("NoSuchKey", "NoSuchObject").contains(failure.errorResponse().code())) return false;
+            if (Arrays.asList("NoSuchKey", "NoSuchObject").contains(failure.errorResponse().code())) return false;
             throw failure;
         }
     }
@@ -289,7 +294,12 @@ public class MigrateLocalData {
             if (total > MAX_BYTES) throw new SafeFailure("An original exceeds the 30 MB limit.");
             digest.update(buffer, 0, read);
         }
-        return HexFormat.of().formatHex(digest.digest());
+        StringBuilder hex = new StringBuilder(64);
+        for (byte value : digest.digest()) {
+            hex.append(Character.forDigit((value >>> 4) & 15, 16));
+            hex.append(Character.forDigit(value & 15, 16));
+        }
+        return hex.toString();
     }
 
     private static String uuid(String value) throws SafeFailure {
@@ -303,11 +313,27 @@ public class MigrateLocalData {
 
     private static String env(String name, boolean allowEmpty) throws SafeFailure {
         String value = System.getenv(name);
-        if (value == null || (!allowEmpty && value.isBlank())) throw new SafeFailure("Missing required environment variable " + name);
+        if (value == null || (!allowEmpty && value.trim().isEmpty())) throw new SafeFailure("Missing required environment variable " + name);
         return value;
     }
 
-    private record Column(String name, int type) { }
-    private record Original(String id, Path path, String sha256) { }
+    private static final class Column {
+        private final String name;
+        private final int type;
+        private Column(String name, int type) { this.name = name; this.type = type; }
+        private String name() { return name; }
+        private int type() { return type; }
+    }
+    private static final class Original {
+        private final String id;
+        private final Path path;
+        private final String sha256;
+        private Original(String id, Path path, String sha256) {
+            this.id = id; this.path = path; this.sha256 = sha256;
+        }
+        private String id() { return id; }
+        private Path path() { return path; }
+        private String sha256() { return sha256; }
+    }
     private static final class SafeFailure extends Exception { private SafeFailure(String message) { super(message); } }
 }

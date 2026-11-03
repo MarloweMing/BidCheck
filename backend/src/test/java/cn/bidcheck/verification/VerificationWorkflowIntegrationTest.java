@@ -22,7 +22,7 @@ import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.web.servlet.MockMvc;
 import static org.assertj.core.api.Assertions.*;
 import static org.awaitility.Awaitility.await;
@@ -43,20 +43,20 @@ class VerificationWorkflowIntegrationTest {
     @Autowired ObjectMapper json;
     @Autowired Store store;
     @Autowired BidService bids;
-    @MockitoBean VerificationEngine engine;
+    @MockBean VerificationEngine engine;
     @BeforeEach @SuppressWarnings("unchecked") void inference() {
         doAnswer(invocation->{
             Checkpoint c=invocation.getArgument(0);List<Document> docs=invocation.getArgument(1);Map<String,Object> context=invocation.getArgument(3);
             Consumer<Map<String,Object>> observer=(Consumer<Map<String,Object>>)context.get("stepObserver");
-            observer.accept(fields("id","one","type","FACT_EXTRACTION","inputFingerprint",context.get("analysisRevision"),"status","COMPLETED","output",Map.of("documents",docs.size())));
+            observer.accept(fields("id","one","type","FACT_EXTRACTION","inputFingerprint",context.get("analysisRevision"),"status","COMPLETED","output",cn.bidcheck.compat.Java8Api.mapOf("documents", docs.size())));
             boolean quotation=docs.stream().anyMatch(d->d.pages().stream().anyMatch(p->p.text().contains("投标总价：100元")));
             return fields("checkpointId",c.id(),"title",c.title(),"businessDecision",quotation?"PASS":"UNDETERMINED","decisionBasis","RULE_COMPUTED",
-                "workflowState",quotation?"COMPLETED":"WAIT_INPUT","complete",quotation,"obligations",List.of(fields("id","o1","description","报价核验","status",quotation?"PASS":"UNDETERMINED","reason","依据当前冻结资料")),
-                "gaps",quotation?List.of():List.of(fields("code","DOCUMENT_NOT_RECEIVED","description","未收到报价分册","requiredInput","本项目报价","resumeTrigger","DOCUMENT_ADDED")),"evidences",List.of(),"reason",quotation?"资料集合包含报价":"等待报价","metrics",Map.of());
+                "workflowState",quotation?"COMPLETED":"WAIT_INPUT","complete",quotation,"obligations",cn.bidcheck.compat.Java8Api.listOf(fields("id","o1","description","报价核验","status",quotation?"PASS":"UNDETERMINED","reason","依据当前冻结资料")),
+                "gaps",quotation?cn.bidcheck.compat.Java8Api.listOf():cn.bidcheck.compat.Java8Api.listOf(fields("code","DOCUMENT_NOT_RECEIVED","description","未收到报价分册","requiredInput","本项目报价","resumeTrigger","DOCUMENT_ADDED")),"evidences",cn.bidcheck.compat.Java8Api.listOf(),"reason",quotation?"资料集合包含报价":"等待报价","metrics",cn.bidcheck.compat.Java8Api.mapOf());
         }).when(engine).evaluate(any(),anyList(),any(),anyMap());
     }
     private JsonNode jsonResponse(org.springframework.test.web.servlet.ResultActions result) throws Exception {
-        var response=result.andReturn().getResponse();assertThat(response.getStatus()).isBetween(200,299);return json.readTree(response.getContentAsString(StandardCharsets.UTF_8));
+        org.springframework.mock.web.MockHttpServletResponse response=result.andReturn().getResponse();assertThat(response.getStatus()).isBetween(200,299);return json.readTree(response.getContentAsString(StandardCharsets.UTF_8));
     }
     private String project() throws Exception {return jsonResponse(mvc.perform(post("/api/projects").contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"核验流程测试\"}"))).path("id").asText();}
     private void complete(String taskId) {await().atMost(Duration.ofSeconds(25)).pollInterval(Duration.ofMillis(80)).until(()->{TaskRow t=store.mapper().task(taskId);if("FAILED".equals(t.status))throw new AssertionError(t.error);return "SUCCEEDED".equals(t.status);});}
@@ -74,7 +74,7 @@ class VerificationWorkflowIntegrationTest {
     private void currentRules(String project,String tender) {
         Map<String,Object> state=store.getMap("project",project);
         Map<String,Object> versions=new LinkedHashMap<>();
-        if(state.get("checkpointRuleVersions") instanceof Map<?,?> previous)previous.forEach((key,value)->versions.put(key.toString(),value));
+        if(state.get("checkpointRuleVersions") instanceof Map<?,?>)((Map<?,?>) (state.get("checkpointRuleVersions"))).forEach((key,value)->versions.put(key.toString(),value));
         versions.put(tender,BidService.RULE_VERSION);
         state.put("checkpointRuleVersions",versions);state.put("checkpointRuleVersion",BidService.RULE_VERSION);
         state.put("activeTenderId",tender);state.put("requestedTenderId",tender);
@@ -82,11 +82,10 @@ class VerificationWorkflowIntegrationTest {
     }
     private JsonNode start(String project,String tender,String bid) throws Exception {
         return jsonResponse(mvc.perform(post("/api/projects/"+project+"/verification-runs").contentType(MediaType.APPLICATION_JSON)
-            .content(json.writeValueAsString(fields("tenderDocumentId",tender,"documentIds",List.of(bid),"evaluationStage","PRE_SUBMISSION")))));
+            .content(json.writeValueAsString(fields("tenderDocumentId",tender,"documentIds",cn.bidcheck.compat.Java8Api.listOf(bid),"evaluationStage","PRE_SUBMISSION")))));
     }
     @Test void summarySeparatesServiceFailuresFromInputGaps() {
-        Map<String,Object> result=VerificationService.summary(List.of(fields("businessDecision","UNDETERMINED","complete",false,"workflowState","ENGINE_FAILURE"),
-            fields("businessDecision","UNDETERMINED","complete",false,"workflowState","WAIT_INPUT")),2);
+        Map<String,Object> result=VerificationService.summary(cn.bidcheck.compat.Java8Api.listOf(fields("businessDecision","UNDETERMINED","complete",false,"workflowState","ENGINE_FAILURE"), fields("businessDecision","UNDETERMINED","complete",false,"workflowState","WAIT_INPUT")),2);
         assertThat(result.get("errors")).isEqualTo(1);assertThat(result.get("waiting")).isEqualTo(2);
     }
     @Test void selectedHistoricalTenderCannotBorrowTheActiveTendersCurrentRuleVersion() throws Exception {
@@ -95,12 +94,12 @@ class VerificationWorkflowIntegrationTest {
                 bid=upload(project,"BID","投标.txt","投标总价：100元");
         checkpoint(project,oldTender);checkpoint(project,currentTender);
         Map<String,Object> state=store.getMap("project",project);
-        state.put("checkpointRuleVersions",Map.of(oldTender,"old-rules",currentTender,BidService.RULE_VERSION));
+        state.put("checkpointRuleVersions",cn.bidcheck.compat.Java8Api.mapOf(oldTender, "old-rules", currentTender, BidService.RULE_VERSION));
         assertThat(state.get("activeTenderId")).isEqualTo(currentTender);
         store.save("project",project,project,"",state);
         mvc.perform(post("/api/projects/"+project+"/verification-runs").contentType(MediaType.APPLICATION_JSON)
-                .content(json.writeValueAsString(fields("tenderDocumentId",oldTender,"documentIds",List.of(bid)))))
-                .andExpect(status().isBadRequest()).andExpect(content().string(org.hamcrest.Matchers.containsString("提取规则已更新")));
+                .content(json.writeValueAsString(fields("tenderDocumentId",oldTender,"documentIds",cn.bidcheck.compat.Java8Api.listOf(bid)))))
+                .andExpect(status().isBadRequest()).andExpect(response -> assertThat(response.getResponse().getContentAsString(StandardCharsets.UTF_8)).contains("提取规则已更新"));
         assertThat(store.maps("verification_run",project,null)).isEmpty();
         JsonNode current=start(project,currentTender,bid);complete(current.path("taskId").asText());
     }
@@ -119,7 +118,7 @@ class VerificationWorkflowIntegrationTest {
             .param("role","BID").param("purpose","QUOTATION").param("runId",runId)));
         complete(parse.path("id").asText());
         await().atMost(Duration.ofSeconds(25)).until(()->store.maps("verification_run",project,null).size()==2);
-        Map<String,Object> revised=store.maps("verification_run",project,null).stream().filter(r->!runId.equals(r.get("id"))).findFirst().orElseThrow();complete(revised.get("taskId").toString());
+        Map<String,Object> revised=store.maps("verification_run",project,null).stream().filter(r->!runId.equals(r.get("id"))).findFirst().orElseThrow(java.util.NoSuchElementException::new);complete(revised.get("taskId").toString());
         JsonNode latest=jsonResponse(mvc.perform(get("/api/verification-runs/"+revised.get("id"))));
         assertThat(latest.path("run").path("documentIds").size()).isEqualTo(2);
         assertThat(latest.path("summary").path("automaticComplete").asInt()).isEqualTo(1);
@@ -133,9 +132,9 @@ class VerificationWorkflowIntegrationTest {
     @Test void validatesProjectScopeDatesAndRejectsExternallySubmittedPass() throws Exception {
         String project=project(),tender=upload(project,"TENDER","招标.txt","投标截止时间：2025年08月05日。\n报价不超过200元"),bid=upload(project,"BID","投标.txt","投标总价：100元");
         checkpoint(project,tender);String other=project(),foreign=upload(other,"BID","外部.txt","其他项目");
-        mvc.perform(post("/api/projects/"+project+"/verification-runs").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(fields("tenderDocumentId",tender,"documentIds",List.of(foreign))))).andExpect(status().isBadRequest());
-        mvc.perform(post("/api/projects/"+project+"/verification-runs").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(fields("tenderDocumentId",tender,"documentIds",List.of())))).andExpect(status().isBadRequest());
-        mvc.perform(post("/api/projects/"+project+"/verification-runs").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(fields("tenderDocumentId",tender,"documentIds",List.of(bid),"referenceDate","2025-10-08","referenceDateSourceDocumentId",tender)))).andExpect(status().isBadRequest());
+        mvc.perform(post("/api/projects/"+project+"/verification-runs").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(fields("tenderDocumentId",tender,"documentIds",cn.bidcheck.compat.Java8Api.listOf(foreign))))).andExpect(status().isBadRequest());
+        mvc.perform(post("/api/projects/"+project+"/verification-runs").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(fields("tenderDocumentId",tender,"documentIds",cn.bidcheck.compat.Java8Api.listOf())))).andExpect(status().isBadRequest());
+        mvc.perform(post("/api/projects/"+project+"/verification-runs").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(fields("tenderDocumentId",tender,"documentIds",cn.bidcheck.compat.Java8Api.listOf(bid),"referenceDate","2025-10-08","referenceDateSourceDocumentId",tender)))).andExpect(status().isBadRequest());
         JsonNode run=start(project,tender,bid);complete(run.path("taskId").asText());
         mvc.perform(post("/api/projects/"+project+"/verification-external-records").contentType(MediaType.APPLICATION_JSON)
             .content(json.writeValueAsString(fields("runId",run.path("id").asText(),"kind","CREDIT","subject","某公司","source","示例记录","result","PASS")))).andExpect(status().isBadRequest());
@@ -153,9 +152,9 @@ class VerificationWorkflowIntegrationTest {
         doAnswer(invocation->{
             Checkpoint cp=invocation.getArgument(0);Map<String,Object> context=invocation.getArgument(3);int call=calls.computeIfAbsent(cp.id(),k->new AtomicInteger()).incrementAndGet();
             if(cp.id().equals(second)&&call>1)resumed.set(!VerificationService.maps(context.get("priorSteps")).isEmpty());
-            ((Consumer<Map<String,Object>>)context.get("stepObserver")).accept(fields("id","durable-fact","type","EXTRACT","status","COMPLETED","output",Map.of("value","100")));
+            ((Consumer<Map<String,Object>>)context.get("stepObserver")).accept(fields("id","durable-fact","type","EXTRACT","status","COMPLETED","output",cn.bidcheck.compat.Java8Api.mapOf("value", "100")));
             if(cp.id().equals(second)&&call==1)throw new IllegalStateException("测试处理进程在计算阶段中断");
-            return fields("businessDecision","PASS","complete",true,"workflowState","COMPLETED","decisionBasis","RULE_COMPUTED","obligations",List.of(),"gaps",List.of(),"reason","已完成的计算");
+            return fields("businessDecision","PASS","complete",true,"workflowState","COMPLETED","decisionBasis","RULE_COMPUTED","obligations",cn.bidcheck.compat.Java8Api.listOf(),"gaps",cn.bidcheck.compat.Java8Api.listOf(),"reason","已完成的计算");
         }).when(engine).evaluate(any(),anyList(),any(),anyMap());
         JsonNode run=start(project,tender,bid);String taskId=run.path("taskId").asText();
         await().atMost(Duration.ofSeconds(25)).until(()->"FAILED".equals(bids.task(taskId).status));
@@ -168,19 +167,19 @@ class VerificationWorkflowIntegrationTest {
         String project=project(),tender=upload(project,"TENDER","日期.txt","投标截止时间：2030年04月01日\n合同工期起算日期：2030年06月01日"),bid=upload(project,"BID","投标.txt","投标总价：100元");
         checkpoint(project,tender);
         mvc.perform(post("/api/projects/"+project+"/verification-runs").contentType(MediaType.APPLICATION_JSON)
-            .content(json.writeValueAsString(fields("tenderDocumentId",tender,"documentIds",List.of(bid),"referenceDate","2030-06-01","referenceDateSourceDocumentId",tender)))).andExpect(status().isBadRequest());
+            .content(json.writeValueAsString(fields("tenderDocumentId",tender,"documentIds",cn.bidcheck.compat.Java8Api.listOf(bid),"referenceDate","2030-06-01","referenceDateSourceDocumentId",tender)))).andExpect(status().isBadRequest());
     }
     @Test void aClarificationRequiresAnExplicitSourcedRuleRevision() throws Exception {
         String project=project(),tender=upload(project,"TENDER","规则.txt","报价不得超过200元"),bid=upload(project,"BID","投标.txt","本项目投标总价：100元");String cp=checkpoint(project,tender);
         JsonNode first=start(project,tender,bid);complete(first.path("taskId").asText());
         String amended=upload(project,"TENDER","澄清.txt","澄清：报价上限由200元调整为150元，其他条款不变。");
         JsonNode second=jsonResponse(mvc.perform(post("/api/verification-runs/"+first.path("id").asText()+"/revisions").contentType(MediaType.APPLICATION_JSON)
-            .content(json.writeValueAsString(fields("documentIds",List.of(bid,amended))))));complete(second.path("taskId").asText());
+            .content(json.writeValueAsString(fields("documentIds",cn.bidcheck.compat.Java8Api.listOf(bid, amended))))));complete(second.path("taskId").asText());
         JsonNode detail=jsonResponse(mvc.perform(get("/api/verification-runs/"+second.path("id").asText())));assertThat(detail.path("results").get(0).path("businessDecision").asText()).isEqualTo("UNDETERMINED");
         JsonNode change=detail.path("run").path("requirementChanges").get(0);assertThat(change.path("requiresConfirmation").asBoolean()).isTrue();List<String> candidates=new ArrayList<>();change.path("candidates").forEach(c->candidates.add(c.path("id").asText()));
-        var override=fields("checkpointId",cp,"expected","报价不得超过150元","source",fields("documentId",amended,"page",1,"quote","报价上限由200元调整为150元"),"candidateIds",candidates,"confirmed",true);
+        java.util.Map<java.lang.String, java.lang.Object> override=fields("checkpointId",cp,"expected","报价不得超过150元","source",fields("documentId",amended,"page",1,"quote","报价上限由200元调整为150元"),"candidateIds",candidates,"confirmed",true);
         JsonNode third=jsonResponse(mvc.perform(post("/api/verification-runs/"+second.path("id").asText()+"/revisions").contentType(MediaType.APPLICATION_JSON)
-            .content(json.writeValueAsString(fields("expectedRevision",2,"acceptedCheckpointOverrides",List.of(override))))));complete(third.path("taskId").asText());
+            .content(json.writeValueAsString(fields("expectedRevision",2,"acceptedCheckpointOverrides",cn.bidcheck.compat.Java8Api.listOf(override))))));complete(third.path("taskId").asText());
         assertThat(store.list("verification_check",project,third.path("id").asText(),Checkpoint.class).get(0).expected()).isEqualTo("报价不得超过150元");
         assertThat(store.list("verification_check",project,first.path("id").asText(),Checkpoint.class).get(0).expected()).isEqualTo("报价不超过200元");
         assertThat(jsonResponse(mvc.perform(get("/api/verification-runs/"+third.path("id").asText()))).path("summary").path("automaticComplete").asInt()).isEqualTo(1);
@@ -197,9 +196,7 @@ class VerificationWorkflowIntegrationTest {
         JsonNode before=jsonResponse(mvc.perform(get("/api/verification-runs/"+first.path("id").asText())));
         assertThat(before.path("results").get(0).path("businessDecision").asText()).isEqualTo("UNDETERMINED");
         Map<String,Object> data=fields("confirmed",true,"rosterComplete",true,"arithmeticCorrectionsConfirmed",true,"taxBasis","EXCLUDING_TAX","targetBidder","甲公司",
-            "rosterSource",fields("documentId",bid,"page",1,"quote",roster),"entries",List.of(
-                fields("bidder","甲公司","price","100","unit","万元","source",fields("documentId",bid,"page",1,"quote",a)),
-                fields("bidder","乙公司","price","1000000","unit","元","source",fields("documentId",bid,"page",1,"quote",b))));
+            "rosterSource",fields("documentId",bid,"page",1,"quote",roster),"entries",cn.bidcheck.compat.Java8Api.listOf(fields("bidder","甲公司","price","100","unit","万元","source",fields("documentId",bid,"page",1,"quote",a)), fields("bidder","乙公司","price","1000000","unit","元","source",fields("documentId",bid,"page",1,"quote",b))));
         // Input-unit conversion is checked against original amounts, not a claimed business conclusion.
         JsonNode second=jsonResponse(mvc.perform(post("/api/verification-runs/"+first.path("id").asText()+"/revisions").contentType(MediaType.APPLICATION_JSON)
             .content(json.writeValueAsString(fields("expectedRevision",1,"pricingData",data)))));complete(second.path("taskId").asText());
@@ -220,9 +217,9 @@ class VerificationWorkflowIntegrationTest {
                 extractions.incrementAndGet();List<Map<String,Object>> facts=new ArrayList<>();
                 for(Map<String,Object> source:VerificationService.maps(input.get("sources"))) {
                     String quote=Objects.toString(source.get("quote"),"");java.util.regex.Matcher value=java.util.regex.Pattern.compile("服务期[：:]([0-9]+)天").matcher(quote);
-                    if(value.find())facts.add(fields("kind","NUMBER","subject","","field","服务期","rawValue",value.group(1),"value",value.group(1),"unit","天","basis","服务期","scope","CURRENT_PROJECT","sourceIds",List.of(source.get("id")),"attributes",Map.of()));
+                    if(value.find())facts.add(fields("kind","NUMBER","subject","","field","服务期","rawValue",value.group(1),"value",value.group(1),"unit","天","basis","服务期","scope","CURRENT_PROJECT","sourceIds",cn.bidcheck.compat.Java8Api.listOf(source.get("id")),"attributes",cn.bidcheck.compat.Java8Api.mapOf()));
                 }
-                return json.valueToTree(Map.of("facts",facts));
+                return json.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("facts", facts));
             }
         };
         VerificationEngine delegate=new VerificationEngine(gateway,null);
@@ -247,7 +244,7 @@ class VerificationWorkflowIntegrationTest {
         byte[] oldExport=mvc.perform(get("/api/verification-runs/"+runId+"/report?format=json")).andReturn().getResponse().getContentAsByteArray();
         String changed=upload(project,"BID","补充服务期.txt","本项目服务期：300天");
         JsonNode second=jsonResponse(mvc.perform(post("/api/verification-runs/"+runId+"/revisions").contentType(MediaType.APPLICATION_JSON)
-            .content(json.writeValueAsString(fields("expectedRevision",1,"documentIds",List.of(bid,changed))))));complete(second.path("taskId").asText());
+            .content(json.writeValueAsString(fields("expectedRevision",1,"documentIds",cn.bidcheck.compat.Java8Api.listOf(bid, changed))))));complete(second.path("taskId").asText());
         JsonNode changedDetail=jsonResponse(mvc.perform(get("/api/verification-runs/"+second.path("id").asText())));
         assertThat(extractions.get()).isGreaterThan(1);
         assertThat(changedDetail.path("results").toString()).contains("CONFLICTING_EVIDENCE");

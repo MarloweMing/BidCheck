@@ -28,7 +28,7 @@ final class CheckpointReconciler {
             }
         }
         List<Entry> existing=new ArrayList<>();
-        for (String kind:List.of("checkpoint","deleted_checkpoint")) {
+        for (String kind:cn.bidcheck.compat.Java8Api.listOf("checkpoint", "deleted_checkpoint")) {
             for (Checkpoint current:store.list(kind,project,tender,Checkpoint.class)) {
                 Stored baseline=store.mapper().get("checkpoint-baseline:"+current.id());
                 Checkpoint original=baseline==null?initial.getOrDefault(current.id(),current):store.decode(baseline.body,Checkpoint.class);
@@ -41,14 +41,14 @@ final class CheckpointReconciler {
         Set<String> used=new HashSet<>();
         for (Checkpoint candidate:fresh) {
             String shape=definition(candidate), business=businessDefinition(candidate);
-            List<Entry> exact=existing.stream().filter(e->!e.manual&&!used.contains(e.current.id())&&definition(e.original).equals(shape)).toList();
+            List<Entry> exact=cn.bidcheck.compat.Java8Api.toList(existing.stream().filter(e->!e.manual&&!used.contains(e.current.id())&&definition(e.original).equals(shape)));
             Entry match=exact.size()==1?exact.get(0):null;
             // Line anchors and quote extents may be corrected without changing the obligation.
             // Only one-to-one business matches may bridge such a source migration.
-            List<Entry> sameBusiness=existing.stream().filter(e->!e.manual&&businessDefinition(e.original).equals(business)).toList();
+            List<Entry> sameBusiness=cn.bidcheck.compat.Java8Api.toList(existing.stream().filter(e->!e.manual&&businessDefinition(e.original).equals(business)));
             if(match==null&&sameBusiness.size()==1&&fresh.stream().filter(c->businessDefinition(c).equals(business)).count()==1
                     &&!used.contains(sameBusiness.get(0).current.id()))match=sameBusiness.get(0);
-            List<Entry> allRelated=existing.stream().filter(e->!e.manual&&relatedSource(e.original,candidate)).toList();
+            List<Entry> allRelated=cn.bidcheck.compat.Java8Api.toList(existing.stream().filter(e->!e.manual&&relatedSource(e.original,candidate)));
             Boolean inheritedEnabled=null;
             if(match==null&&allRelated.size()==1) {
                 Entry old=allRelated.get(0);
@@ -107,7 +107,7 @@ final class CheckpointReconciler {
         String audit=Store.id();
         store.save("audit",audit,project,tender,BidService.fields("id",audit,"action","CHECKPOINTS_EXTRACTED",
                 "ruleVersion",version,"candidateCount",fresh.size(),"activeCount",count,"createdAt",BidService.now()));
-        return new Outcome(count,List.copyOf(warnings));
+        return new Outcome(count,cn.bidcheck.compat.Java8Api.listCopyOf(warnings));
     }
 
     private Checkpoint decode(Object value) { return store.decode(store.encode(value),Checkpoint.class); }
@@ -134,7 +134,7 @@ final class CheckpointReconciler {
     private static String lineage(Checkpoint c) {
         Evidence source=c.source();
         String position=source==null?"generated":source.documentId()+":"+source.locationType()+":"+source.page()+":"+
-                (source.anchor()==null||source.anchor().isBlank()?source.quote():source.anchor());
+                (source.anchor()==null||cn.bidcheck.compat.Java8Api.isBlank(source.anchor())?source.quote():source.anchor());
         return position+":"+c.type()+":"+c.field();
     }
     private static Checkpoint copy(Checkpoint c,String id,boolean confirmed) {
@@ -144,6 +144,32 @@ final class CheckpointReconciler {
         return new Checkpoint(id,c.title(),c.category(),c.severity(),c.type(),c.field(),c.operator(),
                 c.expected(),c.unit(),c.required(),confirmed,enabled,c.source());
     }
-    record Outcome(int count,List<String> warnings) {}
-    private record Entry(Checkpoint current,Checkpoint original,boolean deleted,boolean manual) {}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    static final class Outcome {
+        private final int count;
+        private final List<String> warnings;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        Outcome(@com.fasterxml.jackson.annotation.JsonProperty("count") int count, @com.fasterxml.jackson.annotation.JsonProperty("warnings") List<String> warnings) { this.count = count; this.warnings = warnings; }
+        public int count() { return count; }
+        public List<String> warnings() { return warnings; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Outcome that = (Outcome) other; return java.util.Objects.equals(this.count, that.count) && java.util.Objects.equals(this.warnings, that.warnings); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.count); hash = 31 * hash + java.util.Objects.hashCode(this.warnings); return hash; }
+        @Override public String toString() { return "Outcome[" + "count=" + count + ", warnings=" + warnings + "]"; }
+}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Entry {
+        private final Checkpoint current;
+        private final Checkpoint original;
+        private final boolean deleted;
+        private final boolean manual;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Entry(@com.fasterxml.jackson.annotation.JsonProperty("current") Checkpoint current, @com.fasterxml.jackson.annotation.JsonProperty("original") Checkpoint original, @com.fasterxml.jackson.annotation.JsonProperty("deleted") boolean deleted, @com.fasterxml.jackson.annotation.JsonProperty("manual") boolean manual) { this.current = current; this.original = original; this.deleted = deleted; this.manual = manual; }
+        public Checkpoint current() { return current; }
+        public Checkpoint original() { return original; }
+        public boolean deleted() { return deleted; }
+        public boolean manual() { return manual; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Entry that = (Entry) other; return java.util.Objects.equals(this.current, that.current) && java.util.Objects.equals(this.original, that.original) && java.util.Objects.equals(this.deleted, that.deleted) && java.util.Objects.equals(this.manual, that.manual); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.current); hash = 31 * hash + java.util.Objects.hashCode(this.original); hash = 31 * hash + java.util.Objects.hashCode(this.deleted); hash = 31 * hash + java.util.Objects.hashCode(this.manual); return hash; }
+        @Override public String toString() { return "Entry[" + "current=" + current + ", original=" + original + ", deleted=" + deleted + ", manual=" + manual + "]"; }
+}
 }

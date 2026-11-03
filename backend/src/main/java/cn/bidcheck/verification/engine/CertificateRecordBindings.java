@@ -13,7 +13,18 @@ final class CertificateRecordBindings {
     private static final Pattern TITLE=Pattern.compile("(?m)^[\\t #*]*(?:中华人民共和国)?[^\\r\\n:：|<>]{0,50}(?:注册证书|安全生产考核合格证书?)[\\t *]*\\r?$");
     private static final Pattern HOLDER=Pattern.compile("(?m)^[\\t ]*(?:#{1,6}[\\t ]*)?(?:姓\\s*名|持证人)\\s*[:：]\\s*[\\p{IsHan}·*＊×●]{2,12}[\\t ]*\\r?$");
     private CertificateRecordBindings(){}
-    record Original(String text,List<Source> sources){}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    static final class Original{
+        private final String text;
+        private final List<Source> sources;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        Original(@com.fasterxml.jackson.annotation.JsonProperty("text") String text, @com.fasterxml.jackson.annotation.JsonProperty("sources") List<Source> sources) { this.text = text; this.sources = sources; }
+        public String text() { return text; }
+        public List<Source> sources() { return sources; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Original that = (Original) other; return java.util.Objects.equals(this.text, that.text) && java.util.Objects.equals(this.sources, that.sources); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.text); hash = 31 * hash + java.util.Objects.hashCode(this.sources); return hash; }
+        @Override public String toString() { return "Original[" + "text=" + text + ", sources=" + sources + "]"; }
+}
     /** Only the corpus constructor registers complete immutable pages. A model-disclosed map
      * has no such provenance and cannot authorize a cross-block certificate binding. */
     static final class SourceIndex extends LinkedHashMap<String,Source>{
@@ -26,37 +37,48 @@ final class CertificateRecordBindings {
             return result;
         }
     }
-    private record PageIdentity(int length,String hash){}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class PageIdentity{
+        private final int length;
+        private final String hash;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private PageIdentity(@com.fasterxml.jackson.annotation.JsonProperty("length") int length, @com.fasterxml.jackson.annotation.JsonProperty("hash") String hash) { this.length = length; this.hash = hash; }
+        public int length() { return length; }
+        public String hash() { return hash; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; PageIdentity that = (PageIdentity) other; return java.util.Objects.equals(this.length, that.length) && java.util.Objects.equals(this.hash, that.hash); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.length); hash = 31 * hash + java.util.Objects.hashCode(this.hash); return hash; }
+        @Override public String toString() { return "PageIdentity[" + "length=" + length + ", hash=" + hash + "]"; }
+}
 
     static List<CertificateSourceComparison.Record> records(EvidenceCorpus corpus,List<Source> selected){
         Set<String> selectedPages=new HashSet<>();for(Source s:selected)selectedPages.add(pageKey(s));
         Map<String,List<Source>> pages=new LinkedHashMap<>();
         for(Source s:corpus.all)if(selectedPages.contains(pageKey(s))&&!s.id().startsWith("V"))pages.computeIfAbsent(pageKey(s),k->new ArrayList<>()).add(s);
         List<CertificateSourceComparison.Record> out=new ArrayList<>();
-        for(var entry:pages.entrySet()){
+        for(java.util.Map.Entry<java.lang.String, java.util.List<cn.bidcheck.verification.engine.VerificationTypes.Source>> entry:pages.entrySet()){
             Original original=original(entry.getValue());if(original==null)continue;
-            var page=corpus.pages.get(entry.getKey());if(page==null||!original.text().equals(Objects.toString(page.text(),"")))continue;
+            cn.bidcheck.domain.Domain.Page page=corpus.pages.get(entry.getKey());if(page==null||!original.text().equals(Objects.toString(page.text(),"")))continue;
             out.addAll(read(original));
         }
-        return List.copyOf(out);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(out);
     }
 
     /** A fresh source re-read is the authorization; a claimed bindingMethod/recordId is not. */
     static boolean matches(Fact fact,Map<String,Source> sources){return matching(fact,sources)!=null;}
     static CertificateSourceComparison.Record matching(Fact fact,Map<String,Source> sources){
-        if(!(sources instanceof SourceIndex index))return null;
+        if(!(sources instanceof SourceIndex))return null;
         if(!fact.kind().equals("CERTIFICATE")||fact.sourceIds().isEmpty()||!DomainBindings.certificateIdentity(fact))return null;
         List<Source> refs=new ArrayList<>();for(String id:fact.sourceIds()){Source source=sources.get(id);if(source==null)return null;refs.add(source);}
         String page=pageKey(refs.get(0));if(refs.stream().anyMatch(s->!pageKey(s).equals(page)))return null;
         // Do not accept a selected prefix when the host has more blocks of this occurrence.
         Set<String> ids=new HashSet<>(fact.sourceIds());if(sources.values().stream().anyMatch(s->pageKey(s).equals(page)&&!s.id().startsWith("V")&&!ids.contains(s.id())))return null;
-        Original original=original(refs);if(original==null||!index.complete(page,original.text()))return null;
-        for(var record:read(original))if(matchesFields(fact,record))return record;
+        Original original=original(refs);if(original==null||!((SourceIndex) (sources)).complete(page,original.text()))return null;
+        for(cn.bidcheck.verification.engine.CertificateSourceComparison.Record record:read(original))if(matchesFields(fact,record))return record;
         return null;
     }
 
     static Set<String> validityFields(Fact fact,Map<String,Source> sources){
-        var record=matching(fact,sources);if(record==null)return Set.of();
+        cn.bidcheck.verification.engine.CertificateSourceComparison.Record record=matching(fact,sources);if(record==null)return cn.bidcheck.compat.Java8Api.setOf();
         Set<String> labels=new LinkedHashSet<>();
         if(record.fields().containsKey("VALIDITY_USE_START")||record.fields().containsKey("VALIDITY_USE_END"))labels.add("使用有效期");
         if(record.fields().keySet().stream().anyMatch(k->k.startsWith("VALIDITY_")&&!k.startsWith("VALIDITY_USE_"))){
@@ -69,47 +91,47 @@ final class CertificateRecordBindings {
 
     static Map<String,Object> audit(CertificateSourceComparison.Record record){
         return linked("version",VERSION,"recordId",record.id(),"binding","UNIQUE_LABELLED_HOLDER_AND_CERTIFICATE_TITLE_IN_CONTIGUOUS_ORIGINAL_RANGE",
-            "sourceIds",record.sources().stream().map(Source::id).toList(),"fields",record.fields().values().stream().sorted(Comparator.comparing(CertificateSourceComparison.Field::key)).map(CertificateSourceComparison.Field::audit).toList(),
+            "sourceIds",cn.bidcheck.compat.Java8Api.toList(record.sources().stream().map(Source::id)),"fields",cn.bidcheck.compat.Java8Api.toList(record.fields().values().stream().sorted(Comparator.comparing(CertificateSourceComparison.Field::key)).map(CertificateSourceComparison.Field::audit)),
             "proves","LOCAL_CERTIFICATE_FIELDS_ONLY","provesCurrentAppointment",false);
     }
 
     private static boolean matchesFields(Fact fact,CertificateSourceComparison.Record record){
         if(!record.issues().isEmpty()||!record.owner().equals(fact.subject())||!DomainBindings.sameCertificateCategory(record.category(),str(fact.attributes(),"category")))return false;
         String numberKey=numberKey(record,str(fact.attributes(),"numberField"));
-        if(numberKey.isBlank()||!record.value(numberKey).equals(PersonnelCertificateRecords.normalNumber(str(fact.attributes(),"number"))))return false;
-        if(!fact.value().isBlank()&&!PersonnelCertificateRecords.normalNumber(fact.value()).equals(record.value(numberKey)))return false;
+        if(cn.bidcheck.compat.Java8Api.isBlank(numberKey)||!record.value(numberKey).equals(PersonnelCertificateRecords.normalNumber(str(fact.attributes(),"number"))))return false;
+        if(!cn.bidcheck.compat.Java8Api.isBlank(fact.value())&&!PersonnelCertificateRecords.normalNumber(fact.value()).equals(record.value(numberKey)))return false;
         String grade=str(fact.attributes(),"grade"),profession=str(fact.attributes(),"profession"),employer=str(fact.attributes(),"employer");
-        if(!grade.isBlank()&&!record.category().startsWith(grade))return false;
-        if(!employer.isBlank()&&!record.value("EMPLOYER").equals(employer))return false;
-        if(!profession.isBlank()&&!record.value("PROFESSION").equals(profession)&&!record.value("PROFESSION:"+profession).equals(profession))return false;
+        if(!cn.bidcheck.compat.Java8Api.isBlank(grade)&&!record.category().startsWith(grade))return false;
+        if(!cn.bidcheck.compat.Java8Api.isBlank(employer)&&!record.value("EMPLOYER").equals(employer))return false;
+        if(!cn.bidcheck.compat.Java8Api.isBlank(profession)&&!record.value("PROFESSION").equals(profession)&&!record.value("PROFESSION:"+profession).equals(profession))return false;
         String field=str(fact.attributes(),"validityField"),start=str(fact.attributes(),"start"),end=str(fact.attributes(),"end");
-        if(field.isBlank())return start.isBlank()&&end.isBlank();
+        if(cn.bidcheck.compat.Java8Api.isBlank(field))return cn.bidcheck.compat.Java8Api.isBlank(start)&&cn.bidcheck.compat.Java8Api.isBlank(end);
         String prefix=field.equals("使用有效期")?"VALIDITY_USE_":"VALIDITY_",suffix="";
-        if(!prefix.equals("VALIDITY_USE_")&&!profession.isBlank()&&record.fields().containsKey("VALIDITY_END:"+profession))suffix=":"+profession;
-        var ending=record.fields().get(prefix+"END"+suffix);var beginning=record.fields().get(prefix+"START"+suffix);
-        if(ending==null||!(ending.label().equals(field)||!suffix.isBlank()&&field.equals("有效期")))return false;
-        return (start.isBlank()||beginning!=null&&beginning.value().equals(start))&&(end.isBlank()||ending.value().equals(end));
+        if(!prefix.equals("VALIDITY_USE_")&&!cn.bidcheck.compat.Java8Api.isBlank(profession)&&record.fields().containsKey("VALIDITY_END:"+profession))suffix=":"+profession;
+        cn.bidcheck.verification.engine.CertificateSourceComparison.Field ending=record.fields().get(prefix+"END"+suffix);cn.bidcheck.verification.engine.CertificateSourceComparison.Field beginning=record.fields().get(prefix+"START"+suffix);
+        if(ending==null||!(ending.label().equals(field)||!cn.bidcheck.compat.Java8Api.isBlank(suffix)&&field.equals("有效期")))return false;
+        return (cn.bidcheck.compat.Java8Api.isBlank(start)||beginning!=null&&beginning.value().equals(start))&&(cn.bidcheck.compat.Java8Api.isBlank(end)||ending.value().equals(end));
     }
 
     static String numberKey(CertificateSourceComparison.Record record,String label){
-        for(String key:List.of("CERTIFICATE_NUMBER","REGISTRATION_NUMBER")){var f=record.fields().get(key);if(f!=null&&f.label().equals(label))return key;}return "";
+        for(String key:cn.bidcheck.compat.Java8Api.listOf("CERTIFICATE_NUMBER", "REGISTRATION_NUMBER")){cn.bidcheck.verification.engine.CertificateSourceComparison.Field f=record.fields().get(key);if(f!=null&&f.label().equals(label))return key;}return "";
     }
 
     private static List<CertificateSourceComparison.Record> read(Original original){
         String text=original.text();
-        if(TITLE.matcher(text).results().count()!=1||HOLDER.matcher(text).results().count()!=1)return List.of();
+        if(cn.bidcheck.compat.Java8Extras.matchCount(TITLE.matcher(text))!=1||cn.bidcheck.compat.Java8Extras.matchCount(HOLDER.matcher(text))!=1)return cn.bidcheck.compat.Java8Api.listOf();
         List<CertificateSourceComparison.Record> out=new ArrayList<>();
-        for(var record:PersonnelCertificateRecords.read(original.sources(),text))if(record.side().equals("CERTIFICATE")&&record.issues().isEmpty()){
-            Matcher title=TITLE.matcher(text);if(!title.find())continue;var field=sourceField("CATEGORY","证书类别",record.category(),text,title.start(),title.end(),original.sources());if(field==null)continue;
+        for(cn.bidcheck.verification.engine.CertificateSourceComparison.Record record:PersonnelCertificateRecords.read(original.sources(),text))if(record.side().equals("CERTIFICATE")&&record.issues().isEmpty()){
+            Matcher title=TITLE.matcher(text);if(!title.find())continue;cn.bidcheck.verification.engine.CertificateSourceComparison.Field field=sourceField("CATEGORY","证书类别",record.category(),text,title.start(),title.end(),original.sources());if(field==null)continue;
             Map<String,CertificateSourceComparison.Field> fields=new LinkedHashMap<>(record.fields());fields.put("CATEGORY",field);
-            out.add(new CertificateSourceComparison.Record(record.id(),record.side(),record.category(),record.owner(),record.sources(),Map.copyOf(fields),record.issues()));
+            out.add(new CertificateSourceComparison.Record(record.id(),record.side(),record.category(),record.owner(),record.sources(),cn.bidcheck.compat.Java8Api.mapCopyOf(fields),record.issues()));
         }
-        return List.copyOf(out);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(out);
     }
 
     static CertificateSourceComparison.Field sourceField(String key,String label,String value,String text,int start,int end,List<Source> sources){
         for(Source source:sources){Matcher range=RANGE.matcher(source.evidence().anchor());if(!range.matches()||start<Integer.parseInt(range.group(1))||end>Integer.parseInt(range.group(2)))continue;
-            var e=source.evidence();String raw=text.substring(start,end);return new CertificateSourceComparison.Field(key,label,raw,value,source.id(),new cn.bidcheck.domain.Domain.Evidence(e.documentId(),e.documentName(),e.page(),e.locationType(),raw,"chars:"+start+"-"+end,e.confidence()));}
+            cn.bidcheck.domain.Domain.Evidence e=source.evidence();String raw=text.substring(start,end);return new CertificateSourceComparison.Field(key,label,raw,value,source.id(),new cn.bidcheck.domain.Domain.Evidence(e.documentId(),e.documentName(),e.page(),e.locationType(),raw,"chars:"+start+"-"+end,e.confidence()));}
         return null;
     }
 
@@ -129,7 +151,7 @@ final class CertificateRecordBindings {
             if(overlap<0||!text.substring(range[0],range[0]+overlap).equals(quote.substring(0,overlap)))return null;
             if(range[1]>text.length())text.append(quote.substring(overlap));
         }
-        return new Original(text.toString(),List.copyOf(ordered));
+        return new Original(text.toString(),cn.bidcheck.compat.Java8Api.listCopyOf(ordered));
     }
-    private static String pageKey(Source source){var e=source.evidence();return EvidenceCorpus.pageKey(e.documentId(),e.page(),e.locationType());}
+    private static String pageKey(Source source){cn.bidcheck.domain.Domain.Evidence e=source.evidence();return EvidenceCorpus.pageKey(e.documentId(),e.page(),e.locationType());}
 }

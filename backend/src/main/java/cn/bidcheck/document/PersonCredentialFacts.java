@@ -1,4 +1,5 @@
 package cn.bidcheck.document;
+import cn.bidcheck.compat.HexFormat;
 
 import cn.bidcheck.domain.Domain.*;
 import java.nio.charset.StandardCharsets;
@@ -14,7 +15,7 @@ public final class PersonCredentialFacts {
     /** Downstream filtering only; never part of the OCR preparation/cache identity. */
     public static final String CONSISTENCY_FILTER_VERSION = "person-credential-consistency-filter-1";
     private static final int MAX_PAGE = 100_000, MAX_RECORD = 10_000, MAX_RECORDS = 300;
-    private static final Set<String> NUMBERS = Set.of("idNumber", "drivingLicenseNumber", "drivingFileNumber", "passportNumber", "certificateNumber");
+    private static final Set<String> NUMBERS = cn.bidcheck.compat.Java8Api.setOf("idNumber", "drivingLicenseNumber", "drivingFileNumber", "passportNumber", "certificateNumber");
     private static final LinkedHashMap<String,String> LABELS = new LinkedHashMap<>();
     private static final Pattern LABEL, TITLE;
     private static final Pattern TABLE = Pattern.compile("(?is)<table\\b[^>]*>.*?</table\\s*>");
@@ -50,18 +51,64 @@ public final class PersonCredentialFacts {
         labels("employer", "工作单位", "受聘单位", "聘用单位", "Employer");
         labels("socialSecurityNumber", "社会保障号码", "社会保障号");
         String alternatives = LABELS.keySet().stream().sorted(Comparator.comparingInt(String::length).reversed())
-                .map(PersonCredentialFacts::labelPattern).reduce((a,b) -> a + "|" + b).orElseThrow();
+                .map(PersonCredentialFacts::labelPattern).reduce((a,b) -> a + "|" + b).orElseThrow(java.util.NoSuchElementException::new);
         LABEL = Pattern.compile("(?iu)(?<![A-Za-z])(" + alternatives + ")(?![A-Za-z])(?:\\*\\*|__)?(?:[ \\t]*[:：][ \\t]*|[ \\t]+|(?=[\\r\\n])|(?=[\\p{IsHan}0-9]))");
         TITLE = Pattern.compile("(?imu)^[ \\t]*(?:#{1,6}[ \\t]+)?(?:\\*\\*|__)?(中华人民共和国机动车驾驶证|机动车驾驶证|驾驶证|中华人民共和国居民身份证|居民身份证|身份证|中华人民共和国护照|护照|Driving Licen[cs]e|Driver'?s Licen[cs]e|(?:National )?Identity Card|Passport|[\\p{IsHan}]{0,18}(?:资格证书|执业证书|注册证书|职称证书|合格证书)|人员(?:名单|一览表|情况表|配备表))(?!号码|编号|号|名称|类别|[ \\t]+(?:Number|No\\.?))");
     }
     private PersonCredentialFacts() { }
-    public record Occurrence(String id, String recordKey, String personName, String credentialType, String field,
-                             String rawValue, String value, Evidence evidence, Map<String,String> context) {
-        public Occurrence { context = Map.copyOf(context); }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public static final class Occurrence {
+        private final String id;
+        private final String recordKey;
+        private final String personName;
+        private final String credentialType;
+        private final String field;
+        private final String rawValue;
+        private final String value;
+        private final Evidence evidence;
+        private final Map<String,String> context;
+        public String id() { return id; }
+        public String recordKey() { return recordKey; }
+        public String personName() { return personName; }
+        public String credentialType() { return credentialType; }
+        public String field() { return field; }
+        public String rawValue() { return rawValue; }
+        public String value() { return value; }
+        public Evidence evidence() { return evidence; }
+        public Map<String,String> context() { return context; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Occurrence that = (Occurrence) other; return java.util.Objects.equals(this.id, that.id) && java.util.Objects.equals(this.recordKey, that.recordKey) && java.util.Objects.equals(this.personName, that.personName) && java.util.Objects.equals(this.credentialType, that.credentialType) && java.util.Objects.equals(this.field, that.field) && java.util.Objects.equals(this.rawValue, that.rawValue) && java.util.Objects.equals(this.value, that.value) && java.util.Objects.equals(this.evidence, that.evidence) && java.util.Objects.equals(this.context, that.context); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.id); hash = 31 * hash + java.util.Objects.hashCode(this.recordKey); hash = 31 * hash + java.util.Objects.hashCode(this.personName); hash = 31 * hash + java.util.Objects.hashCode(this.credentialType); hash = 31 * hash + java.util.Objects.hashCode(this.field); hash = 31 * hash + java.util.Objects.hashCode(this.rawValue); hash = 31 * hash + java.util.Objects.hashCode(this.value); hash = 31 * hash + java.util.Objects.hashCode(this.evidence); hash = 31 * hash + java.util.Objects.hashCode(this.context); return hash; }
+        @Override public String toString() { return "Occurrence[" + "id=" + id + ", recordKey=" + recordKey + ", personName=" + personName + ", credentialType=" + credentialType + ", field=" + field + ", rawValue=" + rawValue + ", value=" + value + ", evidence=" + evidence + ", context=" + context + "]"; }
+
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public Occurrence(@com.fasterxml.jackson.annotation.JsonProperty("id") String id, @com.fasterxml.jackson.annotation.JsonProperty("recordKey") String recordKey, @com.fasterxml.jackson.annotation.JsonProperty("personName") String personName, @com.fasterxml.jackson.annotation.JsonProperty("credentialType") String credentialType, @com.fasterxml.jackson.annotation.JsonProperty("field") String field, @com.fasterxml.jackson.annotation.JsonProperty("rawValue") String rawValue, @com.fasterxml.jackson.annotation.JsonProperty("value") String value, @com.fasterxml.jackson.annotation.JsonProperty("evidence") Evidence evidence, @com.fasterxml.jackson.annotation.JsonProperty("context") Map<String,String> context) { context = cn.bidcheck.compat.Java8Api.mapCopyOf(context);
+            this.id = id; this.recordKey = recordKey; this.personName = personName; this.credentialType = credentialType; this.field = field; this.rawValue = rawValue; this.value = value; this.evidence = evidence; this.context = context;
+        }
     }
-    public record Result(int page, String locationType, boolean candidate, boolean complete, List<Occurrence> occurrences,
-                         List<Map<String,Object>> issues, List<Fact> facts) {
-        public Result { occurrences = List.copyOf(occurrences); issues = List.copyOf(issues); facts = List.copyOf(facts); }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public static final class Result {
+        private final int page;
+        private final String locationType;
+        private final boolean candidate;
+        private final boolean complete;
+        private final List<Occurrence> occurrences;
+        private final List<Map<String,Object>> issues;
+        private final List<Fact> facts;
+        public int page() { return page; }
+        public String locationType() { return locationType; }
+        public boolean candidate() { return candidate; }
+        public boolean complete() { return complete; }
+        public List<Occurrence> occurrences() { return occurrences; }
+        public List<Map<String,Object>> issues() { return issues; }
+        public List<Fact> facts() { return facts; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Result that = (Result) other; return java.util.Objects.equals(this.page, that.page) && java.util.Objects.equals(this.locationType, that.locationType) && java.util.Objects.equals(this.candidate, that.candidate) && java.util.Objects.equals(this.complete, that.complete) && java.util.Objects.equals(this.occurrences, that.occurrences) && java.util.Objects.equals(this.issues, that.issues) && java.util.Objects.equals(this.facts, that.facts); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.page); hash = 31 * hash + java.util.Objects.hashCode(this.locationType); hash = 31 * hash + java.util.Objects.hashCode(this.candidate); hash = 31 * hash + java.util.Objects.hashCode(this.complete); hash = 31 * hash + java.util.Objects.hashCode(this.occurrences); hash = 31 * hash + java.util.Objects.hashCode(this.issues); hash = 31 * hash + java.util.Objects.hashCode(this.facts); return hash; }
+        @Override public String toString() { return "Result[" + "page=" + page + ", locationType=" + locationType + ", candidate=" + candidate + ", complete=" + complete + ", occurrences=" + occurrences + ", issues=" + issues + ", facts=" + facts + "]"; }
+
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public Result(@com.fasterxml.jackson.annotation.JsonProperty("page") int page, @com.fasterxml.jackson.annotation.JsonProperty("locationType") String locationType, @com.fasterxml.jackson.annotation.JsonProperty("candidate") boolean candidate, @com.fasterxml.jackson.annotation.JsonProperty("complete") boolean complete, @com.fasterxml.jackson.annotation.JsonProperty("occurrences") List<Occurrence> occurrences, @com.fasterxml.jackson.annotation.JsonProperty("issues") List<Map<String,Object>> issues, @com.fasterxml.jackson.annotation.JsonProperty("facts") List<Fact> facts) { occurrences = cn.bidcheck.compat.Java8Api.listCopyOf(occurrences); issues = cn.bidcheck.compat.Java8Api.listCopyOf(issues); facts = cn.bidcheck.compat.Java8Api.listCopyOf(facts);
+            this.page = page; this.locationType = locationType; this.candidate = candidate; this.complete = complete; this.occurrences = occurrences; this.issues = issues; this.facts = facts;
+        }
     }
 
     public static Result analyze(Document document, Page page) {
@@ -76,17 +123,17 @@ public final class PersonCredentialFacts {
     private static Result analyze(Document document, Page page, boolean tableRelations) {
         String text = page == null ? "" : Objects.toString(page.text(), "");
         boolean candidate = candidate(text) || tableRelations && relationalCandidate(text);
-        if (page == null) return new Result(0, "PAGE", false, false, List.of(), List.of(), List.of());
+        if (page == null) return new Result(0, "PAGE", false, false, cn.bidcheck.compat.Java8Api.listOf(), cn.bidcheck.compat.Java8Api.listOf(), cn.bidcheck.compat.Java8Api.listOf());
         List<Map<String,Object>> issues = new ArrayList<>();
-        if (!candidate) return result(page, false, true, List.of(), issues);
+        if (!candidate) return result(page, false, true, cn.bidcheck.compat.Java8Api.listOf(), issues);
         if (document == null || document.pages() == null || document.pages().stream().noneMatch(p -> p.number() == page.number()
                 && Objects.equals(p.locationType(), page.locationType()) && Objects.equals(p.text(), page.text()))) {
             issue(issues, page, "SOURCE_NOT_BOUND", "页面未绑定当前文档版本，未提取人员证件事实。");
-            return result(page, true, false, List.of(), issues);
+            return result(page, true, false, cn.bidcheck.compat.Java8Api.listOf(), issues);
         }
         if (text.length() > MAX_PAGE) {
             issue(issues, page, "PERSON_PAGE_LIMIT", "人员材料超过结构解析长度限制，需进一步识别。");
-            return result(page, true, false, List.of(), issues);
+            return result(page, true, false, cn.bidcheck.compat.Java8Api.listOf(), issues);
         }
         if (Objects.toString(page.warning(), "").matches("(?s).*(?:\\[OCR未完成\\]|\\[OCR_DEFERRED\\]).*"))
             issue(issues, page, "SOURCE_INCOMPLETE", "人员材料页面识别未完成，事实覆盖未完成。");
@@ -121,11 +168,11 @@ public final class PersonCredentialFacts {
     }
 
     private static Result result(Page page, boolean candidate, boolean complete, List<Occurrence> occurrences, List<Map<String,Object>> issues) {
-        List<Fact> facts = occurrences.stream().map(o -> new Fact("PERSON_CREDENTIAL", o.recordKey(), o.field(), o.rawValue(), o.value(), o.evidence())).toList();
+        List<Fact> facts = cn.bidcheck.compat.Java8Api.toList(occurrences.stream().map(o -> new Fact("PERSON_CREDENTIAL", o.recordKey(), o.field(), o.rawValue(), o.value(), o.evidence())));
         return new Result(page.number(), page.locationType(), candidate, complete, occurrences, issues, facts);
     }
     private static boolean candidate(String text) {
-        List<String> lines=text.lines().map(String::strip).filter(s->!s.isBlank()&&!s.matches("[0-9]{1,5}|[目录\\s]+")).toList();
+        List<String> lines=cn.bidcheck.compat.Java8Api.toList(cn.bidcheck.compat.Java8Extras.lines(text).map(cn.bidcheck.compat.Java8Api::strip).filter(s->!cn.bidcheck.compat.Java8Api.isBlank(s)&&!s.matches("[0-9]{1,5}|[目录\\s]+")));
         if(lines.size()>=3&&lines.stream().allMatch(s->s.matches(".*(?:\\.{4,}|…{2,}|·{4,})[ \\t]*[0-9]{1,5}"))) return false;
         return TITLE.matcher(text).find() || Pattern.compile("(?iu)身份证|公民身份号码|驾驶证|护照|资格证书|执业证书|职称证书|人员名单|人员一览表|人员配备表|Driv(?:ing|er'?s?) Licen[cs]e|Identity Card|Passport|\\bID (?:Number|No)|\\bCertificate (?:Number|Type)").matcher(text).find()
                 || Pattern.compile("(?m)(?:^|[|>\\t *])姓[ \\t\\u3000]*名(?:\\*\\*)?[ \\t]*[:：|<\\t]").matcher(text).find();
@@ -140,14 +187,14 @@ public final class PersonCredentialFacts {
         while (matcher.find()) tokens.add(new Token(matcher.start(), matcher.end(), field(matcher.group(1)), matcher.group(1)));
         List<Title> titles = new ArrayList<>(); Matcher tm = TITLE.matcher(text);
         while (tm.find()) titles.add(new Title(tm.start(), tm.end(), tm.group(1), type(tm.group(1))));
-        List<Integer> breaks = new ArrayList<>(List.of(0)); for (Title title : titles) if (title.start > 0) breaks.add(title.start);
-        breaks.add(text.length()); breaks = breaks.stream().distinct().sorted().toList();
+        List<Integer> breaks = new ArrayList<>(cn.bidcheck.compat.Java8Api.listOf(0)); for (Title title : titles) if (title.start > 0) breaks.add(title.start);
+        breaks.add(text.length()); breaks = cn.bidcheck.compat.Java8Api.toList(breaks.stream().distinct().sorted());
         for (int b = 0; b + 1 < breaks.size(); b++) {
             int start = breaks.get(b), end = breaks.get(b + 1);
-            List<Token> part = tokens.stream().filter(t -> t.start >= start && t.start < end).toList();
+            List<Token> part = cn.bidcheck.compat.Java8Api.toList(tokens.stream().filter(t -> t.start >= start && t.start < end));
             if (part.isEmpty()) continue;
             Title title = titles.stream().filter(t -> t.start == start).findFirst().orElse(null);
-            String kind = title == null ? infer(part.stream().map(Token::field).toList()) : title.type;
+            String kind = title == null ? infer(cn.bidcheck.compat.Java8Api.toList(part.stream().map(Token::field))) : title.type;
             List<RawField> pending = new ArrayList<>(); int recordStart = title == null ? part.get(0).start : title.start;
             boolean hasName = false;
             for (int n = 0; n < part.size(); n++) {
@@ -203,24 +250,24 @@ public final class PersonCredentialFacts {
         }
         List<TableRow> rows = new ArrayList<>(); Matcher row = ROW.matcher(html); int previous = html.indexOf('>') + 1;
         while (row.find()) {
-            if (!html.substring(previous, row.start()).replaceAll("(?is)</?(?:thead|tbody|tfoot)\\b[^>]*>", "").isBlank()) {
+            if (!cn.bidcheck.compat.Java8Api.isBlank(html.substring(previous, row.start()).replaceAll("(?is)</?(?:thead|tbody|tfoot)\\b[^>]*>", ""))) {
                 issue(issues, page, "PERSON_TABLE_INCOMPLETE", "人员表格含无法定位的行或内容，未猜测行列。"); return;
             }
             List<RawField> cells = new ArrayList<>(); Matcher cell = CELL.matcher(row.group(1)); int at = 0;
             while (cell.find()) {
-                if (!row.group(1).substring(at, cell.start()).isBlank() || cell.group(3).contains("<") && !cell.group(3).matches("(?is)(?:[^<]|<br\\s*/?>)*")) {
+                if (!cn.bidcheck.compat.Java8Api.isBlank(row.group(1).substring(at, cell.start())) || cell.group(3).contains("<") && !cell.group(3).matches("(?is)(?:[^<]|<br\\s*/?>)*")) {
                     issue(issues, page, "PERSON_TABLE_CELL_UNSUPPORTED", "人员表格单元格格式无法安全解析，需补充识别。"); return;
                 }
                 int cs = start + row.start(1) + cell.start(3), ce = start + row.start(1) + cell.end(3);
                 cells.add(new RawField("", original.substring(cs, ce), visible(cell.group(3)), cs, ce)); at = cell.end();
             }
-            if (!row.group(1).substring(at).isBlank() || cells.isEmpty()) {
+            if (!cn.bidcheck.compat.Java8Api.isBlank(row.group(1).substring(at)) || cells.isEmpty()) {
                 issue(issues, page, "PERSON_TABLE_INCOMPLETE", "人员表格单元格未闭合，未猜测字段归属。"); return;
             }
             rows.add(new TableRow(start + row.start(), start + row.end(), cells)); previous = row.end();
         }
         String remainder = html.substring(previous).replaceAll("(?is)</?(?:thead|tbody|tfoot)\\b[^>]*>|</table\\s*>", "");
-        if (!remainder.isBlank()) { issue(issues, page, "PERSON_TABLE_INCOMPLETE", "人员表格末尾不完整，未猜测字段归属。"); return; }
+        if (!cn.bidcheck.compat.Java8Api.isBlank(remainder)) { issue(issues, page, "PERSON_TABLE_INCOMPLETE", "人员表格末尾不完整，未猜测字段归属。"); return; }
         parseRows(rows, "HTML", out, issues, page);
     }
 
@@ -245,12 +292,12 @@ public final class PersonCredentialFacts {
             List<RawField> values=new ArrayList<>();Set<String> fields=new HashSet<>();boolean duplicate=false;
             for(TableRelationIndex.Association cell:row.associations()) {
                 String field=relationField(cell.label().replaceAll("[：:]$",""));
-                if(field.isBlank()){
-                    if(!Set.of("序号","序列","序","备注","No.","No").contains(cell.label()))issue(issues,page,"PERSON_TABLE_FIELDS_UNSUPPORTED","人员表格存在尚未识别含义的列，明确字段已保留。");
+                if(cn.bidcheck.compat.Java8Api.isBlank(field)){
+                    if(!cn.bidcheck.compat.Java8Api.setOf("序号", "序列", "序", "备注", "No.", "No").contains(cell.label()))issue(issues,page,"PERSON_TABLE_FIELDS_UNSUPPORTED","人员表格存在尚未识别含义的列，明确字段已保留。");
                     continue;
                 }
                 if(!fields.add(field)){duplicate=true;break;}
-                if(cell.value().isBlank()){issue(issues,page,"PERSON_FIELD_EMPTY","人员表格明确字段为空，未沿用前一行或前一页信息。");continue;}
+                if(cn.bidcheck.compat.Java8Api.isBlank(cell.value())){issue(issues,page,"PERSON_FIELD_EMPTY","人员表格明确字段为空，未沿用前一行或前一页信息。");continue;}
                 if(cell.value().length()>300){issue(issues,page,"PERSON_FIELD_UNRESOLVED","人员表格字段超过解析限制，未猜测值。");continue;}
                 values.add(new RawField(field,cell.rawValue(),cell.value(),cell.source().start(),cell.source().end(),cell));
             }
@@ -265,29 +312,23 @@ public final class PersonCredentialFacts {
         return Pattern.compile("(?is)<t[dh]\\b[^>]*>\\s*(?:姓\\s*名|人员姓名|公民身份号码|身份证(?:号|号码))\\s*</t[dh]\\s*>").matcher(text).find();
     }
     private static String relationField(String label){
-        return switch(label.replaceAll("[\\s\\p{Z}]+","")){
-            case "在本项目中担任职务","拟任职务","担任职务","本项目职务" -> "role";
-            case "初领日期" -> "firstIssueDate";
-            case "有效期开始日期" -> "validFrom";
-            case "有效期结束日期" -> "validUntil";
-            default -> field(label);
-        };
+        switch (label.replaceAll("[\\s\\p{Z}]+","")) {case "在本项目中担任职务":case "拟任职务":case "担任职务":case "本项目职务":return "role";case "初领日期":return "firstIssueDate";case "有效期开始日期":return "validFrom";case "有效期结束日期":return "validUntil";default:return field(label);}
     }
     private static void parseRelatedKeyValue(TableRelationIndex.Table table,List<RawRecord> out,List<Map<String,Object>> issues,Page page){
         List<RawField> fields=new ArrayList<>();int start=-1,end=0;
         for(TableRelationIndex.Row row:table.rows()){
             if(!row.status().equals("RESOLVED")){issue(issues,page,"PERSON_TABLE_AMBIGUOUS","人员键值表存在无法定位的标签和值，已保留明确字段。");continue;}
             for(TableRelationIndex.Association association:row.associations()){
-                String field=relationField(association.label());if(field.isBlank())continue;
+                String field=relationField(association.label());if(cn.bidcheck.compat.Java8Api.isBlank(field))continue;
                 if(field.equals("personName")&&fields.stream().anyMatch(f->f.field.equals("personName"))){
-                    out.add(new RawRecord(start,end,infer(fields.stream().map(RawField::field).toList()),"HTML_RELATION",fields));fields=new ArrayList<>();start=-1;
+                    out.add(new RawRecord(start,end,infer(cn.bidcheck.compat.Java8Api.toList(fields.stream().map(RawField::field))),"HTML_RELATION",fields));fields=new ArrayList<>();start=-1;
                 }
-                if(association.value().isBlank()){issue(issues,page,"PERSON_FIELD_EMPTY","证件键值表字段为空，未补写值。");continue;}
+                if(cn.bidcheck.compat.Java8Api.isBlank(association.value())){issue(issues,page,"PERSON_FIELD_EMPTY","证件键值表字段为空，未补写值。");continue;}
                 if(association.value().length()>300){issue(issues,page,"PERSON_FIELD_UNRESOLVED","证件键值表字段超过解析限制，需回查原文。");continue;}
                 if(start<0)start=row.start();end=row.end();fields.add(new RawField(field,association.rawValue(),association.value(),association.source().start(),association.source().end(),association));
             }
         }
-        if(!fields.isEmpty())out.add(new RawRecord(start,end,infer(fields.stream().map(RawField::field).toList()),"HTML_RELATION",fields));
+        if(!fields.isEmpty())out.add(new RawRecord(start,end,infer(cn.bidcheck.compat.Java8Api.toList(fields.stream().map(RawField::field))),"HTML_RELATION",fields));
     }
 
     private static void parseMarkdown(String original, char[] prose, List<RawRecord> out, List<Map<String,Object>> issues, Page page) {
@@ -320,23 +361,23 @@ public final class PersonCredentialFacts {
     }
     private static void parseRows(List<TableRow> rows, String format, List<RawRecord> out, List<Map<String,Object>> issues, Page page) {
         if (rows.isEmpty()) return;
-        if(rows.size()>2&&rows.get(0).cells.size()==2&&Set.of("字段","项目","信息项","属性","Field").contains(rows.get(0).cells.get(0).value)
-                &&Set.of("内容","信息","值","说明","Value","Details").contains(rows.get(0).cells.get(1).value)) {
+        if(rows.size()>2&&rows.get(0).cells.size()==2&&cn.bidcheck.compat.Java8Api.setOf("字段", "项目", "信息项", "属性", "Field").contains(rows.get(0).cells.get(0).value)
+                &&cn.bidcheck.compat.Java8Api.setOf("内容", "信息", "值", "说明", "Value", "Details").contains(rows.get(0).cells.get(1).value)) {
             parseRows(rows.subList(1,rows.size()),format,out,issues,page);return;
         }
         boolean keyValue = rows.size() >= 2 && rows.get(0).cells.size() == 2
-                && !field(rows.get(0).cells.get(0).value).isBlank() && field(rows.get(0).cells.get(1).value).isBlank()
-                && rows.stream().filter(r -> r.cells.size() == 2 && !field(r.cells.get(0).value).isBlank()).count() >= 2;
+                && !cn.bidcheck.compat.Java8Api.isBlank(field(rows.get(0).cells.get(0).value)) && cn.bidcheck.compat.Java8Api.isBlank(field(rows.get(0).cells.get(1).value))
+                && rows.stream().filter(r -> r.cells.size() == 2 && !cn.bidcheck.compat.Java8Api.isBlank(field(r.cells.get(0).value))).count() >= 2;
         if (keyValue) { parseKeyValueRows(rows,format,out,issues,page); return; }
-        List<String> fields = rows.get(0).cells.stream().map(c -> field(c.value.replaceAll("[：:]$", ""))).toList();
+        List<String> fields = cn.bidcheck.compat.Java8Api.toList(rows.get(0).cells.stream().map(c -> field(c.value.replaceAll("[：:]$", ""))));
         boolean personnel = fields.contains("personName") || fields.stream().anyMatch(NUMBERS::contains);
         if (!personnel) { issue(issues, page, "PERSON_TABLE_HEADER_UNRESOLVED", "人员材料中的表头无法明确识别，需补充结构解析。"); return; }
         if (rows.size() == 1) { issue(issues, page, "PERSON_TABLE_NO_DATA", "人员表格只有表头，尚无可核对记录。"); return; }
         Set<String> seen = new HashSet<>();
-        for (int column = 0; column < fields.size(); column++) if (fields.get(column).isBlank()
-                && !Set.of("序号", "序列", "序", "备注", "No.", "No").contains(rows.get(0).cells.get(column).value))
+        for (int column = 0; column < fields.size(); column++) if (cn.bidcheck.compat.Java8Api.isBlank(fields.get(column))
+                && !cn.bidcheck.compat.Java8Api.setOf("序号", "序列", "序", "备注", "No.", "No").contains(rows.get(0).cells.get(column).value))
             issue(issues, page, "PERSON_TABLE_FIELDS_UNSUPPORTED", "人员表格存在尚未识别含义的列，已提取明确字段，其余列覆盖待补充。");
-        for (String field : fields) if (!field.isBlank() && !seen.add(field)) {
+        for (String field : fields) if (!cn.bidcheck.compat.Java8Api.isBlank(field) && !seen.add(field)) {
             issue(issues, page, "PERSON_TABLE_DUPLICATE_HEADER", "人员表格存在重复字段列，无法确定同一人的字段归属。"); return;
         }
         String kind = infer(fields);
@@ -346,8 +387,8 @@ public final class PersonCredentialFacts {
             List<RawField> values = new ArrayList<>();
             for (int c = 0; c < fields.size(); c++) {
                 String field = fields.get(c); RawField cell = row.cells.get(c);
-                if (field.isBlank()) continue;
-                if (cell.value.isBlank()) { issue(issues, page, "PERSON_FIELD_EMPTY", "人员表格明确字段为空，未沿用前一行人员信息。"); continue; }
+                if (cn.bidcheck.compat.Java8Api.isBlank(field)) continue;
+                if (cn.bidcheck.compat.Java8Api.isBlank(cell.value)) { issue(issues, page, "PERSON_FIELD_EMPTY", "人员表格明确字段为空，未沿用前一行人员信息。"); continue; }
                 if (cell.value.length() > 300) { issue(issues, page, "PERSON_FIELD_UNRESOLVED", "人员表格字段超过解析限制，未猜测值。"); continue; }
                 values.add(new RawField(field, cell.raw, cell.value, cell.start, cell.end));
             }
@@ -359,17 +400,17 @@ public final class PersonCredentialFacts {
         for (TableRow row : rows) {
             if (row.cells.size() != 2) { issue(issues,page,"PERSON_TABLE_COLUMNS_MISMATCH","证件键值表行列数量不一致，该行未提取。"); continue; }
             String field = field(row.cells.get(0).value); RawField cell = row.cells.get(1);
-            if (field.isBlank()) { issue(issues,page,"PERSON_TABLE_FIELDS_UNSUPPORTED","证件键值表含尚未识别的字段，覆盖待补充。"); continue; }
+            if (cn.bidcheck.compat.Java8Api.isBlank(field)) { issue(issues,page,"PERSON_TABLE_FIELDS_UNSUPPORTED","证件键值表含尚未识别的字段，覆盖待补充。"); continue; }
             if (field.equals("personName") && values.stream().anyMatch(v -> v.field.equals("personName"))) {
-                out.add(new RawRecord(start,end,infer(values.stream().map(RawField::field).toList()),format,values));
+                out.add(new RawRecord(start,end,infer(cn.bidcheck.compat.Java8Api.toList(values.stream().map(RawField::field))),format,values));
                 values=new ArrayList<>();start=row.start;
             }
             end=row.end;
-            if (cell.value.isBlank()) {issue(issues,page,"PERSON_FIELD_EMPTY","证件键值表明确字段为空，未补写字段值。");continue;}
+            if (cn.bidcheck.compat.Java8Api.isBlank(cell.value)) {issue(issues,page,"PERSON_FIELD_EMPTY","证件键值表明确字段为空，未补写字段值。");continue;}
             if (cell.value.length()>300) {issue(issues,page,"PERSON_FIELD_UNRESOLVED","证件键值表字段超过解析限制，未猜测值。");continue;}
             values.add(new RawField(field,cell.raw,cell.value,cell.start,cell.end));
         }
-        if (!values.isEmpty()) out.add(new RawRecord(start,end,infer(values.stream().map(RawField::field).toList()),format,values));
+        if (!values.isEmpty()) out.add(new RawRecord(start,end,infer(cn.bidcheck.compat.Java8Api.toList(values.stream().map(RawField::field))),format,values));
     }
 
     private static void publish(Document document, Page page, RawRecord record, List<Occurrence> out, List<Map<String,Object>> outputIssues) {
@@ -377,27 +418,27 @@ public final class PersonCredentialFacts {
         String name = single(record.fields, "personName"), role = single(record.fields, "role");
         String credentialName = single(record.fields, "certificateName");
         String kind = record.type;
-        if (!credentialName.isBlank() && !type(credentialName).equals("UNKNOWN")) kind = type(credentialName);
-        if (kind.equals("UNKNOWN")) kind = infer(record.fields.stream().map(RawField::field).toList());
+        if (!cn.bidcheck.compat.Java8Api.isBlank(credentialName) && !type(credentialName).equals("UNKNOWN")) kind = type(credentialName);
+        if (kind.equals("UNKNOWN")) kind = infer(cn.bidcheck.compat.Java8Api.toList(record.fields.stream().map(RawField::field)));
         List<RawField> resolved = new ArrayList<>();
         for (RawField raw : record.fields) {
             String field = raw.field.equals("genericNumber") ? numberField(kind) : raw.field;
-            if(field.equals("classification")&&(kind.equals("DRIVING_LICENSE")||record.fields.stream().anyMatch(f->Set.of("drivingLicenseNumber","drivingFileNumber","vehicleClass").contains(f.field))))
+            if(field.equals("classification")&&(kind.equals("DRIVING_LICENSE")||record.fields.stream().anyMatch(f->cn.bidcheck.compat.Java8Api.setOf("drivingLicenseNumber", "drivingFileNumber", "vehicleClass").contains(f.field))))
                 field="vehicleClass";
-            if(field.equals("archiveNumber")&&(kind.equals("DRIVING_LICENSE")||record.fields.stream().anyMatch(f->Set.of("drivingLicenseNumber","drivingFileNumber","vehicleClass").contains(f.field))))
+            if(field.equals("archiveNumber")&&(kind.equals("DRIVING_LICENSE")||record.fields.stream().anyMatch(f->cn.bidcheck.compat.Java8Api.setOf("drivingLicenseNumber", "drivingFileNumber", "vehicleClass").contains(f.field))))
                 field="drivingFileNumber";
-            if (field.isBlank()) { issue(issues, page, "CREDENTIAL_TYPE_UNKNOWN", "发现证号或编号，但证件类别不明确，未混同不同证件的号码。"); continue; }
+            if (cn.bidcheck.compat.Java8Api.isBlank(field)) { issue(issues, page, "CREDENTIAL_TYPE_UNKNOWN", "发现证号或编号，但证件类别不明确，未混同不同证件的号码。"); continue; }
             resolved.add(new RawField(field, raw.raw, raw.value, raw.start, raw.end, raw.association));
         }
         boolean ambiguousRecord = resolved.stream().filter(f -> NUMBERS.contains(f.field)).map(RawField::field).distinct()
                 .anyMatch(f -> resolved.stream().filter(v -> v.field.equals(f)).map(RawField::value).distinct().count() > 1);
         if (ambiguousRecord) issue(issues, page, "PERSON_RECORD_AMBIGUOUS", "同一记录范围出现多个不同的同类证号，已保留原文但未猜测人员归属。");
-        if (name.isBlank()) issue(issues, page, "PERSON_NAME_MISSING", "人员记录缺少明确姓名，已保留字段但未关联到其他人员。");
+        if (cn.bidcheck.compat.Java8Api.isBlank(name)) issue(issues, page, "PERSON_NAME_MISSING", "人员记录缺少明确姓名，已保留字段但未关联到其他人员。");
         else if (!usableName(name)) issue(issues, page, "PERSON_NAME_AMBIGUOUS", "姓名字段疑似包含多人、掩码或无法确定的内容，未用于确定身份。");
         if (kind.equals("UNKNOWN")) issue(issues, page, "CREDENTIAL_TYPE_UNKNOWN", "人员材料缺少明确证件类型，需复核字段类别。");
         if (!kind.equals("PERSON_ROSTER") && resolved.stream().noneMatch(f -> NUMBERS.contains(f.field) && !f.field.equals("drivingFileNumber")))
             issue(issues, page, "CREDENTIAL_NUMBER_MISSING", "证件记录缺少明确证件号码，覆盖尚未完成。");
-        if (kind.equals("PERSON_CERTIFICATE") && credentialName.isBlank())
+        if (kind.equals("PERSON_CERTIFICATE") && cn.bidcheck.compat.Java8Api.isBlank(credentialName))
             issue(issues, page, "CERTIFICATE_NAME_MISSING", "证书未明确名称或类别，不能与其他类型证书混同比较。");
         if (record.end - record.start > MAX_RECORD) {
             issue(outputIssues, page, "PERSON_RECORD_LIMIT", "人员记录范围过长，需核对记录边界。"); return;
@@ -409,7 +450,7 @@ public final class PersonCredentialFacts {
         Map<String,String> base = new LinkedHashMap<>();
         base.put("recordStart", Integer.toString(record.start)); base.put("recordEnd", Integer.toString(record.end));
         base.put("sourceFormat", record.format); base.put("role", role); base.put("credentialName", credentialName);
-        base.put("personNameStatus", name.isBlank() ? "MISSING" : usableName(name) && !ambiguousRecord ? "EXPLICIT" : "AMBIGUOUS");
+        base.put("personNameStatus", cn.bidcheck.compat.Java8Api.isBlank(name) ? "MISSING" : usableName(name) && !ambiguousRecord ? "EXPLICIT" : "AMBIGUOUS");
         base.put("sourceVersion", Integer.toString(document.version())); base.put("sourceHash", Objects.toString(document.sha256(), ""));
         base.put("documentId", document.id()); base.put("documentHash", Objects.toString(document.sha256(), ""));
         base.put("documentVersion", Integer.toString(document.version()));
@@ -437,7 +478,7 @@ public final class PersonCredentialFacts {
             }
             context.put("recordComplete", Boolean.toString(complete)); context.put("numberMasked", Boolean.toString("MASKED".equals(statuses.get(raw))));
             if (statuses.containsKey(raw)) { context.put("numberStatus",statuses.get(raw)); context.put("numberValidation","FORMAT_ONLY"); }
-            String quote = page.text().substring(record.start, record.end).strip();
+            String quote = cn.bidcheck.compat.Java8Api.strip(page.text().substring(record.start, record.end));
             String anchor = "person-record:" + record.start + ":field:" + raw.field + ":chars:" + raw.start + "-" + raw.end;
             Evidence evidence = new Evidence(document.id(), document.name(), page.number(), page.locationType(), quote, anchor,
                     Objects.toString(page.parser(), "").toUpperCase(Locale.ROOT).contains("OCR") ? 0d : 1d);
@@ -454,7 +495,7 @@ public final class PersonCredentialFacts {
         List<RawField> kept=new ArrayList<>();
         for(RawField raw:record.fields) {
             String reason=consistencyNoiseReason(page,record,raw);
-            if(reason.isBlank()){kept.add(raw);continue;}
+            if(cn.bidcheck.compat.Java8Api.isBlank(reason)){kept.add(raw);continue;}
             String recordKey=document.id()+":v"+document.version()+":"+document.sha256()+":"+page.locationType()
                     +":p"+page.number()+":person-record:"+record.start;
             TableRelationIndex.Association relation=record.fields.stream().map(RawField::association).filter(Objects::nonNull).findFirst().orElse(null);
@@ -462,18 +503,13 @@ public final class PersonCredentialFacts {
             String oldId=digest(recordKey+"|"+raw.field+"|"+raw.start+"|"+raw.end);
             String anchor="person-record:"+record.start+":field:"+raw.field+":chars:"+raw.start+"-"+raw.end;
             Evidence evidence=new Evidence(document.id(),document.name(),page.number(),page.locationType(),
-                    page.text().substring(record.start,record.end).strip(),anchor,
+                    cn.bidcheck.compat.Java8Api.strip(page.text().substring(record.start,record.end)),anchor,
                     Objects.toString(page.parser(),"").toUpperCase(Locale.ROOT).contains("OCR")?0d:1d);
             Map<String,Object> rejection=new LinkedHashMap<>();
             rejection.put("code","PERSON_EXTRACTION_NOISE_REJECTED");rejection.put("category","EXTRACTION_NOISE");
             rejection.put("policyVersion",CONSISTENCY_FILTER_VERSION);rejection.put("rejectionId",digest(CONSISTENCY_FILTER_VERSION+"|"+oldId));
             rejection.put("oldOccurrenceId",oldId);rejection.put("field",raw.field);rejection.put("reasonCode",reason);
-            rejection.put("reason",switch(reason){
-                case "IMAGE_AGE_ESTIMATE" -> "头像年龄估计或图像分析说明不是原文登记年龄，已从一致性事实中剔除。";
-                case "PERSON_NAME_DESCRIPTION" -> "证书说明、签名提示或图像描述不是明确姓名，已从一致性事实中剔除。";
-                case "ROLE_DESCRIPTION_OR_HEADER" -> "表头片段、岗位职责说明或图像描述不是明确人员职务，已从一致性事实中剔除。";
-                default -> "字段标签后接的是标题或排版片段，未将其作为人员字段值。";
-            });
+            rejection.put("reason",(java.util.Objects.equals((reason), "IMAGE_AGE_ESTIMATE") ? "头像年龄估计或图像分析说明不是原文登记年龄，已从一致性事实中剔除。" : (java.util.Objects.equals((reason), "PERSON_NAME_DESCRIPTION") ? "证书说明、签名提示或图像描述不是明确姓名，已从一致性事实中剔除。" : (java.util.Objects.equals((reason), "ROLE_DESCRIPTION_OR_HEADER") ? "表头片段、岗位职责说明或图像描述不是明确人员职务，已从一致性事实中剔除。" : "字段标签后接的是标题或排版片段，未将其作为人员字段值。"))));
             rejection.put("requiresReview",false);rejection.put("documentId",document.id());
             rejection.put("documentVersion",document.version());rejection.put("documentHash",Objects.toString(document.sha256(),""));
             rejection.put("page",page.number());rejection.put("locationType",page.locationType());
@@ -486,13 +522,13 @@ public final class PersonCredentialFacts {
     }
 
     private static String consistencyNoiseReason(Page page,RawRecord record,RawField raw) {
-        String value=raw.value.strip();
+        String value=cn.bidcheck.compat.Java8Api.strip(raw.value);
         if(raw.field.equals("age")&&Pattern.compile("估计|估算|推断|面部|发际线|皮肤|背景色|^(?:区间|段)[：:]|^精确估算").matcher(value).find())
             return "IMAGE_AGE_ESTIMATE";
         if(raw.field.equals("personName")) {
             if(value.matches(">\\s*[-—–]")
                     ||value.matches("(?:信息|签名|印章)[：:。*（(].*")
-                    ||Set.of("信息","签名","印章").contains(value)&&record.format.equals("TEXT")
+                    ||cn.bidcheck.compat.Java8Api.setOf("信息", "签名", "印章").contains(value)&&record.format.equals("TEXT")
                         &&Pattern.compile("(?:姓名|持证人)(?:\\*\\*|__)?$").matcher(page.text().substring(Math.max(0,raw.start-20),raw.start)).find()
                     ||Pattern.compile("照片|头像|证件照|免冠|^通过国家统一组织的考试|^(?:已|已经)通过.*考核|^具备.*执业能力").matcher(value).find())
                 return "PERSON_NAME_DESCRIPTION";
@@ -500,7 +536,7 @@ public final class PersonCredentialFacts {
         if(raw.field.equals("role")) {
             if(value.matches("(?is)(?:Detection\\s+Patterns|patterns\\s*[—–-]).*")
                     ||Pattern.compile("^(?:职责|的具体职责|因显示空间限制|培训等证书|配备具有相应)").matcher(value).find()
-                    ||record.format.equals("TEXT")&&Set.of("发包人及","号").contains(value))
+                    ||record.format.equals("TEXT")&&cn.bidcheck.compat.Java8Api.setOf("发包人及", "号").contains(value))
                 return "ROLE_DESCRIPTION_OR_HEADER";
         }
         // These are exact label continuations from flat text, never a guess from an unknown value.
@@ -512,11 +548,11 @@ public final class PersonCredentialFacts {
         return "";
     }
     private static String single(List<RawField> fields, String field) {
-        List<String> values = fields.stream().filter(f -> f.field.equals(field)).map(f->normalize(field,f.value)).distinct().toList();
+        List<String> values = cn.bidcheck.compat.Java8Api.toList(fields.stream().filter(f -> f.field.equals(field)).map(f->normalize(field,f.value)).distinct());
         return values.size() == 1 ? values.get(0) : "";
     }
     private static boolean usableName(String value) {
-        return !value.isBlank() && value.length() <= 80 && !Pattern.compile("[*/＊×，,、;；|\\d]|(?:未知|不详|未提供)").matcher(value).find()
+        return !cn.bidcheck.compat.Java8Api.isBlank(value) && value.length() <= 80 && !Pattern.compile("[*/＊×，,、;；|\\d]|(?:未知|不详|未提供)").matcher(value).find()
                 && (value.matches("[\\p{IsHan}·•]{2,30}") || value.matches("[A-Za-z][A-Za-z .'’-]{1,79}"));
     }
     private static String numberStatus(String field, String value) {
@@ -533,11 +569,11 @@ public final class PersonCredentialFacts {
     }
     private static String normalize(String field, String value) {
         if (NUMBERS.contains(field)) return value.replaceAll("[\\s\\p{Z}]+", "").toUpperCase(Locale.ROOT);
-        if(field.equals("personName")&&value.strip().matches("[\\p{IsHan}·•](?:[\\s\\p{Z}]+[\\p{IsHan}·•]){1,29}")) {
+        if(field.equals("personName")&&cn.bidcheck.compat.Java8Api.strip(value).matches("[\\p{IsHan}·•](?:[\\s\\p{Z}]+[\\p{IsHan}·•]){1,29}")) {
             String compact=value.replaceAll("[\\s\\p{Z}]+","");if(compact.matches("[\\p{IsHan}·•]{2,30}"))return compact;
         }
-        if (field.equals("gender")) return switch(value.toLowerCase(Locale.ROOT)) { case "male","m" -> "男"; case "female","f" -> "女"; default -> value; };
-        return value.replaceAll("[\\s\\p{Z}]+", " ").strip();
+        if (field.equals("gender")) switch (value.toLowerCase(Locale.ROOT)) {case "male":case "m":return "男";case "female":case "f":return "女";default:return value;}
+        return cn.bidcheck.compat.Java8Api.strip(value.replaceAll("[\\s\\p{Z}]+", " "));
     }
     private static String type(String title) {
         String value = title.toLowerCase(Locale.ROOT);
@@ -557,47 +593,126 @@ public final class PersonCredentialFacts {
         return "UNKNOWN";
     }
     private static String numberField(String kind) {
-        return switch(kind) { case "ID_CARD" -> "idNumber"; case "DRIVING_LICENSE" -> "drivingLicenseNumber"; case "PASSPORT" -> "passportNumber"; case "PERSON_CERTIFICATE" -> "certificateNumber"; default -> ""; };
+        switch (kind) {case "ID_CARD":return "idNumber";case "DRIVING_LICENSE":return "drivingLicenseNumber";case "PASSPORT":return "passportNumber";case "PERSON_CERTIFICATE":return "certificateNumber";default:return "";}
     }
     private static void labels(String field, String... labels) { for (String label : labels) LABELS.put(label.toLowerCase(Locale.ROOT),field); }
     private static String field(String label) {
-        String value=label.strip().replaceAll("^(?:\\*\\*|__)|(?:\\*\\*|__)$","").strip().toLowerCase(Locale.ROOT);
+        String value=cn.bidcheck.compat.Java8Api.strip(cn.bidcheck.compat.Java8Api.strip(label).replaceAll("^(?:\\*\\*|__)|(?:\\*\\*|__)$","")).toLowerCase(Locale.ROOT);
         if(value.matches("[\\p{IsHan}\\s\\p{Z}]+"))value=value.replaceAll("[\\s\\p{Z}]+","");
         return LABELS.getOrDefault(value, "");
     }
     private static String labelPattern(String label) {
         if(!label.matches("[\\p{IsHan}]+"))return Pattern.quote(label);
-        return label.codePoints().mapToObj(c->Pattern.quote(new String(Character.toChars(c)))).reduce((a,b)->a+"[ \\t\\u3000]*"+b).orElseThrow();
+        return label.codePoints().mapToObj(c->Pattern.quote(new String(Character.toChars(c)))).reduce((a,b)->a+"[ \\t\\u3000]*"+b).orElseThrow(java.util.NoSuchElementException::new);
     }
     private static boolean knownLabel(String value) {
-        if(!field(value).isBlank())return true;
+        if(!cn.bidcheck.compat.Java8Api.isBlank(field(value)))return true;
         String text=value+":";Matcher labels=LABEL.matcher(text);int end=0,count=0;Set<String> fields=new HashSet<>();
-        while(labels.find()){if(!text.substring(end,labels.start()).isBlank())return false;fields.add(field(labels.group(1)));count++;end=labels.end();}
-        return count>=2&&fields.size()==1&&!fields.contains("")&&text.substring(end).isBlank();
+        while(labels.find()){if(!cn.bidcheck.compat.Java8Api.isBlank(text.substring(end,labels.start())))return false;fields.add(field(labels.group(1)));count++;end=labels.end();}
+        return count>=2&&fields.size()==1&&!fields.contains("")&&cn.bidcheck.compat.Java8Api.isBlank(text.substring(end));
     }
     private static int[] unwrap(String text,int start,int end) {
-        for(String marker:List.of("**","__","`")) if(end-start>=marker.length()*2&&text.startsWith(marker,start)&&text.substring(start,end).endsWith(marker)) {
+        for(String marker:cn.bidcheck.compat.Java8Api.listOf("**", "__", "`")) if(end-start>=marker.length()*2&&text.startsWith(marker,start)&&text.substring(start,end).endsWith(marker)) {
             start+=marker.length();end-=marker.length();while(start<end&&Character.isWhitespace(text.charAt(start)))start++;while(end>start&&Character.isWhitespace(text.charAt(end-1)))end--;break;
         }
         return new int[]{start,end};
     }
     private static String visible(String value) {
-        return value.replaceAll("(?i)<br\\s*/?>", " ").replace("&nbsp;", " ").replace("&#160;", " ")
-                .replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'").replaceAll("[\\s\\p{Z}]+", " ").strip();
+        return cn.bidcheck.compat.Java8Api.strip(value.replaceAll("(?i)<br\\s*/?>", " ").replace("&nbsp;", " ").replace("&#160;", " ")
+                .replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'").replaceAll("[\\s\\p{Z}]+", " "));
     }
-    private static int count(Pattern pattern, String value) { return (int)pattern.matcher(value).results().count(); }
+    private static int count(Pattern pattern, String value) { return (int)cn.bidcheck.compat.Java8Extras.matchCount(pattern.matcher(value)); }
     private static void issue(List<Map<String,Object>> issues, Page page, String code, String reason) {
-        if (issues.stream().noneMatch(i -> code.equals(i.get("code")))) issues.add(Map.of("code",code,"page",page.number(),"locationType",page.locationType(),"reason",reason));
+        if (issues.stream().noneMatch(i -> code.equals(i.get("code")))) issues.add(cn.bidcheck.compat.Java8Api.mapOf("code", code, "page", page.number(), "locationType", page.locationType(), "reason", reason));
     }
     private static String digest(String value) {
         try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }
         catch (Exception impossible) { throw new IllegalStateException(impossible); }
     }
-    private record Token(int start, int end, String field, String label) { }
-    private record Title(int start, int end, String raw, String type) { }
-    private record RawField(String field, String raw, String value, int start, int end, TableRelationIndex.Association association) {
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Token {
+        private final int start;
+        private final int end;
+        private final String field;
+        private final String label;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Token(@com.fasterxml.jackson.annotation.JsonProperty("start") int start, @com.fasterxml.jackson.annotation.JsonProperty("end") int end, @com.fasterxml.jackson.annotation.JsonProperty("field") String field, @com.fasterxml.jackson.annotation.JsonProperty("label") String label) { this.start = start; this.end = end; this.field = field; this.label = label; }
+        public int start() { return start; }
+        public int end() { return end; }
+        public String field() { return field; }
+        public String label() { return label; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Token that = (Token) other; return java.util.Objects.equals(this.start, that.start) && java.util.Objects.equals(this.end, that.end) && java.util.Objects.equals(this.field, that.field) && java.util.Objects.equals(this.label, that.label); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.start); hash = 31 * hash + java.util.Objects.hashCode(this.end); hash = 31 * hash + java.util.Objects.hashCode(this.field); hash = 31 * hash + java.util.Objects.hashCode(this.label); return hash; }
+        @Override public String toString() { return "Token[" + "start=" + start + ", end=" + end + ", field=" + field + ", label=" + label + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Title {
+        private final int start;
+        private final int end;
+        private final String raw;
+        private final String type;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Title(@com.fasterxml.jackson.annotation.JsonProperty("start") int start, @com.fasterxml.jackson.annotation.JsonProperty("end") int end, @com.fasterxml.jackson.annotation.JsonProperty("raw") String raw, @com.fasterxml.jackson.annotation.JsonProperty("type") String type) { this.start = start; this.end = end; this.raw = raw; this.type = type; }
+        public int start() { return start; }
+        public int end() { return end; }
+        public String raw() { return raw; }
+        public String type() { return type; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Title that = (Title) other; return java.util.Objects.equals(this.start, that.start) && java.util.Objects.equals(this.end, that.end) && java.util.Objects.equals(this.raw, that.raw) && java.util.Objects.equals(this.type, that.type); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.start); hash = 31 * hash + java.util.Objects.hashCode(this.end); hash = 31 * hash + java.util.Objects.hashCode(this.raw); hash = 31 * hash + java.util.Objects.hashCode(this.type); return hash; }
+        @Override public String toString() { return "Title[" + "start=" + start + ", end=" + end + ", raw=" + raw + ", type=" + type + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class RawField {
+        private final String field;
+        private final String raw;
+        private final String value;
+        private final int start;
+        private final int end;
+        private final TableRelationIndex.Association association;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private RawField(@com.fasterxml.jackson.annotation.JsonProperty("field") String field, @com.fasterxml.jackson.annotation.JsonProperty("raw") String raw, @com.fasterxml.jackson.annotation.JsonProperty("value") String value, @com.fasterxml.jackson.annotation.JsonProperty("start") int start, @com.fasterxml.jackson.annotation.JsonProperty("end") int end, @com.fasterxml.jackson.annotation.JsonProperty("association") TableRelationIndex.Association association) { this.field = field; this.raw = raw; this.value = value; this.start = start; this.end = end; this.association = association; }
+        public String field() { return field; }
+        public String raw() { return raw; }
+        public String value() { return value; }
+        public int start() { return start; }
+        public int end() { return end; }
+        public TableRelationIndex.Association association() { return association; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; RawField that = (RawField) other; return java.util.Objects.equals(this.field, that.field) && java.util.Objects.equals(this.raw, that.raw) && java.util.Objects.equals(this.value, that.value) && java.util.Objects.equals(this.start, that.start) && java.util.Objects.equals(this.end, that.end) && java.util.Objects.equals(this.association, that.association); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.field); hash = 31 * hash + java.util.Objects.hashCode(this.raw); hash = 31 * hash + java.util.Objects.hashCode(this.value); hash = 31 * hash + java.util.Objects.hashCode(this.start); hash = 31 * hash + java.util.Objects.hashCode(this.end); hash = 31 * hash + java.util.Objects.hashCode(this.association); return hash; }
+        @Override public String toString() { return "RawField[" + "field=" + field + ", raw=" + raw + ", value=" + value + ", start=" + start + ", end=" + end + ", association=" + association + "]"; }
+
         RawField(String field,String raw,String value,int start,int end){this(field,raw,value,start,end,null);}
     }
-    private record RawRecord(int start, int end, String type, String format, List<RawField> fields) { }
-    private record TableRow(int start, int end, List<RawField> cells) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class RawRecord {
+        private final int start;
+        private final int end;
+        private final String type;
+        private final String format;
+        private final List<RawField> fields;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private RawRecord(@com.fasterxml.jackson.annotation.JsonProperty("start") int start, @com.fasterxml.jackson.annotation.JsonProperty("end") int end, @com.fasterxml.jackson.annotation.JsonProperty("type") String type, @com.fasterxml.jackson.annotation.JsonProperty("format") String format, @com.fasterxml.jackson.annotation.JsonProperty("fields") List<RawField> fields) { this.start = start; this.end = end; this.type = type; this.format = format; this.fields = fields; }
+        public int start() { return start; }
+        public int end() { return end; }
+        public String type() { return type; }
+        public String format() { return format; }
+        public List<RawField> fields() { return fields; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; RawRecord that = (RawRecord) other; return java.util.Objects.equals(this.start, that.start) && java.util.Objects.equals(this.end, that.end) && java.util.Objects.equals(this.type, that.type) && java.util.Objects.equals(this.format, that.format) && java.util.Objects.equals(this.fields, that.fields); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.start); hash = 31 * hash + java.util.Objects.hashCode(this.end); hash = 31 * hash + java.util.Objects.hashCode(this.type); hash = 31 * hash + java.util.Objects.hashCode(this.format); hash = 31 * hash + java.util.Objects.hashCode(this.fields); return hash; }
+        @Override public String toString() { return "RawRecord[" + "start=" + start + ", end=" + end + ", type=" + type + ", format=" + format + ", fields=" + fields + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class TableRow {
+        private final int start;
+        private final int end;
+        private final List<RawField> cells;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private TableRow(@com.fasterxml.jackson.annotation.JsonProperty("start") int start, @com.fasterxml.jackson.annotation.JsonProperty("end") int end, @com.fasterxml.jackson.annotation.JsonProperty("cells") List<RawField> cells) { this.start = start; this.end = end; this.cells = cells; }
+        public int start() { return start; }
+        public int end() { return end; }
+        public List<RawField> cells() { return cells; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; TableRow that = (TableRow) other; return java.util.Objects.equals(this.start, that.start) && java.util.Objects.equals(this.end, that.end) && java.util.Objects.equals(this.cells, that.cells); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.start); hash = 31 * hash + java.util.Objects.hashCode(this.end); hash = 31 * hash + java.util.Objects.hashCode(this.cells); return hash; }
+        @Override public String toString() { return "TableRow[" + "start=" + start + ", end=" + end + ", cells=" + cells + "]"; }
+ }
 }

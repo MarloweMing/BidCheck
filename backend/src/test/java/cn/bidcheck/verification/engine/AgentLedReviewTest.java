@@ -24,8 +24,28 @@ class AgentLedReviewTest {
     private static final String PASS_BODY="本项目应急预案\n发生事故后立即向建设单位报告现场情况，由应急负责人组织现场处置，并沿安全通道组织人员疏散至集合区域。";
     private static final String FAIL_BODY="本项目施工应急说明\n遇到事故时仅停止施工，不向建设单位报告，不组织现场处置，也不安排人员疏散，人员继续留在作业区域等待。";
 
-    private record Fixture(AgentLedReview review,RunSession session,Reviewer model,Source source,
-                           Map<String,Object> context,Checkpoint checkpoint,List<Document> bids) {}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Fixture {
+        private final AgentLedReview review;
+        private final RunSession session;
+        private final Reviewer model;
+        private final Source source;
+        private final Map<String,Object> context;
+        private final Checkpoint checkpoint;
+        private final List<Document> bids;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Fixture(@com.fasterxml.jackson.annotation.JsonProperty("review") AgentLedReview review, @com.fasterxml.jackson.annotation.JsonProperty("session") RunSession session, @com.fasterxml.jackson.annotation.JsonProperty("model") Reviewer model, @com.fasterxml.jackson.annotation.JsonProperty("source") Source source, @com.fasterxml.jackson.annotation.JsonProperty("context") Map<String,Object> context, @com.fasterxml.jackson.annotation.JsonProperty("checkpoint") Checkpoint checkpoint, @com.fasterxml.jackson.annotation.JsonProperty("bids") List<Document> bids) { this.review = review; this.session = session; this.model = model; this.source = source; this.context = context; this.checkpoint = checkpoint; this.bids = bids; }
+        public AgentLedReview review() { return review; }
+        public RunSession session() { return session; }
+        public Reviewer model() { return model; }
+        public Source source() { return source; }
+        public Map<String,Object> context() { return context; }
+        public Checkpoint checkpoint() { return checkpoint; }
+        public List<Document> bids() { return bids; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Fixture that = (Fixture) other; return java.util.Objects.equals(this.review, that.review) && java.util.Objects.equals(this.session, that.session) && java.util.Objects.equals(this.model, that.model) && java.util.Objects.equals(this.source, that.source) && java.util.Objects.equals(this.context, that.context) && java.util.Objects.equals(this.checkpoint, that.checkpoint) && java.util.Objects.equals(this.bids, that.bids); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.review); hash = 31 * hash + java.util.Objects.hashCode(this.session); hash = 31 * hash + java.util.Objects.hashCode(this.model); hash = 31 * hash + java.util.Objects.hashCode(this.source); hash = 31 * hash + java.util.Objects.hashCode(this.context); hash = 31 * hash + java.util.Objects.hashCode(this.checkpoint); hash = 31 * hash + java.util.Objects.hashCode(this.bids); return hash; }
+        @Override public String toString() { return "Fixture[" + "review=" + review + ", session=" + session + ", model=" + model + ", source=" + source + ", context=" + context + ", checkpoint=" + checkpoint + ", bids=" + bids + "]"; }
+}
 
     private static final class Reviewer implements ModelGateway {
         final List<String> operations=new ArrayList<>();
@@ -36,13 +56,13 @@ class AgentLedReviewTest {
         @Override public JsonNode request(String operation,Map<String,Object> input)throws IOException{
             AgentReviewContracts.validateInput(operation,input);
             operations.add(operation);inputs.add(new LinkedHashMap<>(input));
-            List<String> ids=wrongConditionIds?List.of("foreign-condition"):
-                RuleEvaluator.maps(input.get("conditions")).stream().map(c->str(c,"obligationId")).toList();
+            List<String> ids=wrongConditionIds?cn.bidcheck.compat.Java8Api.listOf("foreign-condition"):
+                cn.bidcheck.compat.Java8Api.toList(RuleEvaluator.maps(input.get("conditions")).stream().map(c->str(c,"obligationId")));
             if(operation.equals("REVIEW_PLAN"))return JSON.valueToTree(linked("approved",approvePlan,
-                "coverageComplete",approvePlan,"conditionIds",ids,"issues",approvePlan?List.of():List.of("原条款的人员疏散安排未纳入计划"),"requiresDeterministic",List.of()));
+                "coverageComplete",approvePlan,"conditionIds",ids,"issues",approvePlan?cn.bidcheck.compat.Java8Api.listOf():cn.bidcheck.compat.Java8Api.listOf("原条款的人员疏散安排未纳入计划"),"requiresDeterministic",cn.bidcheck.compat.Java8Api.listOf()));
             if(operation.equals("REVIEW_JUDGMENT"))return JSON.valueToTree(linked("approved",approveJudgment,
                 "status",approveJudgment?((Map<?,?>)input.get("proposal")).get("status"):"UNDETERMINED",
-                "conditionIds",ids,"issues",approveJudgment?List.of():List.of("只核对事故报告，尚未证明现场处置与人员疏散")));
+                "conditionIds",ids,"issues",approveJudgment?cn.bidcheck.compat.Java8Api.listOf():cn.bidcheck.compat.Java8Api.listOf("只核对事故报告，尚未证明现场处置与人员疏散")));
             throw new AssertionError("Unexpected model operation: "+operation);
         }
     }
@@ -53,36 +73,36 @@ class AgentLedReviewTest {
     }
     private static Fixture fixturePages(String requirement,Reviewer reviewer,String... bidTexts){
         Document tender=new Document("tender-1","project-1","TENDER","招标要求.docx",1,
-            identity(requirement),"",List.of(new Page(1,requirement,"BLOCK","DOCX","")),List.of());
+            identity(requirement),"",cn.bidcheck.compat.Java8Api.listOf(new Page(1,requirement,"BLOCK","DOCX","")),cn.bidcheck.compat.Java8Api.listOf());
         List<Page> bidPages=new ArrayList<>();for(int i=0;i<bidTexts.length;i++)bidPages.add(new Page(i+1,bidTexts[i],"PAGE","PDF",""));
         Document bid=new Document("bid-1","project-1","BID","投标文件.pdf",1,
-            identity(String.join("\n",bidTexts)),"",bidPages,List.of());
+            identity(String.join("\n",bidTexts)),"",bidPages,cn.bidcheck.compat.Java8Api.listOf());
         Evidence evidence=new Evidence(tender.id(),tender.name(),1,"BLOCK",requirement,"chars:0-"+requirement.length(),1);
         Checkpoint checkpoint=new Checkpoint("review-item","应急预案内容","响应检查","HIGH","SEMANTIC_RESPONSE",
             "technicalResponse","RESPONDS",requirement,"",true,true,true,evidence);
         Map<String,Object> context=linked("reviewMode","AGENT_LED","originalRequirement",requirement,
-            "requirementProjectId","project-1","tenderDocuments",List.of(tender));
-        EvidenceCorpus corpus=new EvidenceCorpus(List.of(bid));Source source=corpus.all.get(0);
+            "requirementProjectId","project-1","tenderDocuments",cn.bidcheck.compat.Java8Api.listOf(tender));
+        EvidenceCorpus corpus=new EvidenceCorpus(cn.bidcheck.compat.Java8Api.listOf(bid));Source source=corpus.all.get(0);
         // A source handle authorizes navigation only; judgment must still wait for an actual read.
-        context.put("recoveryChangedSourceIds",corpus.all.stream().map(Source::id).toList());
+        context.put("recoveryChangedSourceIds",cn.bidcheck.compat.Java8Api.toList(corpus.all.stream().map(Source::id)));
         RunSession session=new RunSession(reviewer,context,"agent-led-isolated-item");
-        return new Fixture(new AgentLedReview(checkpoint,List.of(bid),context,session,null),session,reviewer,source,context,checkpoint,List.of(bid));
+        return new Fixture(new AgentLedReview(checkpoint,cn.bidcheck.compat.Java8Api.listOf(bid),context,session,null),session,reviewer,source,context,checkpoint,cn.bidcheck.compat.Java8Api.listOf(bid));
     }
     private static Map<String,Object> condition(String quote){return linked("obligationId","emergency",
         "description","核对事故报告、现场处置和人员疏散安排","requirementQuote",quote,"method","SEMANTIC",
         "predicate","CONTENT","subject","本项目","field","应急预案","operator","RESPONDS",
         "expected","","unit","","expectedEvidence","对应应急预案正文");}
-    private static Map<String,Object> plan(Map<String,Object> condition){return linked("conditions",List.of(condition),
+    private static Map<String,Object> plan(Map<String,Object> condition){return linked("conditions",cn.bidcheck.compat.Java8Api.listOf(condition),
         "coverageExplanation","本条件保留原条款全部应急响应安排，逐项对照正文。");}
     private static String approve(Fixture f){
         Map<String,Object> receipt=f.review().call("submit_review_plan",plan(condition(str(f.context(),"originalRequirement"))));
         assertEquals("COMPLETED",receipt.get("status"),receipt.toString());
         assertEquals(true,((Map<?,?>)receipt.get("planReceipt")).get("approved"));
-        assertFalse(str(receipt,"planRevision").isBlank());
+        assertFalse(cn.bidcheck.compat.Java8Api.isBlank(str(receipt,"planRevision")));
         return str(receipt,"planRevision");
     }
     private static void read(Fixture f){
-        Map<String,Object> receipt=f.review().call("read_section",Map.of("sourceId",f.source().id(),"targetObligationId","emergency"));
+        Map<String,Object> receipt=f.review().call("read_section",cn.bidcheck.compat.Java8Api.mapOf("sourceId", f.source().id(), "targetObligationId", "emergency"));
         assertEquals("COMPLETED",receipt.get("status"),receipt.toString());
         assertTrue(ProofVerifier.strings(receipt.get("sourceIds")).contains(f.source().id()));
         assertEquals(false,((Map<?,?>)receipt.get("computationReceipt")).get("businessCheckCompleted"),
@@ -92,10 +112,10 @@ class AgentLedReviewTest {
         String quote=f.source().evidence().quote();
         return linked("targetObligationId","emergency","planRevision",revision,"status",status,
             "reason",status.equals("PASS")?"正文分别明确事故报告、现场处置与人员疏散安排。":"正文明确排除了原条款要求的应急处置安排。",
-            "evidence",List.of(linked("sourceId",f.source().id(),"quote",quote)),
-            "conditionChecks",List.of(linked("requirementQuote",str(f.context(),"originalRequirement"),
+            "evidence",cn.bidcheck.compat.Java8Api.listOf(linked("sourceId",f.source().id(),"quote",quote)),
+            "conditionChecks",cn.bidcheck.compat.Java8Api.listOf(linked("requirementQuote",str(f.context(),"originalRequirement"),
                 "evidenceSourceId",f.source().id(),"evidenceQuote",quote,"explanation","逐项对照报告、处置、疏散的具体安排。")),
-            "remainingGaps",List.of());
+            "remainingGaps",cn.bidcheck.compat.Java8Api.listOf());
     }
     private static void rejection(Map<String,Object> result,String code){
         assertEquals("REJECTED",result.get("status"),result.toString());assertEquals(code,result.get("error"),result.toString());
@@ -126,17 +146,17 @@ class AgentLedReviewTest {
                 assertEquals(f.checkpoint().id(),checkpoint.get("checkpointId"));
                 assertEquals(15,((List<?>)contract.get("deterministicPredicateValues")).size());
                 assertEquals("CONTENT",contract.get("semanticPredicateValue"));
-                assertEquals(List.of(),context.get("targetObligationIds"));
+                assertEquals(cn.bidcheck.compat.Java8Api.listOf(),context.get("targetObligationIds"));
                 Map<String,Object> approved=handler.call("submit_review_plan",plan(condition(REQUIREMENT)));
                 assertEquals("COMPLETED",approved.get("status"),approved.toString());
-                Map<String,Object> searched=handler.call("search_evidence",Map.of("query","本项目 应急 事故","targetObligationId","emergency"));
+                Map<String,Object> searched=handler.call("search_evidence",cn.bidcheck.compat.Java8Api.mapOf("query", "本项目 应急 事故", "targetObligationId", "emergency"));
                 assertTrue(ProofVerifier.strings(searched.get("sourceIds")).contains(f.source().id()),searched.toString());
-                Map<String,Object> read=handler.call("read_section",Map.of("sourceId",f.source().id(),"targetObligationId","emergency"));
+                Map<String,Object> read=handler.call("read_section",cn.bidcheck.compat.Java8Api.mapOf("sourceId", f.source().id(), "targetObligationId", "emergency"));
                 assertEquals("COMPLETED",read.get("status"),read.toString());
                 assertEquals(false,((Map<?,?>)read.get("computationReceipt")).get("businessCheckCompleted"));
                 Map<String,Object> judged=handler.call("submit_review_judgment",judgment(f,str(approved,"planRevision"),status));
                 assertEquals("COMPLETED",judged.get("status"),judged.toString());
-                Map<String,Object> receipt=handler.call("recompute_check",Map.of());
+                Map<String,Object> receipt=handler.call("recompute_check",cn.bidcheck.compat.Java8Api.mapOf());
                 assertEquals(true,receipt.get("businessCheckCompleted"),receipt.toString());
                 assertEquals(status,receipt.get("businessDecision"));
                 return linked("status","COMPLETED","modelCalls",0,"stopReason","HOST_COMPLETED");
@@ -145,7 +165,7 @@ class AgentLedReviewTest {
         Map<String,Object> result=f.review().execute(agent);
         assertEquals(true,result.get("complete"),result.toString());assertEquals(status,result.get("businessDecision"));
         assertEquals("COMPLETED",result.get("workflowState"));assertTrue(RuleEvaluator.maps(result.get("gaps")).isEmpty());
-        assertEquals(List.of("REVIEW_PLAN","REVIEW_JUDGMENT"),f.model().operations);
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf("REVIEW_PLAN", "REVIEW_JUDGMENT"),f.model().operations);
         assertEquals(2,f.session().modelCalls);
         Map<String,Object> obligation=RuleEvaluator.maps(result.get("obligations")).get(0);
         assertEquals("SOURCE_GROUNDED_SEMANTIC_REVIEW",((Map<?,?>)obligation.get("proof")).get("method"));
@@ -155,23 +175,23 @@ class AgentLedReviewTest {
 
     @Test void unapprovedPlanCannotReadSearchSubmitOrPublish(){
         Fixture f=fixture(REQUIREMENT,PASS_BODY);
-        for(String tool:List.of("read_section","search_evidence","submit_candidate_fact","submit_review_judgment","recompute_check"))
-            rejection(f.review().call(tool,Map.of()),"PLAN_APPROVAL_REQUIRED");
+        for(String tool:cn.bidcheck.compat.Java8Api.listOf("read_section", "search_evidence", "submit_candidate_fact", "submit_review_judgment", "recompute_check"))
+            rejection(f.review().call(tool,cn.bidcheck.compat.Java8Api.mapOf()),"PLAN_APPROVAL_REQUIRED");
         assertTrue(f.model().operations.isEmpty());assertEquals(false,f.review().result().get("complete"));
         assertTrue(RuleEvaluator.maps(f.review().result().get("gaps")).stream().anyMatch(g->"AGENT_PLAN_NOT_SUBMITTED".equals(g.get("code"))));
     }
 
     @Test void planToolSchemaPublishesExactPrimitiveContractAndSemanticConstant(){
-        Map<String,Object> submit=AgentLedReview.tools().stream().filter(t->"submit_review_plan".equals(t.get("name"))).findFirst().orElseThrow();
+        Map<String,Object> submit=AgentLedReview.tools().stream().filter(t->"submit_review_plan".equals(t.get("name"))).findFirst().orElseThrow(java.util.NoSuchElementException::new);
         Map<?,?> parameters=(Map<?,?>)submit.get("parameters"),properties=(Map<?,?>)parameters.get("properties");
         Map<?,?> conditions=(Map<?,?>)properties.get("conditions"),item=(Map<?,?>)conditions.get("items"),fields=(Map<?,?>)item.get("properties");
         Map<?,?> predicate=(Map<?,?>)fields.get("predicate");List<?> alternatives=(List<?>)predicate.get("oneOf");
         List<?> deterministic=(List<?>)((Map<?,?>)alternatives.get(0)).get("enum");
         assertEquals(15,deterministic.size());assertEquals(15,new HashSet<>(deterministic).size());
-        assertEquals(List.of("CONTENT"),((Map<?,?>)alternatives.get(1)).get("enum"));
-        assertEquals(List.of("DETERMINISTIC","SEMANTIC"),((Map<?,?>)fields.get("method")).get("enum"));
-        for(String field:List.of("requirementQuote","method","predicate","subject","field","operator","unit"))
-            assertFalse(Objects.toString(((Map<?,?>)fields.get(field)).get("description"),"").isBlank(),field);
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf("CONTENT"),((Map<?,?>)alternatives.get(1)).get("enum"));
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf("DETERMINISTIC", "SEMANTIC"),((Map<?,?>)fields.get("method")).get("enum"));
+        for(String field:cn.bidcheck.compat.Java8Api.listOf("requirementQuote", "method", "predicate", "subject", "field", "operator", "unit"))
+            assertFalse(cn.bidcheck.compat.Java8Api.isBlank(Objects.toString(((Map<?,?>)fields.get(field)).get("description"),"")),field);
     }
 
     @Test void invalidPlanIdentifiesExactFieldWithoutDisclosingContextAsExecutable(){
@@ -181,9 +201,9 @@ class AgentLedReviewTest {
         Map<String,Object> violation=RuleEvaluator.maps(result.get("violations")).get(0);
         assertEquals("emergency",violation.get("conditionId"));assertEquals("conditions[0].requirementQuote",violation.get("fieldPath"));
         assertFalse(ProofVerifier.strings(violation.get("allowedValues")).isEmpty());
-        assertFalse(str(violation,"correctiveAction").isBlank());
+        assertFalse(cn.bidcheck.compat.Java8Api.isBlank(str(violation,"correctiveAction")));
         Map<String,Object> finalResult=f.review().result();
-        Map<String,Object> gap=RuleEvaluator.maps(finalResult.get("gaps")).stream().filter(g->"AGENT_PLAN_PROTOCOL_FAILED".equals(g.get("code"))).findFirst().orElseThrow();
+        Map<String,Object> gap=RuleEvaluator.maps(finalResult.get("gaps")).stream().filter(g->"AGENT_PLAN_PROTOCOL_FAILED".equals(g.get("code"))).findFirst().orElseThrow(java.util.NoSuchElementException::new);
         assertEquals(1,RunSession.number(gap.get("planSubmissions"),0));assertEquals(1,RunSession.number(gap.get("planRejections"),0));
         Map<?,?> metrics=(Map<?,?>)finalResult.get("metrics");assertEquals("AGENT_PLAN_PROTOCOL_FAILED",metrics.get("stopReason"));assertEquals(false,metrics.get("planApproved"));
     }
@@ -211,36 +231,36 @@ class AgentLedReviewTest {
         Reviewer reviewer=new Reviewer();reviewer.approvePlan=false;Fixture f=fixture(REQUIREMENT,PASS_BODY,reviewer);
         Map<String,Object> partial=condition("本项目应急预案应说明事故报告");
         rejection(f.review().call("submit_review_plan",plan(partial)),"PLAN_COVERAGE_REJECTED");
-        rejection(f.review().call("read_section",Map.of("sourceId",f.source().id())),"PLAN_APPROVAL_REQUIRED");
-        assertEquals(List.of("REVIEW_PLAN"),reviewer.operations);assertEquals(false,f.review().result().get("complete"));
+        rejection(f.review().call("read_section",cn.bidcheck.compat.Java8Api.mapOf("sourceId", f.source().id())),"PLAN_APPROVAL_REQUIRED");
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf("REVIEW_PLAN"),reviewer.operations);assertEquals(false,f.review().result().get("complete"));
     }
 
     @Test void foundMaterialAndAgentPassProposalDoNotOverrideIndependentMissingConditionReview(){
         Reviewer reviewer=new Reviewer();reviewer.approveJudgment=false;Fixture f=fixture(REQUIREMENT,PASS_BODY,reviewer);
         String revision=approve(f);read(f);Map<String,Object> proposal=judgment(f,revision,"PASS");
-        proposal.put("conditionChecks",List.of(linked("requirementQuote",REQUIREMENT,"evidenceSourceId",f.source().id(),
+        proposal.put("conditionChecks",cn.bidcheck.compat.Java8Api.listOf(linked("requirementQuote",REQUIREMENT,"evidenceSourceId",f.source().id(),
             "evidenceQuote",f.source().evidence().quote(),"explanation","仅检查了事故报告，尚未核对其他条件。")));
         rejection(f.review().call("submit_review_judgment",proposal),"SEMANTIC_REVIEW_REJECTED");
         assertEquals("UNDETERMINED",f.review().result().get("businessDecision"));
-        assertEquals(List.of("REVIEW_PLAN","REVIEW_JUDGMENT"),reviewer.operations);
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf("REVIEW_PLAN", "REVIEW_JUDGMENT"),reviewer.operations);
     }
 
     @Test void unknownUnreadAndInventedContinuousSourcesCannotReachIndependentJudgment(){
         Fixture f=fixture(REQUIREMENT,PASS_BODY);String revision=approve(f);
         rejection(f.review().call("submit_review_judgment",judgment(f,revision,"PASS")),"SEMANTIC_SOURCE_INVALID");
         read(f);Map<String,Object> fabricated=judgment(f,revision,"PASS");
-        fabricated.put("evidence",List.of(linked("sourceId","fake-source","quote",PASS_BODY)));
+        fabricated.put("evidence",cn.bidcheck.compat.Java8Api.listOf(linked("sourceId","fake-source","quote",PASS_BODY)));
         rejection(f.review().call("submit_review_judgment",fabricated),"SEMANTIC_SOURCE_INVALID");
         Map<String,Object> spliced=judgment(f,revision,"PASS");
-        spliced.put("evidence",List.of(linked("sourceId",f.source().id(),"quote","发生事故后立即向建设单位报告现场情况，已满足全部招标要求")));
+        spliced.put("evidence",cn.bidcheck.compat.Java8Api.listOf(linked("sourceId",f.source().id(),"quote","发生事故后立即向建设单位报告现场情况，已满足全部招标要求")));
         rejection(f.review().call("submit_review_judgment",spliced),"SEMANTIC_SOURCE_INVALID");
-        assertEquals(List.of("REVIEW_PLAN"),f.model().operations);assertEquals(false,f.review().result().get("complete"));
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf("REVIEW_PLAN"),f.model().operations);assertEquals(false,f.review().result().get("complete"));
     }
 
     @Test void titleOnlyMaterialCannotProveBodyContent(){
         Fixture f=fixture(REQUIREMENT,"本项目应急预案与事故现场处置方案");String revision=approve(f);read(f);
         rejection(f.review().call("submit_review_judgment",judgment(f,revision,"PASS")),"TITLE_ONLY_EVIDENCE");
-        assertEquals(List.of("REVIEW_PLAN"),f.model().operations);
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf("REVIEW_PLAN"),f.model().operations);
     }
 
     @Test void historicalProjectTextCannotBecomeCurrentProjectProof(){
@@ -248,7 +268,7 @@ class AgentLedReviewTest {
         assertTrue(f.source().historical()||f.source().scopeContext().blocked(),"Fixture must be recognized as historical by the real corpus");
         String revision=approve(f);read(f);
         rejection(f.review().call("submit_review_judgment",judgment(f,revision,"PASS")),"SEMANTIC_SOURCE_SCOPE_INVALID");
-        assertEquals(List.of("REVIEW_PLAN"),f.model().operations);assertEquals(false,f.review().result().get("complete"));
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf("REVIEW_PLAN"),f.model().operations);assertEquals(false,f.review().result().get("complete"));
     }
 
     @Test void revisedPlanRejectsJudgmentForOldRevision(){
@@ -257,7 +277,7 @@ class AgentLedReviewTest {
         Map<String,Object> approved=f.review().call("submit_review_plan",plan(changed));
         assertEquals("COMPLETED",approved.get("status"),approved.toString());String current=str(approved,"planRevision");assertNotEquals(previous,current);
         rejection(f.review().call("submit_review_judgment",judgment(f,previous,"PASS")),"REVIEW_PLAN_REVISION_MISMATCH");
-        assertEquals(List.of("REVIEW_PLAN","REVIEW_PLAN"),f.model().operations);
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf("REVIEW_PLAN", "REVIEW_PLAN"),f.model().operations);
         Map<String,Object> currentJudgment=judgment(f,current,"PASS");currentJudgment.put("targetObligationId","emergency-v2");
         assertEquals("COMPLETED",f.review().call("submit_review_judgment",currentJudgment).get("status"));
         assertEquals("PASS",f.review().result().get("businessDecision"));
@@ -270,14 +290,14 @@ class AgentLedReviewTest {
         Map<String,Object> request=plan(condition);request.put("coverageExplanation","换一种说法说明相同覆盖范围");
         Map<String,Object> approved=f.review().call("submit_review_plan",request);
         assertEquals(revision,approved.get("planRevision"));assertEquals("PASS",f.review().result().get("businessDecision"));
-        assertEquals(List.of("REVIEW_PLAN","REVIEW_JUDGMENT"),f.model().operations);
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf("REVIEW_PLAN", "REVIEW_JUDGMENT"),f.model().operations);
     }
 
     @Test void mismatchingIndependentReviewConditionIdsNeverApprovePlan(){
         Reviewer reviewer=new Reviewer();reviewer.wrongConditionIds=true;Fixture f=fixture(REQUIREMENT,PASS_BODY,reviewer);
         Map<String,Object> rejected=f.review().call("submit_review_plan",plan(condition(REQUIREMENT)));
         assertEquals("FAILED",rejected.get("status"));assertEquals("INDEPENDENT_REVIEW_UNAVAILABLE",rejected.get("error"));
-        rejection(f.review().call("read_section",Map.of("sourceId",f.source().id())),"PLAN_APPROVAL_REQUIRED");
+        rejection(f.review().call("read_section",cn.bidcheck.compat.Java8Api.mapOf("sourceId", f.source().id())),"PLAN_APPROVAL_REQUIRED");
         assertEquals(false,f.review().result().get("complete"));
     }
 
@@ -286,7 +306,7 @@ class AgentLedReviewTest {
         assertEquals("COMPLETED",f.review().call("submit_review_judgment",judgment(f,revision,"PASS")).get("status"));
         assertEquals(revision,approve(f));
         assertEquals("COMPLETED",f.review().call("submit_review_judgment",judgment(f,revision,"PASS")).get("status"));
-        assertEquals(List.of("REVIEW_PLAN","REVIEW_JUDGMENT"),f.model().operations);
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf("REVIEW_PLAN", "REVIEW_JUDGMENT"),f.model().operations);
         assertEquals(true,f.review().result().get("complete"));
     }
 
@@ -311,12 +331,12 @@ class AgentLedReviewTest {
     private static String approveTwo(Fixture f){
         Map<String,Object> first=condition(EMERGENCY_REQUIREMENT),second=condition(CLEANING_REQUIREMENT);
         second.put("obligationId","cleaning");second.put("field","现场保洁");second.put("description","核对现场保洁安排");
-        Map<String,Object> receipt=f.review().call("submit_review_plan",linked("conditions",List.of(first,second),
+        Map<String,Object> receipt=f.review().call("submit_review_plan",linked("conditions",cn.bidcheck.compat.Java8Api.listOf(first, second),
             "coverageExplanation","分别核对应急报告与现场保洁两项义务，保留每项原文。"));
         assertEquals("COMPLETED",receipt.get("status"),receipt.toString());return str(receipt,"planRevision");
     }
     private static Source page(Fixture f,int number){return new EvidenceCorpus(f.bids()).all.stream()
-        .filter(s->s.evidence().page()==number).findFirst().orElseThrow();}
+        .filter(s->s.evidence().page()==number).findFirst().orElseThrow(java.util.NoSuchElementException::new);}
     private static Map<String,Object> readTarget(Fixture f,String target,Source source){
         Map<String,Object> read=f.review().call("read_section",linked("targetObligationId",target,"sourceId",source.id()));
         assertEquals("COMPLETED",read.get("status"),read.toString());return read;
@@ -324,12 +344,12 @@ class AgentLedReviewTest {
     private static Map<String,Object> targetJudgment(String revision,String target,String requirement,Source source,String status){
         String quote=source.evidence().quote();return linked("targetObligationId",target,"planRevision",revision,"status",status,
             "reason",status.equals("PASS")?"原文明确提供了本项要求的具体安排。":"原文明确排除了本项要求的安排。",
-            "evidence",List.of(linked("sourceId",source.id(),"quote",quote)),
-            "conditionChecks",List.of(linked("requirementQuote",requirement,"evidenceSourceId",source.id(),"evidenceQuote",quote,
-                "explanation","逐字对照本条件的要求和该项投标正文。")),"remainingGaps",List.of());
+            "evidence",cn.bidcheck.compat.Java8Api.listOf(linked("sourceId",source.id(),"quote",quote)),
+            "conditionChecks",cn.bidcheck.compat.Java8Api.listOf(linked("requirementQuote",requirement,"evidenceSourceId",source.id(),"evidenceQuote",quote,
+                "explanation","逐字对照本条件的要求和该项投标正文。")),"remainingGaps",cn.bidcheck.compat.Java8Api.listOf());
     }
     private static Map<String,Object> decision(Map<String,Object> result,String target){return RuleEvaluator.maps(result.get("obligations"))
-        .stream().filter(d->target.equals(str(d,"id"))).findFirst().orElseThrow();}
+        .stream().filter(d->target.equals(str(d,"id"))).findFirst().orElseThrow(java.util.NoSuchElementException::new);}
 
     @Test void readingSecondTargetsSourceDoesNotInvalidateFirstTargetsAcceptedJudgment(){
         Fixture f=twoConditions(PASS_BODY);String revision=approveTwo(f);Source first=page(f,1),second=page(f,2);
@@ -345,7 +365,7 @@ class AgentLedReviewTest {
         assertEquals("UNDETERMINED",decision(afterRead,"cleaning").get("status"));
         assertEquals("COMPLETED",f.review().call("submit_review_judgment",targetJudgment(revision,"cleaning",CLEANING_REQUIREMENT,second,"PASS")).get("status"));
         Map<String,Object> result=f.review().result();assertEquals("PASS",result.get("businessDecision"));assertEquals(true,result.get("complete"));
-        assertEquals(List.of("REVIEW_PLAN","REVIEW_JUDGMENT","REVIEW_JUDGMENT"),f.model().operations);
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf("REVIEW_PLAN", "REVIEW_JUDGMENT", "REVIEW_JUDGMENT"),f.model().operations);
     }
 
     @Test void explicitFailSurvivesOtherTargetPendingWhileCompletionRemainsFalse(){
@@ -364,21 +384,21 @@ class AgentLedReviewTest {
         String requirement="应急预案应说明事故报告路径；应说明现场处置措施；应说明人员疏散安排。";
         Fixture f=fixture(requirement,PASS_BODY);String revision=approve(f);read(f);
         Map<String,Object> partial=judgment(f,revision,"PASS");
-        partial.put("conditionChecks",List.of(linked("requirementQuote","应急预案应说明事故报告路径",
+        partial.put("conditionChecks",cn.bidcheck.compat.Java8Api.listOf(linked("requirementQuote","应急预案应说明事故报告路径",
             "evidenceSourceId",f.source().id(),"evidenceQuote",f.source().evidence().quote(),"explanation","这里只核对事故报告路径。")));
         rejection(f.review().call("submit_review_judgment",partial),"CONDITION_EVIDENCE_INVALID");
-        assertEquals(List.of("REVIEW_PLAN"),f.model().operations,"Incomplete clause coverage is rejected before another model call");
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf("REVIEW_PLAN"),f.model().operations,"Incomplete clause coverage is rejected before another model call");
         assertEquals(false,f.review().result().get("complete"));
     }
 
     @Test void sourceReadingToolsRequireAnApprovedTargetInsteadOfChangingAllGoals(){
         Fixture f=fixture(REQUIREMENT,PASS_BODY);approve(f);
-        for(String tool:List.of("search_evidence","read_section","read_table_record")){
+        for(String tool:cn.bidcheck.compat.Java8Api.listOf("search_evidence", "read_section", "read_table_record")){
             Map<String,Object> args=linked("query","应急","sourceId",f.source().id(),"rowOffset",0);
             rejection(f.review().call(tool,args),"INVALID_TARGET_RECEIPT");
             args.put("targetObligationId","foreign-goal");rejection(f.review().call(tool,args),"INVALID_TARGET_RECEIPT");
         }
-        assertEquals(List.of("REVIEW_PLAN"),f.model().operations);
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf("REVIEW_PLAN"),f.model().operations);
     }
 
     private static Map<String,Object> completedSemantic(Fixture f){
@@ -389,9 +409,9 @@ class AgentLedReviewTest {
     private static Map<String,Object> restore(Fixture original,Fixture current,Map<String,Object> previous){
         Map<String,Object> context=new LinkedHashMap<>(current.context());context.remove("recoveryChangedSourceIds");
         context.put("recoveryMode","EVIDENCE_RECOMPUTE");context.put("recoveryModelAllowed",false);
-        context.put("priorSteps",List.copyOf(original.session().steps));
+        context.put("priorSteps",cn.bidcheck.compat.Java8Api.listCopyOf(original.session().steps));
         // Report projections do not contain or authorize persisted execution steps.
-        context.put("previousAtomicCheck",Map.of("agentReview",previous.get("agentReview")));
+        context.put("previousAtomicCheck",cn.bidcheck.compat.Java8Api.mapOf("agentReview", previous.get("agentReview")));
         RunSession session=new RunSession(current.model(),context,original.session().scope);
         AgentLedReview review=new AgentLedReview(current.checkpoint(),current.bids(),context,session,null);
         int before=current.model().operations.size();Map<String,Object> result=review.execute(new AgentInvestigator(){

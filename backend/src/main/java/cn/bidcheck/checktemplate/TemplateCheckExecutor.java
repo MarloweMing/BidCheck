@@ -14,10 +14,7 @@ public final class TemplateCheckExecutor {
 
     public TemplateCheckExecutor(CheckTemplateRegistry registry) {
         this.registry = Objects.requireNonNull(registry, "registry");
-        this.identity=TemplateIdentity.digest(VERSION,java.util.Map.of(
-                "registry",registry.identity(),
-                "executorBinary",TemplateIdentity.classFingerprint(TemplateCheckExecutor.class),
-                "projectionBinary",TemplateIdentity.classFingerprint(ResultProjection.class)));
+        this.identity=TemplateIdentity.digest(VERSION,cn.bidcheck.compat.Java8Api.mapOf("registry", registry.identity(), "executorBinary", TemplateIdentity.classFingerprint(TemplateCheckExecutor.class), "projectionBinary", TemplateIdentity.classFingerprint(ResultProjection.class)));
     }
     public String identity() { return identity; }
 
@@ -26,20 +23,20 @@ public final class TemplateCheckExecutor {
         evidence = evidence == null ? EvidenceView.empty() : evidence;
         ValidationResult validation = registry.validate(spec);
         if (!validation.valid()) return invalid(spec, validation, evidence.revision());
-        CheckTemplate template = registry.find(spec.templateId(), spec.templateVersion()).orElseThrow();
+        CheckTemplate template = registry.find(spec.templateId(), spec.templateVersion()).orElseThrow(java.util.NoSuchElementException::new);
         List<EvidenceNeed> needs = template.evidenceNeeds(spec);
         if (spec.applicability().state() == TemplateTypes.ApplicabilityState.DOES_NOT_APPLY) {
             TemplateResult result = new TemplateResult(TemplateTypes.ConclusionState.NOT_APPLICABLE,
                     TemplateTypes.EvidenceState.NOT_APPLICABLE,"NOT_APPLICABLE",
-                    spec.applicability().reason().isBlank()?"有来源的适用条件表明该要求不适用。":spec.applicability().reason(),
-                    List.of(),sourceIds(spec.applicability().sources()),List.of(),needs.stream().map(EvidenceNeed::key).toList(),
+                    cn.bidcheck.compat.Java8Api.isBlank(spec.applicability().reason())?"有来源的适用条件表明该要求不适用。":spec.applicability().reason(),
+                    cn.bidcheck.compat.Java8Api.listOf(),sourceIds(spec.applicability().sources()),cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.toList(needs.stream().map(EvidenceNeed::key)),
                     TemplateTypes.ActionOwner.NONE,"NONE","");
             return execution(spec,needs,result,evidence.revision(),TemplateTypes.ExecutionState.FINISHED,false);
         }
         if (spec.applicability().state() == TemplateTypes.ApplicabilityState.UNKNOWN) {
             TemplateResult result = new TemplateResult(TemplateTypes.ConclusionState.UNDETERMINED,
                     TemplateTypes.EvidenceState.SCOPE_UNRESOLVED,"APPLICABILITY_UNKNOWN","检查要求的适用条件尚未明确。",
-                    List.of(),sourceIds(spec.applicability().sources()),List.of("applicability"),needs.stream().map(EvidenceNeed::key).toList(),
+                    cn.bidcheck.compat.Java8Api.listOf(),sourceIds(spec.applicability().sources()),cn.bidcheck.compat.Java8Api.listOf("applicability"),cn.bidcheck.compat.Java8Api.toList(needs.stream().map(EvidenceNeed::key)),
                     TemplateTypes.ActionOwner.SYSTEM,"CLARIFY_REQUIREMENT","请先根据招标原文或确认记录明确适用条件。");
             return execution(spec,needs,result,evidence.revision(),TemplateTypes.ExecutionState.BLOCKED,false);
         }
@@ -51,18 +48,18 @@ public final class TemplateCheckExecutor {
         } catch (RuntimeException error) {
             TemplateResult result = new TemplateResult(TemplateTypes.ConclusionState.UNDETERMINED,
                     TemplateTypes.EvidenceState.SCOPE_UNRESOLVED,"TEMPLATE_EVALUATION_FAILED","固定判定器未完成本项计算。",
-                    List.of(),List.of(),List.of("system.templateEvaluation"),needs.stream().map(EvidenceNeed::key).toList(),
+                    cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf("system.templateEvaluation"),cn.bidcheck.compat.Java8Api.toList(needs.stream().map(EvidenceNeed::key)),
                     TemplateTypes.ActionOwner.SYSTEM,"RETRY_TEMPLATE","系统需修复或重试本项；无需用户补交材料。");
             return execution(spec,needs,result,evidence.revision(),TemplateTypes.ExecutionState.FAILED,true);
         }
     }
 
     private TemplateExecution invalid(CheckSpec spec, ValidationResult validation, long revision) {
-        List<String> missing=validation.errors().stream().map(error->error.field()+":"+error.code()).toList();
+        List<String> missing=cn.bidcheck.compat.Java8Api.toList(validation.errors().stream().map(error->error.field()+":"+error.code()));
         TemplateResult result=new TemplateResult(TemplateTypes.ConclusionState.UNDETERMINED,TemplateTypes.EvidenceState.SCOPE_UNRESOLVED,
-                "INVALID_CHECK_SPEC","检查规格未通过模板参数校验。",List.of(),List.of(),missing,List.of(),
+                "INVALID_CHECK_SPEC","检查规格未通过模板参数校验。",cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(),missing,cn.bidcheck.compat.Java8Api.listOf(),
                 TemplateTypes.ActionOwner.SYSTEM,"FIX_CHECK_SPEC","请修正检查项参数或完成检查项确认。");
-        return execution(spec,List.of(),result,revision,TemplateTypes.ExecutionState.BLOCKED,false);
+        return execution(spec,cn.bidcheck.compat.Java8Api.listOf(),result,revision,TemplateTypes.ExecutionState.BLOCKED,false);
     }
 
     private TemplateExecution execution(CheckSpec spec,List<EvidenceNeed> needs,TemplateResult result,long revision,
@@ -79,6 +76,6 @@ public final class TemplateCheckExecutor {
     }
 
     private static List<String> sourceIds(List<SourceRef> sources) {
-        return sources.stream().map(source->source.documentId()+":"+source.documentVersion()+":"+source.locationType()+":"+source.location()).distinct().toList();
+        return cn.bidcheck.compat.Java8Api.toList(sources.stream().map(source->source.documentId()+":"+source.documentVersion()+":"+source.locationType()+":"+source.location()).distinct());
     }
 }

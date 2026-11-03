@@ -25,7 +25,7 @@ public final class DocumentStructureController {
         Document doc=bids.document(id);
         Page source=doc.pages().stream().filter(p->p.number()==page).findFirst().orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND,"原文位置不存在"));
         return fields("documentId",id,"documentHash",doc.sha256(),"documentVersion",doc.version(),"location",page,"locationType",source.locationType(),
-            "available",source.layout()!=null,"layout",source.layout()==null?Map.of("status","UNAVAILABLE","warnings",List.of("当前文件版本未保存结构化OCR结果；文字转录和原文仍可查看")):source.layout().toMap());
+            "available",source.layout()!=null,"layout",source.layout()==null?cn.bidcheck.compat.Java8Api.mapOf("status", "UNAVAILABLE", "warnings", cn.bidcheck.compat.Java8Api.listOf("当前文件版本未保存结构化OCR结果；文字转录和原文仍可查看")):source.layout().toMap());
     }
 
     @GetMapping("/{id}/word-layout")

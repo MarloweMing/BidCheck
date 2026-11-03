@@ -23,27 +23,27 @@ class WordsCompatibilityTest {
     }
     @Test void existingSetterFailureCannotBeTreatedAsAbsent()throws Exception{
         assertFalse(WordsCompatibility.optional(new Object(),"setFeature",boolean.class,false));
-        var e=assertThrows(IOException.class,()->WordsCompatibility.optional(new BrokenSetting(),"setFeature",boolean.class,false));
+        java.io.IOException e=assertThrows(IOException.class,()->WordsCompatibility.optional(new BrokenSetting(),"setFeature",boolean.class,false));
         assertEquals("WORD_SDK_CONFIGURATION_ERROR",e.getMessage());assertNull(e.getCause());
     }
     @Test void callbackBridgePreservesDeadlineAndDoesNotRunOnObjectMethods()throws Exception{
-        var setting=new CallbackSetting();var calls=new AtomicInteger();assertTrue(WordsCompatibility.callback(setting,"setProgressCallback",calls::incrementAndGet));
+        cn.bidcheck.document.word.WordsCompatibilityTest.CallbackSetting setting=new CallbackSetting();java.util.concurrent.atomic.AtomicInteger calls=new AtomicInteger();assertTrue(WordsCompatibility.callback(setting,"setProgressCallback",calls::incrementAndGet));
         assertEquals("BoundedWordProgress",setting.progress.toString());setting.progress.hashCode();assertTrue(setting.progress.equals(setting.progress));assertEquals(0,calls.get());
         setting.progress.notify(null);assertEquals(1,calls.get());assertFalse(WordsCompatibility.callback(new Object(),"setProgressCallback",()->fail()));
         assertTrue(WordsCompatibility.callback(setting,"setProgressCallback",()->{throw new IllegalStateException("TIMEOUT");}));assertThrows(IllegalStateException.class,()->setting.progress.notify(null));
     }
     @Test void actualSdkUsesItsAvailableApisAndPreservesIndependentDeadline()throws Exception{
-        assertTrue(WordsCompatibility.compatible());var config=WordsCompatibility.configuration();assertEquals(BuildVersionInfo.getVersion(),config.get("runtimeVersion"));
+        assertTrue(WordsCompatibility.compatible());java.util.Map<java.lang.String, java.lang.Object> config=WordsCompatibility.configuration();assertEquals(BuildVersionInfo.getVersion(),config.get("runtimeVersion"));
         assertEquals("ISOLATED_PROCESS_DEADLINE",config.get("timeoutEnforcement"));assertEquals("EXPLICIT_LICENSE_REQUIRED",config.get("licensePolicy"));
-        var options=new LoadOptions();WordsCompatibility.configureLoad(options,temp,()->{});
-        var pdf=new PdfSaveOptions();WordsCompatibility.configureSave(pdf,temp,()->{});
-        var doc=new Document();WordsCompatibility.configureDocument(doc,()->{});
+        com.aspose.words.LoadOptions options=new LoadOptions();WordsCompatibility.configureLoad(options,temp,()->{});
+        com.aspose.words.PdfSaveOptions pdf=new PdfSaveOptions();WordsCompatibility.configureSave(pdf,temp,()->{});
+        com.aspose.words.Document doc=new Document();WordsCompatibility.configureDocument(doc,()->{});
         String name=(String)config.get("automaticStylesApi");Method getter=Document.class.getMethod(name.replaceFirst("^set","get"));assertEquals(false,getter.invoke(doc));
         if(Boolean.TRUE.equals(config.get("saveTempFolder")))assertEquals(temp.toString(),PdfSaveOptions.class.getMethod("getTempFolder").invoke(pdf));
         assertEquals(!Boolean.TRUE.equals(config.get("ignoreOleData"))||!Boolean.TRUE.equals(config.get("disableOleImageUpdate"))||!Boolean.TRUE.equals(config.get("disableFormScripts")),WordsCompatibility.legacyPreflightRequired());
     }
     @Test void identityIsBasedOnLoadedCodeAndCannotChangeWithCallerMapMutation(){
-        String identity=WordsCompatibility.identity();assertTrue(identity.matches("[a-f0-9]{64}"));var config=WordsCompatibility.configuration();config.put("runtimeVersion","made-up");
+        String identity=WordsCompatibility.identity();assertTrue(identity.matches("[a-f0-9]{64}"));java.util.Map<java.lang.String, java.lang.Object> config=WordsCompatibility.configuration();config.put("runtimeVersion","made-up");
         assertEquals(identity,WordsCompatibility.identity());assertEquals(BuildVersionInfo.getVersion(),WordsCompatibility.configuration().get("runtimeVersion"));
     }
 }

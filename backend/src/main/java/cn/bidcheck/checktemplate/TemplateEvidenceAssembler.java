@@ -29,7 +29,7 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.HexFormat;
+import cn.bidcheck.compat.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -81,28 +81,20 @@ public final class TemplateEvidenceAssembler {
             "(?i)^(?:[_＿—-]+|待填|未填|空白|N/?A|NULL|NONE|XX+|某某|\\[.*?\\]|【.*?】)$");
     private static final Pattern LOT = Pattern.compile(
             "第?([A-Za-z0-9一二三四五六七八九十_-]{1,24})(?:标段|标包|包件)|(?:标段|标包|包件|包号)[ \\t]*[:：=]?[ \\t]*([A-Za-z0-9一二三四五六七八九十_-]{1,24})");
-    private static final Set<String> CERTIFICATE_NUMBER_FIELDS = Set.of(
-            "certificateNumber", "idNumber", "drivingLicenseNumber", "passportNumber");
-    private static final Set<String> TRUSTED_SEAL_ENTITIES = Set.of(
-            "SIGNATURE_SEAL", "VISUAL_SEAL", "VISUAL_OBSERVATION");
-    private static final Set<String> TRUSTED_SEAL_FIELDS = Set.of(
-            "seal", "sealObserved", "visualSeal", "observationType");
+    private static final Set<String> CERTIFICATE_NUMBER_FIELDS = cn.bidcheck.compat.Java8Api.setOf("certificateNumber", "idNumber", "drivingLicenseNumber", "passportNumber");
+    private static final Set<String> TRUSTED_SEAL_ENTITIES = cn.bidcheck.compat.Java8Api.setOf("SIGNATURE_SEAL", "VISUAL_SEAL", "VISUAL_OBSERVATION");
+    private static final Set<String> TRUSTED_SEAL_FIELDS = cn.bidcheck.compat.Java8Api.setOf("seal", "sealObserved", "visualSeal", "observationType");
     /**
      * The tender composition list names logical volumes while bidders commonly print a shorter
      * title on the actual cover/index.  Keep this vocabulary deliberately closed: a fuzzy match
      * here could turn a missing mandatory volume into an automatic pass.
      */
-    private static final Map<String, MaterialAliasProfile> MATERIAL_ALIAS_PROFILES = Map.of(
-            normalize("第一分册 商务投标文件"), new MaterialAliasProfile(MaterialAliasKind.BUSINESS_VOLUME,
-                    List.of("第一分册 商务投标文件", "第一分册 商务文件", "商务投标文件", "投标文件（商务部分）")),
-            normalize("商务技术评审索引表"), new MaterialAliasProfile(MaterialAliasKind.BUSINESS_INDEX,
-                    List.of("商务技术评审索引表", "商务评审索引表")),
-            normalize("第二分册 技术投标文件"), new MaterialAliasProfile(MaterialAliasKind.TECHNICAL_VOLUME,
-                    List.of("第二分册 技术投标文件", "第二分册 技术文件", "技术投标文件", "投标文件（技术部分）")),
-            normalize("技术投标索引表"), new MaterialAliasProfile(MaterialAliasKind.TECHNICAL_INDEX,
-                    List.of("技术投标索引表", "技术评审索引表")),
-            normalize("技术建议书"), new MaterialAliasProfile(MaterialAliasKind.TECHNICAL_PROPOSAL,
-                    List.of("技术建议书")));
+    private static final Map<String, MaterialAliasProfile> MATERIAL_ALIAS_PROFILES = cn.bidcheck.compat.Java8Api.mapOf(normalize("第一分册 商务投标文件"), new MaterialAliasProfile(MaterialAliasKind.BUSINESS_VOLUME,
+                    cn.bidcheck.compat.Java8Api.listOf("第一分册 商务投标文件", "第一分册 商务文件", "商务投标文件", "投标文件（商务部分）")), normalize("商务技术评审索引表"), new MaterialAliasProfile(MaterialAliasKind.BUSINESS_INDEX,
+                    cn.bidcheck.compat.Java8Api.listOf("商务技术评审索引表", "商务评审索引表")), normalize("第二分册 技术投标文件"), new MaterialAliasProfile(MaterialAliasKind.TECHNICAL_VOLUME,
+                    cn.bidcheck.compat.Java8Api.listOf("第二分册 技术投标文件", "第二分册 技术文件", "技术投标文件", "投标文件（技术部分）")), normalize("技术投标索引表"), new MaterialAliasProfile(MaterialAliasKind.TECHNICAL_INDEX,
+                    cn.bidcheck.compat.Java8Api.listOf("技术投标索引表", "技术评审索引表")), normalize("技术建议书"), new MaterialAliasProfile(MaterialAliasKind.TECHNICAL_PROPOSAL,
+                    cn.bidcheck.compat.Java8Api.listOf("技术建议书")));
 
     public TemplateEvidenceAssembler() {
         this.evidenceCoordinator = null;
@@ -132,35 +124,13 @@ public final class TemplateEvidenceAssembler {
                                    List<Fact> inputFacts) {
         Objects.requireNonNull(spec, "spec");
         Objects.requireNonNull(bid, "bid");
-        List<Fact> facts = inputFacts == null ? List.of() : inputFacts.stream()
+        List<Fact> facts = inputFacts == null ? cn.bidcheck.compat.Java8Api.listOf() : cn.bidcheck.compat.Java8Api.toList(inputFacts.stream()
                 .filter(Objects::nonNull)
                 .filter(fact -> fact.evidence() != null && (bid.id().equals(fact.evidence().documentId())
-                        || trustedConnectorFact(fact)))
-                .toList();
+                        || trustedConnectorFact(fact))));
         Context context = new Context(spec, checkpoint, bid, tender, facts);
 
-        switch (spec.templateId()) {
-            case "MATERIAL_PRESENT" -> materialPresent(context);
-            case "COMMITMENT_WITH_SEAL" -> commitmentWithSeal(context);
-            case "MATERIAL_ALTERNATIVE" -> materialAlternative(context);
-            case "CERTIFICATE_VALIDITY" -> certificateValidity(context);
-            case "PRICE_COMPARE" -> priceCompare(context);
-            case "PERSONNEL_ROSTER" -> personnelRoster(context);
-            case "SECTION_CHECKLIST" -> sectionChecklist(context);
-            case "ENTITY_FIELD_MATCH" -> entityFieldMatch(context);
-            case "PERSONNEL_CREDENTIAL" -> personnelCredential(context);
-            case "CONSORTIUM_RESPONSIBILITY" -> consortiumResponsibility(context);
-            case "PRICE_RECONCILE" -> priceReconcile(context);
-            case "DURATION_COMPARE" -> durationCompare(context);
-            case "CROSS_DOCUMENT_CONSISTENCY" -> crossDocumentConsistency(context);
-            case "FORM_FIELD_COMPLETENESS" -> formFieldCompleteness(context);
-            case "DATE_RELATION" -> dateRelation(context);
-            case "TEXT_ANOMALY" -> textAnomaly(context);
-            case "OBJECTIVE_SCORING" -> objectiveScoring(context);
-            case "QUALITY_ADVISORY" -> qualityAdvisory(context);
-            case "EXTERNAL_CHECK" -> externalCheck(context);
-            default -> context.note("UNSUPPORTED_TEMPLATE", "证据装配层未注册该固定模板");
-        }
+        switch (spec.templateId()) {case "MATERIAL_PRESENT":materialPresent(context); break;case "COMMITMENT_WITH_SEAL":commitmentWithSeal(context); break;case "MATERIAL_ALTERNATIVE":materialAlternative(context); break;case "CERTIFICATE_VALIDITY":certificateValidity(context); break;case "PRICE_COMPARE":priceCompare(context); break;case "PERSONNEL_ROSTER":personnelRoster(context); break;case "SECTION_CHECKLIST":sectionChecklist(context); break;case "ENTITY_FIELD_MATCH":entityFieldMatch(context); break;case "PERSONNEL_CREDENTIAL":personnelCredential(context); break;case "CONSORTIUM_RESPONSIBILITY":consortiumResponsibility(context); break;case "PRICE_RECONCILE":priceReconcile(context); break;case "DURATION_COMPARE":durationCompare(context); break;case "CROSS_DOCUMENT_CONSISTENCY":crossDocumentConsistency(context); break;case "FORM_FIELD_COMPLETENESS":formFieldCompleteness(context); break;case "DATE_RELATION":dateRelation(context); break;case "TEXT_ANOMALY":textAnomaly(context); break;case "OBJECTIVE_SCORING":objectiveScoring(context); break;case "QUALITY_ADVISORY":qualityAdvisory(context); break;case "EXTERNAL_CHECK":externalCheck(context); break;default:context.note("UNSUPPORTED_TEMPLATE", "证据装配层未注册该固定模板"); break;}
 
         Map<String, Object> diagnostics = new LinkedHashMap<>();
         diagnostics.put("version", VERSION);
@@ -173,16 +143,16 @@ public final class TemplateEvidenceAssembler {
         diagnostics.put("compilerFallbacks", 0);
         diagnostics.put("documentCoverageComplete", context.documentComplete);
         diagnostics.put("observationCount", context.observations.size());
-        diagnostics.put("closedNeedKeys", List.copyOf(context.closed));
-        diagnostics.put("counters", Map.copyOf(context.counters));
-        diagnostics.put("notes", List.copyOf(context.notes));
+        diagnostics.put("closedNeedKeys", cn.bidcheck.compat.Java8Api.listCopyOf(context.closed));
+        diagnostics.put("counters", cn.bidcheck.compat.Java8Api.mapCopyOf(context.counters));
+        diagnostics.put("notes", cn.bidcheck.compat.Java8Api.listCopyOf(context.notes));
 
         EvidenceView view = new EvidenceView(
                 "template-evidence:" + digest(spec.id() + ":" + spec.revision() + ":" + bid.id() + ":"
                         + bid.version() + ":" + Objects.toString(bid.sha256(), "")),
-                bid.version(), List.copyOf(context.observations), Set.copyOf(context.closed),
-                Set.copyOf(context.failed), Map.copyOf(context.processingFailures));
-        return new Assembly(view, List.copyOf(context.domainEvidence.values()), Map.copyOf(diagnostics));
+                bid.version(), cn.bidcheck.compat.Java8Api.listCopyOf(context.observations), cn.bidcheck.compat.Java8Api.setCopyOf(context.closed),
+                cn.bidcheck.compat.Java8Api.setCopyOf(context.failed), cn.bidcheck.compat.Java8Api.mapCopyOf(context.processingFailures));
+        return new Assembly(view, cn.bidcheck.compat.Java8Api.listCopyOf(context.domainEvidence.values()), cn.bidcheck.compat.Java8Api.mapCopyOf(diagnostics));
     }
 
     private Assembly assembleSingleFlight(CheckSpec spec, Checkpoint checkpoint, Document bid, Document tender,
@@ -195,7 +165,7 @@ public final class TemplateEvidenceAssembler {
         AssemblyMemo memo = new AssemblyMemo(() -> assembleLocal(spec, checkpoint, bid, tender, inputFacts));
         SnapshotLookup snapshotLookup = snapshotFor(bid, inputFacts);
         InputSnapshot inputSnapshot = snapshotLookup.snapshot();
-        SnapshotLookup tenderSnapshotLookup = tender == null ? null : snapshotFor(tender, List.of());
+        SnapshotLookup tenderSnapshotLookup = tender == null ? null : snapshotFor(tender, cn.bidcheck.compat.Java8Api.listOf());
         List<NeedFlight> flights = new ArrayList<>();
         List<Map<String, Object>> queryAudit = new ArrayList<>();
         for (EvidenceNeed need : needs) {
@@ -213,7 +183,7 @@ public final class TemplateEvidenceAssembler {
                             local.evidenceView().closedNeedKeys().contains(need.key()));
                     if (!observations.isEmpty()) return EvidenceExtractionResult.positive(observations, scope);
                     if (scope.closed()) return EvidenceExtractionResult.notFound(scope, "闭合范围内未定位到该证据");
-                    return EvidenceExtractionResult.partial(List.of(), scope, "证据范围或对象集合尚未闭合");
+                    return EvidenceExtractionResult.partial(cn.bidcheck.compat.Java8Api.listOf(), scope, "证据范围或对象集合尚未闭合");
                 }
             };
             CompletableFuture<NeedReceipt> future;
@@ -226,7 +196,7 @@ public final class TemplateEvidenceAssembler {
             flights.add(new NeedFlight(need, stableKey, future));
         }
 
-        List<NeedReceipt> receipts = flights.stream().map(flight -> flight.future.join()).toList();
+        List<NeedReceipt> receipts = cn.bidcheck.compat.Java8Api.toList(flights.stream().map(flight -> flight.future.join()));
         LinkedHashMap<String, Observation> observations = new LinkedHashMap<>();
         LinkedHashSet<String> closed = new LinkedHashSet<>(), failed = new LinkedHashSet<>();
         LinkedHashMap<String, String> failures = new LinkedHashMap<>();
@@ -236,8 +206,7 @@ public final class TemplateEvidenceAssembler {
             if (value.failure != null || receipt == null) {
                 failed.add(value.need.key());
                 failures.put(value.need.key(), safeFailure(value.failure));
-                receiptAudit.add(Map.of("needKey", value.need.key(), "status", "COORDINATOR_FAILED",
-                        "message", safeFailure(value.failure)));
+                receiptAudit.add(cn.bidcheck.compat.Java8Api.mapOf("needKey", value.need.key(), "status", "COORDINATOR_FAILED", "message", safeFailure(value.failure)));
                 continue;
             }
             EvidenceExtractionResult result = receipt.result();
@@ -264,7 +233,7 @@ public final class TemplateEvidenceAssembler {
                 audit.put("scopeClosed", result.scope().closed());
                 audit.put("observationCount", result.observations().size());
             }
-            receiptAudit.add(Map.copyOf(audit));
+            receiptAudit.add(cn.bidcheck.compat.Java8Api.mapCopyOf(audit));
         }
 
         // Always project domain evidence from the persisted observations.  On the first request the
@@ -277,7 +246,7 @@ public final class TemplateEvidenceAssembler {
                 .map(value -> value.receipt.taskId() + ":" + value.receipt.taskRevision())
                 .sorted().collect(java.util.stream.Collectors.joining("|"));
         EvidenceView view = new EvidenceView("template-evidence-flight:" + digest(receiptRevision), bid.version(),
-                List.copyOf(observations.values()), Set.copyOf(closed), Set.copyOf(failed), Map.copyOf(failures));
+                cn.bidcheck.compat.Java8Api.listCopyOf(observations.values()), cn.bidcheck.compat.Java8Api.setCopyOf(closed), cn.bidcheck.compat.Java8Api.setCopyOf(failed), cn.bidcheck.compat.Java8Api.mapCopyOf(failures));
         Map<String, Object> diagnostics = new LinkedHashMap<>();
         if (local != null) diagnostics.putAll(local.diagnostics());
         diagnostics.put("version", VERSION);
@@ -288,12 +257,12 @@ public final class TemplateEvidenceAssembler {
         diagnostics.put("inputSnapshotCacheHit", snapshotLookup.cacheHit());
         if (tenderSnapshotLookup != null) diagnostics.put("tenderSnapshotCacheHit", tenderSnapshotLookup.cacheHit());
         diagnostics.put("needCount", needs.size());
-        diagnostics.put("evidenceQueries", List.copyOf(queryAudit));
+        diagnostics.put("evidenceQueries", cn.bidcheck.compat.Java8Api.listCopyOf(queryAudit));
         diagnostics.put("sharedReceiptCount", receipts.stream().filter(value -> value.receipt != null && value.receipt.sharedTask()).count());
-        diagnostics.put("receipts", List.copyOf(receiptAudit));
-        diagnostics.put("closedNeedKeys", List.copyOf(closed));
-        diagnostics.put("failedNeedKeys", List.copyOf(failed));
-        return new Assembly(view, evidences, Map.copyOf(diagnostics));
+        diagnostics.put("receipts", cn.bidcheck.compat.Java8Api.listCopyOf(receiptAudit));
+        diagnostics.put("closedNeedKeys", cn.bidcheck.compat.Java8Api.listCopyOf(closed));
+        diagnostics.put("failedNeedKeys", cn.bidcheck.compat.Java8Api.listCopyOf(failed));
+        return new Assembly(view, evidences, cn.bidcheck.compat.Java8Api.mapCopyOf(diagnostics));
     }
 
     private static EvidenceNeedKey stableNeedKey(CheckSpec spec, EvidenceNeed need, EvidenceQuery query,
@@ -314,7 +283,7 @@ public final class TemplateEvidenceAssembler {
                 + selector.constraints().entrySet().stream().sorted(Map.Entry.comparingByKey())
                 .map(entry -> entry.getKey() + "=" + entry.getValue()).collect(java.util.stream.Collectors.joining(";"));
         LinkedHashMap<String, String> dimensions = new LinkedHashMap<>();
-        need.constraints().forEach((key, value) -> { if (value != null && !value.isBlank()) dimensions.put(key, value); });
+        need.constraints().forEach((key, value) -> { if (value != null && !cn.bidcheck.compat.Java8Api.isBlank(value)) dimensions.put(key, value); });
         dimensions.put("scopeClosureRequired", Boolean.toString(need.scopeClosureRequired()));
         dimensions.put("factSnapshot", inputSnapshot.factSnapshot());
         putDimension(dimensions, "query.documentRoles", String.join("|", query.documentRoles()));
@@ -326,32 +295,21 @@ public final class TemplateEvidenceAssembler {
         // an otherwise identical task and defeat cross-spec single-flight reuse.
         extractionParameters(need.kind()).stream().sorted().forEach(key -> {
             Object value = spec.parameters().get(key);
-            if (value != null && !String.valueOf(value).isBlank())
+            if (value != null && !cn.bidcheck.compat.Java8Api.isBlank(String.valueOf(value)))
                 dimensions.put("extract." + key, canonicalValue(value));
         });
         String field = need.requiredFields().stream().sorted().collect(java.util.stream.Collectors.joining(","));
-        if (field.isBlank()) field = need.kind().name();
-        return new EvidenceNeedKey(List.copyOf(documents), subject, need.kind().name(), field,
-                Map.copyOf(dimensions), SINGLE_FLIGHT_EXTRACTOR, VERSION);
+        if (cn.bidcheck.compat.Java8Api.isBlank(field)) field = need.kind().name();
+        return new EvidenceNeedKey(cn.bidcheck.compat.Java8Api.listCopyOf(documents), subject, need.kind().name(), field,
+                cn.bidcheck.compat.Java8Api.mapCopyOf(dimensions), SINGLE_FLIGHT_EXTRACTOR, VERSION);
     }
 
     private static void putDimension(Map<String, String> dimensions, String key, String value) {
-        if (value != null && !value.isBlank()) dimensions.put(key, value.strip());
+        if (value != null && !cn.bidcheck.compat.Java8Api.isBlank(value)) dimensions.put(key, cn.bidcheck.compat.Java8Api.strip(value));
     }
 
     private static Set<String> extractionParameters(TemplateTypes.NeedKind kind) {
-        return switch (kind) {
-            case MATERIAL -> Set.of("requireBody", "requiredCommitmentPoints", "requiredMemberRoles",
-                    "requiredResponsibilities", "leadRole", "memberPrefix", "requiredItems",
-                    "formType", "requiredFields", "expectedSubject", "textScope", "anomalyTypes",
-                    "typoDictionary", "dimensions", "source", "queryObject", "asOfDate", "adapterId",
-                    "evaluationStage");
-            case SEAL -> Set.of("materialType", "sealLocation");
-            case CERTIFICATE -> Set.of("certificateType", "leftRole", "rightRole", "relationKey");
-            case PRICE -> Set.of("field", "unit", "startEvent", "calendarBasis", "lot", "priceLayer",
-                    "taxBasis", "criterion", "aggregation", "maxScore", "scoreUnit", "deduplicateBySubject");
-            case PERSONNEL, ROSTER_SCOPE -> Set.of("role", "consortiumRole", "employerKey");
-        };
+        switch (kind) {case MATERIAL:return cn.bidcheck.compat.Java8Api.setOf("requireBody", "requiredCommitmentPoints", "requiredMemberRoles", "requiredResponsibilities", "leadRole", "memberPrefix", "requiredItems", "formType", "requiredFields", "expectedSubject", "textScope", "anomalyTypes", "typoDictionary", "dimensions", "source", "queryObject", "asOfDate", "adapterId", "evaluationStage");case SEAL:return cn.bidcheck.compat.Java8Api.setOf("materialType", "sealLocation");case CERTIFICATE:return cn.bidcheck.compat.Java8Api.setOf("certificateType", "leftRole", "rightRole", "relationKey");case PRICE:return cn.bidcheck.compat.Java8Api.setOf("field", "unit", "startEvent", "calendarBasis", "lot", "priceLayer", "taxBasis", "criterion", "aggregation", "maxScore", "scoreUnit", "deduplicateBySubject");case PERSONNEL:case ROSTER_SCOPE:return cn.bidcheck.compat.Java8Api.setOf("role", "consortiumRole", "employerKey");default:throw new IncompatibleClassChangeError();}
     }
 
     /**
@@ -365,66 +323,57 @@ public final class TemplateEvidenceAssembler {
         LinkedHashSet<String> sectionTerms = new LinkedHashSet<>();
         LinkedHashSet<String> fieldRoles = new LinkedHashSet<>(need.requiredFields());
         String instance = need.kind().name();
-        switch (spec.templateId()) {
-            case "DURATION_COMPARE" -> {
+        switch (spec.templateId()) {case "DURATION_COMPARE":{
                 documentRoles.add("BID");
                 sectionTerms.addAll(fieldLabels(need.constraints().getOrDefault("field", "duration")));
                 sectionTerms.add(need.constraints().getOrDefault("startEvent", ""));
-                fieldRoles.addAll(List.of("amount", "unit", "startEvent", "calendarBasis"));
+                fieldRoles.addAll(cn.bidcheck.compat.Java8Api.listOf("amount", "unit", "startEvent", "calendarBasis"));
                 instance = "lot:" + need.constraints().getOrDefault("lot", "CURRENT_PROJECT");
-            }
-            case "CROSS_DOCUMENT_CONSISTENCY" -> {
+            } break;case "CROSS_DOCUMENT_CONSISTENCY":{
                 String field = need.constraints().getOrDefault("field", "");
                 documentRoles.add("BID");
                 if (!bidInternalConsistencyField(field) && tender != null
                         && "TENDER".equalsIgnoreCase(tender.role())) documentRoles.add("TENDER");
                 sectionTerms.addAll(fieldLabels(field));
-                fieldRoles.addAll(List.of("value", "documentCoverage"));
+                fieldRoles.addAll(cn.bidcheck.compat.Java8Api.listOf("value", "documentCoverage"));
                 instance = bidInternalConsistencyField(field) ? "logical-occurrence" : "document-role";
-            }
-            case "FORM_FIELD_COMPLETENESS" -> {
+            } break;case "FORM_FIELD_COMPLETENESS":{
                 documentRoles.add("BID");
                 sectionTerms.add(need.constraints().getOrDefault("formType", ""));
                 fieldRoles.addAll(splitConstraint(need.constraints().getOrDefault("requiredFields", "")));
                 instance = "same-page-form-instance";
-            }
-            case "DATE_RELATION" -> {
+            } break;case "DATE_RELATION":{
                 String role = need.constraints().getOrDefault("dateRole", "");
                 documentRoles.add(tenderDateRole(role) ? "TENDER" : "BID");
                 sectionTerms.addAll(dateRoleLabels(role));
                 fieldRoles.add(role);
                 instance = need.constraints().getOrDefault("relationKey", "CURRENT_PROJECT") + ":" + role;
-            }
-            case "TEXT_ANOMALY" -> {
+            } break;case "TEXT_ANOMALY":{
                 documentRoles.add("BID");
                 String scope = need.constraints().getOrDefault("textScope", "");
                 if (!wholeDocumentScope(scope)) sectionTerms.add(scope);
                 fieldRoles.addAll(splitConstraint(need.constraints().getOrDefault("anomalyTypes", "")));
                 instance = wholeDocumentScope(scope) ? "whole-document" : "section:" + scope;
-            }
-            case "OBJECTIVE_SCORING" -> {
+            } break;case "OBJECTIVE_SCORING":{
                 String criterion = need.constraints().getOrDefault("criterion", "");
                 ObjectiveRule rule = objectiveRule(spec, criterion);
                 documentRoles.add("BID");
                 if (rule != null) documentRoles.add("TENDER");
                 sectionTerms.add(rule == null ? criterion : rule.materialType());
                 if (rule == null) {
-                    fieldRoles.addAll(List.of("scoreItem", "amount"));
+                    fieldRoles.addAll(cn.bidcheck.compat.Java8Api.listOf("scoreItem", "amount"));
                     instance = "criterion:" + criterion;
                 } else {
-                    fieldRoles.addAll(List.of("certificateNumber", "holder", "validFrom", "validUntil",
-                            "consortiumRole", "scoreItem", "amount"));
+                    fieldRoles.addAll(cn.bidcheck.compat.Java8Api.listOf("certificateNumber", "holder", "validFrom", "validUntil", "consortiumRole", "scoreItem", "amount"));
                     instance = String.join(":", "binary-material", rule.partyRole(), rule.materialType(),
                             rule.score().stripTrailingZeros().toPlainString());
                 }
-            }
-            case "QUALITY_ADVISORY" -> {
+            } break;case "QUALITY_ADVISORY":{
                 documentRoles.add("BID");
                 sectionTerms.add(need.constraints().getOrDefault("materialType", ""));
                 fieldRoles.addAll(qualityDimensions(spec));
                 instance = "material:" + need.constraints().getOrDefault("materialType", "");
-            }
-            case "EXTERNAL_CHECK" -> {
+            } break;case "EXTERNAL_CHECK":{
                 documentRoles.add("EXTERNAL");
                 sectionTerms.add(need.constraints().getOrDefault("source", ""));
                 fieldRoles.addAll(need.requiredFields());
@@ -432,19 +381,17 @@ public final class TemplateEvidenceAssembler {
                         need.constraints().getOrDefault("queryObject", ""),
                         need.constraints().getOrDefault("asOfDate", ""),
                         need.constraints().getOrDefault("adapterId", ""));
-            }
-            default -> documentRoles.add("BID");
-        }
-        sectionTerms.removeIf(String::isBlank);
-        fieldRoles.removeIf(String::isBlank);
-        return new EvidenceQuery(List.copyOf(documentRoles), List.copyOf(sectionTerms), instance,
-                List.copyOf(fieldRoles));
+            } break;default:documentRoles.add("BID"); break;}
+        sectionTerms.removeIf(cn.bidcheck.compat.Java8Api::isBlank);
+        fieldRoles.removeIf(cn.bidcheck.compat.Java8Api::isBlank);
+        return new EvidenceQuery(cn.bidcheck.compat.Java8Api.listCopyOf(documentRoles), cn.bidcheck.compat.Java8Api.listCopyOf(sectionTerms), instance,
+                cn.bidcheck.compat.Java8Api.listCopyOf(fieldRoles));
     }
 
     private static List<String> splitConstraint(String value) {
-        if (value == null || value.isBlank()) return List.of();
-        return java.util.Arrays.stream(value.split("\\|"))
-                .map(String::strip).filter(part -> !part.isBlank()).distinct().toList();
+        if (value == null || cn.bidcheck.compat.Java8Api.isBlank(value)) return cn.bidcheck.compat.Java8Api.listOf();
+        return cn.bidcheck.compat.Java8Api.toList(java.util.Arrays.stream(value.split("\\|"))
+                .map(cn.bidcheck.compat.Java8Api::strip).filter(part -> !cn.bidcheck.compat.Java8Api.isBlank(part)).distinct());
     }
 
     private static boolean bidInternalConsistencyField(String field) {
@@ -488,7 +435,7 @@ public final class TemplateEvidenceAssembler {
             digestPart(parser, page.warning());
         }
         if (bid.warnings() != null) bid.warnings().stream().filter(Objects::nonNull)
-                .map(String::strip).sorted().forEach(value -> digestPart(content, value));
+                .map(cn.bidcheck.compat.Java8Api::strip).sorted().forEach(value -> digestPart(content, value));
         return new InputSnapshot(HexFormat.of().formatHex(content.digest()),
                 HexFormat.of().formatHex(parser.digest()), factSnapshot(bid, inputFacts));
     }
@@ -529,37 +476,26 @@ public final class TemplateEvidenceAssembler {
     }
 
     private static String canonicalValue(Object value) {
-        if (value instanceof Collection<?> collection) return collection.stream().map(String::valueOf)
-                .map(String::strip).sorted().collect(java.util.stream.Collectors.joining("|"));
-        return String.valueOf(value).strip();
+        if (value instanceof Collection<?>) return ((Collection<?>) (value)).stream().map(String::valueOf)
+                .map(cn.bidcheck.compat.Java8Api::strip).sorted().collect(java.util.stream.Collectors.joining("|"));
+        return cn.bidcheck.compat.Java8Api.strip(String.valueOf(value));
     }
 
     private static List<Observation> observationsForNeed(CheckSpec spec, EvidenceNeed need,
                                                          List<Observation> values) {
-        return values.stream().filter(value -> switch (need.kind()) {
-            case MATERIAL -> value instanceof Observation.MaterialObservation material
-                    && materialMatchesNeed(spec, need, material);
-            case SEAL -> value instanceof Observation.SealObservation;
-            case CERTIFICATE -> value instanceof Observation.CertificateObservation certificate
-                    && certificateMatchesNeed(spec, need, certificate);
-            case PRICE -> value instanceof Observation.PriceObservation price
-                    && priceMatchesNeed(spec, need, price);
-            case PERSONNEL, ROSTER_SCOPE -> value instanceof Observation.PersonnelObservation person
-                    && (need.constraints().getOrDefault("role", "").isBlank()
-                    || person.roles().stream().anyMatch(role -> sameRole(need.constraints().get("role"), role)));
-        }).toList();
+        return cn.bidcheck.compat.Java8Api.toList(values.stream().filter(value -> { switch (need.kind()) {case MATERIAL:return value instanceof Observation.MaterialObservation
+                    && materialMatchesNeed(spec, need, ((Observation.MaterialObservation) (value)));case SEAL:return value instanceof Observation.SealObservation;case CERTIFICATE:return value instanceof Observation.CertificateObservation
+                    && certificateMatchesNeed(spec, need, ((Observation.CertificateObservation) (value)));case PRICE:return value instanceof Observation.PriceObservation
+                    && priceMatchesNeed(spec, need, ((Observation.PriceObservation) (value)));case PERSONNEL:case ROSTER_SCOPE:return value instanceof Observation.PersonnelObservation
+                    && (cn.bidcheck.compat.Java8Api.isBlank(need.constraints().getOrDefault("role", ""))
+                    || ((Observation.PersonnelObservation) (value)).roles().stream().anyMatch(role -> sameRole(need.constraints().get("role"), role)));default:throw new IllegalStateException("Unknown evidence need: " + need.kind());} }));
     }
 
     private static boolean materialMatchesNeed(CheckSpec spec, EvidenceNeed need,
                                                Observation.MaterialObservation observation) {
-        String expected = switch (spec.templateId()) {
-            case "CROSS_DOCUMENT_CONSISTENCY" -> "FIELD:" + need.constraints().getOrDefault("field", "");
-            case "FORM_FIELD_COMPLETENESS" -> need.constraints().getOrDefault("formType", "");
-            case "TEXT_ANOMALY" -> "TEXT:" + need.constraints().getOrDefault("textScope", "");
-            case "EXTERNAL_CHECK" -> "EXTERNAL:" + need.constraints().getOrDefault("source", "");
-            default -> need.constraints().getOrDefault("materialType", "");
-        };
-        return !expected.isBlank() && materialMatches(observation, expected);
+        String expected;
+switch (spec.templateId()) {case "CROSS_DOCUMENT_CONSISTENCY":expected = "FIELD:" + need.constraints().getOrDefault("field", ""); break;case "FORM_FIELD_COMPLETENESS":expected = need.constraints().getOrDefault("formType", ""); break;case "TEXT_ANOMALY":expected = "TEXT:" + need.constraints().getOrDefault("textScope", ""); break;case "EXTERNAL_CHECK":expected = "EXTERNAL:" + need.constraints().getOrDefault("source", ""); break;default:expected = need.constraints().getOrDefault("materialType", ""); break;}
+        return !cn.bidcheck.compat.Java8Api.isBlank(expected) && materialMatches(observation, expected);
     }
 
     private static boolean certificateMatchesNeed(CheckSpec spec, EvidenceNeed need,
@@ -567,9 +503,9 @@ public final class TemplateEvidenceAssembler {
         String expected = "DATE_RELATION".equals(spec.templateId())
                 ? "DATE:" + need.constraints().getOrDefault("dateRole", "")
                 : need.constraints().getOrDefault("certificateType", "");
-        if (!expected.isBlank() && !certificateTypeMatches(expected, observation.certificateType())) return false;
+        if (!cn.bidcheck.compat.Java8Api.isBlank(expected) && !certificateTypeMatches(expected, observation.certificateType())) return false;
         String relationKey = need.constraints().getOrDefault("relationKey", "");
-        return relationKey.isBlank() || same(relationKey, observation.holderKey());
+        return cn.bidcheck.compat.Java8Api.isBlank(relationKey) || same(relationKey, observation.holderKey());
     }
 
     private static boolean priceMatchesNeed(CheckSpec spec, EvidenceNeed need,
@@ -583,7 +519,7 @@ public final class TemplateEvidenceAssembler {
                     && same(need.constraints().getOrDefault("field", ""), observation.field());
         }
         String field = need.constraints().getOrDefault("field", "");
-        return field.isBlank() || same(field, observation.field());
+        return cn.bidcheck.compat.Java8Api.isBlank(field) || same(field, observation.field());
     }
 
     private static boolean materialMatches(Observation.MaterialObservation observation, String expected) {
@@ -615,7 +551,7 @@ public final class TemplateEvidenceAssembler {
             expected++;
             missing.add("scope-boundary:" + need.kind().name().toLowerCase(Locale.ROOT));
         }
-        return EvidenceScope.partial(scanned, expected, Set.copyOf(missing), "文档页面或对象集合尚未闭合");
+        return EvidenceScope.partial(scanned, expected, cn.bidcheck.compat.Java8Api.setCopyOf(missing), "文档页面或对象集合尚未闭合");
     }
 
     private static List<Evidence> domainEvidence(Collection<Observation> observations, Document bid, Document tender) {
@@ -627,7 +563,7 @@ public final class TemplateEvidenceAssembler {
                     source.quote(), "singleflight:" + source.sourceHash(), observation.confidence());
             result.putIfAbsent(evidenceKey(evidence), evidence);
         }
-        return List.copyOf(result.values());
+        return cn.bidcheck.compat.Java8Api.listCopyOf(result.values());
     }
 
     private static String safeFailure(Throwable failure) {
@@ -640,7 +576,7 @@ public final class TemplateEvidenceAssembler {
     private void sectionChecklist(Context context) {
         boolean requireBody = bool(context.spec.parameters(), "requireBody", true);
         for (String item : strings(context.spec.parameters(), "requiredItems")) {
-            MaterialScan scan = scanMaterial(context, item, Set.of(), requireBody);
+            MaterialScan scan = scanMaterial(context, item, cn.bidcheck.compat.Java8Api.setOf(), requireBody);
             scan.observations.forEach(context::add);
             closeMaterialNeed(context, "item-" + safe(item), scan);
         }
@@ -676,14 +612,14 @@ public final class TemplateEvidenceAssembler {
 
     private void consortiumResponsibility(Context context) {
         String materialType = string(context.spec.parameters(), "materialType");
-        if (materialType.isBlank()) materialType = "联合体协议书";
+        if (cn.bidcheck.compat.Java8Api.isBlank(materialType)) materialType = "联合体协议书";
         LinkedHashSet<String> points = new LinkedHashSet<>();
         points.addAll(strings(context.spec.parameters(), "requiredMemberRoles"));
         points.addAll(strings(context.spec.parameters(), "requiredResponsibilities"));
         String lead = string(context.spec.parameters(), "leadRole");
-        if (!lead.isBlank()) points.add(lead);
+        if (!cn.bidcheck.compat.Java8Api.isBlank(lead)) points.add(lead);
         String prefix = string(context.spec.parameters(), "memberPrefix");
-        if (prefix.isBlank()) prefix = "成员:";
+        if (cn.bidcheck.compat.Java8Api.isBlank(prefix)) prefix = "成员:";
         MaterialScan scan = scanMaterial(context, materialType, points, true);
         Observation.MaterialObservation material = aggregateCommitment(context, materialType, scan);
         if (material != null) {
@@ -695,7 +631,7 @@ public final class TemplateEvidenceAssembler {
             }
             context.add(new Observation.MaterialObservation(material.id(), material.materialType(), material.aliases(),
                     material.subjectKey(), material.currentScope(), material.bodyPresent(), material.titleOnly(),
-                    Set.copyOf(explicit), material.state(), material.sources(), material.confidence()));
+                    cn.bidcheck.compat.Java8Api.setCopyOf(explicit), material.state(), material.sources(), material.confidence()));
         } else scan.observations.forEach(context::add);
         closeMaterialNeed(context, "consortium-agreement", scan);
     }
@@ -730,7 +666,7 @@ public final class TemplateEvidenceAssembler {
             String observedLot = lots(String.join("\n", Objects.toString(fact.rawValue(), ""),
                     Objects.toString(fact.evidence().quote(), ""), sourceContext));
             boolean current = currentEvidence(context, fact.evidence(), page, false);
-            boolean explicitWrongLot = !lot.isBlank() && !observedLot.isBlank() && !same(lot, observedLot);
+            boolean explicitWrongLot = !cn.bidcheck.compat.Java8Api.isBlank(lot) && !cn.bidcheck.compat.Java8Api.isBlank(observedLot) && !same(lot, observedLot);
             // A historical project or another explicit lot is outside the requested collection.
             // Count it as rejected evidence, but never let it keep the current-project range open.
             if (!current) {
@@ -748,7 +684,7 @@ public final class TemplateEvidenceAssembler {
             // A numeric value alone is not a duration observation: PriceObservation requires a
             // real unit, and copying the unit requested by the rule would turn an unknown basis
             // into apparently supporting evidence.
-            if (duration.unit.isBlank() || duration.calendarBasis.isBlank()) {
+            if (cn.bidcheck.compat.Java8Api.isBlank(duration.unit) || cn.bidcheck.compat.Java8Api.isBlank(duration.calendarBasis)) {
                 if (!explicitWrongLot) unresolved = true;
                 context.increment("unboundDurationBasis");
                 continue;
@@ -761,19 +697,19 @@ public final class TemplateEvidenceAssembler {
                     && knownRequired(requestedCalendar, duration.calendarBasis,
                             TemplateEvidenceAssembler::same)
                     && knownRequired(requestedStart, observedStart, TemplateEvidenceAssembler::same)
-                    && (lot.isBlank() || !observedLot.isBlank() && same(lot, observedLot));
+                    && (cn.bidcheck.compat.Java8Api.isBlank(lot) || !cn.bidcheck.compat.Java8Api.isBlank(observedLot) && same(lot, observedLot));
             TemplateTypes.ObservationState state = compatible && current
                     ? TemplateTypes.ObservationState.SUPPORTED : TemplateTypes.ObservationState.UNRESOLVED;
             if (!compatible && !explicitWrongLot) unresolved = true;
             String subject = subjectKey(context.spec.subjectSelector());
-            List<SourceRef> sourceRefs = refs(context, List.of(fact.evidence()));
+            List<SourceRef> sourceRefs = refs(context, cn.bidcheck.compat.Java8Api.listOf(fact.evidence()));
             context.add(new Observation.PriceObservation(
                     stableObservationId("duration", subject,
                             String.join("|", field, observedLot, observedStart, duration.calendarBasis, duration.unit,
                                     duration.amount.toPlainString()), sourceRefs),
                     field, subject, observedLot, observedStart, duration.calendarBasis, "DURATION", duration.unit,
                     duration.amount, current, state, sourceRefs,
-                    observationConfidence(page, List.of(fact.evidence()))));
+                    observationConfidence(page, cn.bidcheck.compat.Java8Api.listOf(fact.evidence()))));
         }
         if (matched == 0 && !unresolved && durationAcceptance(context, field, requestedUnit,
                 requestedStart, requestedCalendar, lot)) matched = 1;
@@ -791,15 +727,15 @@ public final class TemplateEvidenceAssembler {
      */
     private boolean durationAcceptance(Context context, String field, String unit, String startEvent,
                                        String calendarBasis, String lot) {
-        if (!context.spec.confirmed() || field.isBlank() || unit.isBlank()
-                || calendarBasis.isBlank()) return false;
+        if (!context.spec.confirmed() || cn.bidcheck.compat.Java8Api.isBlank(field) || cn.bidcheck.compat.Java8Api.isBlank(unit)
+                || cn.bidcheck.compat.Java8Api.isBlank(calendarBasis)) return false;
         BigDecimal expected;
         try { expected = new BigDecimal(string(context.spec.parameters(), "expected")); }
         catch (NumberFormatException invalid) { return false; }
-        List<SourceRef> requirementSources = context.spec.parameterBindings().stream()
-                .filter(binding -> Set.of("expected", "unit", "startEvent", "calendarBasis", "lot")
+        List<SourceRef> requirementSources = cn.bidcheck.compat.Java8Api.toList(context.spec.parameterBindings().stream()
+                .filter(binding -> cn.bidcheck.compat.Java8Api.setOf("expected", "unit", "startEvent", "calendarBasis", "lot")
                         .contains(binding.parameter()))
-                .flatMap(binding -> binding.sources().stream()).distinct().toList();
+                .flatMap(binding -> binding.sources().stream()).distinct());
         if (requirementSources.isEmpty()) requirementSources = context.spec.requirementRefs();
         if (requirementSources.isEmpty()) return false;
         Pattern acceptance = Pattern.compile(
@@ -810,14 +746,14 @@ public final class TemplateEvidenceAssembler {
             Matcher matcher = acceptance.matcher(text);
             if (!matcher.find()) continue;
             Evidence acceptanceEvidence = new Evidence(context.bid.id(), context.bid.name(), page.number(),
-                    page.locationType(), matcher.group().strip(),
+                    page.locationType(), cn.bidcheck.compat.Java8Api.strip(matcher.group()),
                     "template-duration-acceptance:" + matcher.start(), parserConfidence(page));
             if (!currentEvidence(context, acceptanceEvidence, page, false)) continue;
-            List<SourceRef> sources = new ArrayList<>(refs(context, List.of(acceptanceEvidence)));
+            List<SourceRef> sources = new ArrayList<>(refs(context, cn.bidcheck.compat.Java8Api.listOf(acceptanceEvidence)));
             sources.addAll(requirementSources);
-            sources = sources.stream().collect(java.util.stream.Collectors.toMap(
+            sources = cn.bidcheck.compat.Java8Api.toList(sources.stream().collect(java.util.stream.Collectors.toMap(
                     TemplateEvidenceAssembler::sourceKey, source -> source, (left, right) -> left,
-                    LinkedHashMap::new)).values().stream().toList();
+                    LinkedHashMap::new)).values().stream());
             String subject = subjectKey(context.spec.subjectSelector());
             context.add(new Observation.PriceObservation(
                     stableObservationId("duration-accepted-requirement", subject,
@@ -849,25 +785,25 @@ public final class TemplateEvidenceAssembler {
                     continue;
                 }
                 String party = consistencyParty(field, document, sourcePage, value.value, primaryCompany);
-                if (bidInternalConsistencyField(field) && party.isBlank()) {
+                if (bidInternalConsistencyField(field) && cn.bidcheck.compat.Java8Api.isBlank(party)) {
                     context.increment("rejectedUnboundConsistencyParty");
                     continue;
                 }
                 String logicalScope = consistencySourceScope(document, sourcePage, field);
-                logicalScopesByParty.computeIfAbsent(party.isBlank() ? "PROJECT" : party,
+                logicalScopesByParty.computeIfAbsent(cn.bidcheck.compat.Java8Api.isBlank(party) ? "PROJECT" : party,
                         ignored -> new LinkedHashSet<>()).add(logicalScope);
-                List<SourceRef> sourceRefs = refs(context, List.of(value.evidence));
+                List<SourceRef> sourceRefs = refs(context, cn.bidcheck.compat.Java8Api.listOf(value.evidence));
                 String subject = subjectKey(context.spec.subjectSelector());
                 LinkedHashSet<String> points = new LinkedHashSet<>();
                 points.add("VALUE:" + value.value);
                 points.add("SOURCE_SCOPE:" + logicalScope);
-                points.add("PARTY_SCOPE:" + (party.isBlank() ? "PROJECT" : party));
+                points.add("PARTY_SCOPE:" + (cn.bidcheck.compat.Java8Api.isBlank(party) ? "PROJECT" : party));
                 context.add(new Observation.MaterialObservation(
                         stableObservationId("cross-document-field", subject,
                                 field + "|" + document.id() + "|" + value.value, sourceRefs),
-                        "FIELD:" + field, Set.of(), subject, true, true, false,
-                        Set.copyOf(points), TemplateTypes.ObservationState.SUPPORTED,
-                        sourceRefs, observationConfidence(sourcePage, List.of(value.evidence))));
+                        "FIELD:" + field, cn.bidcheck.compat.Java8Api.setOf(), subject, true, true, false,
+                        cn.bidcheck.compat.Java8Api.setCopyOf(points), TemplateTypes.ObservationState.SUPPORTED,
+                        sourceRefs, observationConfidence(sourcePage, cn.bidcheck.compat.Java8Api.listOf(value.evidence))));
             }
         }
         boolean covered = !logicalScopesByParty.isEmpty()
@@ -895,30 +831,30 @@ public final class TemplateEvidenceAssembler {
         String formType = string(parameters, "formType");
         List<String> requiredFields = strings(parameters, "requiredFields");
         String expectedSubject = string(parameters, "expectedSubject");
-        List<Page> candidates = sortedPages(context.bid).stream()
-                .filter(page -> containsNormalized(page.text(), formType)).toList();
+        List<Page> candidates = cn.bidcheck.compat.Java8Api.toList(sortedPages(context.bid).stream()
+                .filter(page -> containsNormalized(page.text(), formType)));
         for (Page page : candidates) {
             LinkedHashSet<String> points = new LinkedHashSet<>();
             for (String field : requiredFields) {
                 LabelValue value = labelledField(page.text(), field);
                 if (!value.present) continue;
-                String marker = value.value.isBlank() ? "FIELD_BLANK:"
-                        : PLACEHOLDER.matcher(value.value.strip()).matches() ? "FIELD_PLACEHOLDER:"
+                String marker = cn.bidcheck.compat.Java8Api.isBlank(value.value) ? "FIELD_BLANK:"
+                        : PLACEHOLDER.matcher(cn.bidcheck.compat.Java8Api.strip(value.value)).matches() ? "FIELD_PLACEHOLDER:"
                         : "FIELD_FILLED:";
                 points.add(marker + field);
-                if (!expectedSubject.isBlank() && subjectField(field) && !value.value.isBlank()
+                if (!cn.bidcheck.compat.Java8Api.isBlank(expectedSubject) && subjectField(field) && !cn.bidcheck.compat.Java8Api.isBlank(value.value)
                         && !containsNormalized(value.value, expectedSubject)) {
                     points.add("FIELD_WRONG_SUBJECT:" + field);
                 }
             }
             if (points.isEmpty()) continue;
             Evidence evidence = pageEvidence(context.bid, page, formType);
-            List<SourceRef> sourceRefs = refs(context, List.of(evidence));
+            List<SourceRef> sourceRefs = refs(context, cn.bidcheck.compat.Java8Api.listOf(evidence));
             String subject = subjectKey(context.spec.subjectSelector());
             context.add(new Observation.MaterialObservation(
                     stableObservationId("form-fields", subject,
                             formType + "|" + points.stream().sorted().collect(java.util.stream.Collectors.joining("|")),
-                            sourceRefs), formType, Set.of(), subject, true, true, false, Set.copyOf(points),
+                            sourceRefs), formType, cn.bidcheck.compat.Java8Api.setOf(), subject, true, true, false, cn.bidcheck.compat.Java8Api.setCopyOf(points),
                     TemplateTypes.ObservationState.SUPPORTED, sourceRefs, parserConfidence(page)));
             boolean everyFieldExplicit = requiredFields.stream().allMatch(field -> points.contains("FIELD_FILLED:" + field)
                     || points.contains("FIELD_BLANK:" + field) || points.contains("FIELD_PLACEHOLDER:" + field)
@@ -930,8 +866,8 @@ public final class TemplateEvidenceAssembler {
 
     private void dateRelation(Context context) {
         String relationKey = string(context.spec.parameters(), "relationKey");
-        if (relationKey.isBlank()) relationKey = subjectKey(context.spec.subjectSelector());
-        for (String side : List.of("left", "right")) {
+        if (cn.bidcheck.compat.Java8Api.isBlank(relationKey)) relationKey = subjectKey(context.spec.subjectSelector());
+        for (String side : cn.bidcheck.compat.Java8Api.listOf("left", "right")) {
             String role = string(context.spec.parameters(), side + "Role");
             List<DatedSource> dates = datesForRole(context, role);
             for (DatedSource dated : dates) {
@@ -955,7 +891,7 @@ public final class TemplateEvidenceAssembler {
         Set<String> allowed = strings(context.spec.parameters(), "anomalyTypes").stream()
                 .map(TemplateEvidenceAssembler::upper)
                 .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
-        if (allowed.isEmpty()) allowed.addAll(List.of("TYPO", "TRUNCATED", "OCR_SUSPECT"));
+        if (allowed.isEmpty()) allowed.addAll(cn.bidcheck.compat.Java8Api.listOf("TYPO", "TRUNCATED", "OCR_SUSPECT"));
         List<TypoRule> typoRules = typoRules(context.spec.parameters().get("typoDictionary"));
         Set<String> availableDetectors = new LinkedHashSet<>();
         if (allowed.contains("TYPO") && !typoRules.isEmpty()) availableDetectors.add("TYPO");
@@ -966,7 +902,7 @@ public final class TemplateEvidenceAssembler {
                 if (textScanScopeMarker(fact, anomalyType, scope)) availableDetectors.add(anomalyType);
             }
         }
-        boolean wholeDocument = scope.isBlank() || List.of("全文", "全部", "整份").stream().anyMatch(scope::contains);
+        boolean wholeDocument = cn.bidcheck.compat.Java8Api.isBlank(scope) || cn.bidcheck.compat.Java8Api.listOf("全文", "全部", "整份").stream().anyMatch(scope::contains);
         boolean scopeSeen = wholeDocument;
         for (Page page : sortedPages(context.bid)) {
             String text = Objects.toString(page.text(), "");
@@ -982,7 +918,7 @@ public final class TemplateEvidenceAssembler {
             String warning = Objects.toString(page.warning(), "");
             if (allowed.contains("OCR_SUSPECT") && (OBVIOUS_TEXT_ANOMALY.matcher(text).find()
                     || OBVIOUS_TEXT_ANOMALY.matcher(warning).find()))
-                points.add("ANOMALY:OCR_SUSPECT:" + anomalySnippet(text.isBlank() ? warning : text));
+                points.add("ANOMALY:OCR_SUSPECT:" + anomalySnippet(cn.bidcheck.compat.Java8Api.isBlank(text) ? warning : text));
             if (allowed.contains("TRUNCATED") && (warning.contains("截断") || text.contains("[内容截断]")))
                 points.add("ANOMALY:TRUNCATED:" + anomalySnippet(warning + " " + text));
             if (allowed.contains("TYPO")) for (TypoRule rule : typoRules) {
@@ -998,12 +934,12 @@ public final class TemplateEvidenceAssembler {
             }
             if (points.isEmpty()) continue;
             Evidence evidence = pageEvidence(context.bid, page, scope);
-            List<SourceRef> sourceRefs = refs(context, List.of(evidence));
+            List<SourceRef> sourceRefs = refs(context, cn.bidcheck.compat.Java8Api.listOf(evidence));
             String subject = subjectKey(context.spec.subjectSelector());
             context.add(new Observation.MaterialObservation(
                     stableObservationId("text-anomaly", subject,
                             scope + "|" + points.stream().sorted().collect(java.util.stream.Collectors.joining("|")), sourceRefs),
-                    "TEXT:" + scope, Set.of(), subject, true, true, false, Set.copyOf(points),
+                    "TEXT:" + scope, cn.bidcheck.compat.Java8Api.setOf(), subject, true, true, false, cn.bidcheck.compat.Java8Api.setCopyOf(points),
                     TemplateTypes.ObservationState.SUPPORTED, sourceRefs, parserConfidence(page)));
         }
         LinkedHashSet<String> missingCapabilities = new LinkedHashSet<>(allowed);
@@ -1018,7 +954,7 @@ public final class TemplateEvidenceAssembler {
     private void objectiveScoring(Context context) {
         String criterion = string(context.spec.parameters(), "criterion");
         String scoreUnit = string(context.spec.parameters(), "scoreUnit");
-        if (scoreUnit.isBlank()) scoreUnit = "分";
+        if (cn.bidcheck.compat.Java8Api.isBlank(scoreUnit)) scoreUnit = "分";
         LinkedHashSet<String> emitted = new LinkedHashSet<>();
         boolean scoringScopeClosed = false;
         for (Fact fact : context.facts) {
@@ -1028,15 +964,15 @@ public final class TemplateEvidenceAssembler {
             if (score == null || fact.evidence() == null) continue;
             Page page = page(context.bid, fact.evidence());
             if (page == null) continue;
-            String subject = fact.entityKey() == null || fact.entityKey().isBlank()
+            String subject = fact.entityKey() == null || cn.bidcheck.compat.Java8Api.isBlank(fact.entityKey())
                     ? subjectKey(context.spec.subjectSelector()) : fact.entityKey();
             if (!emitted.add(scoreIdentity(fact.evidence(), subject, score))) continue;
-            List<SourceRef> sourceRefs = refs(context, List.of(fact.evidence()));
+            List<SourceRef> sourceRefs = refs(context, cn.bidcheck.compat.Java8Api.listOf(fact.evidence()));
             context.add(new Observation.PriceObservation(
                     stableObservationId("objective-score", subject, criterion + "|" + score, sourceRefs),
                     criterion, subject, "", "", "", "SCORE", scoreUnit, score, true,
                     TemplateTypes.ObservationState.SUPPORTED, sourceRefs,
-                    observationConfidence(page, List.of(fact.evidence()))));
+                    observationConfidence(page, cn.bidcheck.compat.Java8Api.listOf(fact.evidence()))));
             if (explicitScoreSummary(fact.rawValue(), criterion, true) != null) scoringScopeClosed = true;
         }
 
@@ -1057,7 +993,7 @@ public final class TemplateEvidenceAssembler {
             }
             String subject = subjectKey(context.spec.subjectSelector());
             if (emitted.add(scoreIdentity(evidence, subject, summary.score()))) {
-                List<SourceRef> sourceRefs = refs(context, List.of(evidence));
+                List<SourceRef> sourceRefs = refs(context, cn.bidcheck.compat.Java8Api.listOf(evidence));
                 context.add(new Observation.PriceObservation(
                         stableObservationId("objective-score-summary", subject,
                                 criterion + "|" + summary.score(), sourceRefs),
@@ -1078,15 +1014,15 @@ public final class TemplateEvidenceAssembler {
                 ObjectiveProof proof = objectiveMaterialProof(context, rule);
                 List<Evidence> selected = !proof.eligible().isEmpty() ? proof.eligible()
                         : proof.ineligible().isEmpty() || !proof.unresolved().isEmpty()
-                        ? List.of() : proof.ineligible();
+                        ? cn.bidcheck.compat.Java8Api.listOf() : proof.ineligible();
                 if (!selected.isEmpty()) {
                     boolean eligible = !proof.eligible().isEmpty();
                     BigDecimal awarded = eligible ? rule.score() : BigDecimal.ZERO;
                     List<SourceRef> sourceRefs = new ArrayList<>(refs(context, selected));
                     sourceRefs.addAll(rule.sources());
-                    sourceRefs = sourceRefs.stream().collect(java.util.stream.Collectors.toMap(
+                    sourceRefs = cn.bidcheck.compat.Java8Api.toList(sourceRefs.stream().collect(java.util.stream.Collectors.toMap(
                             TemplateEvidenceAssembler::sourceKey, source -> source, (left, right) -> left,
-                            LinkedHashMap::new)).values().stream().toList();
+                            LinkedHashMap::new)).values().stream());
                     String subject = subjectKey(context.spec.subjectSelector());
                     context.add(new Observation.PriceObservation(
                             stableObservationId("objective-rule-proof", subject,
@@ -1110,7 +1046,7 @@ public final class TemplateEvidenceAssembler {
     private void qualityAdvisory(Context context) {
         String materialType = string(context.spec.parameters(), "materialType");
         List<String> dimensions = qualityDimensions(context.spec);
-        MaterialScan scan = scanMaterial(context, materialType, Set.copyOf(dimensions), true);
+        MaterialScan scan = scanMaterial(context, materialType, cn.bidcheck.compat.Java8Api.setCopyOf(dimensions), true);
         QualitySectionScan sectionScan = qualitySectionBody(context, materialType, dimensions);
         if (!sectionScan.observations().isEmpty()) {
             sectionScan.observations().forEach(context::add);
@@ -1143,20 +1079,19 @@ public final class TemplateEvidenceAssembler {
         }
         context.add(new Observation.MaterialObservation(material.id(), material.materialType(), material.aliases(),
                 material.subjectKey(), material.currentScope(), material.bodyPresent(), material.titleOnly(),
-                Set.copyOf(points), material.state(), material.sources(), material.confidence()));
+                cn.bidcheck.compat.Java8Api.setCopyOf(points), material.state(), material.sources(), material.confidence()));
         // Advisory coverage is intentionally never closed into a hard negative: absent qualitative
         // detail remains an evaluator/committee judgement rather than a document-compliance failure.
     }
 
     private Observation.MaterialObservation explicitQualityBody(Context context, String materialType,
                                                                 List<String> dimensions, MaterialScan scan) {
-        List<Observation.MaterialObservation> candidates = scan.observations.stream()
+        List<Observation.MaterialObservation> candidates = cn.bidcheck.compat.Java8Api.toList(scan.observations.stream()
                 .filter(Observation.MaterialObservation::currentScope)
                 .filter(value -> value.state() == TemplateTypes.ObservationState.SUPPORTED
                         && value.bodyPresent() && !value.titleOnly())
                 .filter(value -> value.sources().stream().map(SourceRef::quote)
-                        .anyMatch(quote -> dimensions.stream().anyMatch(dimension -> containsNormalized(quote, dimension))))
-                .toList();
+                        .anyMatch(quote -> dimensions.stream().anyMatch(dimension -> containsNormalized(quote, dimension)))));
         if (candidates.isEmpty()) return null;
         LinkedHashMap<String, SourceRef> sources = new LinkedHashMap<>();
         LinkedHashSet<String> covered = new LinkedHashSet<>();
@@ -1167,18 +1102,18 @@ public final class TemplateEvidenceAssembler {
                     .anyMatch(source -> containsNormalized(source.quote(), dimension))) covered.add(dimension);
             confidence = Math.min(confidence, candidate.confidence());
         }
-        List<SourceRef> sourceRefs = List.copyOf(sources.values());
+        List<SourceRef> sourceRefs = cn.bidcheck.compat.Java8Api.listCopyOf(sources.values());
         String subject = subjectKey(context.spec.subjectSelector());
         return new Observation.MaterialObservation(
                 stableObservationId("quality-material", subject,
                         materialType + "|" + covered.stream().sorted().collect(java.util.stream.Collectors.joining("|")),
-                        sourceRefs), materialType, Set.of(), subject, true, true, false, Set.copyOf(covered),
+                        sourceRefs), materialType, cn.bidcheck.compat.Java8Api.setOf(), subject, true, true, false, cn.bidcheck.compat.Java8Api.setCopyOf(covered),
                 TemplateTypes.ObservationState.SUPPORTED, sourceRefs, confidence);
     }
 
     private static ObjectiveRule objectiveRule(CheckSpec spec, String criterion) {
         if (spec == null || !spec.confirmed() || spec.requirementRefs().isEmpty()
-                || criterion == null || criterion.isBlank()) return null;
+                || criterion == null || cn.bidcheck.compat.Java8Api.isBlank(criterion)) return null;
         Pattern rulePattern = Pattern.compile(
                 "(?:(投标人|供应商|响应人|施工单位|设计单位|联合体成员)\\s*(?:应当|应|须|必须)?\\s*)?"
                         + "(?:具备|具有|提供|持有)\\s*([^，,。；;\\r\\n]{2,80}?(?:认证证书|资格证书|资质证书|许可证|证书|资质|证明材料|证明))"
@@ -1187,7 +1122,7 @@ public final class TemplateEvidenceAssembler {
         for (SourceRef source : spec.requirementRefs()) {
             Matcher matcher = rulePattern.matcher(Objects.toString(source.quote(), ""));
             while (matcher.find()) {
-                String partyRole = Objects.toString(matcher.group(1), "").strip();
+                String partyRole = cn.bidcheck.compat.Java8Api.strip(Objects.toString(matcher.group(1), ""));
                 String materialType = objectiveMaterialLookupType(matcher.group(2));
                 if (materialType.length() < 2 || materialType.length() > 60
                         || !containsNormalized(criterion, materialType)) continue;
@@ -1209,18 +1144,17 @@ public final class TemplateEvidenceAssembler {
         if (candidates.size() != 1) return null;
         ObjectiveRuleBuilder selected = candidates.values().iterator().next();
         return new ObjectiveRule(selected.partyRole, selected.materialType, selected.score,
-                List.copyOf(selected.sources.values()));
+                cn.bidcheck.compat.Java8Api.listCopyOf(selected.sources.values()));
     }
 
     private static String objectiveMaterialLookupType(String value) {
-        String materialType = cleanMarkup(Objects.toString(value, "")).strip();
+        String materialType = cn.bidcheck.compat.Java8Api.strip(cleanMarkup(Objects.toString(value, "")));
         // The tender rule may require an "有效的" certificate, while the certificate itself is
         // headed only by its formal name. Validity is proved independently from the labelled date
         // range at the tender deadline, so source-side validity adjectives are not part of the
         // material lookup identity. The original requirement source remains attached to the score.
-        return materialType.replaceFirst(
-                "^(?:(?:合法(?:且)?|真实|现行|持续)?有效(?:期内)?|(?:在|处于)有效期内)\\s*的?\\s*", "")
-                .strip();
+        return cn.bidcheck.compat.Java8Api.strip(materialType.replaceFirst(
+                "^(?:(?:合法(?:且)?|真实|现行|持续)?有效(?:期内)?|(?:在|处于)有效期内)\\s*的?\\s*", ""));
     }
 
     private ObjectiveProof objectiveMaterialProof(Context context, ObjectiveRule rule) {
@@ -1240,16 +1174,12 @@ public final class TemplateEvidenceAssembler {
                 Evidence evidence = new Evidence(context.bid.id(), context.bid.name(), page.number(), page.locationType(),
                         quote, "template-objective-material:" + safe(materialType), parserConfidence(page));
                 if (!currentEvidence(context, evidence, page, false) && !currentMaterialContext(text)) continue;
-                switch (assessment.state()) {
-                    case ELIGIBLE -> eligible.add(evidence);
-                    case INELIGIBLE -> ineligible.add(evidence);
-                    case UNRESOLVED -> unresolved.add(evidence);
-                }
+                switch (assessment.state()) {case ELIGIBLE:eligible.add(evidence); break;case INELIGIBLE:ineligible.add(evidence); break;case UNRESOLVED:unresolved.add(evidence); break;}
                 if (eligible.size() + ineligible.size() + unresolved.size() >= 6)
-                    return new ObjectiveProof(List.copyOf(eligible), List.copyOf(ineligible), List.copyOf(unresolved));
+                    return new ObjectiveProof(cn.bidcheck.compat.Java8Api.listCopyOf(eligible), cn.bidcheck.compat.Java8Api.listCopyOf(ineligible), cn.bidcheck.compat.Java8Api.listCopyOf(unresolved));
             }
         }
-        return new ObjectiveProof(List.copyOf(eligible), List.copyOf(ineligible), List.copyOf(unresolved));
+        return new ObjectiveProof(cn.bidcheck.compat.Java8Api.listCopyOf(eligible), cn.bidcheck.compat.Java8Api.listCopyOf(ineligible), cn.bidcheck.compat.Java8Api.listCopyOf(unresolved));
     }
 
     private static List<String> objectiveCertificateBlocks(String text, String materialType) {
@@ -1264,15 +1194,15 @@ public final class TemplateEvidenceAssembler {
                 if (block.length() + line.length() > 2200) break;
                 block.append(line).append('\n');
             }
-            String value = block.toString().strip();
-            if (!value.isBlank()) blocks.putIfAbsent(normalize(value), value);
+            String value = cn.bidcheck.compat.Java8Api.strip(block.toString());
+            if (!cn.bidcheck.compat.Java8Api.isBlank(value)) blocks.putIfAbsent(normalize(value), value);
         }
-        return List.copyOf(blocks.values());
+        return cn.bidcheck.compat.Java8Api.listCopyOf(blocks.values());
     }
 
     private static boolean otherCertificateHeading(String line, String materialType) {
-        String value = cleanMarkup(Objects.toString(line, "")).strip();
-        if (value.isBlank() || value.length() > 100 || containsNormalized(value, materialType)) return false;
+        String value = cn.bidcheck.compat.Java8Api.strip(cleanMarkup(Objects.toString(line, "")));
+        if (cn.bidcheck.compat.Java8Api.isBlank(value) || value.length() > 100 || containsNormalized(value, materialType)) return false;
         return value.matches(".*(?:认证证书|资格证书|资质证书|许可证)\\s*[（(]?(?:副本|正本)?[）)]?\\s*$");
     }
 
@@ -1289,20 +1219,20 @@ public final class TemplateEvidenceAssembler {
         Matcher labelled = Pattern.compile("(?:兹证明|证书持有人|持证单位|组织名称|企业名称|单位名称)"
                 + "\\s*[:：]?\\s*([^，,。；;\\r\\n]{2,100}?(?:有限责任公司|股份有限公司|有限公司|公司|设计院|研究院))")
                 .matcher(Objects.toString(quote, ""));
-        if (labelled.find()) return cleanMarkup(labelled.group(1)).strip();
+        if (labelled.find()) return cn.bidcheck.compat.Java8Api.strip(cleanMarkup(labelled.group(1)));
         Matcher company = Pattern.compile("([\\p{IsHan}A-Za-z0-9（）()·]{2,80}?(?:有限责任公司|股份有限公司|有限公司|公司|设计院|研究院))")
                 .matcher(Objects.toString(quote, ""));
-        return company.find() ? cleanMarkup(company.group(1)).strip() : "";
+        return company.find() ? cn.bidcheck.compat.Java8Api.strip(cleanMarkup(company.group(1))) : "";
     }
 
     private static boolean objectivePartyMatches(Context context, String partyRole, String holder, String proofText) {
-        if (partyRole == null || partyRole.isBlank()) return !holder.isBlank();
-        if (holder.isBlank()) return false;
+        if (partyRole == null || cn.bidcheck.compat.Java8Api.isBlank(partyRole)) return !cn.bidcheck.compat.Java8Api.isBlank(holder);
+        if (cn.bidcheck.compat.Java8Api.isBlank(holder)) return false;
         String role = normalize(partyRole);
         String roleTerms = role.contains("设计") ? "(?:设计单位|设计成员|设计方|负责[^。；;\\n]{0,20}设计|承担[^。；;\\n]{0,20}设计)"
                 : role.contains("施工") ? "(?:施工单位|施工成员|施工方|负责[^。；;\\n]{0,20}施工|承担[^。；;\\n]{0,20}施工)"
                 : role.contains("联合体成员") ? "(?:联合体成员|联合体牵头人|联合体牵头单位|施工成员|设计成员)" : "";
-        if (!roleTerms.isBlank()) {
+        if (!cn.bidcheck.compat.Java8Api.isBlank(roleTerms)) {
             Pattern bound = Pattern.compile(Pattern.quote(holder) + "[^。；;\\n]{0,100}" + roleTerms
                     + "|" + roleTerms + "[^。；;\\n]{0,100}" + Pattern.quote(holder));
             if (bound.matcher(cleanMarkup(proofText)).find()) return true;
@@ -1336,12 +1266,11 @@ public final class TemplateEvidenceAssembler {
         String prefix = requirement.substring(Math.max(0, count.start() - 180), count.start());
         int colon = Math.max(prefix.lastIndexOf('：'), prefix.lastIndexOf(':'));
         if (colon >= 0) prefix = prefix.substring(colon + 1);
-        prefix = prefix.replaceFirst("^\\s*(?:对)?(?:本项目|本工程)?的?", "").strip();
-        List<String> parsed = java.util.Arrays.stream(prefix.split("[、,，]|(?:以及|及|和)"))
-                .map(String::strip)
+        prefix = cn.bidcheck.compat.Java8Api.strip(prefix.replaceFirst("^\\s*(?:对)?(?:本项目|本工程)?的?", ""));
+        List<String> parsed = cn.bidcheck.compat.Java8Api.toList(java.util.Arrays.stream(prefix.split("[、,，]|(?:以及|及|和)"))
+                .map(cn.bidcheck.compat.Java8Api::strip)
                 .map(value -> value.replaceFirst("^(?:包括|包含|涵盖)\\s*", ""))
-                .filter(value -> value.length() >= 2 && value.length() <= 28)
-                .toList();
+                .filter(value -> value.length() >= 2 && value.length() <= 28));
         if (parsed.size() != expected || parsed.stream().map(TemplateEvidenceAssembler::normalize)
                 .distinct().count() != parsed.size()) return configured;
         return parsed;
@@ -1349,7 +1278,7 @@ public final class TemplateEvidenceAssembler {
 
     private QualitySectionScan qualitySectionBody(Context context, String materialType,
                                                   List<String> dimensions) {
-        if (materialType.isBlank() || dimensions.isEmpty()) return new QualitySectionScan(false, List.of());
+        if (cn.bidcheck.compat.Java8Api.isBlank(materialType) || dimensions.isEmpty()) return new QualitySectionScan(false, cn.bidcheck.compat.Java8Api.listOf());
         List<Page> pages = sortedPages(context.bid);
         int start = -1;
         int startOffset = 0;
@@ -1367,16 +1296,16 @@ public final class TemplateEvidenceAssembler {
                 sectionNumber = matcher.group(1);
                 break;
             }
-            if (heading(text.lines().findFirst().orElse(""), materialType)) {
+            if (heading(cn.bidcheck.compat.Java8Extras.lines(text).findFirst().orElse(""), materialType)) {
                 start = index;
                 break;
             }
         }
-        if (start < 0) return new QualitySectionScan(false, List.of());
+        if (start < 0) return new QualitySectionScan(false, cn.bidcheck.compat.Java8Api.listOf());
 
         List<SectionSlice> slices = qualitySectionSlices(pages, start, startOffset, sectionNumber, materialType);
         boolean sectionLocated = true;
-        if (slices.isEmpty()) return new QualitySectionScan(sectionLocated, List.of());
+        if (slices.isEmpty()) return new QualitySectionScan(sectionLocated, cn.bidcheck.compat.Java8Api.listOf());
 
         List<Observation.MaterialObservation> observations = new ArrayList<>();
         for (String dimension : dimensions) {
@@ -1394,19 +1323,19 @@ public final class TemplateEvidenceAssembler {
                     "template-quality-section:" + safe(materialType) + ":" + safe(dimension),
                     parserConfidence(best.page()));
             if (historicalAt(best.text(), quote)) continue;
-            List<SourceRef> sourceRefs = refs(context, List.of(evidence));
+            List<SourceRef> sourceRefs = refs(context, cn.bidcheck.compat.Java8Api.listOf(evidence));
             if (sourceRefs.isEmpty()) continue;
             String subject = subjectKey(context.spec.subjectSelector());
             Set<String> points = explicitGap(best.text(), dimension)
-                    ? Set.of("GAP:" + dimension + ":原文明确存在缺项或未说明")
-                    : Set.of("DIMENSION:" + dimension + ":SUPPORTED");
+                    ? cn.bidcheck.compat.Java8Api.setOf("GAP:" + dimension + ":原文明确存在缺项或未说明")
+                    : cn.bidcheck.compat.Java8Api.setOf("DIMENSION:" + dimension + ":SUPPORTED");
             observations.add(new Observation.MaterialObservation(
                     stableObservationId("quality-section", subject, materialType + "|" + dimension, sourceRefs),
-                    materialType, Set.of(), subject, true, true, false, points,
+                    materialType, cn.bidcheck.compat.Java8Api.setOf(), subject, true, true, false, points,
                     TemplateTypes.ObservationState.SUPPORTED, sourceRefs, parserConfidence(best.page())));
         }
         context.counters.put("qualityDimensionsLocated", observations.size());
-        return new QualitySectionScan(sectionLocated, List.copyOf(observations));
+        return new QualitySectionScan(sectionLocated, cn.bidcheck.compat.Java8Api.listCopyOf(observations));
     }
 
     private static int qualityBodyScore(String text, String dimension, List<String> dimensions,
@@ -1416,10 +1345,10 @@ public final class TemplateEvidenceAssembler {
         int outlineEnd = overviewPage ? qualityOutlineEnd(lines, dimensions) : -1;
         int score = Integer.MIN_VALUE;
         for (int lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-            String line = lines[lineIndex].strip();
+            String line = cn.bidcheck.compat.Java8Api.strip(lines[lineIndex]);
             if (!containsNormalized(line, dimension)) continue;
             boolean dimensionHeading = qualityDimensionHeading(line, dimension);
-            if (!dimensionHeading && explicitQualityDimensionStatement(line, List.of(dimension))) {
+            if (!dimensionHeading && explicitQualityDimensionStatement(line, cn.bidcheck.compat.Java8Api.listOf(dimension))) {
                 score = Math.max(score, line.length() >= 28 ? 5 : 3);
                 continue;
             }
@@ -1431,7 +1360,7 @@ public final class TemplateEvidenceAssembler {
             int headingLevel = qualityHeadingLevel(line);
             StringBuilder body = new StringBuilder();
             for (int next = lineIndex + 1; next < lines.length; next++) {
-                String candidate = lines[next].strip();
+                String candidate = cn.bidcheck.compat.Java8Api.strip(lines[next]);
                 int candidateLevel = qualityHeadingLevel(candidate);
                 // Any structural peer/ancestor ends this dimension body, even when its title is not
                 // one of the requested dimensions.  Deeper sections and bare numbered list items
@@ -1453,7 +1382,7 @@ public final class TemplateEvidenceAssembler {
         Pattern predicate = Pattern.compile("具有|包含|涵盖|围绕|结合|分析|说明|明确|提出|采用|通过|制定|实施|保障|论证|形成");
         Pattern navigation = Pattern.compile("仅为|仅作|导航|目录|将在|后续|随后|详见|参见|尚未|未提供|未说明|不包含|不含|待补|待完善|拟在");
         for (String line : text.split("\\R")) {
-            String value = line.strip();
+            String value = cn.bidcheck.compat.Java8Api.strip(line);
             if (value.length() < 10 || navigation.matcher(value).find() || !predicate.matcher(value).find()) continue;
             for (String dimension : dimensions) {
                 if (containsNormalized(value, dimension) && !qualityDimensionHeading(value, dimension)) return true;
@@ -1469,7 +1398,7 @@ public final class TemplateEvidenceAssembler {
         if (lines == null || dimensions == null || dimensions.size() < 3) return -1;
         LinkedHashMap<String, Integer> firstHeadings = new LinkedHashMap<>();
         for (int lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-            String line = lines[lineIndex].strip();
+            String line = cn.bidcheck.compat.Java8Api.strip(lines[lineIndex]);
             for (String dimension : dimensions) {
                 if (!firstHeadings.containsKey(dimension) && qualityDimensionHeading(line, dimension))
                     firstHeadings.put(dimension, lineIndex);
@@ -1482,11 +1411,7 @@ public final class TemplateEvidenceAssembler {
     private static int qualityHeadingLevel(String line) {
         String value = cleanMarkup(Objects.toString(line, ""));
         Matcher chinese = Pattern.compile("第?[一二三四五六七八九十百0-9]+\\s*(章|节|条)").matcher(value);
-        if (chinese.find()) return switch (chinese.group(1)) {
-            case "章" -> 1;
-            case "节" -> 2;
-            default -> 3;
-        };
+        if (chinese.find()) switch (chinese.group(1)) {case "章":return 1;case "节":return 2;default:return 3;}
         Matcher numbered = Pattern.compile("(?<!\\d)(\\d+(?:\\.\\d+)+)").matcher(value);
         if (numbered.find()) return numbered.group(1).split("\\.").length;
         if (value.matches("^[^\\p{IsHan}A-Za-z0-9]{0,8}[一二三四五六七八九十0-9]+[、.．)].*")) return 3;
@@ -1494,10 +1419,10 @@ public final class TemplateEvidenceAssembler {
     }
 
     private static boolean qualityDimensionHeading(String line, String dimension) {
-        if (line == null || line.isBlank() || line.length() > 72 || !containsNormalized(line, dimension)) return false;
-        String value = cleanMarkup(line).strip();
+        if (line == null || cn.bidcheck.compat.Java8Api.isBlank(line) || line.length() > 72 || !containsNormalized(line, dimension)) return false;
+        String value = cn.bidcheck.compat.Java8Api.strip(cleanMarkup(line));
         String remaining = normalize(value).replace(normalize(dimension), "");
-        if (remaining.isBlank()) return true;
+        if (cn.bidcheck.compat.Java8Api.isBlank(remaining)) return true;
         boolean prefixed = value.matches("^(?:第?[一二三四五六七八九十百0-9]+\\s*(?:章|节|条)[、.．)]*"
                 + "|\\d+(?:\\.\\d+)+[ \\t、.．)]*|[一二三四五六七八九十0-9]+[、.．)])\\s*.*");
         return prefixed && remaining.length() <= 18;
@@ -1515,7 +1440,7 @@ public final class TemplateEvidenceAssembler {
             int from = index == start ? Math.max(0, Math.min(startOffset, text.length())) : 0;
             int to = text.length();
             boolean ended = false;
-            if (!sectionNumber.isBlank()) {
+            if (!cn.bidcheck.compat.Java8Api.isBlank(sectionNumber)) {
                 Matcher matcher = nextHeading.matcher(text);
                 while (matcher.find()) {
                     if ((index == start && matcher.start(1) <= from) || matcher.group(1).equals(sectionNumber)) continue;
@@ -1531,12 +1456,12 @@ public final class TemplateEvidenceAssembler {
                 }
             }
             if (to > from) {
-                String slice = text.substring(from, to).strip();
-                if (!slice.isBlank()) result.add(new SectionSlice(page, slice));
+                String slice = cn.bidcheck.compat.Java8Api.strip(text.substring(from, to));
+                if (!cn.bidcheck.compat.Java8Api.isBlank(slice)) result.add(new SectionSlice(page, slice));
             }
             if (ended) break;
         }
-        return List.copyOf(result);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(result);
     }
 
     private static boolean peerOrAncestorSection(String current, String candidate,
@@ -1558,7 +1483,7 @@ public final class TemplateEvidenceAssembler {
             } catch (NumberFormatException invalid) {
                 return false;
             }
-            String boundaryTitle = cleanMarkup(Objects.toString(title, "")).strip();
+            String boundaryTitle = cn.bidcheck.compat.Java8Api.strip(cleanMarkup(Objects.toString(title, "")));
             String boundarySeparator = Objects.toString(separator, "");
             // “1、功能需求分析” is normally an inner list item.  Accept only the next root
             // number near a page start with a major-section cue; reject common measurement lines.
@@ -1602,12 +1527,12 @@ public final class TemplateEvidenceAssembler {
     }
 
     private static String excerpt(String text, String term, int limit) {
-        String value = Objects.toString(text, "").strip();
+        String value = cn.bidcheck.compat.Java8Api.strip(Objects.toString(text, ""));
         int at = value.indexOf(term);
         if (at < 0) at = 0;
         int start = Math.max(0, at - 100);
         int end = Math.min(value.length(), start + Math.max(200, limit));
-        return value.substring(start, end).strip();
+        return cn.bidcheck.compat.Java8Api.strip(value.substring(start, end));
     }
 
     private void externalCheck(Context context) {
@@ -1632,9 +1557,9 @@ public final class TemplateEvidenceAssembler {
                     || containsNormalized(evidence.quote(), source);
             boolean queryMatches = same(queryObject, fact.entityKey());
             boolean fieldMatches = requiredFields.contains(fact.field());
-            boolean adapterMatches = !adapterId.isBlank() && containsNormalized(evidence.anchor(), "adapter:" + adapterId);
-            boolean timeMatches = !asOfDate.isBlank() && connectorAsOf(fact).map(asOfDate::equals).orElse(false);
-            boolean stageMatches = !evaluationStage.isBlank()
+            boolean adapterMatches = !cn.bidcheck.compat.Java8Api.isBlank(adapterId) && containsNormalized(evidence.anchor(), "adapter:" + adapterId);
+            boolean timeMatches = !cn.bidcheck.compat.Java8Api.isBlank(asOfDate) && connectorAsOf(fact).map(asOfDate::equals).orElse(false);
+            boolean stageMatches = !cn.bidcheck.compat.Java8Api.isBlank(evaluationStage)
                     && containsNormalized(evidence.anchor(), "stage:" + evaluationStage);
             if (!sourceMatches || !queryMatches || !fieldMatches || !adapterMatches || !timeMatches
                     || !stageMatches) {
@@ -1642,10 +1567,10 @@ public final class TemplateEvidenceAssembler {
                 continue;
             }
             String state = upper(fact.normalizedValue());
-            if (Set.of("UNRESOLVED", "UNKNOWN", "PENDING", "").contains(state)) continue;
-            if (Set.of("NEGATIVE", "NOT_SATISFIED", "FALSE", "RISK", "HIT").contains(state))
+            if (cn.bidcheck.compat.Java8Api.setOf("UNRESOLVED", "UNKNOWN", "PENDING", "").contains(state)) continue;
+            if (cn.bidcheck.compat.Java8Api.setOf("NEGATIVE", "NOT_SATISFIED", "FALSE", "RISK", "HIT").contains(state))
                 points.add("NEGATIVE:" + fact.field());
-            else points.add("FIELD:" + fact.field() + "=" + Objects.toString(fact.normalizedValue(), "").strip());
+            else points.add("FIELD:" + fact.field() + "=" + cn.bidcheck.compat.Java8Api.strip(Objects.toString(fact.normalizedValue(), "")));
             admitted.add(evidence);
         }
         if (!points.isEmpty()) {
@@ -1655,7 +1580,7 @@ public final class TemplateEvidenceAssembler {
                     stableObservationId("external-record", subject,
                             source + "|" + queryObject + "|" + points.stream().sorted()
                                     .collect(java.util.stream.Collectors.joining("|")), sourceRefs),
-                    "EXTERNAL:" + source, Set.of(), subject, true, true, false, Set.copyOf(points),
+                    "EXTERNAL:" + source, cn.bidcheck.compat.Java8Api.setOf(), subject, true, true, false, cn.bidcheck.compat.Java8Api.setCopyOf(points),
                     TemplateTypes.ObservationState.SUPPORTED, sourceRefs,
                     averageConfidenceEvidence(admitted)));
         } else {
@@ -1667,7 +1592,7 @@ public final class TemplateEvidenceAssembler {
     private void materialPresent(Context context) {
         String materialType = string(context.spec.parameters(), "materialType");
         boolean requireBody = bool(context.spec.parameters(), "requireBody", true);
-        MaterialScan scan = scanMaterial(context, materialType, Set.of(), requireBody);
+        MaterialScan scan = scanMaterial(context, materialType, cn.bidcheck.compat.Java8Api.setOf(), requireBody);
         scan.observations.forEach(context::add);
         closeMaterialNeed(context, "material", scan);
     }
@@ -1676,7 +1601,7 @@ public final class TemplateEvidenceAssembler {
         List<String> alternatives = strings(context.spec.parameters(), "alternatives");
         boolean requireBody = bool(context.spec.parameters(), "requireBody", true);
         for (String alternative : alternatives) {
-            MaterialScan scan = scanMaterial(context, alternative, Set.of(), requireBody);
+            MaterialScan scan = scanMaterial(context, alternative, cn.bidcheck.compat.Java8Api.setOf(), requireBody);
             scan.observations.forEach(context::add);
             // Each branch owns its own evidence need. Finding one branch never closes another.
             closeMaterialNeed(context, "alternative-" + safe(alternative), scan);
@@ -1701,7 +1626,7 @@ public final class TemplateEvidenceAssembler {
                             materialType + "|" + seal.location + "|" + seal.observed, seal.sources),
                     materialId, subject, seal.location, seal.currentScope,
                     seal.observed, seal.observed ? TemplateTypes.ObservationState.SUPPORTED : TemplateTypes.ObservationState.REFUTED,
-                    seal.sources, observationConfidence(page(context.bid, seal.evidence), List.of(seal.evidence))));
+                    seal.sources, observationConfidence(page(context.bid, seal.evidence), cn.bidcheck.compat.Java8Api.listOf(seal.evidence))));
         }
         // An admitted visual/structural observation closes this exact seal request. Mere words such
         // as “盖章处” or “已盖章” never enter trustedSeals and therefore cannot close it.
@@ -1713,9 +1638,9 @@ public final class TemplateEvidenceAssembler {
     }
 
     private Observation.MaterialObservation aggregateCommitment(Context context, String materialType, MaterialScan scan) {
-        List<Observation.MaterialObservation> body = scan.observations.stream()
+        List<Observation.MaterialObservation> body = cn.bidcheck.compat.Java8Api.toList(scan.observations.stream()
                 .filter(value -> value.currentScope() && value.state() == TemplateTypes.ObservationState.SUPPORTED
-                        && value.bodyPresent() && !value.titleOnly()).toList();
+                        && value.bodyPresent() && !value.titleOnly()));
         if (body.isEmpty()) return null;
         LinkedHashSet<String> points = new LinkedHashSet<>();
         LinkedHashMap<String, SourceRef> sources = new LinkedHashMap<>();
@@ -1726,11 +1651,11 @@ public final class TemplateEvidenceAssembler {
             confidence = Math.min(confidence, value.confidence());
         }
         String subject = subjectKey(context.spec.subjectSelector());
-        List<SourceRef> sourceRefs = List.copyOf(sources.values());
+        List<SourceRef> sourceRefs = cn.bidcheck.compat.Java8Api.listCopyOf(sources.values());
         String pointScope = points.stream().sorted().collect(java.util.stream.Collectors.joining("|"));
         return new Observation.MaterialObservation(
                 stableObservationId("material-commitment", subject, materialType + "|" + pointScope, sourceRefs),
-                materialType, Set.of(), subject, true, true, false, Set.copyOf(points),
+                materialType, cn.bidcheck.compat.Java8Api.setOf(), subject, true, true, false, cn.bidcheck.compat.Java8Api.setCopyOf(points),
                 TemplateTypes.ObservationState.SUPPORTED, sourceRefs, confidence);
     }
 
@@ -1745,14 +1670,14 @@ public final class TemplateEvidenceAssembler {
             for (List<PersonCredentialFacts.Occurrence> record : records.values()) {
                 Map<String, List<String>> fields = fields(record);
                 String actualType = first(fields, "certificateName");
-                if (actualType.isBlank()) actualType = record.stream().map(PersonCredentialFacts.Occurrence::credentialType)
-                        .filter(value -> !Set.of("", "UNKNOWN", "PERSON_ROSTER").contains(value)).findFirst().orElse("");
+                if (cn.bidcheck.compat.Java8Api.isBlank(actualType)) actualType = record.stream().map(PersonCredentialFacts.Occurrence::credentialType)
+                        .filter(value -> !cn.bidcheck.compat.Java8Api.setOf("", "UNKNOWN", "PERSON_ROSTER").contains(value)).findFirst().orElse("");
                 if (!certificateTypeMatches(expectedType, actualType)) { rejectedType++; continue; }
                 Evidence evidence = record.get(0).evidence();
                 String name = first(fields, "personName");
                 String role = canonicalRole(first(fields, "role"));
                 boolean current = currentEvidence(context, evidence, personPage.page, true)
-                        || !name.isBlank() && !role.isBlank()
+                        || !cn.bidcheck.compat.Java8Api.isBlank(name) && !cn.bidcheck.compat.Java8Api.isBlank(role)
                         && explicitCurrentAppointment(context, personPage.page, record, name, role);
                 if (!current) rejectedScope++;
                 String number = certificateNumber(fields);
@@ -1760,13 +1685,13 @@ public final class TemplateEvidenceAssembler {
                 DateRange range = dateRange(fields);
                 TemplateTypes.ObservationState state = range.conflicting
                         ? TemplateTypes.ObservationState.CONFLICTING : TemplateTypes.ObservationState.SUPPORTED;
-                List<SourceRef> refs = refs(context, record.stream().map(PersonCredentialFacts.Occurrence::evidence).toList());
+                List<SourceRef> refs = refs(context, cn.bidcheck.compat.Java8Api.toList(record.stream().map(PersonCredentialFacts.Occurrence::evidence)));
                 context.add(new Observation.CertificateObservation(
                         stableObservationId("certificate", holderKey,
                                 expectedType + "|" + number, refs),
                         expectedType, holderKey, name, number, range.from, range.until, range.longTerm,
                         current, state, refs, observationConfidence(personPage.page,
-                        record.stream().map(PersonCredentialFacts.Occurrence::evidence).toList())));
+                        cn.bidcheck.compat.Java8Api.toList(record.stream().map(PersonCredentialFacts.Occurrence::evidence)))));
             }
         }
 
@@ -1779,22 +1704,22 @@ public final class TemplateEvidenceAssembler {
             String quote = Objects.toString(expiry.evidence().quote(), "");
             String type = certificateTypeInQuote(expectedType, quote);
             String holder = labelled(quote, "(?:姓名|持证人|持有人)");
-            if (type.isBlank() || holder.isBlank()) {
+            if (cn.bidcheck.compat.Java8Api.isBlank(type) || cn.bidcheck.compat.Java8Api.isBlank(holder)) {
                 context.increment("unboundCertificateDates");
                 continue;
             }
             LocalDate until = parseDate(expiry.normalizedValue());
             if (until == null) { context.increment("unparsedCertificateDates"); continue; }
             boolean current = currentEvidence(context, expiry.evidence(), page(context.bid, expiry.evidence()), true);
-            String holderKey = certificateHolderKey(context, holder, Map.of(), factIdentity(expiry));
-            List<SourceRef> sourceRefs = refs(context, List.of(expiry.evidence()));
+            String holderKey = certificateHolderKey(context, holder, cn.bidcheck.compat.Java8Api.mapOf(), factIdentity(expiry));
+            List<SourceRef> sourceRefs = refs(context, cn.bidcheck.compat.Java8Api.listOf(expiry.evidence()));
             context.add(new Observation.CertificateObservation(
                     stableObservationId("certificate", holderKey,
                             expectedType + "|" + until, sourceRefs),
                     expectedType, holderKey, holder, "", null, until,
                     LocalDate.of(9999, 12, 31).equals(until), current, TemplateTypes.ObservationState.SUPPORTED,
                     sourceRefs,
-                    observationConfidence(page(context.bid, expiry.evidence()), List.of(expiry.evidence()))));
+                    observationConfidence(page(context.bid, expiry.evidence()), cn.bidcheck.compat.Java8Api.listOf(expiry.evidence()))));
         }
         addCounter(context, "certificateTypeRejected", rejectedType);
         addCounter(context, "certificateScopeRejected", rejectedScope);
@@ -1832,27 +1757,27 @@ public final class TemplateEvidenceAssembler {
                     && knownRequired(requiredTax, tax, TemplateEvidenceAssembler::taxEquivalent)
                     && knownRequired(requiredLot, lot, TemplateEvidenceAssembler::same)
                     && knownRequired(requiredLayer, layer, TemplateEvidenceAssembler::layerEquivalent);
-            String outputCurrency = requiredCurrency.isBlank() ? price.currency
+            String outputCurrency = cn.bidcheck.compat.Java8Api.isBlank(requiredCurrency) ? price.currency
                     : currencyEquivalent(requiredCurrency, price.currency) ? requiredCurrency : price.currency;
-            String outputUnit = requiredUnit.isBlank() ? price.unit
+            String outputUnit = cn.bidcheck.compat.Java8Api.isBlank(requiredUnit) ? price.unit
                     : unitEquivalent(requiredUnit, price.unit) ? requiredUnit : price.unit;
-            if (outputCurrency.isBlank()) outputCurrency = "UNKNOWN";
-            if (outputUnit.isBlank()) outputUnit = "UNKNOWN";
-            String outputTax = requiredTax.isBlank() ? tax : taxEquivalent(requiredTax, tax) ? requiredTax : tax;
-            String outputLot = requiredLot.isBlank() ? lot : same(requiredLot, lot) ? requiredLot : lot;
-            String outputLayer = requiredLayer.isBlank() ? layer : layerEquivalent(requiredLayer, layer) ? requiredLayer : layer;
+            if (cn.bidcheck.compat.Java8Api.isBlank(outputCurrency)) outputCurrency = "UNKNOWN";
+            if (cn.bidcheck.compat.Java8Api.isBlank(outputUnit)) outputUnit = "UNKNOWN";
+            String outputTax = cn.bidcheck.compat.Java8Api.isBlank(requiredTax) ? tax : taxEquivalent(requiredTax, tax) ? requiredTax : tax;
+            String outputLot = cn.bidcheck.compat.Java8Api.isBlank(requiredLot) ? lot : same(requiredLot, lot) ? requiredLot : lot;
+            String outputLayer = cn.bidcheck.compat.Java8Api.isBlank(requiredLayer) ? layer : layerEquivalent(requiredLayer, layer) ? requiredLayer : layer;
             TemplateTypes.ObservationState state = current && dimensionsKnown
                     ? TemplateTypes.ObservationState.SUPPORTED : TemplateTypes.ObservationState.UNRESOLVED;
             if (!current) { context.increment("historicalOrUnscopedPrices"); unresolved = true; }
             if (!dimensionsKnown) { context.increment("priceDimensionPending"); unresolved = true; }
             String subject = subjectKey(context.spec.subjectSelector());
-            List<SourceRef> sourceRefs = refs(context, List.of(fact.evidence()));
+            List<SourceRef> sourceRefs = refs(context, cn.bidcheck.compat.Java8Api.listOf(fact.evidence()));
             context.add(new Observation.PriceObservation(
                     stableObservationId("price", subject, String.join("|", field, outputLot, outputLayer,
                             outputTax, outputCurrency, outputUnit, price.amount.toPlainString()), sourceRefs), field,
                     subject, outputLot, outputLayer, outputTax,
                     outputCurrency, outputUnit, price.amount, current, state,
-                    sourceRefs, observationConfidence(page, List.of(fact.evidence()))));
+                    sourceRefs, observationConfidence(page, cn.bidcheck.compat.Java8Api.listOf(fact.evidence()))));
         }
         return new PriceScan(matchedFacts, unresolved);
     }
@@ -1876,9 +1801,9 @@ public final class TemplateEvidenceAssembler {
             for (List<PersonCredentialFacts.Occurrence> record : records.values()) {
                 Map<String, List<String>> fields = fields(record);
                 String name = first(fields, "personName"), role = canonicalRole(first(fields, "role"));
-                if (role.isBlank() && explicitRole(record.get(0).evidence().quote(), requestedRole))
+                if (cn.bidcheck.compat.Java8Api.isBlank(role) && explicitRole(record.get(0).evidence().quote(), requestedRole))
                     role = canonicalRole(requestedRole);
-                if (name.isBlank() || role.isBlank() || !sameRole(requestedRole, role)) continue;
+                if (cn.bidcheck.compat.Java8Api.isBlank(name) || cn.bidcheck.compat.Java8Api.isBlank(role) || !sameRole(requestedRole, role)) continue;
                 String employer = first(fields, "employer");
                 String strongNumber = stableIdentityNumber(fields);
                 boolean current = explicitCurrentAppointment(context, personPage.page, record, name, role);
@@ -1888,10 +1813,10 @@ public final class TemplateEvidenceAssembler {
                 if (!current) continue;
                 String normalizedName = normalize(name);
                 currentRecordsByName.merge(normalizedName, 1, Integer::sum);
-                if (strongNumber.isBlank()) missingStrongIdByName.merge(normalizedName, 1, Integer::sum);
+                if (cn.bidcheck.compat.Java8Api.isBlank(strongNumber)) missingStrongIdByName.merge(normalizedName, 1, Integer::sum);
                 else strongIdsByName.computeIfAbsent(normalizedName, ignored -> new LinkedHashSet<>()).add(strongNumber);
             }
-            candidatesByPage.put(personPage, List.copyOf(candidates));
+            candidatesByPage.put(personPage, cn.bidcheck.compat.Java8Api.listCopyOf(candidates));
         }
 
         Set<String> ambiguousNames = new LinkedHashSet<>();
@@ -1911,7 +1836,7 @@ public final class TemplateEvidenceAssembler {
         for (PersonPage personPage : pages) {
             Set<String> pagePeople = new LinkedHashSet<>();
             boolean allRequestedRowsBound = true;
-            for (PersonnelCandidate candidate : candidatesByPage.getOrDefault(personPage, List.of())) {
+            for (PersonnelCandidate candidate : candidatesByPage.getOrDefault(personPage, cn.bidcheck.compat.Java8Api.listOf())) {
                 List<PersonCredentialFacts.Occurrence> record = candidate.occurrences;
                 String name = candidate.name, role = candidate.role;
                 if (!candidate.currentAppointment) {
@@ -1922,18 +1847,18 @@ public final class TemplateEvidenceAssembler {
                 String employer = candidate.employer;
                 String strongNumber = candidate.strongNumber;
                 String normalizedName = normalize(name);
-                Set<String> knownStrongIds = strongIdsByName.getOrDefault(normalizedName, Set.of());
-                if (strongNumber.isBlank() && knownStrongIds.size() > 1) {
+                Set<String> knownStrongIds = strongIdsByName.getOrDefault(normalizedName, cn.bidcheck.compat.Java8Api.setOf());
+                if (cn.bidcheck.compat.Java8Api.isBlank(strongNumber) && knownStrongIds.size() > 1) {
                     // The row cannot be assigned to either same-name person without guessing.
                     context.increment("unboundSameNamePersonnelRows");
                     allRequestedRowsBound = false;
                     continue;
                 }
                 String resolvedStrongNumber = strongNumber;
-                if (resolvedStrongNumber.isBlank() && knownStrongIds.size() == 1)
+                if (cn.bidcheck.compat.Java8Api.isBlank(resolvedStrongNumber) && knownStrongIds.size() == 1)
                     resolvedStrongNumber = knownStrongIds.iterator().next();
                 String key = personKey(name, employer, strongNumber, record.get(0).recordKey());
-                if (!resolvedStrongNumber.isBlank())
+                if (!cn.bidcheck.compat.Java8Api.isBlank(resolvedStrongNumber))
                     key = personKey(name, employer, resolvedStrongNumber, record.get(0).recordKey());
                 String stableKey = key;
                 PersonnelBuilder builder = people.computeIfAbsent(stableKey,
@@ -1945,16 +1870,16 @@ public final class TemplateEvidenceAssembler {
                         consortiumRole(personPage.page.text(), employer));
                 builder.mergeAttribute("certificateLevel", first(recordFields, "certificateLevel"));
                 String registeredEmployer = first(recordFields, "registeredEmployer");
-                if (registeredEmployer.isBlank() && !first(recordFields, "certificateName").isBlank()
-                        && !certificateNumber(recordFields).isBlank())
+                if (cn.bidcheck.compat.Java8Api.isBlank(registeredEmployer) && !cn.bidcheck.compat.Java8Api.isBlank(first(recordFields, "certificateName"))
+                        && !cn.bidcheck.compat.Java8Api.isBlank(certificateNumber(recordFields)))
                     registeredEmployer = first(recordFields, "employer");
                 builder.mergeAttribute("registeredEmployer", registeredEmployer);
-                builder.addAllSources(refs(context, record.stream().map(PersonCredentialFacts.Occurrence::evidence).toList()));
-                builder.evidence.addAll(record.stream().map(PersonCredentialFacts.Occurrence::evidence).toList());
+                builder.addAllSources(refs(context, cn.bidcheck.compat.Java8Api.toList(record.stream().map(PersonCredentialFacts.Occurrence::evidence))));
+                builder.evidence.addAll(cn.bidcheck.compat.Java8Api.toList(record.stream().map(PersonCredentialFacts.Occurrence::evidence)));
                 builder.confidences.add(observationConfidence(personPage.page,
-                        record.stream().map(PersonCredentialFacts.Occurrence::evidence).toList()));
-                builder.identityBasis = !strongNumber.isBlank() ? "STRONG_IDENTIFIER"
-                        : !resolvedStrongNumber.isBlank() ? "NAME_LINKED_TO_SINGLE_STRONG_IDENTIFIER" : "NORMALIZED_NAME";
+                        cn.bidcheck.compat.Java8Api.toList(record.stream().map(PersonCredentialFacts.Occurrence::evidence))));
+                builder.identityBasis = !cn.bidcheck.compat.Java8Api.isBlank(strongNumber) ? "STRONG_IDENTIFIER"
+                        : !cn.bidcheck.compat.Java8Api.isBlank(resolvedStrongNumber) ? "NAME_LINKED_TO_SINGLE_STRONG_IDENTIFIER" : "NORMALIZED_NAME";
                 if (ambiguousNames.contains(normalizedName)) allRequestedRowsBound = false;
                 pagePeople.add(key);
             }
@@ -1969,13 +1894,13 @@ public final class TemplateEvidenceAssembler {
             Map<String, String> attributes = new LinkedHashMap<>(person.attributes);
             attributes.put("identityBasis", person.identityBasis);
             attributes.put("assemblerVersion", VERSION);
-            List<SourceRef> sourceRefs = List.copyOf(person.sources.values());
+            List<SourceRef> sourceRefs = cn.bidcheck.compat.Java8Api.listCopyOf(person.sources.values());
             String roles = person.roles.stream().sorted().collect(java.util.stream.Collectors.joining("|"));
             context.add(new Observation.PersonnelObservation(
                     stableObservationId("personnel", person.key,
                             roles + "|" + person.employer + "|" + person.consortiumRole, sourceRefs),
                     person.key, person.name, person.roles, person.employer, person.consortiumRole,
-                    true, true, Map.copyOf(attributes), TemplateTypes.ObservationState.SUPPORTED,
+                    true, true, cn.bidcheck.compat.Java8Api.mapCopyOf(attributes), TemplateTypes.ObservationState.SUPPORTED,
                     sourceRefs, person.confidences.stream()
                     .mapToDouble(Double::doubleValue).average().orElse(0)));
         }
@@ -1994,11 +1919,11 @@ public final class TemplateEvidenceAssembler {
         if (aliasProfile != null && points.isEmpty())
             return scanAliasedCompositionMaterial(context, materialType, aliasProfile, requireBody);
         List<Observation.MaterialObservation> observations = new ArrayList<>();
-        if (materialType.isBlank()) return new MaterialScan(observations, false, false);
+        if (cn.bidcheck.compat.Java8Api.isBlank(materialType)) return new MaterialScan(observations, false, false);
         boolean mentionFound = false;
         for (Page page : sortedPages(context.bid)) {
             String text = Objects.toString(page.text(), "");
-            List<String> lines = text.lines().toList();
+            List<String> lines = cn.bidcheck.compat.Java8Api.toList(cn.bidcheck.compat.Java8Extras.lines(text));
             if (lines.isEmpty()) continue;
             boolean indexPage = indexPage(text);
             for (int lineNumber = 0; lineNumber < lines.size(); lineNumber++) {
@@ -2021,14 +1946,14 @@ public final class TemplateEvidenceAssembler {
                 if (substantive) for (String point : points) if (containsNormalized(section, point)) matchedPoints.add(point);
                 TemplateTypes.ObservationState state = substantive
                         ? TemplateTypes.ObservationState.SUPPORTED : TemplateTypes.ObservationState.UNRESOLVED;
-                List<SourceRef> refs = refs(context, List.of(evidence));
+                List<SourceRef> refs = refs(context, cn.bidcheck.compat.Java8Api.listOf(evidence));
                 String subject = subjectKey(context.spec.subjectSelector());
                 String pointScope = matchedPoints.stream().sorted()
                         .collect(java.util.stream.Collectors.joining("|"));
                 observations.add(new Observation.MaterialObservation(
                         stableObservationId("material", subject,
                                 materialType + "|" + pointScope + "|" + substantive + "|" + titleOnly, refs),
-                        materialType, Set.of(), subject, current,
+                        materialType, cn.bidcheck.compat.Java8Api.setOf(), subject, current,
                         substantive || !requireBody && !index, titleOnly, matchedPoints, state, refs,
                         confidence(evidence)));
             }
@@ -2037,7 +1962,7 @@ public final class TemplateEvidenceAssembler {
                 && observation.state() == TemplateTypes.ObservationState.SUPPORTED
                 && (!requireBody || observation.bodyPresent() && !observation.titleOnly()));
         if (mentionFound && !hasBody) context.increment("titleOrIndexOnlyMaterials");
-        return new MaterialScan(List.copyOf(observations), mentionFound, hasBody);
+        return new MaterialScan(cn.bidcheck.compat.Java8Api.listCopyOf(observations), mentionFound, hasBody);
     }
 
     /**
@@ -2060,32 +1985,29 @@ public final class TemplateEvidenceAssembler {
             // A real assessment index routinely has rows such as “施工业绩情况”.  Those row
             // labels do not make the index historical; its enclosing current volume supplies the
             // scope.  Covers and proposal bodies retain the stricter whole-page history veto.
-            if (!Set.of(MaterialAliasKind.BUSINESS_INDEX, MaterialAliasKind.TECHNICAL_INDEX).contains(profile.kind)
+            if (!cn.bidcheck.compat.Java8Api.setOf(MaterialAliasKind.BUSINESS_INDEX, MaterialAliasKind.TECHNICAL_INDEX).contains(profile.kind)
                     && HISTORY.matcher(cleanMarkup(text)).find()) continue;
 
             MaterialVolume requiredVolume = profile.kind.volume();
             boolean inVolume = volumeScope.contains(page, requiredVolume);
             String matchedAlias = profile.aliases.stream()
                     .filter(alias -> hasAliasHeading(text, alias)).findFirst().orElse("");
-            if (matchedAlias.isBlank()) continue;
+            if (cn.bidcheck.compat.Java8Api.isBlank(matchedAlias)) continue;
 
-            boolean substantive = switch (profile.kind) {
-                case BUSINESS_VOLUME, TECHNICAL_VOLUME -> inVolume
-                        && volumeScope.isCover(page, requiredVolume) && volumeCoverBody(text);
-                case BUSINESS_INDEX, TECHNICAL_INDEX -> inVolume && indexTableBody(text);
-                case TECHNICAL_PROPOSAL -> inVolume && proposalBody(text, matchedAlias);
-            };
+            boolean substantive;
+switch (profile.kind) {case BUSINESS_VOLUME:case TECHNICAL_VOLUME:substantive = inVolume
+                        && volumeScope.isCover(page, requiredVolume) && volumeCoverBody(text); break;case BUSINESS_INDEX:case TECHNICAL_INDEX:substantive = inVolume && indexTableBody(text); break;case TECHNICAL_PROPOSAL:substantive = inVolume && proposalBody(text, matchedAlias); break;default:throw new IncompatibleClassChangeError();}
             String quote = trimQuote(text);
             Evidence evidence = new Evidence(context.bid.id(), context.bid.name(), page.number(), page.locationType(),
                     quote, "template-composition:" + profile.kind.name().toLowerCase(Locale.ROOT), parserConfidence(page));
-            List<SourceRef> sourceRefs = refs(context, List.of(evidence));
+            List<SourceRef> sourceRefs = refs(context, cn.bidcheck.compat.Java8Api.listOf(evidence));
             Set<String> aliases = new LinkedHashSet<>(profile.aliases);
             aliases.removeIf(alias -> same(alias, materialType));
             observations.add(new Observation.MaterialObservation(
                     stableObservationId("composition-material", subjectKey(context.spec.subjectSelector()),
                             materialType + "|" + profile.kind + "|" + substantive, sourceRefs),
-                    materialType, Set.copyOf(aliases), subjectKey(context.spec.subjectSelector()), inVolume,
-                    substantive || !requireBody, !substantive, Set.of(),
+                    materialType, cn.bidcheck.compat.Java8Api.setCopyOf(aliases), subjectKey(context.spec.subjectSelector()), inVolume,
+                    substantive || !requireBody, !substantive, cn.bidcheck.compat.Java8Api.setOf(),
                     substantive ? TemplateTypes.ObservationState.SUPPORTED : TemplateTypes.ObservationState.UNRESOLVED,
                     sourceRefs, confidence(evidence)));
         }
@@ -2094,7 +2016,7 @@ public final class TemplateEvidenceAssembler {
                 && (!requireBody || observation.bodyPresent() && !observation.titleOnly()));
         if (mentionFound && !bodyFound) context.increment("titleOrIndexOnlyMaterials");
         if (bodyFound) context.increment("aliasedCompositionMaterials");
-        return new MaterialScan(List.copyOf(observations), mentionFound, bodyFound);
+        return new MaterialScan(cn.bidcheck.compat.Java8Api.listCopyOf(observations), mentionFound, bodyFound);
     }
 
     private static VolumeScope volumeScope(List<Page> pages) {
@@ -2121,7 +2043,7 @@ public final class TemplateEvidenceAssembler {
             else if (foreignVolumeBoundary(page, covers, root) || quotationVolumeBoundary(page)) active = MaterialVolume.NONE;
             if (active != MaterialVolume.NONE) pagesByVolume.put(pageKey(page), active);
         }
-        return new VolumeScope(Map.copyOf(pagesByVolume), Map.copyOf(currentCovers));
+        return new VolumeScope(cn.bidcheck.compat.Java8Api.mapCopyOf(pagesByVolume), cn.bidcheck.compat.Java8Api.mapCopyOf(currentCovers));
     }
 
     private static boolean foreignVolumeBoundary(Page page, List<VolumeCover> covers, CoverIdentity root) {
@@ -2131,7 +2053,7 @@ public final class TemplateEvidenceAssembler {
 
     private static boolean quotationVolumeBoundary(Page page) {
         String text = Objects.toString(page.text(), "");
-        return text.lines().limit(8).map(TemplateEvidenceAssembler::normalize).anyMatch(line ->
+        return cn.bidcheck.compat.Java8Extras.lines(text).limit(8).map(TemplateEvidenceAssembler::normalize).anyMatch(line ->
                 line.equals(normalize("第三分册 报价文件")) || line.equals(normalize("投标文件（报价部分）"))
                         || line.equals(normalize("报价文件封面")));
     }
@@ -2160,7 +2082,7 @@ public final class TemplateEvidenceAssembler {
     }
 
     private static boolean hasAliasHeading(String text, String alias) {
-        return Objects.toString(text, "").lines().limit(12).anyMatch(line -> {
+        return cn.bidcheck.compat.Java8Extras.lines(Objects.toString(text, "")).limit(12).anyMatch(line -> {
             String value = normalize(line.replaceFirst(
                     "^[ \\t]*(?:#{1,6}[ \\t]*|第?[一二三四五六七八九十0-9]+(?:[.、．]|[）)]))[ \\t]*", ""));
             String expected = normalize(alias);
@@ -2176,14 +2098,14 @@ public final class TemplateEvidenceAssembler {
         String value = cleanMarkup(text);
         if (!(value.contains("条款号") && value.contains("评审因素")
                 && (value.contains("对应页码") || value.contains("投标文件页码")))) return false;
-        long rows = Objects.toString(text, "").lines().map(String::strip)
+        long rows = cn.bidcheck.compat.Java8Extras.lines(Objects.toString(text, "")).map(cn.bidcheck.compat.Java8Api::strip)
                 .filter(line -> line.matches("^[0-9]{1,3}(?:[.、．][0-9]{1,3})?[ \\t|]+.{1,120}(?:[Pp][ \\t]*[0-9]+|/[ \\t|]+|满足要求).*$"))
                 .count();
         return rows >= 2;
     }
 
     private static boolean proposalBody(String text, String alias) {
-        List<String> lines = Objects.toString(text, "").lines().toList();
+        List<String> lines = cn.bidcheck.compat.Java8Api.toList(cn.bidcheck.compat.Java8Extras.lines(Objects.toString(text, "")));
         for (int index = 0; index < Math.min(lines.size(), 12); index++) {
             if (!hasAliasHeading(lines.get(index), alias)) continue;
             // “技术建议书” is a volume-internal root.  Its first real content normally begins at
@@ -2211,25 +2133,22 @@ public final class TemplateEvidenceAssembler {
         for (Fact fact : context.facts) {
             if (!TRUSTED_SEAL_ENTITIES.contains(upper(fact.entityType())) || !TRUSTED_SEAL_FIELDS.contains(fact.field())) continue;
             String state = upper(fact.normalizedValue());
-            Boolean observed = switch (state) {
-                case "TRUE", "OBSERVED", "VISIBLE", "CLEAR", "PRESENT", "SEAL" -> true;
-                case "FALSE", "NOT_OBSERVED", "ABSENT", "BLANK" -> false;
-                default -> null;
-            };
+            Boolean observed;
+switch (state) {case "TRUE":case "OBSERVED":case "VISIBLE":case "CLEAR":case "PRESENT":case "SEAL":observed = true; break;case "FALSE":case "NOT_OBSERVED":case "ABSENT":case "BLANK":observed = false; break;default:observed = null; break;}
             if (observed == null || fact.evidence() == null) continue;
             boolean locationMatches = materialPages.contains(fact.evidence().page())
                     || containsNormalized(fact.evidence().quote(), materialType);
-            if (!requestedLocation.isBlank()) locationMatches &= containsNormalized(fact.evidence().quote(), requestedLocation)
+            if (!cn.bidcheck.compat.Java8Api.isBlank(requestedLocation)) locationMatches &= containsNormalized(fact.evidence().quote(), requestedLocation)
                     || containsNormalized(fact.rawValue(), requestedLocation);
             if (!locationMatches) { context.increment("unboundSealObservations"); continue; }
             Page page = page(context.bid, fact.evidence());
             if (page == null) { context.increment("unboundSealObservations"); continue; }
             boolean current = currentEvidence(context, fact.evidence(), page, false)
                     || page != null && !historicalAt(page.text(), fact.evidence().quote());
-            result.add(new TrustedSeal(observed, requestedLocation.isBlank() ? "要求位置" : requestedLocation,
-                    current, fact.evidence(), refs(context, List.of(fact.evidence()))));
+            result.add(new TrustedSeal(observed, cn.bidcheck.compat.Java8Api.isBlank(requestedLocation) ? "要求位置" : requestedLocation,
+                    current, fact.evidence(), refs(context, cn.bidcheck.compat.Java8Api.listOf(fact.evidence()))));
         }
-        return List.copyOf(result);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(result);
     }
 
     private List<PersonPage> personPages(Context context) {
@@ -2238,7 +2157,7 @@ public final class TemplateEvidenceAssembler {
             PersonCredentialFacts.Result parsed = PersonCredentialFacts.analyzeForConsistency(context.bid, page);
             if (parsed.candidate()) result.add(new PersonPage(page, parsed));
         }
-        return List.copyOf(result);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(result);
     }
 
     private boolean explicitCurrentAppointment(Context context, Page page,
@@ -2246,7 +2165,7 @@ public final class TemplateEvidenceAssembler {
                                                String name, String role) {
         String quote = record.get(0).evidence().quote();
         String plain = beforeHistory(cleanMarkup(quote));
-        if (plain.isBlank() || example(plain) || historicalAt(page.text(), quote)) return false;
+        if (cn.bidcheck.compat.Java8Api.isBlank(plain) || example(plain) || historicalAt(page.text(), quote)) return false;
         String canonical = canonicalRole(role);
         boolean local = plain.contains(name) && (
                 Pattern.compile("拟在本合同任职[ \\t]*[:：]?[ \\t]*" + Pattern.quote(canonical)).matcher(plain).find()
@@ -2276,10 +2195,10 @@ public final class TemplateEvidenceAssembler {
         if (!explicit || exampleOrHistorical(text)) return false;
         Map<String, List<PersonCredentialFacts.Occurrence>> records = personPage.result.occurrences().stream()
                 .collect(java.util.stream.Collectors.groupingBy(PersonCredentialFacts.Occurrence::recordKey));
-        List<Map<String, List<String>>> rows = records.values().stream().map(TemplateEvidenceAssembler::fields).toList();
-        List<Map<String, List<String>>> requested = rows.stream()
-                .filter(row -> sameRole(role, canonicalRole(first(row, "role")))).toList();
-        return !requested.isEmpty() && requested.stream().allMatch(row -> !first(row, "personName").isBlank());
+        List<Map<String, List<String>>> rows = cn.bidcheck.compat.Java8Api.toList(records.values().stream().map(TemplateEvidenceAssembler::fields));
+        List<Map<String, List<String>>> requested = cn.bidcheck.compat.Java8Api.toList(rows.stream()
+                .filter(row -> sameRole(role, canonicalRole(first(row, "role")))));
+        return !requested.isEmpty() && requested.stream().allMatch(row -> !cn.bidcheck.compat.Java8Api.isBlank(first(row, "personName")));
     }
 
     private boolean currentEvidence(Context context, Evidence evidence, Page page, boolean personnelOrCertificate) {
@@ -2296,7 +2215,7 @@ public final class TemplateEvidenceAssembler {
 
     private static boolean historicalAt(String pageText, String quote) {
         String text = cleanMarkup(Objects.toString(pageText, ""));
-        int at = quote == null || quote.isBlank() ? -1 : text.indexOf(cleanMarkup(quote));
+        int at = quote == null || cn.bidcheck.compat.Java8Api.isBlank(quote) ? -1 : text.indexOf(cleanMarkup(quote));
         if (at < 0) at = text.length();
         String before = text.substring(0, at);
         int history = lastIndex(before, "历史业绩", "历史项目", "类似项目业绩", "主要工作经历", "工作履历", "合同协议书");
@@ -2327,24 +2246,24 @@ public final class TemplateEvidenceAssembler {
     private static Map<String, List<String>> fields(List<PersonCredentialFacts.Occurrence> record) {
         Map<String, LinkedHashSet<String>> values = new LinkedHashMap<>();
         for (PersonCredentialFacts.Occurrence occurrence : record) {
-            String value = Objects.toString(occurrence.value(), "").strip();
-            if (!value.isBlank()) values.computeIfAbsent(occurrence.field(), ignored -> new LinkedHashSet<>()).add(value);
+            String value = cn.bidcheck.compat.Java8Api.strip(Objects.toString(occurrence.value(), ""));
+            if (!cn.bidcheck.compat.Java8Api.isBlank(value)) values.computeIfAbsent(occurrence.field(), ignored -> new LinkedHashSet<>()).add(value);
         }
         Map<String, List<String>> result = new LinkedHashMap<>();
-        values.forEach((key, value) -> result.put(key, List.copyOf(value)));
+        values.forEach((key, value) -> result.put(key, cn.bidcheck.compat.Java8Api.listCopyOf(value)));
         return result;
     }
 
     private static DateRange dateRange(Map<String, List<String>> fields) {
-        Set<LocalDate> from = dates(fields.getOrDefault("validFrom", List.of()));
-        Set<LocalDate> until = dates(fields.getOrDefault("validUntil", List.of()));
-        boolean longTerm = fields.getOrDefault("validUntil", List.of()).stream().anyMatch(TemplateEvidenceAssembler::longTerm)
-                || fields.getOrDefault("validPeriod", List.of()).stream().anyMatch(TemplateEvidenceAssembler::longTerm);
-        for (String period : fields.getOrDefault("validPeriod", List.of())) {
-            Set<LocalDate> values = dates(List.of(period));
+        Set<LocalDate> from = dates(fields.getOrDefault("validFrom", cn.bidcheck.compat.Java8Api.listOf()));
+        Set<LocalDate> until = dates(fields.getOrDefault("validUntil", cn.bidcheck.compat.Java8Api.listOf()));
+        boolean longTerm = fields.getOrDefault("validUntil", cn.bidcheck.compat.Java8Api.listOf()).stream().anyMatch(TemplateEvidenceAssembler::longTerm)
+                || fields.getOrDefault("validPeriod", cn.bidcheck.compat.Java8Api.listOf()).stream().anyMatch(TemplateEvidenceAssembler::longTerm);
+        for (String period : fields.getOrDefault("validPeriod", cn.bidcheck.compat.Java8Api.listOf())) {
+            Set<LocalDate> values = dates(cn.bidcheck.compat.Java8Api.listOf(period));
             if (values.size() == 1) until.addAll(values);
             else if (values.size() == 2) {
-                List<LocalDate> ordered = values.stream().sorted().toList();
+                List<LocalDate> ordered = cn.bidcheck.compat.Java8Api.toList(values.stream().sorted());
                 from.add(ordered.get(0)); until.add(ordered.get(1));
             }
         }
@@ -2373,20 +2292,20 @@ public final class TemplateEvidenceAssembler {
     private static String certificateNumber(Map<String, List<String>> fields) {
         for (String field : CERTIFICATE_NUMBER_FIELDS) {
             String value = first(fields, field);
-            if (!value.isBlank()) return value;
+            if (!cn.bidcheck.compat.Java8Api.isBlank(value)) return value;
         }
         return "";
     }
 
     private static boolean certificateTypeMatches(String expected, String actual) {
-        if (expected.isBlank() || actual.isBlank()) return false;
-        if ("ANY_CERTIFICATE".equalsIgnoreCase(expected)) return !Set.of("UNKNOWN", "PERSON_ROSTER").contains(actual);
+        if (cn.bidcheck.compat.Java8Api.isBlank(expected) || cn.bidcheck.compat.Java8Api.isBlank(actual)) return false;
+        if ("ANY_CERTIFICATE".equalsIgnoreCase(expected)) return !cn.bidcheck.compat.Java8Api.setOf("UNKNOWN", "PERSON_ROSTER").contains(actual);
         String left = normalize(expected), right = normalize(actual);
         return left.equals(right) || left.length() >= 4 && right.contains(left) || right.length() >= 4 && left.contains(right);
     }
 
     private static String certificateTypeInQuote(String expected, String quote) {
-        if (expected.isBlank() || "ANY_CERTIFICATE".equalsIgnoreCase(expected)) {
+        if (cn.bidcheck.compat.Java8Api.isBlank(expected) || "ANY_CERTIFICATE".equalsIgnoreCase(expected)) {
             Matcher matcher = Pattern.compile("([\\p{IsHan}A-Za-z0-9]{2,40}(?:资格证书|执业证书|注册证书|职称证书|许可证|驾驶证|身份证|护照))").matcher(quote);
             return matcher.find() ? matcher.group(1) : "";
         }
@@ -2406,11 +2325,11 @@ public final class TemplateEvidenceAssembler {
                 // becomes a synthetic negative observation.
             }
         }
-        return List.copyOf(result.values());
+        return cn.bidcheck.compat.Java8Api.listCopyOf(result.values());
     }
 
     private static DurationValue durationValue(Fact fact) {
-        String normalized = Objects.toString(fact.normalizedValue(), "").strip();
+        String normalized = cn.bidcheck.compat.Java8Api.strip(Objects.toString(fact.normalizedValue(), ""));
         String raw = Objects.toString(fact.rawValue(), "");
         String prefix = "", numeric = normalized;
         if (normalized.contains(":")) {
@@ -2436,18 +2355,12 @@ public final class TemplateEvidenceAssembler {
 
     private static DurationValue durationValue(BigDecimal amount, String unit) {
         String canonical = canonicalDurationUnit(unit);
-        return switch (canonical) {
-            case "WORKDAY" -> new DurationValue(amount, "工作日", "WORKDAY");
-            case "MONTH" -> new DurationValue(amount, "月", "CALENDAR_MONTH");
-            case "YEAR" -> new DurationValue(amount, "年", "CALENDAR_YEAR");
-            default -> new DurationValue(amount, "日", "CALENDAR_DAY");
-        };
+        switch (canonical) {case "WORKDAY":return new DurationValue(amount, "工作日", "WORKDAY");case "MONTH":return new DurationValue(amount, "月", "CALENDAR_MONTH");case "YEAR":return new DurationValue(amount, "年", "CALENDAR_YEAR");default:return new DurationValue(amount, "日", "CALENDAR_DAY");}
     }
 
     private static String durationStartEvent(String text) {
         String value = Objects.toString(text, "");
-        for (String event : List.of("合同签订之日", "合同签订后", "开工令发出之日", "开工之日",
-                "中标通知书发出之日", "收到订单之日", "投标截止之日")) {
+        for (String event : cn.bidcheck.compat.Java8Api.listOf("合同签订之日", "合同签订后", "开工令发出之日", "开工之日", "中标通知书发出之日", "收到订单之日", "投标截止之日")) {
             if (value.contains(event)) return event;
         }
         return "";
@@ -2470,31 +2383,31 @@ public final class TemplateEvidenceAssembler {
         LinkedHashMap<String, FieldValue> values = new LinkedHashMap<>();
         for (Fact fact : factsFor(context, document)) {
             if (!same(field, fact.field()) || fact.evidence() == null) continue;
-            String value = Objects.toString(fact.normalizedValue(), "").strip();
-            if (value.isBlank() || "UNRESOLVED".equalsIgnoreCase(value)) value = Objects.toString(fact.rawValue(), "").strip();
-            if (!value.isBlank()) values.putIfAbsent(evidenceKey(fact.evidence()) + "|" + normalize(value),
+            String value = cn.bidcheck.compat.Java8Api.strip(Objects.toString(fact.normalizedValue(), ""));
+            if (cn.bidcheck.compat.Java8Api.isBlank(value) || "UNRESOLVED".equalsIgnoreCase(value)) value = cn.bidcheck.compat.Java8Api.strip(Objects.toString(fact.rawValue(), ""));
+            if (!cn.bidcheck.compat.Java8Api.isBlank(value)) values.putIfAbsent(evidenceKey(fact.evidence()) + "|" + normalize(value),
                     new FieldValue(value, fact.evidence()));
         }
         for (Page page : sortedPages(document)) for (String label : fieldLabels(field)) {
             Matcher matcher = Pattern.compile("(?m)(?:^|[|\\t])\\s*" + Pattern.quote(label)
                     + "\\s*[:：=]\\s*([^|\\t;；。\\r\\n]{1,200})").matcher(Objects.toString(page.text(), ""));
             while (matcher.find()) {
-                String value = matcher.group(1).strip();
-                if (value.isBlank() || PLACEHOLDER.matcher(value).matches()) continue;
+                String value = cn.bidcheck.compat.Java8Api.strip(matcher.group(1));
+                if (cn.bidcheck.compat.Java8Api.isBlank(value) || PLACEHOLDER.matcher(value).matches()) continue;
                 Evidence evidence = new Evidence(document.id(), document.name(), page.number(), page.locationType(),
-                        matcher.group().strip(), "template-field:" + safe(field) + ":" + matcher.start(), parserConfidence(page));
+                        cn.bidcheck.compat.Java8Api.strip(matcher.group()), "template-field:" + safe(field) + ":" + matcher.start(), parserConfidence(page));
                 values.putIfAbsent(evidenceKey(evidence) + "|" + normalize(value), new FieldValue(value, evidence));
             }
         }
         for (Page page : sortedPages(document)) {
             LabelValue structured = labelledField(page.text(), field);
-            if (!structured.present || structured.value.isBlank() || PLACEHOLDER.matcher(structured.value).matches()) continue;
+            if (!structured.present || cn.bidcheck.compat.Java8Api.isBlank(structured.value) || PLACEHOLDER.matcher(structured.value).matches()) continue;
             Evidence evidence = new Evidence(document.id(), document.name(), page.number(), page.locationType(),
                     structured.value, "template-field-structured:" + safe(field), parserConfidence(page));
             values.putIfAbsent(evidenceKey(evidence) + "|" + normalize(structured.value),
                     new FieldValue(structured.value, evidence));
         }
-        return List.copyOf(values.values());
+        return cn.bidcheck.compat.Java8Api.listCopyOf(values.values());
     }
 
     private static String primaryCompanyValue(Context context) {
@@ -2502,7 +2415,7 @@ public final class TemplateEvidenceAssembler {
                 .filter(page -> page.number() <= 3 || Objects.toString(page.text(), "").contains("投标文件封面"))
                 .map(page -> labelledField(page.text(), "companyName"))
                 .filter(LabelValue::present).map(LabelValue::value)
-                .filter(value -> !value.isBlank() && !PLACEHOLDER.matcher(value).matches())
+                .filter(value -> !cn.bidcheck.compat.Java8Api.isBlank(value) && !PLACEHOLDER.matcher(value).matches())
                 .findFirst().orElse("");
     }
 
@@ -2510,7 +2423,7 @@ public final class TemplateEvidenceAssembler {
                                            String value, String primaryCompany) {
         if (!bidInternalConsistencyField(field)) return "PROJECT";
         if (page == null || !"BID".equalsIgnoreCase(document.role())) return "";
-        if (!primaryCompany.isBlank() && sameCompanyValue(primaryCompany, value)) return "PRIMARY";
+        if (!cn.bidcheck.compat.Java8Api.isBlank(primaryCompany) && sameCompanyValue(primaryCompany, value)) return "PRIMARY";
         String text = Objects.toString(page.text(), "");
         if (text.matches("(?s).*(?:设计单位|设计成员|设计方).*") ) return "DESIGN_MEMBER";
         if (text.matches("(?s).*(?:施工单位|施工成员|施工方).*") ) return "CONSTRUCTION_MEMBER";
@@ -2545,49 +2458,38 @@ public final class TemplateEvidenceAssembler {
     }
 
     private static boolean fieldLocallySupported(String field) {
-        return Set.of("companyName", "creditCode", "projectName", "projectNumber", "totalPrice",
-                "duration", "designDuration", "constructionDuration", "installationDuration",
-                "commissioningDuration", "bidValidity", "warranty", "documentDate", "date").contains(field);
+        return cn.bidcheck.compat.Java8Api.setOf("companyName", "creditCode", "projectName", "projectNumber", "totalPrice", "duration", "designDuration", "constructionDuration", "installationDuration", "commissioningDuration", "bidValidity", "warranty", "documentDate", "date").contains(field);
     }
 
     private static List<String> fieldLabels(String field) {
-        return switch (field) {
-            case "companyName" -> List.of("投标人名称", "投标单位名称", "企业名称", "公司名称");
-            case "creditCode" -> List.of("统一社会信用代码", "信用代码");
-            case "projectName" -> List.of("项目名称", "工程名称", "招标项目名称");
-            case "projectNumber" -> List.of("项目编号", "招标编号", "采购编号");
-            case "totalPrice" -> List.of("投标总报价", "投标报价", "报价总额", "总报价", "投标总价");
-            case "duration" -> List.of("总工期", "项目工期", "工期", "交货期", "服务期限");
-            case "documentDate", "date" -> List.of("投标日期", "签署日期", "落款日期", "日期");
-            default -> List.of(field);
-        };
+        switch (field) {case "companyName":return cn.bidcheck.compat.Java8Api.listOf("投标人名称", "投标单位名称", "企业名称", "公司名称");case "creditCode":return cn.bidcheck.compat.Java8Api.listOf("统一社会信用代码", "信用代码");case "projectName":return cn.bidcheck.compat.Java8Api.listOf("项目名称", "工程名称", "招标项目名称");case "projectNumber":return cn.bidcheck.compat.Java8Api.listOf("项目编号", "招标编号", "采购编号");case "totalPrice":return cn.bidcheck.compat.Java8Api.listOf("投标总报价", "投标报价", "报价总额", "总报价", "投标总价");case "duration":return cn.bidcheck.compat.Java8Api.listOf("总工期", "项目工期", "工期", "交货期", "服务期限");case "documentDate":case "date":return cn.bidcheck.compat.Java8Api.listOf("投标日期", "签署日期", "落款日期", "日期");default:return cn.bidcheck.compat.Java8Api.listOf(field);}
     }
 
     private static LabelValue labelledField(String text, String field) {
         for (String label : fieldLabels(field)) {
             Matcher table = Pattern.compile("(?m)\\|\\s*" + Pattern.quote(label)
                     + "\\s*\\|\\s*([^|\\r\\n]*)\\|").matcher(Objects.toString(text, ""));
-            if (table.find()) return new LabelValue(true, table.group(1).strip());
+            if (table.find()) return new LabelValue(true, cn.bidcheck.compat.Java8Api.strip(table.group(1)));
             Matcher html = Pattern.compile("(?is)<t[dh][^>]*>\\s*" + Pattern.quote(label)
                     + "\\s*</t[dh]>\\s*<td[^>]*>(.*?)</td>").matcher(Objects.toString(text, ""));
-            if (html.find()) return new LabelValue(true, html.group(1).replaceAll("<[^>]+>", " ").strip());
+            if (html.find()) return new LabelValue(true, cn.bidcheck.compat.Java8Api.strip(html.group(1).replaceAll("<[^>]+>", " ")));
             Matcher matcher = Pattern.compile("(?m)(?:^|[|\\t])[ \\t]*" + Pattern.quote(label)
                     + "(?:[ \\t]*[:：=][ \\t]*|[ \\t]*(?:为|是)[ \\t]*|[ \\t]+)"
                     + "([^|\\t;；。\\r\\n]*)").matcher(Objects.toString(text, ""));
             if (!matcher.find()) continue;
-            String value = matcher.group(1).strip();
+            String value = cn.bidcheck.compat.Java8Api.strip(matcher.group(1));
             if (value.equals(label)) value = "";
             return new LabelValue(true, value);
         }
         String label = fieldLabels(field).stream().filter(value -> value.contains("、"))
                 .findFirst().orElse("");
-        if (!label.isBlank()) {
+        if (!cn.bidcheck.compat.Java8Api.isBlank(label)) {
             int split = label.lastIndexOf('、');
             String prefix = label.substring(0, split), suffix = label.substring(split + 1);
             LabelValue first = lineValueAfterLabel(text, prefix);
             LabelValue second = lineValueAfterLabel(text, suffix);
             if (first.present() && second.present()) {
-                String combined = String.join(" ", first.value(), second.value()).strip();
+                String combined = cn.bidcheck.compat.Java8Api.strip(String.join(" ", first.value(), second.value()));
                 return new LabelValue(true, combined);
             }
         }
@@ -2599,17 +2501,17 @@ public final class TemplateEvidenceAssembler {
                 + "[ \\t]*[、,:：，]?[ \\t]*([^\\r\\n]*)$")
                 .matcher(Objects.toString(text, ""));
         if (!matcher.find()) return new LabelValue(false, "");
-        String value = matcher.group(1).strip().replaceFirst("^[、,:：，\\s]+", "");
+        String value = cn.bidcheck.compat.Java8Api.strip(matcher.group(1)).replaceFirst("^[、,:：，\\s]+", "");
         return new LabelValue(true, value);
     }
 
     private static boolean subjectField(String field) {
-        return Set.of("投标人名称", "投标单位名称", "企业名称", "公司名称", "companyName", "subjectName")
+        return cn.bidcheck.compat.Java8Api.setOf("投标人名称", "投标单位名称", "企业名称", "公司名称", "companyName", "subjectName")
                 .stream().anyMatch(value -> same(value, field));
     }
 
     private static Evidence pageEvidence(Document document, Page page, String purpose) {
-        String text = Objects.toString(page.text(), "").strip();
+        String text = cn.bidcheck.compat.Java8Api.strip(Objects.toString(page.text(), ""));
         String quote = text.length() <= 1000 ? text : text.substring(0, 1000);
         return new Evidence(document.id(), document.name(), page.number(), page.locationType(), quote,
                 "template-page:" + safe(purpose) + ":" + page.number(), parserConfidence(page));
@@ -2617,7 +2519,7 @@ public final class TemplateEvidenceAssembler {
 
     private List<DatedSource> datesForRole(Context context, String role) {
         Document document = dateDocumentForRole(context, role);
-        if (document == null) return List.of();
+        if (document == null) return cn.bidcheck.compat.Java8Api.listOf();
         LinkedHashMap<String, DatedSource> result = directDatesForRole(context, document, role);
         if (result.isEmpty() && tenderDateRole(role)) {
             List<Evidence> linkEvidence = sameTimeDateLinkEvidence(document);
@@ -2628,11 +2530,11 @@ public final class TemplateEvidenceAssembler {
                     List<Evidence> combined = new ArrayList<>(source.evidence());
                     combined.addAll(linkEvidence);
                     result.putIfAbsent(source.date() + "|linked:" + role,
-                            new DatedSource(source.date(), List.copyOf(combined)));
+                            new DatedSource(source.date(), cn.bidcheck.compat.Java8Api.listCopyOf(combined)));
                 }
             }
         }
-        return List.copyOf(result.values());
+        return cn.bidcheck.compat.Java8Api.listCopyOf(result.values());
     }
 
     private LinkedHashMap<String, DatedSource> directDatesForRole(Context context, Document document, String role) {
@@ -2646,7 +2548,7 @@ public final class TemplateEvidenceAssembler {
                     LocalDate date = parseDate(matcher.group());
                     if (date == null) continue;
                     Evidence evidence = new Evidence(document.id(), document.name(), page.number(), page.locationType(),
-                            matcher.group().strip(), "template-date:" + safe(role) + ":" + matcher.start(), parserConfidence(page));
+                            cn.bidcheck.compat.Java8Api.strip(matcher.group()), "template-date:" + safe(role) + ":" + matcher.start(), parserConfidence(page));
                     boolean current = context.bid.id().equals(document.id())
                             ? currentEvidence(context, evidence, page, false)
                             : context.tender != null && context.tender.id().equals(document.id())
@@ -2657,7 +2559,7 @@ public final class TemplateEvidenceAssembler {
                         continue;
                     }
                     result.putIfAbsent(evidenceKey(evidence) + "|" + date,
-                            new DatedSource(date, List.of(evidence)));
+                            new DatedSource(date, cn.bidcheck.compat.Java8Api.listOf(evidence)));
                 }
             }
         }
@@ -2688,15 +2590,11 @@ public final class TemplateEvidenceAssembler {
     }
 
     private static List<String> dateRoleLabels(String role) {
-        return switch (normalizedDateRole(role)) {
-            case "OPENING" -> List.of("开标时间", "开标日期");
-            case "BID_DEADLINE" -> List.of("投标截止时间", "投标文件递交截止时间", "递交截止时间");
-            default -> List.of(role);
-        };
+        switch (normalizedDateRole(role)) {case "OPENING":return cn.bidcheck.compat.Java8Api.listOf("开标时间", "开标日期");case "BID_DEADLINE":return cn.bidcheck.compat.Java8Api.listOf("投标截止时间", "投标文件递交截止时间", "递交截止时间");default:return cn.bidcheck.compat.Java8Api.listOf(role);}
     }
 
     private static List<Evidence> sameTimeDateLinkEvidence(Document document) {
-        if (document == null || !"TENDER".equalsIgnoreCase(document.role())) return List.of();
+        if (document == null || !"TENDER".equalsIgnoreCase(document.role())) return cn.bidcheck.compat.Java8Api.listOf();
         List<Evidence> result = new ArrayList<>();
         for (Page page : sortedPages(document)) {
             String text = Objects.toString(page.text(), "");
@@ -2707,14 +2605,14 @@ public final class TemplateEvidenceAssembler {
                             + "|开标时间[^\\r\\n。；;]{0,20}投标截止时间[^\\r\\n。；;]{0,20}同一时间")
                     .matcher(text);
             while (matcher.find()) result.add(new Evidence(document.id(), document.name(), page.number(),
-                    page.locationType(), matcher.group().strip(), "template-date-same-time:" + matcher.start(),
+                    page.locationType(), cn.bidcheck.compat.Java8Api.strip(matcher.group()), "template-date-same-time:" + matcher.start(),
                     parserConfidence(page)));
         }
-        return List.copyOf(result);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(result);
     }
 
     private static BigDecimal scoreValue(String normalized, String raw) {
-        try { return new BigDecimal(Objects.toString(normalized, "").replace(",", "").strip()); }
+        try { return new BigDecimal(cn.bidcheck.compat.Java8Api.strip(Objects.toString(normalized, "").replace(",", ""))); }
         catch (NumberFormatException ignored) { }
         Matcher matcher = Pattern.compile("(?:得分|评分|计分|获得|得)\\s*[:：=]?\\s*([0-9]+(?:\\.[0-9]+)?)\\s*分")
                 .matcher(Objects.toString(raw, ""));
@@ -2725,34 +2623,34 @@ public final class TemplateEvidenceAssembler {
     private static boolean scoreScopeMarker(Fact fact, String criterion) {
         String entity = upper(fact.entityType()), field = Objects.toString(fact.field(), "");
         String value = upper(fact.normalizedValue());
-        return Set.of("SCORE_SCOPE", "SCORING_SCOPE").contains(entity)
+        return cn.bidcheck.compat.Java8Api.setOf("SCORE_SCOPE", "SCORING_SCOPE").contains(entity)
                 && (same(field, criterion) || same(field, criterion + ".scope") || same(field, "scoreScope"))
-                && Set.of("CLOSED", "COMPLETE", "ZERO_CLOSED", "已闭合", "完整").contains(value);
+                && cn.bidcheck.compat.Java8Api.setOf("CLOSED", "COMPLETE", "ZERO_CLOSED", "已闭合", "完整").contains(value);
     }
 
     private static boolean textScanScopeMarker(Fact fact, String anomalyType, String scope) {
         String entity = upper(fact.entityType());
         String value = upper(fact.normalizedValue());
-        if (!Set.of("TEXT_ANOMALY_SCOPE", "TEXT_SCAN_SCOPE").contains(entity)
+        if (!cn.bidcheck.compat.Java8Api.setOf("TEXT_ANOMALY_SCOPE", "TEXT_SCAN_SCOPE").contains(entity)
                 || !same(fact.field(), anomalyType)
-                || !Set.of("CLOSED", "COMPLETE", "CLEAR", "已闭合", "完整", "未发现异常").contains(value))
+                || !cn.bidcheck.compat.Java8Api.setOf("CLOSED", "COMPLETE", "CLEAR", "已闭合", "完整", "未发现异常").contains(value))
             return false;
-        String markerScope = Objects.toString(fact.entityKey(), "").strip();
-        return markerScope.isBlank() || scope.isBlank() || same(markerScope, scope)
-                || (List.of("全文", "全部", "整份").stream().anyMatch(scope::contains)
-                && List.of("全文", "全部", "整份", "DOCUMENT").stream()
+        String markerScope = cn.bidcheck.compat.Java8Api.strip(Objects.toString(fact.entityKey(), ""));
+        return cn.bidcheck.compat.Java8Api.isBlank(markerScope) || cn.bidcheck.compat.Java8Api.isBlank(scope) || same(markerScope, scope)
+                || (cn.bidcheck.compat.Java8Api.listOf("全文", "全部", "整份").stream().anyMatch(scope::contains)
+                && cn.bidcheck.compat.Java8Api.listOf("全文", "全部", "整份", "DOCUMENT").stream()
                 .anyMatch(valueScope -> same(markerScope, valueScope)));
     }
 
     private static boolean wholeDocumentScope(String scope) {
-        return scope == null || scope.isBlank()
-                || List.of("全文", "全部", "整份").stream().anyMatch(scope::contains);
+        return scope == null || cn.bidcheck.compat.Java8Api.isBlank(scope)
+                || cn.bidcheck.compat.Java8Api.listOf("全文", "全部", "整份").stream().anyMatch(scope::contains);
     }
 
     private static ScoreSummary explicitScoreSummary(String text, String criterion, boolean fieldAlreadyBound) {
         String value = Objects.toString(text, "");
-        if (value.isBlank()) return null;
-        boolean criterionBound = fieldAlreadyBound || criterion.isBlank() || containsNormalized(value, criterion);
+        if (cn.bidcheck.compat.Java8Api.isBlank(value)) return null;
+        boolean criterionBound = fieldAlreadyBound || cn.bidcheck.compat.Java8Api.isBlank(criterion) || containsNormalized(value, criterion);
         if (!criterionBound) return null;
         Matcher matcher = Pattern.compile(
                 "(?:最终得分|实际得分|核验得分|本项得分|客观评分得分|合计得分|总得分)"
@@ -2765,7 +2663,7 @@ public final class TemplateEvidenceAssembler {
                     ? BigDecimal.ZERO : new BigDecimal(matcher.group(1));
             int quoteStart = Math.max(0, matcher.start() - Math.min(80, matcher.start()));
             int quoteEnd = Math.min(value.length(), matcher.end() + 40);
-            return new ScoreSummary(score, value.substring(quoteStart, quoteEnd).strip(), matcher.start());
+            return new ScoreSummary(score, cn.bidcheck.compat.Java8Api.strip(value.substring(quoteStart, quoteEnd)), matcher.start());
         }
         return null;
     }
@@ -2776,7 +2674,7 @@ public final class TemplateEvidenceAssembler {
     }
 
     private static String anomalySnippet(String value) {
-        String compact = Objects.toString(value, "").replaceAll("\\s+", " ").strip();
+        String compact = cn.bidcheck.compat.Java8Api.strip(Objects.toString(value, "").replaceAll("\\s+", " "));
         return compact.length() <= 80 ? compact : compact.substring(0, 80);
     }
 
@@ -2787,18 +2685,18 @@ public final class TemplateEvidenceAssembler {
     }
 
     private static List<TypoRule> typoRules(Object value) {
-        if (!(value instanceof Collection<?> values)) return List.of();
+        if (!(value instanceof Collection<?>)) return cn.bidcheck.compat.Java8Api.listOf();
         List<TypoRule> result = new ArrayList<>();
-        for (Object item : values) {
-            String rule = Objects.toString(item, "").strip();
+        for (Object item : ((Collection<?>) (value))) {
+            String rule = cn.bidcheck.compat.Java8Api.strip(Objects.toString(item, ""));
             String[] parts = rule.split("(?:=>|->|→)", 2);
             if (parts.length != 2) continue;
-            String wrong = parts[0].strip(), correct = parts[1].strip();
-            if (wrong.isBlank() || correct.isBlank() || wrong.equals(correct)
+            String wrong = cn.bidcheck.compat.Java8Api.strip(parts[0]), correct = cn.bidcheck.compat.Java8Api.strip(parts[1]);
+            if (cn.bidcheck.compat.Java8Api.isBlank(wrong) || cn.bidcheck.compat.Java8Api.isBlank(correct) || wrong.equals(correct)
                     || wrong.length() > 40 || correct.length() > 40) continue;
             result.add(new TypoRule(wrong, correct));
         }
-        return List.copyOf(result);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(result);
     }
 
     private static boolean explicitGap(String corpus, String dimension) {
@@ -2809,25 +2707,20 @@ public final class TemplateEvidenceAssembler {
     }
 
     private static ParsedPrice parsedPrice(Fact fact) {
-        String normalized = Objects.toString(fact.normalizedValue(), "").strip();
+        String normalized = cn.bidcheck.compat.Java8Api.strip(Objects.toString(fact.normalizedValue(), ""));
         String raw = Objects.toString(fact.rawValue(), "");
         String tax = "", currency = "", unit = "";
         String numeric = normalized;
         if (normalized.contains(":")) {
             String[] parts = normalized.split(":", 2);
             String prefix = upper(parts[0]);
-            tax = switch (prefix) {
-                case "CNY_INCLUSIVE" -> "INCLUSIVE";
-                case "CNY_EXCLUSIVE" -> "EXCLUSIVE";
-                case "CNY" -> "";
-                default -> "";
-            };
+            switch (prefix) {case "CNY_INCLUSIVE":tax = "INCLUSIVE"; break;case "CNY_EXCLUSIVE":tax = "EXCLUSIVE"; break;case "CNY":tax = ""; break;default:tax = ""; break;}
             currency = canonicalCurrency(prefix);
             unit = basePriceUnit(currency);
             numeric = parts[1];
         }
-        if (currency.isBlank()) currency = currencyIn(raw);
-        if (unit.isBlank()) unit = unitIn(raw, currency);
+        if (cn.bidcheck.compat.Java8Api.isBlank(currency)) currency = currencyIn(raw);
+        if (cn.bidcheck.compat.Java8Api.isBlank(unit)) unit = unitIn(raw, currency);
         try {
             return new ParsedPrice(new BigDecimal(numeric.replace(",", "")), currency, unit, tax);
         } catch (NumberFormatException invalid) {
@@ -2839,7 +2732,7 @@ public final class TemplateEvidenceAssembler {
             else if ("亿元".equals(matcher.group(2))) amount = amount.multiply(new BigDecimal("100000000"));
             if (raw.contains("不含税") || raw.contains("未税") || raw.contains("税前")) tax = "EXCLUSIVE";
             else if (raw.contains("含税") || raw.contains("税后")) tax = "INCLUSIVE";
-            if (currency.isBlank()) currency = "CNY";
+            if (cn.bidcheck.compat.Java8Api.isBlank(currency)) currency = "CNY";
             return new ParsedPrice(amount, currency, "元", tax);
         }
     }
@@ -2863,20 +2756,14 @@ public final class TemplateEvidenceAssembler {
     }
 
     private static String basePriceUnit(String currency) {
-        return switch (currency) {
-            case "CNY" -> "元";
-            case "USD" -> "美元";
-            case "EUR" -> "欧元";
-            case "HKD" -> "港元";
-            default -> "";
-        };
+        switch (currency) {case "CNY":return "元";case "USD":return "美元";case "EUR":return "欧元";case "HKD":return "港元";default:return "";}
     }
 
     private static String lotAround(String pageText, String quote) {
         String local = Objects.toString(quote, "");
         String page = cleanMarkup(Objects.toString(pageText, ""));
         String value = lots(local);
-        if (!value.isBlank()) return value;
+        if (!cn.bidcheck.compat.Java8Api.isBlank(value)) return value;
         int at = page.indexOf(cleanMarkup(local));
         if (at >= 0) {
             int start = Math.max(0, at - 500), end = Math.min(page.length(), at + local.length() + 200);
@@ -2887,11 +2774,11 @@ public final class TemplateEvidenceAssembler {
 
     private static String evidenceContext(String pageText, String quote, String anchor) {
         String page = cleanMarkup(Objects.toString(pageText, ""));
-        if (page.isBlank()) return "";
+        if (cn.bidcheck.compat.Java8Api.isBlank(page)) return "";
         String local = cleanMarkup(Objects.toString(quote, ""));
-        int at = local.isBlank() ? -1 : page.indexOf(local);
+        int at = cn.bidcheck.compat.Java8Api.isBlank(local) ? -1 : page.indexOf(local);
         int length = local.length();
-        if (at < 0 && anchor != null && !anchor.isBlank()) {
+        if (at < 0 && anchor != null && !cn.bidcheck.compat.Java8Api.isBlank(anchor)) {
             for (String label : fieldLabels(anchor)) {
                 at = page.indexOf(label);
                 if (at >= 0) { length = label.length(); break; }
@@ -2908,9 +2795,9 @@ public final class TemplateEvidenceAssembler {
         // in the observation shown to reviewers and used by exact business identifiers.
         Map<String, String> result = new LinkedHashMap<>();
         while (matcher.find()) {
-            String sourceValue = Objects.toString(
-                    matcher.group(1) == null ? matcher.group(2) : matcher.group(1), "").strip();
-            if (!sourceValue.isBlank()) result.putIfAbsent(normalize(sourceValue), sourceValue);
+            String sourceValue = cn.bidcheck.compat.Java8Api.strip(Objects.toString(
+                    matcher.group(1) == null ? matcher.group(2) : matcher.group(1), ""));
+            if (!cn.bidcheck.compat.Java8Api.isBlank(sourceValue)) result.putIfAbsent(normalize(sourceValue), sourceValue);
         }
         return result.size() == 1 ? result.values().iterator().next() : "";
     }
@@ -2925,11 +2812,11 @@ public final class TemplateEvidenceAssembler {
 
     private static boolean knownRequired(String required, String actual,
                                          java.util.function.BiPredicate<String, String> equivalent) {
-        return required.isBlank() || !actual.isBlank() && equivalent.test(required, actual);
+        return cn.bidcheck.compat.Java8Api.isBlank(required) || !cn.bidcheck.compat.Java8Api.isBlank(actual) && equivalent.test(required, actual);
     }
 
     private static boolean currencyEquivalent(String expected, String actual) {
-        return !canonicalCurrency(expected).isBlank()
+        return !cn.bidcheck.compat.Java8Api.isBlank(canonicalCurrency(expected))
                 && canonicalCurrency(expected).equals(canonicalCurrency(actual));
     }
 
@@ -2943,20 +2830,20 @@ public final class TemplateEvidenceAssembler {
     }
 
     private static boolean unitEquivalent(String expected, String actual) {
-        return !canonicalUnit(expected).isBlank() && canonicalUnit(expected).equals(canonicalUnit(actual));
+        return !cn.bidcheck.compat.Java8Api.isBlank(canonicalUnit(expected)) && canonicalUnit(expected).equals(canonicalUnit(actual));
     }
 
     private static String canonicalUnit(String value) {
         String normalized = upper(value).replaceAll("[\\s（()）]", "");
-        if (Set.of("元", "人民币元", "CNY", "RMB").contains(normalized)) return "CNY_BASE";
-        if (Set.of("美元", "USD", "US$").contains(normalized)) return "USD_BASE";
-        if (Set.of("欧元", "EUR").contains(normalized)) return "EUR_BASE";
-        if (Set.of("港元", "港币", "HKD").contains(normalized)) return "HKD_BASE";
+        if (cn.bidcheck.compat.Java8Api.setOf("元", "人民币元", "CNY", "RMB").contains(normalized)) return "CNY_BASE";
+        if (cn.bidcheck.compat.Java8Api.setOf("美元", "USD", "US$").contains(normalized)) return "USD_BASE";
+        if (cn.bidcheck.compat.Java8Api.setOf("欧元", "EUR").contains(normalized)) return "EUR_BASE";
+        if (cn.bidcheck.compat.Java8Api.setOf("港元", "港币", "HKD").contains(normalized)) return "HKD_BASE";
         return normalized;
     }
 
     private static boolean taxEquivalent(String expected, String actual) {
-        return canonicalTax(expected).equals(canonicalTax(actual)) && !canonicalTax(expected).isBlank();
+        return canonicalTax(expected).equals(canonicalTax(actual)) && !cn.bidcheck.compat.Java8Api.isBlank(canonicalTax(expected));
     }
 
     private static String canonicalTax(String value) {
@@ -2967,7 +2854,7 @@ public final class TemplateEvidenceAssembler {
     }
 
     private static boolean layerEquivalent(String expected, String actual) {
-        return canonicalLayer(expected).equals(canonicalLayer(actual)) && !canonicalLayer(expected).isBlank();
+        return canonicalLayer(expected).equals(canonicalLayer(actual)) && !cn.bidcheck.compat.Java8Api.isBlank(canonicalLayer(expected));
     }
 
     private static String canonicalLayer(String value) {
@@ -2981,7 +2868,7 @@ public final class TemplateEvidenceAssembler {
     private static boolean indexPage(String text) {
         if (text == null) return false;
         String opening = cleanMarkup(text.substring(0, Math.min(240, text.length())));
-        return opening.contains("目录") && INDEX_ENTRY.matcher(text).results().count() >= 2;
+        return opening.contains("目录") && cn.bidcheck.compat.Java8Extras.matchCount(INDEX_ENTRY.matcher(text)) >= 2;
     }
 
     private static boolean indexLine(String line) {
@@ -2992,7 +2879,7 @@ public final class TemplateEvidenceAssembler {
     private static boolean heading(String line, String materialType) {
         String value = normalize(line.replaceFirst("^[ \\t]*(?:#{1,6}|第?[一二三四五六七八九十0-9]+[章节条、.．）)]?)[ \\t]*", ""));
         String expected = normalize(materialType);
-        return !expected.isBlank() && (value.equals(expected)
+        return !cn.bidcheck.compat.Java8Api.isBlank(expected) && (value.equals(expected)
                 || value.endsWith(expected) && value.length() <= expected.length() + 14)
                 && !line.matches(".*[。；;].*");
     }
@@ -3000,7 +2887,7 @@ public final class TemplateEvidenceAssembler {
     private static String section(List<String> lines, int heading) {
         int end = Math.min(lines.size(), heading + 30);
         for (int index = heading + 1; index < end; index++) {
-            String line = lines.get(index).strip();
+            String line = cn.bidcheck.compat.Java8Api.strip(lines.get(index));
             if (index > heading + 1 && line.matches("^(?:#{1,6}[ \\t]+|第?[一二三四五六七八九十0-9]+[章节][ \\t]*).{1,80}$")) {
                 end = index; break;
             }
@@ -3009,11 +2896,10 @@ public final class TemplateEvidenceAssembler {
     }
 
     private static boolean substantiveBody(String section, String title) {
-        List<String> content = section.lines().map(String::strip).filter(value -> !value.isBlank())
+        List<String> content = cn.bidcheck.compat.Java8Api.toList(cn.bidcheck.compat.Java8Extras.lines(section).map(cn.bidcheck.compat.Java8Api::strip).filter(value -> !cn.bidcheck.compat.Java8Api.isBlank(value))
                 .filter(value -> !containsNormalized(value, title) || !heading(value, title))
                 .filter(value -> !value.matches("[0-9]{1,5}"))
-                .filter(value -> !value.matches(".*(?:投标人|法定代表人|委托代理人)[（(]?(?:盖章|签字|签章)[）)]?[ \\t]*[:：]?[ \\t_—-]*"))
-                .toList();
+                .filter(value -> !value.matches(".*(?:投标人|法定代表人|委托代理人)[（(]?(?:盖章|签字|签章)[）)]?[ \\t]*[:：]?[ \\t_—-]*")));
         String joined = normalize(String.join("", content));
         if (joined.length() < 8) return false;
         return content.stream().anyMatch(value -> value.matches(".*(?:[:：]|兹|我公司|我方|承诺|证明|名称|编号|代码|地址|有效期|日期|责任|声明).*"))
@@ -3028,7 +2914,7 @@ public final class TemplateEvidenceAssembler {
     private static boolean structuredPage(Page page) {
         String text = Objects.toString(page.text(), "");
         if (text.matches("(?is).*<table\\b.*</table\\s*>.*")) return true;
-        long delimited = text.lines().filter(line -> line.chars().filter(ch -> ch == '|').count() >= 2 || line.contains("\t")).count();
+        long delimited = cn.bidcheck.compat.Java8Extras.lines(text).filter(line -> line.chars().filter(ch -> ch == '|').count() >= 2 || line.contains("\t")).count();
         if (delimited >= 2) return true;
         return page.layout() != null && "COMPLETE".equals(page.layout().status()) && !page.layout().tables().isEmpty();
     }
@@ -3044,12 +2930,12 @@ public final class TemplateEvidenceAssembler {
 
     private static String beforeHistory(String value) {
         Matcher history = HISTORY.matcher(cleanMarkup(value));
-        return history.find() ? cleanMarkup(value).substring(0, history.start()).strip() : cleanMarkup(value);
+        return history.find() ? cn.bidcheck.compat.Java8Api.strip(cleanMarkup(value).substring(0, history.start())) : cleanMarkup(value);
     }
 
     private static String stableIdentityNumber(Map<String, List<String>> fields) {
-        for (String field : List.of("idNumber", "passportNumber", "drivingLicenseNumber")) {
-            List<String> values = fields.getOrDefault(field, List.of());
+        for (String field : cn.bidcheck.compat.Java8Api.listOf("idNumber", "passportNumber", "drivingLicenseNumber")) {
+            List<String> values = fields.getOrDefault(field, cn.bidcheck.compat.Java8Api.listOf());
             if (values.size() == 1) {
                 String value = values.get(0).replaceAll("[\\s\\p{Z}]", "").toUpperCase(Locale.ROOT);
                 if (!value.matches(".*[*＊×•●_]|.*X{2,}.*") && value.matches("[A-Z0-9()（）/.-]{5,80}")) return value;
@@ -3059,17 +2945,17 @@ public final class TemplateEvidenceAssembler {
     }
 
     private static String personKey(String name, String employer, String strongNumber, String recordKey) {
-        if (!strongNumber.isBlank()) return "ID:" + digest(strongNumber).substring(0, 24);
+        if (!cn.bidcheck.compat.Java8Api.isBlank(strongNumber)) return "ID:" + digest(strongNumber).substring(0, 24);
         // Employer is a business dimension, not a person identity. Missing/changing employer must
         // not split one same-name candidate into several people and accidentally satisfy minCount.
-        if (!name.isBlank()) return "NAME:" + digest(normalize(name)).substring(0, 24);
+        if (!cn.bidcheck.compat.Java8Api.isBlank(name)) return "NAME:" + digest(normalize(name)).substring(0, 24);
         return "RECORD:" + digest(recordKey).substring(0, 24);
     }
 
     private static String certificateHolderKey(Context context, String name,
                                                Map<String, List<String>> fields, String recordKey) {
         String strongNumber = stableIdentityNumber(fields);
-        if (!strongNumber.isBlank()) return personKey(name, first(fields, "employer"), strongNumber, recordKey);
+        if (!cn.bidcheck.compat.Java8Api.isBlank(strongNumber)) return personKey(name, first(fields, "employer"), strongNumber, recordKey);
         Set<String> rosterKeys = context.observations.stream()
                 .filter(Observation.PersonnelObservation.class::isInstance)
                 .map(Observation.PersonnelObservation.class::cast)
@@ -3081,12 +2967,8 @@ public final class TemplateEvidenceAssembler {
     }
 
     private static String canonicalRole(String role) {
-        String value = cleanMarkup(Objects.toString(role, "")).replaceFirst("^(?:本项目|本工程|本次投标)", "").strip();
-        return switch (value) {
-            case "施工部分负责人" -> "施工负责人";
-            case "设计部分负责人" -> "设计负责人";
-            default -> value;
-        };
+        String value = cn.bidcheck.compat.Java8Api.strip(cleanMarkup(Objects.toString(role, "")).replaceFirst("^(?:本项目|本工程|本次投标)", ""));
+        switch (value) {case "施工部分负责人":return "施工负责人";case "设计部分负责人":return "设计负责人";default:return value;}
     }
 
     private static boolean sameRole(String expected, String actual) {
@@ -3095,23 +2977,23 @@ public final class TemplateEvidenceAssembler {
 
     private static boolean explicitRole(String quote, String requestedRole) {
         String role = canonicalRole(requestedRole), text = beforeHistory(cleanMarkup(quote));
-        if (role.isBlank() || text.isBlank() || example(text)) return false;
+        if (cn.bidcheck.compat.Java8Api.isBlank(role) || cn.bidcheck.compat.Java8Api.isBlank(text) || example(text)) return false;
         return Pattern.compile("(?:拟在本合同任职|拟任职务|本项目职务|在本项目中担任职务|担任职务)"
                 + "[ \\t]*[:：]?[ \\t]*" + Pattern.quote(role) + "(?:[ \\t]|[|<。；;]|$)").matcher(text).find();
     }
 
     private static String consortiumRole(String text, String employer) {
-        if (employer.isBlank()) return "";
+        if (cn.bidcheck.compat.Java8Api.isBlank(employer)) return "";
         String compact = cleanMarkup(text);
-        for (String role : List.of("联合体牵头人", "联合体牵头单位", "施工成员", "设计成员")) {
+        for (String role : cn.bidcheck.compat.Java8Api.listOf("联合体牵头人", "联合体牵头单位", "施工成员", "设计成员")) {
             if (Pattern.compile(Pattern.quote(employer) + "[^。；;\\n]{0,25}" + role + "|" + role + "[^。；;\\n]{0,25}" + Pattern.quote(employer)).matcher(compact).find()) return role;
         }
         return "";
     }
 
     private static String mergeDimension(String existing, String incoming) {
-        if (incoming == null || incoming.isBlank()) return existing;
-        if (existing == null || existing.isBlank()) return incoming;
+        if (incoming == null || cn.bidcheck.compat.Java8Api.isBlank(incoming)) return existing;
+        if (existing == null || cn.bidcheck.compat.Java8Api.isBlank(existing)) return incoming;
         return same(existing, incoming) ? existing : "UNRESOLVED";
     }
 
@@ -3135,7 +3017,7 @@ public final class TemplateEvidenceAssembler {
                     digest(Objects.toString(value.quote(), "")), value.locationType(), value.page(), value.quote(), null, null);
             refs.putIfAbsent(sourceKey(ref), ref);
         }
-        return List.copyOf(refs.values());
+        return cn.bidcheck.compat.Java8Api.listCopyOf(refs.values());
     }
 
     private static String sourceKey(SourceRef source) {
@@ -3171,14 +3053,14 @@ public final class TemplateEvidenceAssembler {
 
     private static Page page(Document document, Evidence evidence) {
         if (document == null || evidence == null) return null;
-        List<Page> pages = document.pages() == null ? List.of() : document.pages().stream()
-                .filter(page -> page.number() == evidence.page() && Objects.equals(page.locationType(), evidence.locationType())).toList();
+        List<Page> pages = document.pages() == null ? cn.bidcheck.compat.Java8Api.listOf() : cn.bidcheck.compat.Java8Api.toList(document.pages().stream()
+                .filter(page -> page.number() == evidence.page() && Objects.equals(page.locationType(), evidence.locationType())));
         return pages.size() == 1 ? pages.get(0) : null;
     }
 
     private static List<Page> sortedPages(Document document) {
-        if (document == null || document.pages() == null) return List.of();
-        return document.pages().stream().sorted(Comparator.comparingInt(Page::number).thenComparing(Page::locationType)).toList();
+        if (document == null || document.pages() == null) return cn.bidcheck.compat.Java8Api.listOf();
+        return cn.bidcheck.compat.Java8Api.toList(document.pages().stream().sorted(Comparator.comparingInt(Page::number).thenComparing(Page::locationType)));
     }
 
     private static boolean complete(Document document) {
@@ -3208,17 +3090,17 @@ public final class TemplateEvidenceAssembler {
 
     private static String labelled(String text, String label) {
         Matcher matcher = Pattern.compile(label + "[ \\t]*[:：=][ \\t]*([^|\\t;；。\\n]{2,80})").matcher(Objects.toString(text, ""));
-        return matcher.find() ? matcher.group(1).strip() : "";
+        return matcher.find() ? cn.bidcheck.compat.Java8Api.strip(matcher.group(1)) : "";
     }
 
     private static List<String> labelledValues(String text, String prefix) {
         String label = Objects.toString(prefix, "").replaceFirst("[:：=\\s]+$", "");
-        if (label.isBlank()) return List.of();
+        if (cn.bidcheck.compat.Java8Api.isBlank(label)) return cn.bidcheck.compat.Java8Api.listOf();
         LinkedHashSet<String> values = new LinkedHashSet<>();
         Matcher matcher = Pattern.compile(Pattern.quote(label) + "[ \\t]*[:：=][ \\t]*([^|\\t;；。\\n]{2,120})")
                 .matcher(Objects.toString(text, ""));
-        while (matcher.find()) values.add(matcher.group(1).strip());
-        return List.copyOf(values);
+        while (matcher.find()) values.add(cn.bidcheck.compat.Java8Api.strip(matcher.group(1)));
+        return cn.bidcheck.compat.Java8Api.listCopyOf(values);
     }
 
     private static LocalDate parseDate(String value) {
@@ -3234,7 +3116,7 @@ public final class TemplateEvidenceAssembler {
 
     private static boolean containsNormalized(String text, String expected) {
         String left = normalize(text), right = normalize(expected);
-        return !right.isBlank() && left.contains(right);
+        return !cn.bidcheck.compat.Java8Api.isBlank(right) && left.contains(right);
     }
 
     private static String normalize(String value) {
@@ -3244,45 +3126,45 @@ public final class TemplateEvidenceAssembler {
     }
 
     private static String cleanMarkup(String value) {
-        return Objects.toString(value, "").replaceAll("(?is)<[^>]+>", " ")
-                .replaceAll("[*#`]", "").replaceAll("[\\s\\p{Z}]+", " ").strip();
+        return cn.bidcheck.compat.Java8Api.strip(Objects.toString(value, "").replaceAll("(?is)<[^>]+>", " ")
+                .replaceAll("[*#`]", "").replaceAll("[\\s\\p{Z}]+", " "));
     }
 
     private static String trimQuote(String value) {
-        String text = Objects.toString(value, "").strip();
+        String text = cn.bidcheck.compat.Java8Api.strip(Objects.toString(value, ""));
         return text.length() <= 1200 ? text : text.substring(0, 1200);
     }
 
     private static String subjectKey(SubjectSelector selector) {
         String constrained = selector.constraints().getOrDefault("entityKey", "");
-        if (!constrained.isBlank()) return constrained;
+        if (!cn.bidcheck.compat.Java8Api.isBlank(constrained)) return constrained;
         return "PERSON".equalsIgnoreCase(selector.entityType()) ? "" : "BIDDER";
     }
 
     private static String string(Map<String, Object> values, String key) {
-        return Objects.toString(values.get(key), "").strip();
+        return cn.bidcheck.compat.Java8Api.strip(Objects.toString(values.get(key), ""));
     }
 
     private static List<String> strings(Map<String, Object> values, String key) {
-        if (!(values.get(key) instanceof Collection<?> collection)) return List.of();
-        return collection.stream().map(String::valueOf).map(String::strip).filter(value -> !value.isBlank()).distinct().toList();
+        if (!(values.get(key) instanceof Collection<?>)) return cn.bidcheck.compat.Java8Api.listOf();
+        return cn.bidcheck.compat.Java8Api.toList(((Collection<?>) (values.get(key))).stream().map(String::valueOf).map(cn.bidcheck.compat.Java8Api::strip).filter(value -> !cn.bidcheck.compat.Java8Api.isBlank(value)).distinct());
     }
 
     private static boolean bool(Map<String, Object> values, String key, boolean fallback) {
         Object value = values.get(key);
-        return value == null ? fallback : value instanceof Boolean b ? b : Boolean.parseBoolean(String.valueOf(value));
+        return value == null ? fallback : value instanceof Boolean ? ((Boolean) (value)) : Boolean.parseBoolean(String.valueOf(value));
     }
 
     private static String first(Map<String, List<String>> values, String key) {
-        List<String> candidates = values.getOrDefault(key, List.of());
+        List<String> candidates = values.getOrDefault(key, cn.bidcheck.compat.Java8Api.listOf());
         return candidates.size() == 1 ? candidates.get(0) : "";
     }
 
     private static boolean same(String left, String right) { return normalize(left).equals(normalize(right)); }
-    private static String upper(String value) { return Objects.toString(value, "").strip().toUpperCase(Locale.ROOT); }
+    private static String upper(String value) { return cn.bidcheck.compat.Java8Api.strip(Objects.toString(value, "")).toUpperCase(Locale.ROOT); }
     private static String safe(String value) {
         String normalized = normalize(value);
-        return normalized.isBlank() ? "item" : Integer.toUnsignedString(normalized.hashCode(), 36);
+        return cn.bidcheck.compat.Java8Api.isBlank(normalized) ? "item" : Integer.toUnsignedString(normalized.hashCode(), 36);
     }
     private static int integer(String value, int fallback) {
         try { return Integer.parseInt(Objects.toString(value, "")); }
@@ -3290,7 +3172,7 @@ public final class TemplateEvidenceAssembler {
     }
     private static int integer(Map<String, Object> values, String key, int fallback) {
         Object value = values.get(key);
-        if (value instanceof Number number) return number.intValue();
+        if (value instanceof Number) return ((Number) (value)).intValue();
         return integer(Objects.toString(value, ""), fallback);
     }
     private static int lastIndex(String value, String... needles) {
@@ -3348,11 +3230,25 @@ public final class TemplateEvidenceAssembler {
         if (count > 0) context.counters.merge(key, count, Integer::sum);
     }
 
-    public record Assembly(EvidenceView evidenceView, List<Evidence> evidences, Map<String, Object> diagnostics) {
-        public Assembly {
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public static final class Assembly {
+        private final EvidenceView evidenceView;
+        private final List<Evidence> evidences;
+        private final Map<String, Object> diagnostics;
+        public EvidenceView evidenceView() { return evidenceView; }
+        public List<Evidence> evidences() { return evidences; }
+        public Map<String, Object> diagnostics() { return diagnostics; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Assembly that = (Assembly) other; return java.util.Objects.equals(this.evidenceView, that.evidenceView) && java.util.Objects.equals(this.evidences, that.evidences) && java.util.Objects.equals(this.diagnostics, that.diagnostics); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.evidenceView); hash = 31 * hash + java.util.Objects.hashCode(this.evidences); hash = 31 * hash + java.util.Objects.hashCode(this.diagnostics); return hash; }
+        @Override public String toString() { return "Assembly[" + "evidenceView=" + evidenceView + ", evidences=" + evidences + ", diagnostics=" + diagnostics + "]"; }
+
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public Assembly(@com.fasterxml.jackson.annotation.JsonProperty("evidenceView") EvidenceView evidenceView, @com.fasterxml.jackson.annotation.JsonProperty("evidences") List<Evidence> evidences, @com.fasterxml.jackson.annotation.JsonProperty("diagnostics") Map<String, Object> diagnostics) {
             Objects.requireNonNull(evidenceView, "evidenceView");
-            evidences = evidences == null ? List.of() : List.copyOf(evidences);
-            diagnostics = diagnostics == null ? Map.of() : Map.copyOf(diagnostics);
+            evidences = evidences == null ? cn.bidcheck.compat.Java8Api.listOf() : cn.bidcheck.compat.Java8Api.listCopyOf(evidences);
+            diagnostics = diagnostics == null ? cn.bidcheck.compat.Java8Api.mapOf() : cn.bidcheck.compat.Java8Api.mapCopyOf(diagnostics);
+
+            this.evidenceView = evidenceView; this.evidences = evidences; this.diagnostics = diagnostics;
         }
     }
 
@@ -3378,10 +3274,23 @@ public final class TemplateEvidenceAssembler {
         }
         void add(Observation observation) { observations.add(observation); }
         void increment(String key) { counters.merge(key, 1, Integer::sum); }
-        void note(String code, String message) { notes.add(Map.of("code", code, "message", message)); }
+        void note(String code, String message) { notes.add(cn.bidcheck.compat.Java8Api.mapOf("code", code, "message", message)); }
     }
 
-    private record MaterialScan(List<Observation.MaterialObservation> observations, boolean mentionFound, boolean bodyFound) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class MaterialScan {
+        private final List<Observation.MaterialObservation> observations;
+        private final boolean mentionFound;
+        private final boolean bodyFound;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private MaterialScan(@com.fasterxml.jackson.annotation.JsonProperty("observations") List<Observation.MaterialObservation> observations, @com.fasterxml.jackson.annotation.JsonProperty("mentionFound") boolean mentionFound, @com.fasterxml.jackson.annotation.JsonProperty("bodyFound") boolean bodyFound) { this.observations = observations; this.mentionFound = mentionFound; this.bodyFound = bodyFound; }
+        public List<Observation.MaterialObservation> observations() { return observations; }
+        public boolean mentionFound() { return mentionFound; }
+        public boolean bodyFound() { return bodyFound; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; MaterialScan that = (MaterialScan) other; return java.util.Objects.equals(this.observations, that.observations) && java.util.Objects.equals(this.mentionFound, that.mentionFound) && java.util.Objects.equals(this.bodyFound, that.bodyFound); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.observations); hash = 31 * hash + java.util.Objects.hashCode(this.mentionFound); hash = 31 * hash + java.util.Objects.hashCode(this.bodyFound); return hash; }
+        @Override public String toString() { return "MaterialScan[" + "observations=" + observations + ", mentionFound=" + mentionFound + ", bodyFound=" + bodyFound + "]"; }
+ }
     private enum MaterialVolume { NONE, BUSINESS, TECHNICAL }
     private enum MaterialAliasKind {
         BUSINESS_VOLUME(MaterialVolume.BUSINESS), BUSINESS_INDEX(MaterialVolume.BUSINESS),
@@ -3391,37 +3300,220 @@ public final class TemplateEvidenceAssembler {
         MaterialAliasKind(MaterialVolume volume) { this.volume = volume; }
         MaterialVolume volume() { return volume; }
     }
-    private record MaterialAliasProfile(MaterialAliasKind kind, List<String> aliases) {
-        MaterialAliasProfile { aliases = List.copyOf(aliases); }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class MaterialAliasProfile {
+        private final MaterialAliasKind kind;
+        private final List<String> aliases;
+        public MaterialAliasKind kind() { return kind; }
+        public List<String> aliases() { return aliases; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; MaterialAliasProfile that = (MaterialAliasProfile) other; return java.util.Objects.equals(this.kind, that.kind) && java.util.Objects.equals(this.aliases, that.aliases); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.kind); hash = 31 * hash + java.util.Objects.hashCode(this.aliases); return hash; }
+        @Override public String toString() { return "MaterialAliasProfile[" + "kind=" + kind + ", aliases=" + aliases + "]"; }
+
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private MaterialAliasProfile(@com.fasterxml.jackson.annotation.JsonProperty("kind") MaterialAliasKind kind, @com.fasterxml.jackson.annotation.JsonProperty("aliases") List<String> aliases) { aliases = cn.bidcheck.compat.Java8Api.listCopyOf(aliases);
+            this.kind = kind; this.aliases = aliases;
+        }
     }
-    private record CoverIdentity(String projectNumber, String bidder) {
-        boolean complete() { return !projectNumber.isBlank() && !bidder.isBlank(); }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class CoverIdentity {
+        private final String projectNumber;
+        private final String bidder;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private CoverIdentity(@com.fasterxml.jackson.annotation.JsonProperty("projectNumber") String projectNumber, @com.fasterxml.jackson.annotation.JsonProperty("bidder") String bidder) { this.projectNumber = projectNumber; this.bidder = bidder; }
+        public String projectNumber() { return projectNumber; }
+        public String bidder() { return bidder; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; CoverIdentity that = (CoverIdentity) other; return java.util.Objects.equals(this.projectNumber, that.projectNumber) && java.util.Objects.equals(this.bidder, that.bidder); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.projectNumber); hash = 31 * hash + java.util.Objects.hashCode(this.bidder); return hash; }
+        @Override public String toString() { return "CoverIdentity[" + "projectNumber=" + projectNumber + ", bidder=" + bidder + "]"; }
+
+        boolean complete() { return !cn.bidcheck.compat.Java8Api.isBlank(projectNumber) && !cn.bidcheck.compat.Java8Api.isBlank(bidder); }
         boolean sameBid(CoverIdentity other) {
             return other != null && projectNumber.equals(other.projectNumber) && bidder.equals(other.bidder);
         }
     }
-    private record VolumeCover(String pageKey, MaterialVolume volume, CoverIdentity identity) { }
-    private record VolumeScope(Map<String, MaterialVolume> pages, Map<String, MaterialVolume> covers) {
-        static VolumeScope empty() { return new VolumeScope(Map.of(), Map.of()); }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class VolumeCover {
+        private final String pageKey;
+        private final MaterialVolume volume;
+        private final CoverIdentity identity;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private VolumeCover(@com.fasterxml.jackson.annotation.JsonProperty("pageKey") String pageKey, @com.fasterxml.jackson.annotation.JsonProperty("volume") MaterialVolume volume, @com.fasterxml.jackson.annotation.JsonProperty("identity") CoverIdentity identity) { this.pageKey = pageKey; this.volume = volume; this.identity = identity; }
+        public String pageKey() { return pageKey; }
+        public MaterialVolume volume() { return volume; }
+        public CoverIdentity identity() { return identity; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; VolumeCover that = (VolumeCover) other; return java.util.Objects.equals(this.pageKey, that.pageKey) && java.util.Objects.equals(this.volume, that.volume) && java.util.Objects.equals(this.identity, that.identity); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.pageKey); hash = 31 * hash + java.util.Objects.hashCode(this.volume); hash = 31 * hash + java.util.Objects.hashCode(this.identity); return hash; }
+        @Override public String toString() { return "VolumeCover[" + "pageKey=" + pageKey + ", volume=" + volume + ", identity=" + identity + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class VolumeScope {
+        private final Map<String, MaterialVolume> pages;
+        private final Map<String, MaterialVolume> covers;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private VolumeScope(@com.fasterxml.jackson.annotation.JsonProperty("pages") Map<String, MaterialVolume> pages, @com.fasterxml.jackson.annotation.JsonProperty("covers") Map<String, MaterialVolume> covers) { this.pages = pages; this.covers = covers; }
+        public Map<String, MaterialVolume> pages() { return pages; }
+        public Map<String, MaterialVolume> covers() { return covers; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; VolumeScope that = (VolumeScope) other; return java.util.Objects.equals(this.pages, that.pages) && java.util.Objects.equals(this.covers, that.covers); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.pages); hash = 31 * hash + java.util.Objects.hashCode(this.covers); return hash; }
+        @Override public String toString() { return "VolumeScope[" + "pages=" + pages + ", covers=" + covers + "]"; }
+
+        static VolumeScope empty() { return new VolumeScope(cn.bidcheck.compat.Java8Api.mapOf(), cn.bidcheck.compat.Java8Api.mapOf()); }
         boolean contains(Page page, MaterialVolume volume) { return pages.get(pageKey(page)) == volume; }
         boolean isCover(Page page, MaterialVolume volume) { return covers.get(pageKey(page)) == volume; }
     }
-    private record TrustedSeal(boolean observed, String location, boolean currentScope, Evidence evidence, List<SourceRef> sources) { }
-    private record PersonPage(Page page, PersonCredentialFacts.Result result) { }
-    private record PersonnelCandidate(PersonPage personPage,
-                                      List<PersonCredentialFacts.Occurrence> occurrences,
-                                      String name, String role, String employer, String strongNumber,
-                                      boolean currentAppointment) { }
-    private record DateRange(LocalDate from, LocalDate until, boolean longTerm, boolean conflicting) { }
-    private record ParsedPrice(BigDecimal amount, String currency, String unit, String taxBasis) { }
-    private record DurationValue(BigDecimal amount, String unit, String calendarBasis) { }
-    private record ObjectiveRule(String partyRole, String materialType, BigDecimal score,
-                                 List<SourceRef> sources) { }
-    private record ObjectiveProof(List<Evidence> eligible, List<Evidence> ineligible,
-                                  List<Evidence> unresolved) { }
-    private record QualitySectionScan(boolean sectionLocated,
-                                      List<Observation.MaterialObservation> observations) { }
-    private record SectionSlice(Page page, String text) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class TrustedSeal {
+        private final boolean observed;
+        private final String location;
+        private final boolean currentScope;
+        private final Evidence evidence;
+        private final List<SourceRef> sources;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private TrustedSeal(@com.fasterxml.jackson.annotation.JsonProperty("observed") boolean observed, @com.fasterxml.jackson.annotation.JsonProperty("location") String location, @com.fasterxml.jackson.annotation.JsonProperty("currentScope") boolean currentScope, @com.fasterxml.jackson.annotation.JsonProperty("evidence") Evidence evidence, @com.fasterxml.jackson.annotation.JsonProperty("sources") List<SourceRef> sources) { this.observed = observed; this.location = location; this.currentScope = currentScope; this.evidence = evidence; this.sources = sources; }
+        public boolean observed() { return observed; }
+        public String location() { return location; }
+        public boolean currentScope() { return currentScope; }
+        public Evidence evidence() { return evidence; }
+        public List<SourceRef> sources() { return sources; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; TrustedSeal that = (TrustedSeal) other; return java.util.Objects.equals(this.observed, that.observed) && java.util.Objects.equals(this.location, that.location) && java.util.Objects.equals(this.currentScope, that.currentScope) && java.util.Objects.equals(this.evidence, that.evidence) && java.util.Objects.equals(this.sources, that.sources); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.observed); hash = 31 * hash + java.util.Objects.hashCode(this.location); hash = 31 * hash + java.util.Objects.hashCode(this.currentScope); hash = 31 * hash + java.util.Objects.hashCode(this.evidence); hash = 31 * hash + java.util.Objects.hashCode(this.sources); return hash; }
+        @Override public String toString() { return "TrustedSeal[" + "observed=" + observed + ", location=" + location + ", currentScope=" + currentScope + ", evidence=" + evidence + ", sources=" + sources + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class PersonPage {
+        private final Page page;
+        private final PersonCredentialFacts.Result result;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private PersonPage(@com.fasterxml.jackson.annotation.JsonProperty("page") Page page, @com.fasterxml.jackson.annotation.JsonProperty("result") PersonCredentialFacts.Result result) { this.page = page; this.result = result; }
+        public Page page() { return page; }
+        public PersonCredentialFacts.Result result() { return result; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; PersonPage that = (PersonPage) other; return java.util.Objects.equals(this.page, that.page) && java.util.Objects.equals(this.result, that.result); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.page); hash = 31 * hash + java.util.Objects.hashCode(this.result); return hash; }
+        @Override public String toString() { return "PersonPage[" + "page=" + page + ", result=" + result + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class PersonnelCandidate {
+        private final PersonPage personPage;
+        private final List<PersonCredentialFacts.Occurrence> occurrences;
+        private final String name;
+        private final String role;
+        private final String employer;
+        private final String strongNumber;
+        private final boolean currentAppointment;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private PersonnelCandidate(@com.fasterxml.jackson.annotation.JsonProperty("personPage") PersonPage personPage, @com.fasterxml.jackson.annotation.JsonProperty("occurrences") List<PersonCredentialFacts.Occurrence> occurrences, @com.fasterxml.jackson.annotation.JsonProperty("name") String name, @com.fasterxml.jackson.annotation.JsonProperty("role") String role, @com.fasterxml.jackson.annotation.JsonProperty("employer") String employer, @com.fasterxml.jackson.annotation.JsonProperty("strongNumber") String strongNumber, @com.fasterxml.jackson.annotation.JsonProperty("currentAppointment") boolean currentAppointment) { this.personPage = personPage; this.occurrences = occurrences; this.name = name; this.role = role; this.employer = employer; this.strongNumber = strongNumber; this.currentAppointment = currentAppointment; }
+        public PersonPage personPage() { return personPage; }
+        public List<PersonCredentialFacts.Occurrence> occurrences() { return occurrences; }
+        public String name() { return name; }
+        public String role() { return role; }
+        public String employer() { return employer; }
+        public String strongNumber() { return strongNumber; }
+        public boolean currentAppointment() { return currentAppointment; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; PersonnelCandidate that = (PersonnelCandidate) other; return java.util.Objects.equals(this.personPage, that.personPage) && java.util.Objects.equals(this.occurrences, that.occurrences) && java.util.Objects.equals(this.name, that.name) && java.util.Objects.equals(this.role, that.role) && java.util.Objects.equals(this.employer, that.employer) && java.util.Objects.equals(this.strongNumber, that.strongNumber) && java.util.Objects.equals(this.currentAppointment, that.currentAppointment); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.personPage); hash = 31 * hash + java.util.Objects.hashCode(this.occurrences); hash = 31 * hash + java.util.Objects.hashCode(this.name); hash = 31 * hash + java.util.Objects.hashCode(this.role); hash = 31 * hash + java.util.Objects.hashCode(this.employer); hash = 31 * hash + java.util.Objects.hashCode(this.strongNumber); hash = 31 * hash + java.util.Objects.hashCode(this.currentAppointment); return hash; }
+        @Override public String toString() { return "PersonnelCandidate[" + "personPage=" + personPage + ", occurrences=" + occurrences + ", name=" + name + ", role=" + role + ", employer=" + employer + ", strongNumber=" + strongNumber + ", currentAppointment=" + currentAppointment + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class DateRange {
+        private final LocalDate from;
+        private final LocalDate until;
+        private final boolean longTerm;
+        private final boolean conflicting;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private DateRange(@com.fasterxml.jackson.annotation.JsonProperty("from") LocalDate from, @com.fasterxml.jackson.annotation.JsonProperty("until") LocalDate until, @com.fasterxml.jackson.annotation.JsonProperty("longTerm") boolean longTerm, @com.fasterxml.jackson.annotation.JsonProperty("conflicting") boolean conflicting) { this.from = from; this.until = until; this.longTerm = longTerm; this.conflicting = conflicting; }
+        public LocalDate from() { return from; }
+        public LocalDate until() { return until; }
+        public boolean longTerm() { return longTerm; }
+        public boolean conflicting() { return conflicting; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; DateRange that = (DateRange) other; return java.util.Objects.equals(this.from, that.from) && java.util.Objects.equals(this.until, that.until) && java.util.Objects.equals(this.longTerm, that.longTerm) && java.util.Objects.equals(this.conflicting, that.conflicting); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.from); hash = 31 * hash + java.util.Objects.hashCode(this.until); hash = 31 * hash + java.util.Objects.hashCode(this.longTerm); hash = 31 * hash + java.util.Objects.hashCode(this.conflicting); return hash; }
+        @Override public String toString() { return "DateRange[" + "from=" + from + ", until=" + until + ", longTerm=" + longTerm + ", conflicting=" + conflicting + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class ParsedPrice {
+        private final BigDecimal amount;
+        private final String currency;
+        private final String unit;
+        private final String taxBasis;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private ParsedPrice(@com.fasterxml.jackson.annotation.JsonProperty("amount") BigDecimal amount, @com.fasterxml.jackson.annotation.JsonProperty("currency") String currency, @com.fasterxml.jackson.annotation.JsonProperty("unit") String unit, @com.fasterxml.jackson.annotation.JsonProperty("taxBasis") String taxBasis) { this.amount = amount; this.currency = currency; this.unit = unit; this.taxBasis = taxBasis; }
+        public BigDecimal amount() { return amount; }
+        public String currency() { return currency; }
+        public String unit() { return unit; }
+        public String taxBasis() { return taxBasis; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; ParsedPrice that = (ParsedPrice) other; return java.util.Objects.equals(this.amount, that.amount) && java.util.Objects.equals(this.currency, that.currency) && java.util.Objects.equals(this.unit, that.unit) && java.util.Objects.equals(this.taxBasis, that.taxBasis); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.amount); hash = 31 * hash + java.util.Objects.hashCode(this.currency); hash = 31 * hash + java.util.Objects.hashCode(this.unit); hash = 31 * hash + java.util.Objects.hashCode(this.taxBasis); return hash; }
+        @Override public String toString() { return "ParsedPrice[" + "amount=" + amount + ", currency=" + currency + ", unit=" + unit + ", taxBasis=" + taxBasis + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class DurationValue {
+        private final BigDecimal amount;
+        private final String unit;
+        private final String calendarBasis;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private DurationValue(@com.fasterxml.jackson.annotation.JsonProperty("amount") BigDecimal amount, @com.fasterxml.jackson.annotation.JsonProperty("unit") String unit, @com.fasterxml.jackson.annotation.JsonProperty("calendarBasis") String calendarBasis) { this.amount = amount; this.unit = unit; this.calendarBasis = calendarBasis; }
+        public BigDecimal amount() { return amount; }
+        public String unit() { return unit; }
+        public String calendarBasis() { return calendarBasis; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; DurationValue that = (DurationValue) other; return java.util.Objects.equals(this.amount, that.amount) && java.util.Objects.equals(this.unit, that.unit) && java.util.Objects.equals(this.calendarBasis, that.calendarBasis); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.amount); hash = 31 * hash + java.util.Objects.hashCode(this.unit); hash = 31 * hash + java.util.Objects.hashCode(this.calendarBasis); return hash; }
+        @Override public String toString() { return "DurationValue[" + "amount=" + amount + ", unit=" + unit + ", calendarBasis=" + calendarBasis + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class ObjectiveRule {
+        private final String partyRole;
+        private final String materialType;
+        private final BigDecimal score;
+        private final List<SourceRef> sources;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private ObjectiveRule(@com.fasterxml.jackson.annotation.JsonProperty("partyRole") String partyRole, @com.fasterxml.jackson.annotation.JsonProperty("materialType") String materialType, @com.fasterxml.jackson.annotation.JsonProperty("score") BigDecimal score, @com.fasterxml.jackson.annotation.JsonProperty("sources") List<SourceRef> sources) { this.partyRole = partyRole; this.materialType = materialType; this.score = score; this.sources = sources; }
+        public String partyRole() { return partyRole; }
+        public String materialType() { return materialType; }
+        public BigDecimal score() { return score; }
+        public List<SourceRef> sources() { return sources; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; ObjectiveRule that = (ObjectiveRule) other; return java.util.Objects.equals(this.partyRole, that.partyRole) && java.util.Objects.equals(this.materialType, that.materialType) && java.util.Objects.equals(this.score, that.score) && java.util.Objects.equals(this.sources, that.sources); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.partyRole); hash = 31 * hash + java.util.Objects.hashCode(this.materialType); hash = 31 * hash + java.util.Objects.hashCode(this.score); hash = 31 * hash + java.util.Objects.hashCode(this.sources); return hash; }
+        @Override public String toString() { return "ObjectiveRule[" + "partyRole=" + partyRole + ", materialType=" + materialType + ", score=" + score + ", sources=" + sources + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class ObjectiveProof {
+        private final List<Evidence> eligible;
+        private final List<Evidence> ineligible;
+        private final List<Evidence> unresolved;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private ObjectiveProof(@com.fasterxml.jackson.annotation.JsonProperty("eligible") List<Evidence> eligible, @com.fasterxml.jackson.annotation.JsonProperty("ineligible") List<Evidence> ineligible, @com.fasterxml.jackson.annotation.JsonProperty("unresolved") List<Evidence> unresolved) { this.eligible = eligible; this.ineligible = ineligible; this.unresolved = unresolved; }
+        public List<Evidence> eligible() { return eligible; }
+        public List<Evidence> ineligible() { return ineligible; }
+        public List<Evidence> unresolved() { return unresolved; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; ObjectiveProof that = (ObjectiveProof) other; return java.util.Objects.equals(this.eligible, that.eligible) && java.util.Objects.equals(this.ineligible, that.ineligible) && java.util.Objects.equals(this.unresolved, that.unresolved); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.eligible); hash = 31 * hash + java.util.Objects.hashCode(this.ineligible); hash = 31 * hash + java.util.Objects.hashCode(this.unresolved); return hash; }
+        @Override public String toString() { return "ObjectiveProof[" + "eligible=" + eligible + ", ineligible=" + ineligible + ", unresolved=" + unresolved + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class QualitySectionScan {
+        private final boolean sectionLocated;
+        private final List<Observation.MaterialObservation> observations;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private QualitySectionScan(@com.fasterxml.jackson.annotation.JsonProperty("sectionLocated") boolean sectionLocated, @com.fasterxml.jackson.annotation.JsonProperty("observations") List<Observation.MaterialObservation> observations) { this.sectionLocated = sectionLocated; this.observations = observations; }
+        public boolean sectionLocated() { return sectionLocated; }
+        public List<Observation.MaterialObservation> observations() { return observations; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; QualitySectionScan that = (QualitySectionScan) other; return java.util.Objects.equals(this.sectionLocated, that.sectionLocated) && java.util.Objects.equals(this.observations, that.observations); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.sectionLocated); hash = 31 * hash + java.util.Objects.hashCode(this.observations); return hash; }
+        @Override public String toString() { return "QualitySectionScan[" + "sectionLocated=" + sectionLocated + ", observations=" + observations + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class SectionSlice {
+        private final Page page;
+        private final String text;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private SectionSlice(@com.fasterxml.jackson.annotation.JsonProperty("page") Page page, @com.fasterxml.jackson.annotation.JsonProperty("text") String text) { this.page = page; this.text = text; }
+        public Page page() { return page; }
+        public String text() { return text; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; SectionSlice that = (SectionSlice) other; return java.util.Objects.equals(this.page, that.page) && java.util.Objects.equals(this.text, that.text); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.page); hash = 31 * hash + java.util.Objects.hashCode(this.text); return hash; }
+        @Override public String toString() { return "SectionSlice[" + "page=" + page + ", text=" + text + "]"; }
+ }
     private static final class ObjectiveRuleBuilder {
         final String partyRole;
         final String materialType;
@@ -3434,28 +3526,161 @@ public final class TemplateEvidenceAssembler {
         }
         void add(SourceRef source) { sources.putIfAbsent(sourceKey(source), source); }
     }
-    private record ScoreSummary(BigDecimal score, String quote, int offset) { }
-    private record TypoRule(String wrong, String correct) { }
-    private record FieldValue(String value, Evidence evidence) { }
-    private record LabelValue(boolean present, String value) { }
-    private record DatedSource(LocalDate date, List<Evidence> evidence) {
-        DatedSource {
-            evidence = evidence == null ? List.of() : List.copyOf(evidence);
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class ScoreSummary {
+        private final BigDecimal score;
+        private final String quote;
+        private final int offset;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private ScoreSummary(@com.fasterxml.jackson.annotation.JsonProperty("score") BigDecimal score, @com.fasterxml.jackson.annotation.JsonProperty("quote") String quote, @com.fasterxml.jackson.annotation.JsonProperty("offset") int offset) { this.score = score; this.quote = quote; this.offset = offset; }
+        public BigDecimal score() { return score; }
+        public String quote() { return quote; }
+        public int offset() { return offset; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; ScoreSummary that = (ScoreSummary) other; return java.util.Objects.equals(this.score, that.score) && java.util.Objects.equals(this.quote, that.quote) && java.util.Objects.equals(this.offset, that.offset); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.score); hash = 31 * hash + java.util.Objects.hashCode(this.quote); hash = 31 * hash + java.util.Objects.hashCode(this.offset); return hash; }
+        @Override public String toString() { return "ScoreSummary[" + "score=" + score + ", quote=" + quote + ", offset=" + offset + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class TypoRule {
+        private final String wrong;
+        private final String correct;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private TypoRule(@com.fasterxml.jackson.annotation.JsonProperty("wrong") String wrong, @com.fasterxml.jackson.annotation.JsonProperty("correct") String correct) { this.wrong = wrong; this.correct = correct; }
+        public String wrong() { return wrong; }
+        public String correct() { return correct; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; TypoRule that = (TypoRule) other; return java.util.Objects.equals(this.wrong, that.wrong) && java.util.Objects.equals(this.correct, that.correct); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.wrong); hash = 31 * hash + java.util.Objects.hashCode(this.correct); return hash; }
+        @Override public String toString() { return "TypoRule[" + "wrong=" + wrong + ", correct=" + correct + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class FieldValue {
+        private final String value;
+        private final Evidence evidence;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private FieldValue(@com.fasterxml.jackson.annotation.JsonProperty("value") String value, @com.fasterxml.jackson.annotation.JsonProperty("evidence") Evidence evidence) { this.value = value; this.evidence = evidence; }
+        public String value() { return value; }
+        public Evidence evidence() { return evidence; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; FieldValue that = (FieldValue) other; return java.util.Objects.equals(this.value, that.value) && java.util.Objects.equals(this.evidence, that.evidence); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.value); hash = 31 * hash + java.util.Objects.hashCode(this.evidence); return hash; }
+        @Override public String toString() { return "FieldValue[" + "value=" + value + ", evidence=" + evidence + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class LabelValue {
+        private final boolean present;
+        private final String value;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private LabelValue(@com.fasterxml.jackson.annotation.JsonProperty("present") boolean present, @com.fasterxml.jackson.annotation.JsonProperty("value") String value) { this.present = present; this.value = value; }
+        public boolean present() { return present; }
+        public String value() { return value; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; LabelValue that = (LabelValue) other; return java.util.Objects.equals(this.present, that.present) && java.util.Objects.equals(this.value, that.value); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.present); hash = 31 * hash + java.util.Objects.hashCode(this.value); return hash; }
+        @Override public String toString() { return "LabelValue[" + "present=" + present + ", value=" + value + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class DatedSource {
+        private final LocalDate date;
+        private final List<Evidence> evidence;
+        public LocalDate date() { return date; }
+        public List<Evidence> evidence() { return evidence; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; DatedSource that = (DatedSource) other; return java.util.Objects.equals(this.date, that.date) && java.util.Objects.equals(this.evidence, that.evidence); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.date); hash = 31 * hash + java.util.Objects.hashCode(this.evidence); return hash; }
+        @Override public String toString() { return "DatedSource[" + "date=" + date + ", evidence=" + evidence + "]"; }
+
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private DatedSource(@com.fasterxml.jackson.annotation.JsonProperty("date") LocalDate date, @com.fasterxml.jackson.annotation.JsonProperty("evidence") List<Evidence> evidence) {
+            evidence = evidence == null ? cn.bidcheck.compat.Java8Api.listOf() : cn.bidcheck.compat.Java8Api.listCopyOf(evidence);
+
+            this.date = date; this.evidence = evidence;
         }
     }
-    private record PriceScan(int matchedFacts, boolean unresolved) { }
-    private record InputSnapshot(String contentHash, String parserFingerprint, String factSnapshot) { }
-    private record SnapshotLookup(InputSnapshot snapshot, boolean cacheHit) { }
-    private record NeedFlight(EvidenceNeed need, EvidenceNeedKey stableKey,
-                              CompletableFuture<NeedReceipt> future) { }
-    private record NeedReceipt(EvidenceNeed need, EvidenceReadReceipt receipt, Throwable failure) { }
-    private record EvidenceQuery(List<String> documentRoles, List<String> sectionTerms,
-                                 String instanceKey, List<String> fieldRoles) {
-        EvidenceQuery {
-            documentRoles = documentRoles == null ? List.of() : List.copyOf(documentRoles);
-            sectionTerms = sectionTerms == null ? List.of() : List.copyOf(sectionTerms);
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class PriceScan {
+        private final int matchedFacts;
+        private final boolean unresolved;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private PriceScan(@com.fasterxml.jackson.annotation.JsonProperty("matchedFacts") int matchedFacts, @com.fasterxml.jackson.annotation.JsonProperty("unresolved") boolean unresolved) { this.matchedFacts = matchedFacts; this.unresolved = unresolved; }
+        public int matchedFacts() { return matchedFacts; }
+        public boolean unresolved() { return unresolved; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; PriceScan that = (PriceScan) other; return java.util.Objects.equals(this.matchedFacts, that.matchedFacts) && java.util.Objects.equals(this.unresolved, that.unresolved); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.matchedFacts); hash = 31 * hash + java.util.Objects.hashCode(this.unresolved); return hash; }
+        @Override public String toString() { return "PriceScan[" + "matchedFacts=" + matchedFacts + ", unresolved=" + unresolved + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class InputSnapshot {
+        private final String contentHash;
+        private final String parserFingerprint;
+        private final String factSnapshot;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private InputSnapshot(@com.fasterxml.jackson.annotation.JsonProperty("contentHash") String contentHash, @com.fasterxml.jackson.annotation.JsonProperty("parserFingerprint") String parserFingerprint, @com.fasterxml.jackson.annotation.JsonProperty("factSnapshot") String factSnapshot) { this.contentHash = contentHash; this.parserFingerprint = parserFingerprint; this.factSnapshot = factSnapshot; }
+        public String contentHash() { return contentHash; }
+        public String parserFingerprint() { return parserFingerprint; }
+        public String factSnapshot() { return factSnapshot; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; InputSnapshot that = (InputSnapshot) other; return java.util.Objects.equals(this.contentHash, that.contentHash) && java.util.Objects.equals(this.parserFingerprint, that.parserFingerprint) && java.util.Objects.equals(this.factSnapshot, that.factSnapshot); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.contentHash); hash = 31 * hash + java.util.Objects.hashCode(this.parserFingerprint); hash = 31 * hash + java.util.Objects.hashCode(this.factSnapshot); return hash; }
+        @Override public String toString() { return "InputSnapshot[" + "contentHash=" + contentHash + ", parserFingerprint=" + parserFingerprint + ", factSnapshot=" + factSnapshot + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class SnapshotLookup {
+        private final InputSnapshot snapshot;
+        private final boolean cacheHit;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private SnapshotLookup(@com.fasterxml.jackson.annotation.JsonProperty("snapshot") InputSnapshot snapshot, @com.fasterxml.jackson.annotation.JsonProperty("cacheHit") boolean cacheHit) { this.snapshot = snapshot; this.cacheHit = cacheHit; }
+        public InputSnapshot snapshot() { return snapshot; }
+        public boolean cacheHit() { return cacheHit; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; SnapshotLookup that = (SnapshotLookup) other; return java.util.Objects.equals(this.snapshot, that.snapshot) && java.util.Objects.equals(this.cacheHit, that.cacheHit); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.snapshot); hash = 31 * hash + java.util.Objects.hashCode(this.cacheHit); return hash; }
+        @Override public String toString() { return "SnapshotLookup[" + "snapshot=" + snapshot + ", cacheHit=" + cacheHit + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class NeedFlight {
+        private final EvidenceNeed need;
+        private final EvidenceNeedKey stableKey;
+        private final CompletableFuture<NeedReceipt> future;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private NeedFlight(@com.fasterxml.jackson.annotation.JsonProperty("need") EvidenceNeed need, @com.fasterxml.jackson.annotation.JsonProperty("stableKey") EvidenceNeedKey stableKey, @com.fasterxml.jackson.annotation.JsonProperty("future") CompletableFuture<NeedReceipt> future) { this.need = need; this.stableKey = stableKey; this.future = future; }
+        public EvidenceNeed need() { return need; }
+        public EvidenceNeedKey stableKey() { return stableKey; }
+        public CompletableFuture<NeedReceipt> future() { return future; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; NeedFlight that = (NeedFlight) other; return java.util.Objects.equals(this.need, that.need) && java.util.Objects.equals(this.stableKey, that.stableKey) && java.util.Objects.equals(this.future, that.future); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.need); hash = 31 * hash + java.util.Objects.hashCode(this.stableKey); hash = 31 * hash + java.util.Objects.hashCode(this.future); return hash; }
+        @Override public String toString() { return "NeedFlight[" + "need=" + need + ", stableKey=" + stableKey + ", future=" + future + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class NeedReceipt {
+        private final EvidenceNeed need;
+        private final EvidenceReadReceipt receipt;
+        private final Throwable failure;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private NeedReceipt(@com.fasterxml.jackson.annotation.JsonProperty("need") EvidenceNeed need, @com.fasterxml.jackson.annotation.JsonProperty("receipt") EvidenceReadReceipt receipt, @com.fasterxml.jackson.annotation.JsonProperty("failure") Throwable failure) { this.need = need; this.receipt = receipt; this.failure = failure; }
+        public EvidenceNeed need() { return need; }
+        public EvidenceReadReceipt receipt() { return receipt; }
+        public Throwable failure() { return failure; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; NeedReceipt that = (NeedReceipt) other; return java.util.Objects.equals(this.need, that.need) && java.util.Objects.equals(this.receipt, that.receipt) && java.util.Objects.equals(this.failure, that.failure); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.need); hash = 31 * hash + java.util.Objects.hashCode(this.receipt); hash = 31 * hash + java.util.Objects.hashCode(this.failure); return hash; }
+        @Override public String toString() { return "NeedReceipt[" + "need=" + need + ", receipt=" + receipt + ", failure=" + failure + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class EvidenceQuery {
+        private final List<String> documentRoles;
+        private final List<String> sectionTerms;
+        private final String instanceKey;
+        private final List<String> fieldRoles;
+        public List<String> documentRoles() { return documentRoles; }
+        public List<String> sectionTerms() { return sectionTerms; }
+        public String instanceKey() { return instanceKey; }
+        public List<String> fieldRoles() { return fieldRoles; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; EvidenceQuery that = (EvidenceQuery) other; return java.util.Objects.equals(this.documentRoles, that.documentRoles) && java.util.Objects.equals(this.sectionTerms, that.sectionTerms) && java.util.Objects.equals(this.instanceKey, that.instanceKey) && java.util.Objects.equals(this.fieldRoles, that.fieldRoles); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.documentRoles); hash = 31 * hash + java.util.Objects.hashCode(this.sectionTerms); hash = 31 * hash + java.util.Objects.hashCode(this.instanceKey); hash = 31 * hash + java.util.Objects.hashCode(this.fieldRoles); return hash; }
+        @Override public String toString() { return "EvidenceQuery[" + "documentRoles=" + documentRoles + ", sectionTerms=" + sectionTerms + ", instanceKey=" + instanceKey + ", fieldRoles=" + fieldRoles + "]"; }
+
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private EvidenceQuery(@com.fasterxml.jackson.annotation.JsonProperty("documentRoles") List<String> documentRoles, @com.fasterxml.jackson.annotation.JsonProperty("sectionTerms") List<String> sectionTerms, @com.fasterxml.jackson.annotation.JsonProperty("instanceKey") String instanceKey, @com.fasterxml.jackson.annotation.JsonProperty("fieldRoles") List<String> fieldRoles) {
+            documentRoles = documentRoles == null ? cn.bidcheck.compat.Java8Api.listOf() : cn.bidcheck.compat.Java8Api.listCopyOf(documentRoles);
+            sectionTerms = sectionTerms == null ? cn.bidcheck.compat.Java8Api.listOf() : cn.bidcheck.compat.Java8Api.listCopyOf(sectionTerms);
             instanceKey = Objects.toString(instanceKey, "");
-            fieldRoles = fieldRoles == null ? List.of() : List.copyOf(fieldRoles);
+            fieldRoles = fieldRoles == null ? cn.bidcheck.compat.Java8Api.listOf() : cn.bidcheck.compat.Java8Api.listCopyOf(fieldRoles);
+
+            this.documentRoles = documentRoles; this.sectionTerms = sectionTerms; this.instanceKey = instanceKey; this.fieldRoles = fieldRoles;
         }
         Map<String, Object> audit(String needKey) {
             LinkedHashMap<String, Object> value = new LinkedHashMap<>();
@@ -3464,7 +3689,7 @@ public final class TemplateEvidenceAssembler {
             value.put("sectionTerms", sectionTerms);
             value.put("instanceKey", instanceKey);
             value.put("fieldRoles", fieldRoles);
-            return Map.copyOf(value);
+            return cn.bidcheck.compat.Java8Api.mapCopyOf(value);
         }
     }
 
@@ -3493,7 +3718,7 @@ public final class TemplateEvidenceAssembler {
 
         @Override public int hashCode() { return hash; }
         @Override public boolean equals(Object other) {
-            return other instanceof SnapshotCacheKey key && document == key.document && facts == key.facts;
+            return other instanceof SnapshotCacheKey && document == ((SnapshotCacheKey) (other)).document && facts == ((SnapshotCacheKey) (other)).facts;
         }
     }
 
@@ -3512,7 +3737,7 @@ public final class TemplateEvidenceAssembler {
         PersonnelBuilder(String key, String name) { this.key = key; this.name = name; }
         void addAllSources(Collection<SourceRef> refs) { refs.forEach(ref -> sources.putIfAbsent(sourceKey(ref), ref)); }
         void mergeAttribute(String key, String value) {
-            if (value == null || value.isBlank()) return;
+            if (value == null || cn.bidcheck.compat.Java8Api.isBlank(value)) return;
             attributes.merge(key, value, TemplateEvidenceAssembler::mergeDimension);
         }
     }

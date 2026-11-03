@@ -23,7 +23,7 @@ public class ProfileExtractor {
     private static final String PERFORMANCE = "业绩信息";
     private static final String LICENSE = "企业证照";
     private static final String COPYRIGHT = "著作权信息";
-    private static final List<String> GROUPS = List.of(PROJECT, COMPANY, PEOPLE, PERFORMANCE, LICENSE, COPYRIGHT);
+    private static final List<String> GROUPS = cn.bidcheck.compat.Java8Api.listOf(PROJECT, COMPANY, PEOPLE, PERFORMANCE, LICENSE, COPYRIGHT);
     private static final Map<String, Field> FIELDS = fields();
     private static final String ALIASES = FIELDS.keySet().stream()
             .sorted(Comparator.comparingInt(String::length).reversed()).map(Pattern::quote).collect(Collectors.joining("|"));
@@ -31,22 +31,20 @@ public class ProfileExtractor {
             + ")(?:\\s*([（(][^）)\\n]{1,12}[）)]))?\\s*[:：]\\s*");
     private static final Pattern LABEL = Pattern.compile("^(" + ALIASES
             + ")(?:\\s*([（(][^）)\\n]{1,12}[）)]))?\\s*[:：]?$");
-    private static final Set<String> TABLE_METADATA = Set.of("序号", "编号", "性别", "年龄", "学历", "备注");
-    private static final Set<String> PERFORMANCE_CONTEXT = Set.of("项目名称", "项目编号", "项目金额", "金额", "合同金额", "合同编号", "合同名称",
-            "合同日期", "合同签订日期", "签订合同时间", "签订日期", "验收日期", "完成日期", "工期", "合同工期", "服务期限", "采购人", "业主单位",
-            "联系人", "业主联系人", "合同甲方联系人", "合同甲方联系人联系电话", "联系方式", "联系电话", "联系手机", "电话", "项目经理", "项目负责人");
+    private static final Set<String> TABLE_METADATA = cn.bidcheck.compat.Java8Api.setOf("序号", "编号", "性别", "年龄", "学历", "备注");
+    private static final Set<String> PERFORMANCE_CONTEXT = cn.bidcheck.compat.Java8Api.setOf("项目名称", "项目编号", "项目金额", "金额", "合同金额", "合同编号", "合同名称", "合同日期", "合同签订日期", "签订合同时间", "签订日期", "验收日期", "完成日期", "工期", "合同工期", "服务期限", "采购人", "业主单位", "联系人", "业主联系人", "合同甲方联系人", "合同甲方联系人联系电话", "联系方式", "联系电话", "联系手机", "电话", "项目经理", "项目负责人");
     private static final Pattern REQUIREMENT = Pattern.compile("^(应当|必须|须[为有具提填按在]|应[为有具提填按在]|需[要具提填按在]|不得|要求|至少|不少于|不低于|提供|填写|详见|见附件|见下表|见投标|见招标).*");
     private static final int MAX_ITEMS = 600;
 
     public Map<String, Object> extract(Document document) {
         Map<String, List<Map<String, Object>>> groups = new LinkedHashMap<>();
         GROUPS.forEach(title -> groups.put(title, new ArrayList<>()));
-        List<String> warnings = new ArrayList<>(document.warnings() == null ? List.of() : document.warnings());
+        List<String> warnings = new ArrayList<>(document.warnings() == null ? cn.bidcheck.compat.Java8Api.listOf() : document.warnings());
         Set<String> seen = new LinkedHashSet<>();
         String section = PROJECT;
         List<PerformanceRecord> records = new ArrayList<>();
         PerformanceRecord currentRecord = null;
-        List<Column> headers = List.of();
+        List<Column> headers = cn.bidcheck.compat.Java8Api.listOf();
         int itemCount = 0;
         if (document.pages() != null) {
             for (Page page : document.pages()) {
@@ -54,8 +52,8 @@ public class ProfileExtractor {
                 boolean tableDataSeen = false;
                 for (int lineIndex = 0; lineIndex < lines.length; lineIndex++) {
                     // Keep empty leading/trailing table cells so columns never shift between fields.
-                    String line = lines[lineIndex].contains("\t") ? lines[lineIndex] : lines[lineIndex].strip();
-                    if (line.isBlank()) continue;
+                    String line = lines[lineIndex].contains("\t") ? lines[lineIndex] : cn.bidcheck.compat.Java8Api.strip(lines[lineIndex]);
+                    if (cn.bidcheck.compat.Java8Api.isBlank(line)) continue;
                     List<Column> rowHeaders = tableHeaders(line);
                     if (!rowHeaders.isEmpty()) {
                         headers = rowHeaders;
@@ -66,7 +64,7 @@ public class ProfileExtractor {
                     if (heading != null) {
                         if (!section.equals(heading)) currentRecord = null;
                         section = heading;
-                        headers = List.of();
+                        headers = cn.bidcheck.compat.Java8Api.listOf();
                         continue;
                     }
                     String recordTitle = PERFORMANCE.equals(section) ? performanceTitle(line) : null;
@@ -92,14 +90,14 @@ public class ProfileExtractor {
                         // its following labelled fields are safe to use, never shifted column values.
                         if (PERFORMANCE.equals(section)) currentRecord = null;
                     }
-                    if (!line.contains("\t") && !(tableDataSeen && (possibleWordRow || isDerivedTableLine(line, headers)))) headers = List.of();
+                    if (!line.contains("\t") && !(tableDataSeen && (possibleWordRow || isDerivedTableLine(line, headers)))) headers = cn.bidcheck.compat.Java8Api.listOf();
                     boolean extracted = false;
                     for (Pair pair : pairs) {
                         Field field = FIELDS.get(pair.alias());
                         String group = contextGroup(field, pair.alias(), section);
                         String value = cleanValue(pair.value());
                         String label = contextLabel(field, pair.alias(), group) + pair.unit();
-                        boolean identity = PERFORMANCE.equals(group) && Set.of("项目名称", "合同名称").contains(field.label());
+                        boolean identity = PERFORMANCE.equals(group) && cn.bidcheck.compat.Java8Api.setOf("项目名称", "合同名称").contains(field.label());
                         if (!isValue(value)) {
                             if (identity && !tableRow) currentRecord = null;
                             continue;
@@ -155,14 +153,14 @@ public class ProfileExtractor {
         groups.forEach((title, items) -> {
             Map<String, Object> group = new LinkedHashMap<>();
             group.put("title", title);
-            group.put("items", List.copyOf(items));
-            if (PERFORMANCE.equals(title)) group.put("records", records.stream().filter(record -> !record.items.isEmpty())
-                    .map(record -> Map.<String, Object>of("id", record.id, "title", record.title, "items", List.copyOf(record.items))).toList());
+            group.put("items", cn.bidcheck.compat.Java8Api.listCopyOf(items));
+            if (PERFORMANCE.equals(title)) group.put("records", cn.bidcheck.compat.Java8Api.toList(records.stream().filter(record -> !record.items.isEmpty())
+                    .map(record -> cn.bidcheck.compat.Java8Api.<String, Object>mapOf("id", record.id, "title", record.title, "items", cn.bidcheck.compat.Java8Api.listCopyOf(record.items)))));
             resultGroups.add(group);
         });
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("groups", List.copyOf(resultGroups));
-        result.put("warnings", List.copyOf(new LinkedHashSet<>(warnings)));
+        result.put("groups", cn.bidcheck.compat.Java8Api.listCopyOf(resultGroups));
+        result.put("warnings", cn.bidcheck.compat.Java8Api.listCopyOf(new LinkedHashSet<>(warnings)));
         return result;
     }
 
@@ -180,7 +178,22 @@ public class ProfileExtractor {
                 return result;
             }
         }
-        record Start(String alias, String unit, int start, int valueStart) { }
+        @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    final class Start {
+        private final String alias;
+        private final String unit;
+        private final int start;
+        private final int valueStart;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        Start(@com.fasterxml.jackson.annotation.JsonProperty("alias") String alias, @com.fasterxml.jackson.annotation.JsonProperty("unit") String unit, @com.fasterxml.jackson.annotation.JsonProperty("start") int start, @com.fasterxml.jackson.annotation.JsonProperty("valueStart") int valueStart) { this.alias = alias; this.unit = unit; this.start = start; this.valueStart = valueStart; }
+        public String alias() { return alias; }
+        public String unit() { return unit; }
+        public int start() { return start; }
+        public int valueStart() { return valueStart; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Start that = (Start) other; return java.util.Objects.equals(this.alias, that.alias) && java.util.Objects.equals(this.unit, that.unit) && java.util.Objects.equals(this.start, that.start) && java.util.Objects.equals(this.valueStart, that.valueStart); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.alias); hash = 31 * hash + java.util.Objects.hashCode(this.unit); hash = 31 * hash + java.util.Objects.hashCode(this.start); hash = 31 * hash + java.util.Objects.hashCode(this.valueStart); return hash; }
+        @Override public String toString() { return "Start[" + "alias=" + alias + ", unit=" + unit + ", start=" + start + ", valueStart=" + valueStart + "]"; }
+ }
         List<Start> starts = new ArrayList<>();
         Matcher matcher = PAIR.matcher(line);
         while (matcher.find()) starts.add(new Start(matcher.group(1), matcher.group(2) == null ? "" : matcher.group(2), matcher.start(), matcher.end()));
@@ -195,31 +208,31 @@ public class ProfileExtractor {
 
     private static List<Column> tableHeaders(String line) {
         String[] columns = line.split("\\t", -1);
-        if (columns.length < 2) return List.of();
+        if (columns.length < 2) return cn.bidcheck.compat.Java8Api.listOf();
         List<Column> result = new ArrayList<>();
         int recognized = 0;
         for (String value : columns) {
             Column label = column(value);
             if (label != null) { recognized++; result.add(label); }
-            else if (value.isBlank() || TABLE_METADATA.contains(value.strip())) result.add(new Column("", "", value.strip()));
-            else return List.of();
+            else if (cn.bidcheck.compat.Java8Api.isBlank(value) || TABLE_METADATA.contains(cn.bidcheck.compat.Java8Api.strip(value))) result.add(new Column("", "", cn.bidcheck.compat.Java8Api.strip(value)));
+            else return cn.bidcheck.compat.Java8Api.listOf();
         }
-        return recognized >= 2 ? List.copyOf(result) : List.of();
+        return recognized >= 2 ? cn.bidcheck.compat.Java8Api.listCopyOf(result) : cn.bidcheck.compat.Java8Api.listOf();
     }
 
     private static Column column(String text) {
-        Matcher matcher = LABEL.matcher(text.strip());
-        return matcher.matches() ? new Column(matcher.group(1), matcher.group(2) == null ? "" : matcher.group(2), text.strip()) : null;
+        Matcher matcher = LABEL.matcher(cn.bidcheck.compat.Java8Api.strip(text));
+        return matcher.matches() ? new Column(matcher.group(1), matcher.group(2) == null ? "" : matcher.group(2), cn.bidcheck.compat.Java8Api.strip(text)) : null;
     }
 
     private static boolean isPerformanceTable(List<Column> headers) {
-        return headers.stream().anyMatch(header -> Set.of("项目名称", "合同名称", "业绩名称", "业绩项目名称").contains(header.alias()))
+        return headers.stream().anyMatch(header -> cn.bidcheck.compat.Java8Api.setOf("项目名称", "合同名称", "业绩名称", "业绩项目名称").contains(header.alias()))
                 && headers.stream().anyMatch(header -> !header.alias().isEmpty() && PERFORMANCE.equals(FIELDS.get(header.alias()).group()));
     }
 
     private static List<Pair> tablePairs(String line, List<Column> headers) {
         String[] columns = line.split("\\t", -1);
-        if (columns.length != headers.size()) return List.of();
+        if (columns.length != headers.size()) return cn.bidcheck.compat.Java8Api.listOf();
         List<Pair> result = new ArrayList<>();
         for (int i = 0; i < columns.length; i++) {
             Column header = headers.get(i);
@@ -231,33 +244,33 @@ public class ProfileExtractor {
     private static int skipTableEchoes(String[] lines, int lineIndex, String line, List<Column> headers) {
         String[] values = line.split("\\t", -1);
         for (int i = 0; i < headers.size() && lineIndex + 1 < lines.length; i++) {
-            if (headers.get(i).source().isBlank() || values[i].isBlank()) continue;
+            if (cn.bidcheck.compat.Java8Api.isBlank(headers.get(i).source()) || cn.bidcheck.compat.Java8Api.isBlank(values[i])) continue;
             String expected = headers.get(i).source() + "：" + values[i];
-            if (!lines[lineIndex + 1].strip().equals(expected.strip())) break;
+            if (!cn.bidcheck.compat.Java8Api.strip(lines[lineIndex + 1]).equals(cn.bidcheck.compat.Java8Api.strip(expected))) break;
             lineIndex++;
         }
         return lineIndex;
     }
 
     private static boolean isDerivedTableLine(String line, List<Column> headers) {
-        return headers.stream().anyMatch(header -> !header.source().isBlank() && line.startsWith(header.source() + "："));
+        return headers.stream().anyMatch(header -> !cn.bidcheck.compat.Java8Api.isBlank(header.source()) && line.startsWith(header.source() + "："));
     }
 
     private static String contextGroup(Field field, String alias, String section) {
         if (PERFORMANCE.equals(section) && PERFORMANCE_CONTEXT.contains(alias)) return PERFORMANCE;
-        if (COPYRIGHT.equals(section) && Set.of("证书名称", "证书编号", "登记号", "发证日期", "发证机关").contains(alias)) return COPYRIGHT;
-        if (PEOPLE.equals(section) && Set.of("证书名称", "证书编号", "资格证书", "资质证书", "有效期", "发证日期", "有效期至").contains(alias)) return PEOPLE;
+        if (COPYRIGHT.equals(section) && cn.bidcheck.compat.Java8Api.setOf("证书名称", "证书编号", "登记号", "发证日期", "发证机关").contains(alias)) return COPYRIGHT;
+        if (PEOPLE.equals(section) && cn.bidcheck.compat.Java8Api.setOf("证书名称", "证书编号", "资格证书", "资质证书", "有效期", "发证日期", "有效期至").contains(alias)) return PEOPLE;
         return field.group();
     }
 
     private static String contextLabel(Field field, String alias, String group) {
-        if (PERFORMANCE.equals(group) && Set.of("项目经理", "项目负责人").contains(alias)) return alias;
+        if (PERFORMANCE.equals(group) && cn.bidcheck.compat.Java8Api.setOf("项目经理", "项目负责人").contains(alias)) return alias;
         return field.label();
     }
 
     private static String performanceTitle(String line) {
         if (line.length() > 180 || line.contains("\t") || line.contains(":") || line.contains("：")) return null;
-        String title = line.replaceFirst("^[（(]?[0-9一二三四五六七八九十]+[）)、.．]\\s*", "").strip();
+        String title = cn.bidcheck.compat.Java8Api.strip(line.replaceFirst("^[（(]?[0-9一二三四五六七八九十]+[）)、.．]\\s*", ""));
         if (title.equals(line) || !isValue(title) || !title.matches(".*(项目|工程|服务|采购|系统|平台|合同).*")) return null;
         if (title.matches(".*[；;。！？].*")) return null;
         return title;
@@ -271,7 +284,7 @@ public class ProfileExtractor {
 
     private static String headingGroup(String line) {
         if (line.length() > 70 || line.contains("\t") || line.contains("：") || line.contains(":")) return null;
-        String title = line.replaceFirst("^[第\\s一二三四五六七八九十百0-9、.．（）()章节部分-]+", "").strip();
+        String title = cn.bidcheck.compat.Java8Api.strip(line.replaceFirst("^[第\\s一二三四五六七八九十百0-9、.．（）()章节部分-]+", ""));
         if (title.matches(".*(人员一览表|人员基本情况|人员信息|人员简历|人员配备|项目团队|项目负责人简历|项目经理简历|拟派人员|技术人员|主要人员).*")) return PEOPLE;
         if (title.matches(".*(类似项目业绩|同类项目业绩|项目业绩|业绩一览表|业绩表|业绩信息|业绩情况|业绩实力|合同业绩|主要业绩|历史业绩|业绩证明).*")) return PERFORMANCE;
         if (title.matches(".*(著作权|软件登记证书).*")) return COPYRIGHT;
@@ -283,22 +296,16 @@ public class ProfileExtractor {
 
     private static boolean excerptMatches(String section, String line) {
         if (line.length() < 8 || line.length() > 3000 || line.matches(".*(应当|必须|应具备|需提供|不得|至少|不少于|不低于|要求提供).*")) return false;
-        return switch (section) {
-            case PEOPLE -> line.matches(".*(担任|持有|姓名|职务|执业证|资格证|证书编号).*" );
-            case PERFORMANCE -> line.matches(".*(合同|项目|金额|验收).*" ) && line.matches(".*[0-9].*");
-            case LICENSE -> line.matches(".*(营业执照|资质证书|许可证|认证证书|资格证书).*" ) && line.matches(".*[0-9].*");
-            case COPYRIGHT -> line.matches(".*(著作权|软件登记|软著登).*" ) && line.matches(".*[0-9].*");
-            default -> false;
-        };
+        switch (section) {case PEOPLE:return line.matches(".*(担任|持有|姓名|职务|执业证|资格证|证书编号).*" );case PERFORMANCE:return line.matches(".*(合同|项目|金额|验收).*" ) && line.matches(".*[0-9].*");case LICENSE:return line.matches(".*(营业执照|资质证书|许可证|认证证书|资格证书).*" ) && line.matches(".*[0-9].*");case COPYRIGHT:return line.matches(".*(著作权|软件登记|软著登).*" ) && line.matches(".*[0-9].*");default:return false;}
     }
 
     private static String cleanValue(String value) {
-        return value.strip().replaceAll("^[|;；]+|[|;；]+$", "").strip();
+        return cn.bidcheck.compat.Java8Api.strip(cn.bidcheck.compat.Java8Api.strip(value).replaceAll("^[|;；]+|[|;；]+$", ""));
     }
 
     private static boolean isValue(String value) {
-        if (value.isBlank() || value.length() > 3000 || REQUIREMENT.matcher(value).matches()) return false;
-        if (value.matches("^[\\s_—\\-./\\\\□☐（）()【】\\[\\]]+$") || Set.of("待填写", "待补充", "未填写", "空", "暂无", "不详", "无", "不适用").contains(value)) return false;
+        if (cn.bidcheck.compat.Java8Api.isBlank(value) || value.length() > 3000 || REQUIREMENT.matcher(value).matches()) return false;
+        if (value.matches("^[\\s_—\\-./\\\\□☐（）()【】\\[\\]]+$") || cn.bidcheck.compat.Java8Api.setOf("待填写", "待补充", "未填写", "空", "暂无", "不详", "无", "不适用").contains(value)) return false;
         return true;
     }
 
@@ -372,16 +379,53 @@ public class ProfileExtractor {
         add(fields, COPYRIGHT, "首次发表日期", "首次发表日期");
         add(fields, COPYRIGHT, "权利取得方式", "权利取得方式");
         add(fields, COPYRIGHT, "权利范围", "权利范围");
-        return Map.copyOf(fields);
+        return cn.bidcheck.compat.Java8Api.mapCopyOf(fields);
     }
 
     private static void add(Map<String, Field> fields, String group, String label, String... aliases) {
         for (String alias : aliases) fields.put(alias, new Field(group, label));
     }
 
-    private record Field(String group, String label) { }
-    private record Pair(String alias, String unit, String value) { }
-    private record Column(String alias, String unit, String source) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Field {
+        private final String group;
+        private final String label;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Field(@com.fasterxml.jackson.annotation.JsonProperty("group") String group, @com.fasterxml.jackson.annotation.JsonProperty("label") String label) { this.group = group; this.label = label; }
+        public String group() { return group; }
+        public String label() { return label; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Field that = (Field) other; return java.util.Objects.equals(this.group, that.group) && java.util.Objects.equals(this.label, that.label); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.group); hash = 31 * hash + java.util.Objects.hashCode(this.label); return hash; }
+        @Override public String toString() { return "Field[" + "group=" + group + ", label=" + label + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Pair {
+        private final String alias;
+        private final String unit;
+        private final String value;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Pair(@com.fasterxml.jackson.annotation.JsonProperty("alias") String alias, @com.fasterxml.jackson.annotation.JsonProperty("unit") String unit, @com.fasterxml.jackson.annotation.JsonProperty("value") String value) { this.alias = alias; this.unit = unit; this.value = value; }
+        public String alias() { return alias; }
+        public String unit() { return unit; }
+        public String value() { return value; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Pair that = (Pair) other; return java.util.Objects.equals(this.alias, that.alias) && java.util.Objects.equals(this.unit, that.unit) && java.util.Objects.equals(this.value, that.value); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.alias); hash = 31 * hash + java.util.Objects.hashCode(this.unit); hash = 31 * hash + java.util.Objects.hashCode(this.value); return hash; }
+        @Override public String toString() { return "Pair[" + "alias=" + alias + ", unit=" + unit + ", value=" + value + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Column {
+        private final String alias;
+        private final String unit;
+        private final String source;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Column(@com.fasterxml.jackson.annotation.JsonProperty("alias") String alias, @com.fasterxml.jackson.annotation.JsonProperty("unit") String unit, @com.fasterxml.jackson.annotation.JsonProperty("source") String source) { this.alias = alias; this.unit = unit; this.source = source; }
+        public String alias() { return alias; }
+        public String unit() { return unit; }
+        public String source() { return source; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Column that = (Column) other; return java.util.Objects.equals(this.alias, that.alias) && java.util.Objects.equals(this.unit, that.unit) && java.util.Objects.equals(this.source, that.source); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.alias); hash = 31 * hash + java.util.Objects.hashCode(this.unit); hash = 31 * hash + java.util.Objects.hashCode(this.source); return hash; }
+        @Override public String toString() { return "Column[" + "alias=" + alias + ", unit=" + unit + ", source=" + source + "]"; }
+ }
 
     private static final class PerformanceRecord {
         private final String id;

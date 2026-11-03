@@ -8,13 +8,13 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class InventoryRecoveryRoutingTest {
     private Finding finding(String gap){
-        var cp=new Checkpoint("cp","范围明确的要求","形式检查","HIGH","MATERIAL_EXISTENCE","material","EXISTS","业务要求","",true,true,true,null);
-        return new Finding("f","run",cp,new Evaluation("UNDETERMINED","尚未完成","",List.of(),0,"FOCUSED_ATOMIC_RULES"),
-            Map.of("atomicCheck",Map.of("compilationAudit",Map.of("state","VALIDATED"),"gaps",List.of(Map.of("code",gap)))));
+        cn.bidcheck.domain.Domain.Checkpoint cp=new Checkpoint("cp","范围明确的要求","形式检查","HIGH","MATERIAL_EXISTENCE","material","EXISTS","业务要求","",true,true,true,null);
+        return new Finding("f","run",cp,new Evaluation("UNDETERMINED","尚未完成","",cn.bidcheck.compat.Java8Api.listOf(),0,"FOCUSED_ATOMIC_RULES"),
+            cn.bidcheck.compat.Java8Api.mapOf("atomicCheck", cn.bidcheck.compat.Java8Api.mapOf("compilationAudit", cn.bidcheck.compat.Java8Api.mapOf("state", "VALIDATED"), "gaps", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("code", gap)))));
     }
     private Map<String,Object> display(Finding finding){return BusinessResultPresentation.describe(finding.evaluation(),finding.assessment());}
     @Test void missingTenderAttachmentRequestsTheTenderInputInsteadOfMissingBidMaterials(){
-        Finding f=finding("MISSING_TENDER_ATTACHMENT");var presentation=display(f);var resolution=CheckResolution.plan(f);
+        Finding f=finding("MISSING_TENDER_ATTACHMENT");java.util.Map<java.lang.String, java.lang.Object> presentation=display(f);java.util.Map<java.lang.String, java.lang.Object> resolution=CheckResolution.plan(f);
         assertEquals("USER_ACTION",presentation.get("state"));assertEquals("缺招标附件",presentation.get("label"));
         assertEquals("WAIT_TENDER_ATTACHMENT",resolution.get("strategy"));assertEquals("WAITING_USER",resolution.get("status"));
         assertEquals("REQUIREMENT_INPUT",RecoveryFailureRouting.owner("MISSING_TENDER_ATTACHMENT"));

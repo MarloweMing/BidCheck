@@ -37,31 +37,21 @@ class TemplateExternalEvidenceServiceTest {
         Store store = new Store(mapper, new ObjectMapper());
         ExternalVerificationAdapter adapter = mock(ExternalVerificationAdapter.class);
         when(adapter.identity()).thenReturn("connector-identity");
-        when(adapter.enabledTypes()).thenReturn(List.of("CREDIT_CHINA"));
-        when(adapter.enabledSourceTypes()).thenReturn(Map.of("信用中国", "CREDIT_CHINA"));
-        when(adapter.query(anyMap())).thenReturn(Map.of(
-                "status", "COMPLETED",
-                "record", Map.of(
-                        "type", "CREDIT_CHINA", "subject", "海南测试有限公司",
-                        "source", "信用中国", "effectiveAt", "2026-10-19",
-                        "evaluationStage", "BID_OPENING", "coverageComplete", true,
-                        "rawSnapshotHash", "snapshot-sha", "provenanceStatus", "TRUSTED_CONNECTOR",
-                        "result", Map.of("status", "VERIFIED", "facts", List.of(Map.of(
-                                "field", "dishonestJudgmentDebtor", "value", false,
-                                "rawValue", "false", "sourceQuote", "dishonestJudgmentDebtor=false"))))));
+        when(adapter.enabledTypes()).thenReturn(cn.bidcheck.compat.Java8Api.listOf("CREDIT_CHINA"));
+        when(adapter.enabledSourceTypes()).thenReturn(cn.bidcheck.compat.Java8Api.mapOf("信用中国", "CREDIT_CHINA"));
+        when(adapter.query(anyMap())).thenReturn(cn.bidcheck.compat.Java8Api.mapOf("status", "COMPLETED", "record", cn.bidcheck.compat.Java8Api.mapOf("type", "CREDIT_CHINA", "subject", "海南测试有限公司", "source", "信用中国", "effectiveAt", "2026-10-19", "evaluationStage", "BID_OPENING", "coverageComplete", true, "rawSnapshotHash", "snapshot-sha", "provenanceStatus", "TRUSTED_CONNECTOR", "result", cn.bidcheck.compat.Java8Api.mapOf("status", "VERIFIED", "facts", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("field", "dishonestJudgmentDebtor", "value", false, "rawValue", "false", "sourceQuote", "dishonestJudgmentDebtor=false"))))));
         TemplateExternalEvidenceService service = new TemplateExternalEvidenceService(store, adapter);
         Fact bidder = new Fact("COMPANY", "BIDDER", "companyName", "海南测试有限公司", "海南测试有限公司",
                 new Evidence("bid", "投标文件", 1, "PAGE", "投标人名称：海南测试有限公司", "p1", 1));
 
-        List<Fact> facts = service.resolve("project", "run", externalSpec(true), List.of(bidder));
+        List<Fact> facts = service.resolve("project", "run", externalSpec(true), cn.bidcheck.compat.Java8Api.listOf(bidder));
 
         assertEquals(1, facts.size());
         assertEquals("TRUSTED_CONNECTOR", facts.get(0).entityType());
         assertEquals("投标人", facts.get(0).entityKey());
         assertEquals("CLEAR", facts.get(0).normalizedValue());
         assertTrue(facts.get(0).evidence().anchor().contains("rawSnapshotHash:snapshot-sha"));
-        verify(adapter).query(Map.of("type", "CREDIT_CHINA", "subject", "海南测试有限公司",
-                "evaluationStage", "BID_OPENING", "referenceDate", "2026-10-19"));
+        verify(adapter).query(cn.bidcheck.compat.Java8Api.mapOf("type", "CREDIT_CHINA", "subject", "海南测试有限公司", "evaluationStage", "BID_OPENING", "referenceDate", "2026-10-19"));
     }
 
     @Test void missingExplicitAdapterNeverStartsAnExternalRequest() {
@@ -69,7 +59,7 @@ class TemplateExternalEvidenceServiceTest {
         ExternalVerificationAdapter adapter = mock(ExternalVerificationAdapter.class);
         TemplateExternalEvidenceService service = new TemplateExternalEvidenceService(store, adapter);
 
-        assertTrue(service.resolve("project", "run", externalSpec(false), List.of()).isEmpty());
+        assertTrue(service.resolve("project", "run", externalSpec(false), cn.bidcheck.compat.Java8Api.listOf()).isEmpty());
         verify(adapter, never()).query(anyMap());
     }
 
@@ -77,15 +67,15 @@ class TemplateExternalEvidenceServiceTest {
         Store store = new Store(leaseMapper(), new ObjectMapper());
         ExternalVerificationAdapter adapter = mock(ExternalVerificationAdapter.class);
         when(adapter.identity()).thenReturn("connector-identity");
-        when(adapter.enabledTypes()).thenReturn(List.of("CREDIT_CHINA"));
-        when(adapter.enabledSourceTypes()).thenReturn(Map.of("信用中国", "CREDIT_CHINA"));
-        when(adapter.query(anyMap())).thenReturn(Map.of("status", "ERROR", "errorCode", "EXTERNAL_TIMEOUT"));
+        when(adapter.enabledTypes()).thenReturn(cn.bidcheck.compat.Java8Api.listOf("CREDIT_CHINA"));
+        when(adapter.enabledSourceTypes()).thenReturn(cn.bidcheck.compat.Java8Api.mapOf("信用中国", "CREDIT_CHINA"));
+        when(adapter.query(anyMap())).thenReturn(cn.bidcheck.compat.Java8Api.mapOf("status", "ERROR", "errorCode", "EXTERNAL_TIMEOUT"));
         TemplateExternalEvidenceService service = new TemplateExternalEvidenceService(store, adapter);
         Fact bidder = new Fact("COMPANY", "BIDDER", "companyName", "海南测试有限公司", "海南测试有限公司",
                 new Evidence("bid", "投标文件", 1, "PAGE", "投标人名称：海南测试有限公司", "p1", 1));
 
-        assertTrue(service.resolve("project", "run", externalSpec(true), List.of(bidder)).isEmpty());
-        assertTrue(service.resolve("project", "run", externalSpec(true), List.of(bidder)).isEmpty());
+        assertTrue(service.resolve("project", "run", externalSpec(true), cn.bidcheck.compat.Java8Api.listOf(bidder)).isEmpty());
+        assertTrue(service.resolve("project", "run", externalSpec(true), cn.bidcheck.compat.Java8Api.listOf(bidder)).isEmpty());
 
         verify(adapter, times(2)).query(anyMap());
     }
@@ -102,8 +92,8 @@ class TemplateExternalEvidenceServiceTest {
         Store store = new Store(mapper, new ObjectMapper());
         ExternalVerificationAdapter adapter = mock(ExternalVerificationAdapter.class);
         when(adapter.identity()).thenReturn("connector-identity");
-        when(adapter.enabledTypes()).thenReturn(List.of("CREDIT_CHINA"));
-        when(adapter.enabledSourceTypes()).thenReturn(Map.of("信用中国", "CREDIT_CHINA"));
+        when(adapter.enabledTypes()).thenReturn(cn.bidcheck.compat.Java8Api.listOf("CREDIT_CHINA"));
+        when(adapter.enabledSourceTypes()).thenReturn(cn.bidcheck.compat.Java8Api.mapOf("信用中国", "CREDIT_CHINA"));
         CountDownLatch queryEntered = new CountDownLatch(1), releaseQuery = new CountDownLatch(1);
         when(adapter.query(anyMap())).thenAnswer(call -> {
             queryEntered.countDown();
@@ -116,9 +106,9 @@ class TemplateExternalEvidenceServiceTest {
         TemplateExternalEvidenceService second = new TemplateExternalEvidenceService(store, adapter);
         ExecutorService workers = Executors.newFixedThreadPool(2);
         try {
-            Future<List<Fact>> one = workers.submit(() -> first.resolve("project", "run-a", externalSpec(true), List.of(bidder)));
+            Future<List<Fact>> one = workers.submit(() -> first.resolve("project", "run-a", externalSpec(true), cn.bidcheck.compat.Java8Api.listOf(bidder)));
             assertTrue(queryEntered.await(2, TimeUnit.SECONDS));
-            Future<List<Fact>> two = workers.submit(() -> second.resolve("project", "run-b", externalSpec(true), List.of(bidder)));
+            Future<List<Fact>> two = workers.submit(() -> second.resolve("project", "run-b", externalSpec(true), cn.bidcheck.compat.Java8Api.listOf(bidder)));
             releaseQuery.countDown();
             assertEquals(1, one.get(3, TimeUnit.SECONDS).size());
             assertEquals(1, two.get(3, TimeUnit.SECONDS).size());
@@ -127,7 +117,7 @@ class TemplateExternalEvidenceServiceTest {
             workers.shutdownNow();
         }
         assertEquals(1, new TemplateExternalEvidenceService(store, adapter)
-                .resolve("project", "run-c", externalSpec(true), List.of(bidder)).size());
+                .resolve("project", "run-c", externalSpec(true), cn.bidcheck.compat.Java8Api.listOf(bidder)).size());
         verify(adapter, times(1)).query(anyMap());
     }
 
@@ -135,62 +125,41 @@ class TemplateExternalEvidenceServiceTest {
         Store store = new Store(leaseMapper(), new ObjectMapper());
         ExternalVerificationAdapter adapter = mock(ExternalVerificationAdapter.class);
         when(adapter.identity()).thenReturn("connector-identity");
-        when(adapter.enabledTypes()).thenReturn(List.of("CREDIT_CHINA"));
-        when(adapter.enabledSourceTypes()).thenReturn(Map.of("信用中国", "CREDIT_CHINA"));
-        when(adapter.query(anyMap())).thenReturn(Map.of(
-                "status", "COMPLETED",
-                "record", Map.of(
-                        "type", "CREDIT_CHINA", "subject", "海南测试有限公司",
-                        "source", "某信用中国镜像", "effectiveAt", "2026-10-19",
-                        "evaluationStage", "BID_OPENING", "coverageComplete", true,
-                        "rawSnapshotHash", "snapshot-sha", "provenanceStatus", "TRUSTED_CONNECTOR",
-                        "result", Map.of("status", "VERIFIED", "facts", List.of(Map.of(
-                                "field", "dishonestJudgmentDebtor", "value", false,
-                                "rawValue", "false", "sourceQuote", "dishonestJudgmentDebtor=false"))))));
+        when(adapter.enabledTypes()).thenReturn(cn.bidcheck.compat.Java8Api.listOf("CREDIT_CHINA"));
+        when(adapter.enabledSourceTypes()).thenReturn(cn.bidcheck.compat.Java8Api.mapOf("信用中国", "CREDIT_CHINA"));
+        when(adapter.query(anyMap())).thenReturn(cn.bidcheck.compat.Java8Api.mapOf("status", "COMPLETED", "record", cn.bidcheck.compat.Java8Api.mapOf("type", "CREDIT_CHINA", "subject", "海南测试有限公司", "source", "某信用中国镜像", "effectiveAt", "2026-10-19", "evaluationStage", "BID_OPENING", "coverageComplete", true, "rawSnapshotHash", "snapshot-sha", "provenanceStatus", "TRUSTED_CONNECTOR", "result", cn.bidcheck.compat.Java8Api.mapOf("status", "VERIFIED", "facts", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("field", "dishonestJudgmentDebtor", "value", false, "rawValue", "false", "sourceQuote", "dishonestJudgmentDebtor=false"))))));
         TemplateExternalEvidenceService service = new TemplateExternalEvidenceService(store, adapter);
         Fact bidder = new Fact("COMPANY", "BIDDER", "companyName", "海南测试有限公司", "海南测试有限公司",
                 new Evidence("bid", "投标文件", 1, "PAGE", "投标人名称：海南测试有限公司", "p1", 1));
 
-        assertTrue(service.resolve("project", "run", externalSpec(true), List.of(bidder)).isEmpty());
+        assertTrue(service.resolve("project", "run", externalSpec(true), cn.bidcheck.compat.Java8Api.listOf(bidder)).isEmpty());
     }
 
     @Test void mismatchedStageOrIncompleteCoverageCannotCreateTrustedFacts() {
         Store store = new Store(leaseMapper(), new ObjectMapper());
         ExternalVerificationAdapter adapter = mock(ExternalVerificationAdapter.class);
         when(adapter.identity()).thenReturn("connector-identity");
-        when(adapter.enabledTypes()).thenReturn(List.of("CREDIT_CHINA"));
-        when(adapter.enabledSourceTypes()).thenReturn(Map.of("信用中国", "CREDIT_CHINA"));
+        when(adapter.enabledTypes()).thenReturn(cn.bidcheck.compat.Java8Api.listOf("CREDIT_CHINA"));
+        when(adapter.enabledSourceTypes()).thenReturn(cn.bidcheck.compat.Java8Api.mapOf("信用中国", "CREDIT_CHINA"));
         Fact bidder = new Fact("COMPANY", "BIDDER", "companyName", "海南测试有限公司", "海南测试有限公司",
                 new Evidence("bid", "投标文件", 1, "PAGE", "投标人名称：海南测试有限公司", "p1", 1));
-        for (Map<String, Object> overrides : List.<Map<String, Object>>of(
-                Map.<String, Object>of("evaluationStage", "EVALUATION", "coverageComplete", true),
-                Map.<String, Object>of("evaluationStage", "BID_OPENING", "coverageComplete", false))) {
-            when(adapter.query(anyMap())).thenReturn(Map.of("status", "COMPLETED", "record", Map.of(
-                    "type", "CREDIT_CHINA", "subject", "海南测试有限公司", "source", "信用中国",
-                    "effectiveAt", "2026-10-19", "evaluationStage", overrides.get("evaluationStage"),
-                    "coverageComplete", overrides.get("coverageComplete"), "rawSnapshotHash", "snapshot-sha",
-                    "provenanceStatus", "TRUSTED_CONNECTOR", "result", Map.of("status", "VERIFIED",
-                            "facts", List.of(Map.of("field", "dishonestJudgmentDebtor", "value", false,
-                                    "rawValue", "false", "sourceQuote", "dishonestJudgmentDebtor=false"))))));
+        for (Map<String, Object> overrides : cn.bidcheck.compat.Java8Api.<Map<String, Object>>listOf(cn.bidcheck.compat.Java8Api.<String, Object>mapOf("evaluationStage", "EVALUATION", "coverageComplete", true), cn.bidcheck.compat.Java8Api.<String, Object>mapOf("evaluationStage", "BID_OPENING", "coverageComplete", false))) {
+            when(adapter.query(anyMap())).thenReturn(cn.bidcheck.compat.Java8Api.mapOf("status", "COMPLETED", "record", cn.bidcheck.compat.Java8Api.mapOf("type", "CREDIT_CHINA", "subject", "海南测试有限公司", "source", "信用中国", "effectiveAt", "2026-10-19", "evaluationStage", overrides.get("evaluationStage"), "coverageComplete", overrides.get("coverageComplete"), "rawSnapshotHash", "snapshot-sha", "provenanceStatus", "TRUSTED_CONNECTOR", "result", cn.bidcheck.compat.Java8Api.mapOf("status", "VERIFIED", "facts", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("field", "dishonestJudgmentDebtor", "value", false, "rawValue", "false", "sourceQuote", "dishonestJudgmentDebtor=false"))))));
             assertTrue(new TemplateExternalEvidenceService(store, adapter)
-                    .resolve("project", "run-" + overrides.hashCode(), externalSpec(true), List.of(bidder)).isEmpty());
+                    .resolve("project", "run-" + overrides.hashCode(), externalSpec(true), cn.bidcheck.compat.Java8Api.listOf(bidder)).isEmpty());
         }
     }
 
     private static CheckSpec externalSpec(boolean configured) {
         Map<String, Object> parameters = configured
-                ? Map.of("source", "信用中国", "queryObject", "投标人",
-                "requiredFields", List.of("dishonestJudgmentDebtor"), "asOfDate", "2026-10-19",
-                "adapterId", "CREDIT_CHINA", "evaluationStage", "BID_OPENING")
-                : Map.of("source", "信用中国", "queryObject", "投标人",
-                "requiredFields", List.of("dishonestJudgmentDebtor"), "asOfDate", "2026-10-19",
-                "evaluationStage", "BID_OPENING");
+                ? cn.bidcheck.compat.Java8Api.mapOf("source", "信用中国", "queryObject", "投标人", "requiredFields", cn.bidcheck.compat.Java8Api.listOf("dishonestJudgmentDebtor"), "asOfDate", "2026-10-19", "adapterId", "CREDIT_CHINA", "evaluationStage", "BID_OPENING")
+                : cn.bidcheck.compat.Java8Api.mapOf("source", "信用中国", "queryObject", "投标人", "requiredFields", cn.bidcheck.compat.Java8Api.listOf("dishonestJudgmentDebtor"), "asOfDate", "2026-10-19", "evaluationStage", "BID_OPENING");
         return new CheckSpec("external-spec", 1, "item", "checkpoint",
                 TemplateTypes.Category.QUALIFICATION, TemplateTypes.Purpose.MANDATORY,
                 TemplateTypes.VerificationMode.EXTERNAL, "EXTERNAL_CHECK", "1.0",
                 SubjectSelector.bidder(), parameters, Applicability.applies(),
-                TemplateTypes.ProofStandard.FACTUAL_CONDITION, List.of(), List.of(), Map.of(), Map.of(),
-                Map.of("state", "FULL", "complete", true), true,
+                TemplateTypes.ProofStandard.FACTUAL_CONDITION, cn.bidcheck.compat.Java8Api.listOf(), cn.bidcheck.compat.Java8Api.listOf(), cn.bidcheck.compat.Java8Api.mapOf(), cn.bidcheck.compat.Java8Api.mapOf(),
+                cn.bidcheck.compat.Java8Api.mapOf("state", "FULL", "complete", true), true,
                 Confirmation.legacyConfirmed(), "external-semantic");
     }
 
@@ -204,12 +173,6 @@ class TemplateExternalEvidenceServiceTest {
     }
 
     private static Map<String, Object> completedResponse() {
-        return Map.of("status", "COMPLETED", "record", Map.of(
-                "type", "CREDIT_CHINA", "subject", "海南测试有限公司", "source", "信用中国",
-                "effectiveAt", "2026-10-19", "evaluationStage", "BID_OPENING",
-                "coverageComplete", true, "rawSnapshotHash", "snapshot-sha",
-                "provenanceStatus", "TRUSTED_CONNECTOR", "result", Map.of("status", "VERIFIED",
-                        "facts", List.of(Map.of("field", "dishonestJudgmentDebtor", "value", false,
-                                "rawValue", "false", "sourceQuote", "dishonestJudgmentDebtor=false")))));
+        return cn.bidcheck.compat.Java8Api.mapOf("status", "COMPLETED", "record", cn.bidcheck.compat.Java8Api.mapOf("type", "CREDIT_CHINA", "subject", "海南测试有限公司", "source", "信用中国", "effectiveAt", "2026-10-19", "evaluationStage", "BID_OPENING", "coverageComplete", true, "rawSnapshotHash", "snapshot-sha", "provenanceStatus", "TRUSTED_CONNECTOR", "result", cn.bidcheck.compat.Java8Api.mapOf("status", "VERIFIED", "facts", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("field", "dishonestJudgmentDebtor", "value", false, "rawValue", "false", "sourceQuote", "dishonestJudgmentDebtor=false")))));
     }
 }

@@ -28,11 +28,24 @@ class AgentReviewModeIntegrationTest {
     private Object previous;
     @BeforeEach void configure(){previous=ReflectionTestUtils.getField(service,"reviewInvestigator");AgentInvestigator investigator=mock(AgentInvestigator.class);when(investigator.enabled()).thenReturn(true);when(investigator.identity()).thenReturn("test-agent-no-network");ReflectionTestUtils.setField(service,"reviewInvestigator",investigator);}
     @AfterEach void restore(){ReflectionTestUtils.setField(service,"reviewInvestigator",previous);}
-    private record Fixture(String project,String tender,String bid){}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Fixture{
+        private final String project;
+        private final String tender;
+        private final String bid;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Fixture(@com.fasterxml.jackson.annotation.JsonProperty("project") String project, @com.fasterxml.jackson.annotation.JsonProperty("tender") String tender, @com.fasterxml.jackson.annotation.JsonProperty("bid") String bid) { this.project = project; this.tender = tender; this.bid = bid; }
+        public String project() { return project; }
+        public String tender() { return tender; }
+        public String bid() { return bid; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Fixture that = (Fixture) other; return java.util.Objects.equals(this.project, that.project) && java.util.Objects.equals(this.tender, that.tender) && java.util.Objects.equals(this.bid, that.bid); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.project); hash = 31 * hash + java.util.Objects.hashCode(this.tender); hash = 31 * hash + java.util.Objects.hashCode(this.bid); return hash; }
+        @Override public String toString() { return "Fixture[" + "project=" + project + ", tender=" + tender + ", bid=" + bid + "]"; }
+}
     @SuppressWarnings("unchecked") private Fixture fixture()throws Exception{
-        String p=BidService.text(service.createProject(Map.of("name","Agent模式入口测试")),"id");String tender=parsed(p,"TENDER","投标人应提交授权委托书及报价清单。");service.execute(service.extract(p,tender));
+        String p=BidService.text(service.createProject(cn.bidcheck.compat.Java8Api.mapOf("name", "Agent模式入口测试")),"id");String tender=parsed(p,"TENDER","投标人应提交授权委托书及报价清单。");service.execute(service.extract(p,tender));
         for(Checkpoint cp:(List<Checkpoint>)service.detail(p).get("checkpoints"))service.updateCheckpoint(cp.id(),new Checkpoint(cp.id(),cp.title(),cp.category(),cp.severity(),cp.type(),cp.field(),cp.operator(),cp.expected(),cp.unit(),cp.required(),true,false,cp.source()));
-        for(String name:List.of("授权委托书","报价清单"))service.createCheckpoint(p,BidService.fields("title",name,"category","形式检查","type","MATERIAL_EXISTENCE","field","material","operator","EXISTS","expected",name,"confirmed",true));
+        for(String name:cn.bidcheck.compat.Java8Api.listOf("授权委托书", "报价清单"))service.createCheckpoint(p,BidService.fields("title",name,"category","形式检查","type","MATERIAL_EXISTENCE","field","material","operator","EXISTS","expected",name,"confirmed",true));
         String bid=parsed(p,"BID","投标文件\n授权委托书\n本单位授权王甲办理本项目投标事项。\n报价清单\n本项目投标报价合计为人民币100万元。");return new Fixture(p,tender,bid);
     }
     private String parsed(String p,String role,String text)throws Exception{TaskRow task=service.upload(p,role,new MockMultipartFile("file",role+".txt","text/plain",text.getBytes(StandardCharsets.UTF_8)));service.execute(task);return BidService.text(store.map(task.inputJson),"documentId");}
@@ -41,13 +54,13 @@ class AgentReviewModeIntegrationTest {
         Fixture f=fixture();Map<String,Object> fixed=start(f,"FIXED_WORKFLOW","fixed"),agent=start(f,"AGENT_LED","agent");
         assertEquals("RULES_RETRIEVAL",agent.get("checkMode"));assertEquals("AGENT_LED",agent.get("reviewMode"));assertEquals(CheckReviewMode.VERSION,agent.get("reviewModeVersion"));assertEquals(false,agent.get("templateRouteEnabled"));
         assertEquals("RULES_RETRIEVAL",agent.get("consistencyReviewMode"));assertNotEquals(fixed.get("fingerprint"),agent.get("fingerprint"));assertNotEquals(fixed.get("id"),agent.get("id"));
-        List<String> a=store.list("snapshot",f.project(),BidService.text(agent,"id"),Checkpoint.class).stream().map(Checkpoint::id).sorted().toList();
-        List<String> b=store.list("snapshot",f.project(),BidService.text(fixed,"id"),Checkpoint.class).stream().map(Checkpoint::id).sorted().toList();assertEquals(b,a);assertEquals(2,a.size());
+        List<String> a=cn.bidcheck.compat.Java8Api.toList(store.list("snapshot",f.project(),BidService.text(agent,"id"),Checkpoint.class).stream().map(Checkpoint::id).sorted());
+        List<String> b=cn.bidcheck.compat.Java8Api.toList(store.list("snapshot",f.project(),BidService.text(fixed,"id"),Checkpoint.class).stream().map(Checkpoint::id).sorted());assertEquals(b,a);assertEquals(2,a.size());
         assertEquals(agent.get("id"),start(f,"AGENT_LED","agent").get("id"));assertThrows(Exception.class,()->start(f,"FIXED_WORKFLOW","agent"));
     }
     @Test void unavailableSdkAndUnknownModesRejectBeforeAnyNewRunIsCreated()throws Exception{
         Fixture f=fixture();ReflectionTestUtils.setField(service,"reviewInvestigator",null);
-        ResponseStatusException error=assertThrows(ResponseStatusException.class,()->start(f,"AGENT_LED","unavailable"));assertEquals(503,error.getStatusCode().value());assertTrue(error.getReason().contains("未降级"));
+        ResponseStatusException error=assertThrows(ResponseStatusException.class,()->start(f,"AGENT_LED","unavailable"));assertEquals(503,error.getStatus().value());assertTrue(error.getReason().contains("未降级"));
         assertThrows(ResponseStatusException.class,()->start(f,"UNKNOWN","unknown"));assertTrue(store.maps("run",f.project(),null).isEmpty());
         assertEquals("FIXED_WORKFLOW",service.startRun(f.project(),f.bid()).get("reviewMode"));
     }
@@ -63,11 +76,9 @@ class AgentReviewModeIntegrationTest {
         Fixture f=fixture();Map<String,Object> run=start(f,"AGENT_LED","context");String id=BidService.text(run,"id");run.put("status","RUNNING");store.save("run",id,f.project(),f.bid(),run);
         TaskRow task=service.task(BidService.text(run,"taskId"));task.status="RUNNING";store.mapper().updateTask(task);
         Checkpoint cp=store.list("snapshot",f.project(),id,Checkpoint.class).get(0);Document bid=service.document(f.bid()),tender=service.document(f.tender());
-        Map<String,Object> context=contexts.prepare(task,id,bid,tender,"mode-test",List.of(),()->true).apply(cp);assertEquals("AGENT_LED",context.get("reviewMode"));
-        Map<String,Object> atomic=Map.of("complete",false,"workflowState","NEEDS_REVIEW","agentReview",Map.of("mode","AGENT_LED"),
-            "agentInvestigation",Map.of("status","NO_PROGRESS","errorCode","AGENT_STALLED_WITH_REMAINING_TARGETS"),
-            "gaps",List.of(Map.of("code","AGENT_INVESTIGATION_STALLED","description","本轮没有新增证据")));
-        Finding finding=new Finding(BidService.stableId(id+":"+cp.id()),id,cp,new Evaluation("UNDETERMINED","本轮未闭合","",List.of(),0,"AGENT_LED_REVIEW"),Map.of("atomicCheck",atomic));
+        Map<String,Object> context=contexts.prepare(task,id,bid,tender,"mode-test",cn.bidcheck.compat.Java8Api.listOf(),()->true).apply(cp);assertEquals("AGENT_LED",context.get("reviewMode"));
+        Map<String,Object> atomic=cn.bidcheck.compat.Java8Api.mapOf("complete", false, "workflowState", "NEEDS_REVIEW", "agentReview", cn.bidcheck.compat.Java8Api.mapOf("mode", "AGENT_LED"), "agentInvestigation", cn.bidcheck.compat.Java8Api.mapOf("status", "NO_PROGRESS", "errorCode", "AGENT_STALLED_WITH_REMAINING_TARGETS"), "gaps", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("code", "AGENT_INVESTIGATION_STALLED", "description", "本轮没有新增证据")));
+        Finding finding=new Finding(BidService.stableId(id+":"+cp.id()),id,cp,new Evaluation("UNDETERMINED","本轮未闭合","",cn.bidcheck.compat.Java8Api.listOf(),0,"AGENT_LED_REVIEW"),cn.bidcheck.compat.Java8Api.mapOf("atomicCheck", atomic));
         ReflectionTestUtils.invokeMethod(service,"recordResolution",task,id,finding);Map<String,Object> job=store.getMap("check_resolution",CheckResolution.jobId(id,cp.id()));
         assertEquals("FAILED",job.get("status"));assertEquals("WAIT_AGENT_INPUT_CHANGE",job.get("strategy"));assertEquals("RELEVANT_INPUT_OR_EVIDENCE_CHANGED",job.get("resumeTrigger"));
     }
@@ -76,17 +87,15 @@ class AgentReviewModeIntegrationTest {
         run.put("status","RUNNING");store.save("run",id,f.project(),f.bid(),run);
         TaskRow task=service.task(BidService.text(run,"taskId"));task.status="RUNNING";store.mapper().updateTask(task);
         Checkpoint cp=store.list("snapshot",f.project(),id,Checkpoint.class).get(0);
-        Map<String,Object> atomic=Map.of("complete",false,"workflowState","NEEDS_REVIEW",
-            "gaps",List.of(Map.of("code","VISUAL_OBSERVATION_REQUIRED","description","需要核验原图")),
-            "visualRequests",List.of(Map.of("documentId",f.bid(),"page",1,"task","SEAL")));
-        Finding finding=new Finding(BidService.stableId(id+":"+cp.id()),id,cp,new Evaluation("UNDETERMINED","等待原图核验","",List.of(),0,"AGENT_LED_REVIEW"),Map.of("atomicCheck",atomic));
+        Map<String,Object> atomic=cn.bidcheck.compat.Java8Api.mapOf("complete", false, "workflowState", "NEEDS_REVIEW", "gaps", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("code", "VISUAL_OBSERVATION_REQUIRED", "description", "需要核验原图")), "visualRequests", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("documentId", f.bid(), "page", 1, "task", "SEAL")));
+        Finding finding=new Finding(BidService.stableId(id+":"+cp.id()),id,cp,new Evaluation("UNDETERMINED","等待原图核验","",cn.bidcheck.compat.Java8Api.listOf(),0,"AGENT_LED_REVIEW"),cn.bidcheck.compat.Java8Api.mapOf("atomicCheck", atomic));
         ReflectionTestUtils.invokeMethod(service,"recordResolution",task,id,finding);Map<String,Object> job=store.getMap("check_resolution",CheckResolution.jobId(id,cp.id()));
         assertEquals("QUEUED",job.get("status"));assertEquals("VERIFY_SOURCE_PAGES",job.get("strategy"));assertNull(job.get("requiresInputChange"));
     }
     @Test void agentModeDelegatesKnownFullTextChecksToTheExistingProgramScanner()throws Exception{
         Fixture f=fixture();Map<String,Object> run=start(f,"AGENT_LED","full-text-delegation");String runId=BidService.text(run,"id");
         Checkpoint check=new Checkpoint("full-text-typo","错别字检查","全文信息检查","MEDIUM","FULL_TEXT_REVIEW","typos","REVIEW","检查疑似错别字","",true,true,true,null);
-        Finding finding=ReflectionTestUtils.invokeMethod(service,"evaluateFinding",runId,check,service.document(f.bid()),service.document(f.tender()),List.<Fact>of(),Map.<String,Object>of(),(BooleanSupplier)()->true,new LinkedHashMap<>(Map.of("reviewMode","AGENT_LED")));
+        Finding finding=ReflectionTestUtils.invokeMethod(service,"evaluateFinding",runId,check,service.document(f.bid()),service.document(f.tender()),cn.bidcheck.compat.Java8Api.<Fact>listOf(),cn.bidcheck.compat.Java8Api.<String, Object>mapOf(),(BooleanSupplier)()->true,new LinkedHashMap<>(cn.bidcheck.compat.Java8Api.mapOf("reviewMode", "AGENT_LED")));
         assertNotNull(finding);assertEquals("DETERMINISTIC/FULL_TEXT_REVIEW",finding.evaluation().method());
         assertEquals("DETERMINISTIC_FULL_TEXT_REVIEW",BidService.text(CheckResolution.map(finding.assessment().get("agentDelegation")),"executor"));
     }

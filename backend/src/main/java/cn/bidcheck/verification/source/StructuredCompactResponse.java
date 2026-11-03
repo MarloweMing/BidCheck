@@ -12,7 +12,7 @@ final class StructuredCompactResponse {
     private StructuredCompactResponse(){}
 
     static JsonNode envelope(JsonNode input,List<Integer> requested)throws IOException {
-        keys(input,Set.of("wire","pages","limitations"));
+        keys(input,cn.bidcheck.compat.Java8Api.setOf("wire", "pages", "limitations"));
         if(!VERSION.equals(string(input.get("wire"),64)))throw invalid();
         JsonNode pages=input.get("pages");
         if(pages==null||!pages.isArray()||pages.size()>requested.size()+3)throw mapping();
@@ -22,20 +22,20 @@ final class StructuredCompactResponse {
     }
 
     static JsonNode page(JsonNode input)throws IOException {
-        keys(input,Set.of("page","q","r","f","limitations"));
+        keys(input,cn.bidcheck.compat.Java8Api.setOf("page", "q", "r", "f", "limitations"));
         if(!input.path("page").isIntegralNumber()||!input.path("page").canConvertToInt())throw mapping();
         JsonNode quotes=array(input.get("q"),40),records=array(input.get("r"),40),fields=array(input.get("f"),40);
         for(JsonNode quote:quotes)string(quote,4000);
         for(JsonNode record:records){
             tuple(record,3);string(record.get(0),160);String type=string(record.get(1),30);string(record.get(2),160);
-            if(!Set.of("VEHICLE","PERSON","COMPANY","CONTRACT","CERTIFICATE","UNKNOWN").contains(type))throw invalid();
+            if(!cn.bidcheck.compat.Java8Api.setOf("VEHICLE", "PERSON", "COMPANY", "CONTRACT", "CERTIFICATE", "UNKNOWN").contains(type))throw invalid();
         }
         ObjectNode out=JSON.objectNode().put("page",input.path("page").intValue());
         if(input.has("limitations"))out.set("limitations",input.get("limitations").deepCopy());
         ArrayNode observations=out.putArray("observations");
         for(JsonNode field:fields){
             tuple(field,5);String label=string(field.get(0),100),value=string(field.get(1),2048),readability=string(field.get(2),30);
-            if(!Set.of("CLEAR","PARTIAL","UNREADABLE","NOT_OBSERVED").contains(readability))throw invalid();
+            if(!cn.bidcheck.compat.Java8Api.setOf("CLEAR", "PARTIAL", "UNREADABLE", "NOT_OBSERVED").contains(readability))throw invalid();
             int q=index(field.get(3),quotes.size()),r=index(field.get(4),records.size());JsonNode record=records.get(r);
             observations.addObject().put("type","FIELD").put("label",label).put("value",value).put("readability",readability)
                 .putNull("bbox").put("sourceQuote",quotes.get(q).textValue()).put("subject",record.get(0).textValue())

@@ -6,7 +6,7 @@ if ($env:JAVA_HOME) { $bidJavaCandidates += Join-Path $env:JAVA_HOME 'bin/java.e
 $bidJavaCommand = Get-Command java -ErrorAction SilentlyContinue
 if ($bidJavaCommand) { $bidJavaCandidates += $bidJavaCommand.Source }
 $bidJava = $bidJavaCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-if (-not $bidJava) { throw 'Java 17 or newer is required. Set JAVA_HOME and try again.' }
+if (-not $bidJava) { throw 'Java 8 or newer is required. Set JAVA_HOME and try again.' }
 $bidJar = Join-Path $PSScriptRoot 'backend/target/bidcheck-0.1.0.jar'
 if (-not (Test-Path -LiteralPath $bidJar)) { throw 'Build the application first: mvn -f backend/pom.xml package' }
 $bidPort = if ($env:BIDCHECK_PORT) { $env:BIDCHECK_PORT } else { '8787' }
@@ -28,13 +28,6 @@ try {
     }
     if (-not $LocalOnly -and (Test-Path -LiteralPath '.local/model-key.dpapi')) {
         $bidEnvironment['BIDCHECK_MODEL_KEY'] = Read-BidCheckSecret '.local/model-key.dpapi'
-    }
-    $bidAgentPython = Join-Path $PSScriptRoot '.local/agent-venv/Scripts/python.exe'
-    $bidAgentWorker = Join-Path $PSScriptRoot 'agent-worker/worker.py'
-    if (-not $LocalOnly -and (Test-Path -LiteralPath $bidAgentPython) -and (Test-Path -LiteralPath $bidAgentWorker)) {
-        foreach ($bidDefault in @(@('BIDCHECK_AGENT_ENABLED','true'),@('BIDCHECK_AGENT_PYTHON',$bidAgentPython),@('BIDCHECK_AGENT_WORKER',$bidAgentWorker))) {
-            if (-not $bidEnvironment.ContainsKey($bidDefault[0]) -and -not [Environment]::GetEnvironmentVariable($bidDefault[0], 'Process')) { $bidEnvironment[$bidDefault[0]] = $bidDefault[1] }
-        }
     }
     foreach ($bidName in $bidEnvironment.Keys) {
         $bidPreviousEnvironment[$bidName] = [Environment]::GetEnvironmentVariable($bidName, 'Process')

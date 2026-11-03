@@ -42,7 +42,7 @@ class RegressionIntegrationTest {
         return json.readTree(request.andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
     }
     private String create(String name) throws Exception {
-        return result(mvc.perform(post("/api/projects").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(Map.of("name",name,"code","REG-2026"))))).path("id").asText();
+        return result(mvc.perform(post("/api/projects").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(cn.bidcheck.compat.Java8Api.mapOf("name", name, "code", "REG-2026"))))).path("id").asText();
     }
     private JsonNode detail(String project) throws Exception { return result(mvc.perform(get("/api/projects/"+project))); }
     private JsonNode upload(String project,String role,String name,String text) throws Exception {
@@ -61,7 +61,7 @@ class RegressionIntegrationTest {
         return task.path("documentId").asText();
     }
     private void extract(String project,String document) throws Exception {
-        JsonNode task=result(mvc.perform(post("/api/projects/"+project+"/checkpoints/extract").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(Map.of("documentId",document)))));
+        JsonNode task=result(mvc.perform(post("/api/projects/"+project+"/checkpoints/extract").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(cn.bidcheck.compat.Java8Api.mapOf("documentId", document)))));
         complete(task.path("id").asText());
     }
 
@@ -141,7 +141,7 @@ class RegressionIntegrationTest {
         Map<String,JsonNode> restoredA=new LinkedHashMap<>();
         for(JsonNode rule:detail(project).path("checkpoints")) restoredA.put(rule.path("id").asText(),rule);
         assertThat(restoredA).isEqualTo(chosenA);
-        JsonNode run=result(mvc.perform(post("/api/projects/"+project+"/runs").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(Map.of("documentId",bid)))));
+        JsonNode run=result(mvc.perform(post("/api/projects/"+project+"/runs").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(cn.bidcheck.compat.Java8Api.mapOf("documentId", bid)))));
         complete(run.path("taskId").asText());
         JsonNode results=result(mvc.perform(get("/api/runs/"+run.path("id").asText()))).path("results");
         boolean foundValidity=false;
@@ -157,15 +157,30 @@ class RegressionIntegrationTest {
         assertThat(foundValidity).isTrue();
     }
 
-    private record Seed(String runId,String findingId,String quote,String tenderName) {}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Seed {
+        private final String runId;
+        private final String findingId;
+        private final String quote;
+        private final String tenderName;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Seed(@com.fasterxml.jackson.annotation.JsonProperty("runId") String runId, @com.fasterxml.jackson.annotation.JsonProperty("findingId") String findingId, @com.fasterxml.jackson.annotation.JsonProperty("quote") String quote, @com.fasterxml.jackson.annotation.JsonProperty("tenderName") String tenderName) { this.runId = runId; this.findingId = findingId; this.quote = quote; this.tenderName = tenderName; }
+        public String runId() { return runId; }
+        public String findingId() { return findingId; }
+        public String quote() { return quote; }
+        public String tenderName() { return tenderName; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Seed that = (Seed) other; return java.util.Objects.equals(this.runId, that.runId) && java.util.Objects.equals(this.findingId, that.findingId) && java.util.Objects.equals(this.quote, that.quote) && java.util.Objects.equals(this.tenderName, that.tenderName); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.runId); hash = 31 * hash + java.util.Objects.hashCode(this.findingId); hash = 31 * hash + java.util.Objects.hashCode(this.quote); hash = 31 * hash + java.util.Objects.hashCode(this.tenderName); return hash; }
+        @Override public String toString() { return "Seed[" + "runId=" + runId + ", findingId=" + findingId + ", quote=" + quote + ", tenderName=" + tenderName + "]"; }
+}
     private Seed semanticReport() throws Exception {
         String project=create("报告证据回归"),bidId=Store.id(),tenderId=Store.id(),runId=Store.id(),findingId=Store.id(),checkId=Store.id();
         String quote="必须提交专门的售后服务方案。",tenderName="招标依据专用文档.txt";
-        Document bid=new Document(bidId,project,"BID","投标文件.txt",1,"bid-hash",BidService.now(),List.of(new Page(1,"项目编号：REG-2026","PAGE","TEXT",null)),List.of());
-        Document tender=new Document(tenderId,project,"TENDER",tenderName,1,"tender-hash",BidService.now(),List.of(new Page(7,quote,"PAGE","TEXT",null)),List.of());
+        Document bid=new Document(bidId,project,"BID","投标文件.txt",1,"bid-hash",BidService.now(),cn.bidcheck.compat.Java8Api.listOf(new Page(1,"项目编号：REG-2026","PAGE","TEXT",null)),cn.bidcheck.compat.Java8Api.listOf());
+        Document tender=new Document(tenderId,project,"TENDER",tenderName,1,"tender-hash",BidService.now(),cn.bidcheck.compat.Java8Api.listOf(new Page(7,quote,"PAGE","TEXT",null)),cn.bidcheck.compat.Java8Api.listOf());
         Evidence source=new Evidence(tenderId,tenderName,7,"PAGE",quote,"p7-l1",1);
         Checkpoint checkpoint=new Checkpoint(checkId,"售后服务方案响应","技术响应","MEDIUM","SEMANTIC_RESPONSE","technicalResponse","RESPONDS",quote,"",true,true,true,source);
-        Evaluation evaluation=new CheckEngine().evaluate(checkpoint,bid,List.of());
+        Evaluation evaluation=new CheckEngine().evaluate(checkpoint,bid,cn.bidcheck.compat.Java8Api.listOf());
         assertThat(evaluation.status()).isEqualTo("UNDETERMINED");
         store.save("document",bidId,project,"",bid); store.save("document",tenderId,project,"",tender);
         store.save("run",runId,project,bidId,BidService.fields("id",runId,"projectId",project,"documentId",bidId,"status","COMPLETED","ruleVersion","regression","createdAt",BidService.now()));
@@ -178,7 +193,7 @@ class RegressionIntegrationTest {
 
     @Test void multilineSpreadsheetFormulaIsEscapedWithoutChangingSavedReview() throws Exception {
         Seed seed=semanticReport(); String note="=SUM(1,2)\n第二行是人工复核意见";
-        result(mvc.perform(post("/api/results/"+seed.findingId()+"/review").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(Map.of("status","WARNING","note",note,"reviewer","回归复核员")))));
+        result(mvc.perform(post("/api/results/"+seed.findingId()+"/review").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(cn.bidcheck.compat.Java8Api.mapOf("status", "WARNING", "note", note, "reviewer", "回归复核员")))));
         List<List<String>> rows=csvRows(report(seed.runId(),"csv"));
         int noteColumn=rows.get(0).indexOf("复核意见"); assertThat(noteColumn).isGreaterThanOrEqualTo(0);
         assertThat(rows.get(1).get(noteColumn)).isEqualTo("'"+note);
@@ -205,20 +220,16 @@ class RegressionIntegrationTest {
         String deadline="投标截止时间：2030-06-20 09:30，原文标记 <须核对>。",bidQuote="本投标材料出具日期：2030-06-01。";
         Document tender=store.get("document",source.documentId(),Document.class);
         store.save("document",tender.id(),project,"",new Document(tender.id(),project,"TENDER",tender.name(),1,tender.sha256(),tender.createdAt(),
-            List.of(tender.pages().get(0),new Page(8,deadline,"PAGE","TEXT",null)),List.of()));
+            cn.bidcheck.compat.Java8Api.listOf(tender.pages().get(0), new Page(8,deadline,"PAGE","TEXT",null)),cn.bidcheck.compat.Java8Api.listOf()));
         Evidence duplicateSource=new Evidence(source.documentId(),source.documentName(),source.page(),source.locationType(),source.quote(),"different-anchor",0.5);
         Evidence additional=new Evidence(source.documentId(),source.documentName(),8,"PAGE",deadline,"T2",0.9);
         Evidence bid=new Evidence(bidId,"投标文件.txt",1,"PAGE",bidQuote,"B1",0.9);
         String otherTender=Store.id(),otherBid=Store.id(),foreign=Store.id(),unknown=Store.id(),foreignProject=create("另一项目");
-        for(String id:List.of(otherTender,otherBid,foreign)) {
+        for(String id:cn.bidcheck.compat.Java8Api.listOf(otherTender, otherBid, foreign)) {
             String owner=id.equals(foreign)?foreignProject:project,role=id.equals(otherBid)?"BID":"TENDER";
-            store.save("document",id,owner,"",new Document(id,owner,role,"不属于本次检查.txt",1,"synthetic",BidService.now(),List.of(new Page(1,"排除原文","PAGE","TEXT",null)),List.of()));
+            store.save("document",id,owner,"",new Document(id,owner,role,"不属于本次检查.txt",1,"synthetic",BidService.now(),cn.bidcheck.compat.Java8Api.listOf(new Page(1,"排除原文","PAGE","TEXT",null)),cn.bidcheck.compat.Java8Api.listOf()));
         }
-        List<Evidence> refs=List.of(duplicateSource,additional,new Evidence(additional.documentId(),additional.documentName(),8,"PAGE",deadline,"duplicate-T",0.2),bid,
-            new Evidence(otherTender,"其他招标版本",1,"PAGE","不应导出的其他招标依据","T3",1),
-            new Evidence(otherBid,"其他投标版本",1,"PAGE","不应导出的其他投标证据","B2",1),
-            new Evidence(foreign,"跨项目文件",1,"PAGE","不应导出的跨项目引用","X1",1),
-            new Evidence(unknown,"未知文件",1,"PAGE","不应导出的未知引用","X2",1));
+        List<Evidence> refs=cn.bidcheck.compat.Java8Api.listOf(duplicateSource, additional, new Evidence(additional.documentId(),additional.documentName(),8,"PAGE",deadline,"duplicate-T",0.2), bid, new Evidence(otherTender,"其他招标版本",1,"PAGE","不应导出的其他招标依据","T3",1), new Evidence(otherBid,"其他投标版本",1,"PAGE","不应导出的其他投标证据","B2",1), new Evidence(foreign,"跨项目文件",1,"PAGE","不应导出的跨项目引用","X1",1), new Evidence(unknown,"未知文件",1,"PAGE","不应导出的未知引用","X2",1));
         Evaluation evaluated=new Evaluation("UNDETERMINED","核对日期依据","请复核",refs,0.5,"DETERMINISTIC");
         Finding updated=new Finding(seed.findingId(),seed.runId(),original.checkpoint(),evaluated);
         store.save("finding",seed.findingId(),project,seed.runId(),updated);
@@ -245,13 +256,13 @@ class RegressionIntegrationTest {
     @Test void unknownAndCrossProjectCheckpointSourcesAreNotRenderedAsTenderEvidence() throws Exception {
         Seed seed=semanticReport();Map<String,Object> run=store.getMap("run",seed.runId());
         String project=BidService.text(run,"projectId"),bidId=BidService.text(run,"documentId"),foreignProject=create("跨项目依据回归"),foreignId=Store.id();
-        store.save("document",foreignId,foreignProject,"",new Document(foreignId,foreignProject,"TENDER","外部招标.txt",1,"synthetic",BidService.now(),List.of(),List.of()));
+        store.save("document",foreignId,foreignProject,"",new Document(foreignId,foreignProject,"TENDER","外部招标.txt",1,"synthetic",BidService.now(),cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf()));
         Finding original=store.get("finding",seed.findingId(),Finding.class);Checkpoint c=original.checkpoint();
         run.put("tenderDocumentId",c.source().documentId());store.save("run",seed.runId(),project,bidId,run);
-        for(String invalidId:List.of(foreignId,Store.id())) {
+        for(String invalidId:cn.bidcheck.compat.Java8Api.listOf(foreignId, Store.id())) {
             Evidence invalid=new Evidence(invalidId,"无效招标引用",1,"PAGE","不可展示的外部正文","X",1);
             Checkpoint checkpoint=new Checkpoint(c.id(),c.title(),c.category(),c.severity(),c.type(),c.field(),c.operator(),c.expected(),c.unit(),c.required(),c.confirmed(),c.enabled(),invalid);
-            Evaluation evaluated=new Evaluation("UNDETERMINED","无有效依据","请核对",List.of(invalid),0,"DETERMINISTIC");
+            Evaluation evaluated=new Evaluation("UNDETERMINED","无有效依据","请核对",cn.bidcheck.compat.Java8Api.listOf(invalid),0,"DETERMINISTIC");
             store.save("finding",seed.findingId(),project,seed.runId(),new Finding(seed.findingId(),seed.runId(),checkpoint,evaluated));
             assertThat(report(seed.runId(),"html")).contains("未取得本次招标文件的有效依据").doesNotContain("不可展示的外部正文").doesNotContain("无效招标引用");
             List<List<String>> rows=csvRows(report(seed.runId(),"csv"));
@@ -265,9 +276,9 @@ class RegressionIntegrationTest {
         String project=BidService.text(run,"projectId"),bidId=BidService.text(run,"documentId");
         String warning="第 1 页[OCR结构未完成] 表格关系 <需核对>";
         store.save("document",bidId,project,"",new Document(bidId,project,"BID","结构待复核.pdf",1,"b",BidService.now(),
-            List.of(new Page(1,"转录已保存","PAGE","PDF_OCR","[OCR已识别]")),List.of(warning)));
-        run.put("processingCoverage",List.of(Map.of("documentId",bidId,"contextWindows",3,"contextPending",2,"contextReviewRequired",1)));
-        run.put("retrievalPreparation",List.of(Map.of("denseCoverageComplete",false,"mode","BM25_DEGRADED")));
+            cn.bidcheck.compat.Java8Api.listOf(new Page(1,"转录已保存","PAGE","PDF_OCR","[OCR已识别]")),cn.bidcheck.compat.Java8Api.listOf(warning)));
+        run.put("processingCoverage",cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("documentId", bidId, "contextWindows", 3, "contextPending", 2, "contextReviewRequired", 1)));
+        run.put("retrievalPreparation",cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("denseCoverageComplete", false, "mode", "BM25_DEGRADED")));
         store.save("run",seed.runId(),project,bidId,run);
         JsonNode payload=result(mvc.perform(get("/api/runs/"+seed.runId()).param("includeContent","false")));
         JsonNode coverage=null;for(JsonNode doc:payload.path("ocrContext").path("documents")) if(bidId.equals(doc.path("documentId").asText()))coverage=doc;
@@ -286,13 +297,13 @@ class RegressionIntegrationTest {
         String project=BidService.text(run,"projectId"),bidId=BidService.text(run,"documentId");
         Finding original=store.get("finding",seed.findingId(),Finding.class);
         store.save("document",bidId,project,"",new Document(bidId,project,"BID","范围有限.pdf",1,"bid-hash",BidService.now(),
-            List.of(new Page(1,"已保存的有效字段","PAGE","PDF_OCR",null),new Page(2,"第二页","PAGE","PDF_OCR",null),new Page(3,"第三页","PAGE","PDF_OCR",null)),List.of()));
-        List<String> reasons=List.of("STRUCTURED_FIELD_LIMIT_REACHED","STRUCTURED_FIELDS_REMAINING","STRUCTURED_SOURCE_TRUNCATED","STRUCTURED_FIELDS_REJECTED","STRUCTURED_OUTPUT_TARGET_EXCEEDED");
+            cn.bidcheck.compat.Java8Api.listOf(new Page(1,"已保存的有效字段","PAGE","PDF_OCR",null), new Page(2,"第二页","PAGE","PDF_OCR",null), new Page(3,"第三页","PAGE","PDF_OCR",null)),cn.bidcheck.compat.Java8Api.listOf()));
+        List<String> reasons=cn.bidcheck.compat.Java8Api.listOf("STRUCTURED_FIELD_LIMIT_REACHED", "STRUCTURED_FIELDS_REMAINING", "STRUCTURED_SOURCE_TRUNCATED", "STRUCTURED_FIELDS_REJECTED", "STRUCTURED_OUTPUT_TARGET_EXCEEDED");
         Map<String,Object> frozen=BidService.fields("documentId",bidId,"contextWindows",3,"contextPending",0,"contextReviewRequired",0,"contextNoFacts",0,
-            "contextLimitedPageCount",2,"contextLimitedPages",List.of(1,3),"contextCoverageLimitations",reasons);
-        run.put("processingCoverage",List.of(frozen));store.save("run",seed.runId(),project,bidId,run);
+            "contextLimitedPageCount",2,"contextLimitedPages",cn.bidcheck.compat.Java8Api.listOf(1, 3),"contextCoverageLimitations",reasons);
+        run.put("processingCoverage",cn.bidcheck.compat.Java8Api.listOf(frozen));store.save("run",seed.runId(),project,bidId,run);
         store.save("processing_summary","processing:"+bidId,project,bidId,BidService.fields("documentId",bidId,"documentHash","bid-hash","documentVersion",1,
-            "contextLimitedPageCount",1,"contextLimitedPages",List.of(2),"contextCoverageLimitations",List.of("LATER_PROCESSING_ONLY")));
+            "contextLimitedPageCount",1,"contextLimitedPages",cn.bidcheck.compat.Java8Api.listOf(2),"contextCoverageLimitations",cn.bidcheck.compat.Java8Api.listOf("LATER_PROCESSING_ONLY")));
         JsonNode payload=result(mvc.perform(get("/api/runs/"+seed.runId()).param("includeContent","false")));
         JsonNode coverage=null;for(JsonNode doc:payload.path("ocrContext").path("documents")) if(bidId.equals(doc.path("documentId").asText()))coverage=doc.path("processing");
         assertThat(coverage).isEqualTo(json.valueToTree(frozen));
@@ -306,7 +317,7 @@ class RegressionIntegrationTest {
         JsonNode csvCoverage=json.readTree(rows.get(1).get(rows.get(0).indexOf("结构字段范围（冻结记录）"))).get(0);
         assertThat(csvCoverage.path("documentId").asText()).isEqualTo(bidId);
         assertThat(csvCoverage.path("contextLimitedPageCount").asInt()).isEqualTo(2);
-        assertThat(csvCoverage.path("contextLimitedPages")).isEqualTo(json.valueToTree(List.of(1,3)));
+        assertThat(csvCoverage.path("contextLimitedPages")).isEqualTo(json.valueToTree(cn.bidcheck.compat.Java8Api.listOf(1, 3)));
         assertThat(csvCoverage.path("contextCoverageLimitations")).isEqualTo(json.valueToTree(reasons));
         JsonNode exported=json.readTree(report(seed.runId(),"json"));
         assertThat(exported.path("run").path("processingCoverage").get(0)).isEqualTo(json.valueToTree(frozen));
@@ -317,7 +328,7 @@ class RegressionIntegrationTest {
         Seed seed=semanticReport();Map<String,Object> run=store.getMap("run",seed.runId());
         String project=BidService.text(run,"projectId"),bidId=BidService.text(run,"documentId");
         store.save("processing_summary","processing:"+bidId,project,bidId,BidService.fields("documentId",bidId,"documentHash","bid-hash","documentVersion",1,
-            "contextLimitedPageCount",99,"contextLimitedPages",List.of(1),"contextCoverageLimitations",List.of("STRUCTURED_FIELD_LIMIT_REACHED")));
+            "contextLimitedPageCount",99,"contextLimitedPages",cn.bidcheck.compat.Java8Api.listOf(1),"contextCoverageLimitations",cn.bidcheck.compat.Java8Api.listOf("STRUCTURED_FIELD_LIMIT_REACHED")));
         JsonNode payload=result(mvc.perform(get("/api/runs/"+seed.runId()).param("includeContent","false")));
         for(JsonNode document:payload.path("ocrContext").path("documents")) assertThat(document.path("processing").has("contextLimitedPageCount")).isFalse();
         assertThat(report(seed.runId(),"html")).doesNotContain("字段提取范围有限","STRUCTURED_FIELD_LIMIT_REACHED");
@@ -334,16 +345,16 @@ class RegressionIntegrationTest {
         run.put("tenderDocumentId",tenderId);store.save("run",seed.runId(),project,bidId,run);
         String failure="第 9 个内容块[OCR未完成] 图像无法读取 <须核对>";
         store.save("document",tenderId,project,"",new Document(tenderId,project,"TENDER","招标范围.docx",1,"t",BidService.now(),
-            List.of(new Page(7,seed.quote(),"PAGE","TEXT",null),new Page(9,"附件位置","BLOCK","POI_NATIVE",failure)),List.of(failure)));
+            cn.bidcheck.compat.Java8Api.listOf(new Page(7,seed.quote(),"PAGE","TEXT",null), new Page(9,"附件位置","BLOCK","POI_NATIVE",failure)),cn.bidcheck.compat.Java8Api.listOf(failure)));
         store.save("document",bidId,project,"",new Document(bidId,project,"BID","投标识别.pdf",3,"b",BidService.now(),
-            List.of(new Page(1,"服务承诺","PAGE","PDFBOX_OCR","第 1 页[OCR已识别] 请核对")),List.of("第 1 页[OCR已识别] 请核对")));
+            cn.bidcheck.compat.Java8Api.listOf(new Page(1,"服务承诺","PAGE","PDFBOX_OCR","第 1 页[OCR已识别] 请核对")),cn.bidcheck.compat.Java8Api.listOf("第 1 页[OCR已识别] 请核对")));
         store.save("document",otherTender,project,"",new Document(otherTender,project,"TENDER","后续招标版本不可替换历史范围.docx",2,"new",BidService.now(),
-            List.of(new Page(9,"后续新内容","BLOCK","POI_NATIVE",null)),List.of()));
+            cn.bidcheck.compat.Java8Api.listOf(new Page(9,"后续新内容","BLOCK","POI_NATIVE",null)),cn.bidcheck.compat.Java8Api.listOf()));
         String prefix="部分图像OCR未完成，现有文字不能证明全部内容已经核验。";
         String businessReason="尚缺完整响应依据；模型提出 OCR 文字须结合上下文核对。",businessSuggestion="补充服务说明 <附件>。";
         String rawSuggestion="请核对原图中的名称、数字、日期及标识；OCR文字不能证明签字盖章有效。"+businessSuggestion;
         Evaluation evaluation=new Evaluation("UNDETERMINED",prefix+businessReason,rawSuggestion,
-            List.of(new Evidence(bidId,"投标识别.pdf",1,"PAGE","服务承诺","B1",0.5)),0,"DASHSCOPE:test/OCR_REVIEW");
+            cn.bidcheck.compat.Java8Api.listOf(new Evidence(bidId,"投标识别.pdf",1,"PAGE","服务承诺","B1",0.5)),0,"DASHSCOPE:test/OCR_REVIEW");
         Finding frozen=new Finding(seed.findingId(),seed.runId(),previous.checkpoint(),evaluation);
         store.save("finding",frozen.id(),project,seed.runId(),frozen);
         JsonNode payload=result(mvc.perform(get("/api/runs/"+seed.runId()).param("includeContent","false")));
@@ -383,10 +394,8 @@ class RegressionIntegrationTest {
         Finding original=store.get("finding",seed.findingId(),Finding.class);
         run.put("tenderDocumentId",original.checkpoint().source().documentId());store.save("run",seed.runId(),project,bidId,run);
         String deferred="第 2 页[OCR_DEFERRED][OCR未完成] 等待检查计划 <延期>",failed="第 3 页[OCR未完成] 识别超时";
-        store.save("document",bidId,project,"",new Document(bidId,project,"BID","计划范围.pdf",4,"hash",BidService.now(),List.of(
-            new Page(1,"已签署的服务承诺文字","PAGE","PDFBOX_NATIVE",""),
-            new Page(2,"","PAGE","PDFBOX_NATIVE",deferred),new Page(3,"","PAGE","PDFBOX_NATIVE",failed)),List.of(deferred,failed)));
-        Evaluation passed=new Evaluation("PASS","本项已定位到所需服务承诺。","",List.of(new Evidence(bidId,"计划范围.pdf",1,"PAGE","已签署的服务承诺文字","p1",1)),1,"DETERMINISTIC");
+        store.save("document",bidId,project,"",new Document(bidId,project,"BID","计划范围.pdf",4,"hash",BidService.now(),cn.bidcheck.compat.Java8Api.listOf(new Page(1,"已签署的服务承诺文字","PAGE","PDFBOX_NATIVE",""), new Page(2,"","PAGE","PDFBOX_NATIVE",deferred), new Page(3,"","PAGE","PDFBOX_NATIVE",failed)),cn.bidcheck.compat.Java8Api.listOf(deferred, failed)));
+        Evaluation passed=new Evaluation("PASS","本项已定位到所需服务承诺。","",cn.bidcheck.compat.Java8Api.listOf(new Evidence(bidId,"计划范围.pdf",1,"PAGE","已签署的服务承诺文字","p1",1)),1,"DETERMINISTIC");
         Finding frozen=new Finding(seed.findingId(),seed.runId(),original.checkpoint(),passed);
         store.save("finding",frozen.id(),project,seed.runId(),frozen);
         JsonNode payload=result(mvc.perform(get("/api/runs/"+seed.runId()).param("includeContent","false")));
@@ -413,9 +422,7 @@ class RegressionIntegrationTest {
     @Test void reportNeverRemovesUnmarkedPrefixOrModelAuthoredOcrReason() throws Exception {
         Seed seed=semanticReport();Map<String,Object> run=store.getMap("run",seed.runId());String project=BidService.text(run,"projectId");
         Finding previous=store.get("finding",seed.findingId(),Finding.class);
-        for(Evaluation evaluation:List.of(
-            new Evaluation("UNDETERMINED","部分图像OCR未完成，现有文字不能证明全部内容已经核验。模型原始判断。","保持建议",List.of(),0,"DASHSCOPE:test"),
-            new Evaluation("UNDETERMINED","模型认为 OCR 转录无法辨认附件，需核对原件。","保持建议",List.of(),0,"DASHSCOPE:test/OCR_REVIEW"))) {
+        for(Evaluation evaluation:cn.bidcheck.compat.Java8Api.listOf(new Evaluation("UNDETERMINED","部分图像OCR未完成，现有文字不能证明全部内容已经核验。模型原始判断。","保持建议",cn.bidcheck.compat.Java8Api.listOf(),0,"DASHSCOPE:test"), new Evaluation("UNDETERMINED","模型认为 OCR 转录无法辨认附件，需核对原件。","保持建议",cn.bidcheck.compat.Java8Api.listOf(),0,"DASHSCOPE:test/OCR_REVIEW"))) {
             store.save("finding",seed.findingId(),project,seed.runId(),new Finding(seed.findingId(),seed.runId(),previous.checkpoint(),evaluation));
             String html=report(seed.runId(),"html");
             assertThat(html).contains("<p class=analysis-reason>"+evaluation.reason()+"</p>").doesNotContain("查看历史原始说明");
@@ -432,13 +439,10 @@ class RegressionIntegrationTest {
         Finding original=store.get("finding",seed.findingId(),Finding.class);
         run.put("tenderDocumentId",original.checkpoint().source().documentId());store.save("run",seed.runId(),project,bidId,run);
         String failure="第 3 页[OCR未完成] 不属于本项的图像识别超时";
-        store.save("document",bidId,project,"",new Document(bidId,project,"BID","业务与原图分层.pdf",3,"hash",BidService.now(),List.of(
-            new Page(1,"原生服务承诺","PAGE","PDFBOX_NATIVE",""),
-            new Page(2,"OCR服务承诺","PAGE","PDFBOX_OCR","第 2 页[OCR已识别] 请核对"),
-            new Page(3,"其他附件","PAGE","PDFBOX_NATIVE",failure)),List.of("第 2 页[OCR已识别] 请核对",failure)));
-        Evaluation passed=new Evaluation("PASS","已定位到要求的服务承诺。","",List.of(new Evidence(bidId,"业务与原图分层.pdf",2,"PAGE","OCR服务承诺","B1",0)),0.75,"DASHSCOPE:test");
-        Map<String,Object> review=Map.of("required",true,"incomplete",false,"reason","业务证据充分；请核对相关原图文字。","locations",List.of(Map.of("documentId",bidId,"page",2,"locationType","PAGE","label","投标文件第 2 页")));
-        Map<String,Object> assessment=Map.of("rawEvaluation",passed,"preOcrEvaluation",passed,"adjustments",List.of(),"ocrReview",review,"retrieval",Map.of("mode","HYBRID"),"model",Map.of("state","COMPLETED","attempts",List.of()));
+        store.save("document",bidId,project,"",new Document(bidId,project,"BID","业务与原图分层.pdf",3,"hash",BidService.now(),cn.bidcheck.compat.Java8Api.listOf(new Page(1,"原生服务承诺","PAGE","PDFBOX_NATIVE",""), new Page(2,"OCR服务承诺","PAGE","PDFBOX_OCR","第 2 页[OCR已识别] 请核对"), new Page(3,"其他附件","PAGE","PDFBOX_NATIVE",failure)),cn.bidcheck.compat.Java8Api.listOf("第 2 页[OCR已识别] 请核对", failure)));
+        Evaluation passed=new Evaluation("PASS","已定位到要求的服务承诺。","",cn.bidcheck.compat.Java8Api.listOf(new Evidence(bidId,"业务与原图分层.pdf",2,"PAGE","OCR服务承诺","B1",0)),0.75,"DASHSCOPE:test");
+        Map<String,Object> review=cn.bidcheck.compat.Java8Api.mapOf("required", true, "incomplete", false, "reason", "业务证据充分；请核对相关原图文字。", "locations", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("documentId", bidId, "page", 2, "locationType", "PAGE", "label", "投标文件第 2 页")));
+        Map<String,Object> assessment=cn.bidcheck.compat.Java8Api.mapOf("rawEvaluation", passed, "preOcrEvaluation", passed, "adjustments", cn.bidcheck.compat.Java8Api.listOf(), "ocrReview", review, "retrieval", cn.bidcheck.compat.Java8Api.mapOf("mode", "HYBRID"), "model", cn.bidcheck.compat.Java8Api.mapOf("state", "COMPLETED", "attempts", cn.bidcheck.compat.Java8Api.listOf()));
         Finding finding=new Finding(seed.findingId(),seed.runId(),original.checkpoint(),passed,assessment);
         store.save("finding",finding.id(),project,seed.runId(),finding);
         JsonNode frozen=json.valueToTree(store.get("finding",finding.id(),Finding.class));
@@ -456,8 +460,8 @@ class RegressionIntegrationTest {
         assertThat(exportedFinding.assessment()).containsKey("businessPresentation");
         assertThat(json.<JsonNode>valueToTree(store.get("finding",finding.id(),Finding.class))).isEqualTo(frozen);
 
-        Evaluation nativePass=new Evaluation("PASS","原生正文已经证明服务承诺。","",List.of(new Evidence(bidId,"业务与原图分层.pdf",1,"PAGE","原生服务承诺","B1",1)),1,"DETERMINISTIC");
-        Map<String,Object> nativeAssessment=Map.of("rawEvaluation",nativePass,"preOcrEvaluation",nativePass,"adjustments",List.of(),"ocrReview",Map.of("required",false,"incomplete",false,"reason","","locations",List.of()),"retrieval",Map.of("mode","DETERMINISTIC"));
+        Evaluation nativePass=new Evaluation("PASS","原生正文已经证明服务承诺。","",cn.bidcheck.compat.Java8Api.listOf(new Evidence(bidId,"业务与原图分层.pdf",1,"PAGE","原生服务承诺","B1",1)),1,"DETERMINISTIC");
+        Map<String,Object> nativeAssessment=cn.bidcheck.compat.Java8Api.mapOf("rawEvaluation", nativePass, "preOcrEvaluation", nativePass, "adjustments", cn.bidcheck.compat.Java8Api.listOf(), "ocrReview", cn.bidcheck.compat.Java8Api.mapOf("required", false, "incomplete", false, "reason", "", "locations", cn.bidcheck.compat.Java8Api.listOf()), "retrieval", cn.bidcheck.compat.Java8Api.mapOf("mode", "DETERMINISTIC"));
         store.save("finding",finding.id(),project,seed.runId(),new Finding(finding.id(),seed.runId(),finding.checkpoint(),nativePass,nativeAssessment));
         String nativeHtml=report(seed.runId(),"html"),article=nativeHtml.substring(nativeHtml.indexOf("<article "),nativeHtml.indexOf("</article>"));
         assertThat(nativeHtml).contains(failure);
@@ -469,18 +473,19 @@ class RegressionIntegrationTest {
     @Test void reportDistinguishesUnavailableModelFromInsufficientEvidenceAndRetainsRawJudgment() throws Exception {
         Seed seed=semanticReport();Map<String,Object> run=store.getMap("run",seed.runId());String project=BidService.text(run,"projectId");
         Finding original=store.get("finding",seed.findingId(),Finding.class);
-        for(String code:List.of("MODEL_TIMEOUT","PERSONNEL_COVERAGE_INCOMPLETE","MODEL_CITATION_INVALID","EVIDENCE_SCOPE_INCOMPLETE")) {
+        for(String code:cn.bidcheck.compat.Java8Api.listOf("MODEL_TIMEOUT", "PERSONNEL_COVERAGE_INCOMPLETE", "MODEL_CITATION_INVALID", "EVIDENCE_SCOPE_INCOMPLETE")) {
             boolean failed=code.equals("MODEL_TIMEOUT");
-            Evaluation finalEvaluation=new Evaluation("UNDETERMINED",failed?"服务暂未返回结果。":"现有依据不能支撑完整结论。","请核对原文件。",List.of(),0,"DASHSCOPE:test");
+            Evaluation finalEvaluation=new Evaluation("UNDETERMINED",failed?"服务暂未返回结果。":"现有依据不能支撑完整结论。","请核对原文件。",cn.bidcheck.compat.Java8Api.listOf(),0,"DASHSCOPE:test");
             Map<String,Object> assessment=new LinkedHashMap<>();
-            assessment.put("rawEvaluation",failed?null:new Evaluation("PASS","模型曾提出全部符合 <待校验>。","",List.of(),0.75,"DASHSCOPE:test"));
-            List<Map<String,String>> adjustments=new ArrayList<>();adjustments.add(Map.of("code",code,"reason","本次校验调整 <依据>。"));
-            if(failed||code.equals("MODEL_CITATION_INVALID")) adjustments.add(Map.of("code","EVIDENCE_SCOPE_INCOMPLETE","reason","同时存在证据范围缺口，优先显示模型核验问题。"));
+            assessment.put("rawEvaluation",failed?null:new Evaluation("PASS","模型曾提出全部符合 <待校验>。","",cn.bidcheck.compat.Java8Api.listOf(),0.75,"DASHSCOPE:test"));
+            List<Map<String,String>> adjustments=new ArrayList<>();adjustments.add(cn.bidcheck.compat.Java8Api.mapOf("code", code, "reason", "本次校验调整 <依据>。"));
+            if(failed||code.equals("MODEL_CITATION_INVALID")) adjustments.add(cn.bidcheck.compat.Java8Api.mapOf("code", "EVIDENCE_SCOPE_INCOMPLETE", "reason", "同时存在证据范围缺口，优先显示模型核验问题。"));
             assessment.put("preOcrEvaluation",finalEvaluation);assessment.put("adjustments",adjustments);
-            assessment.put("ocrReview",Map.of("required",false,"incomplete",false,"locations",List.of(),"reason",""));
-            assessment.put("retrieval",Map.of("mode","LEXICAL"));assessment.put("model",Map.of("state",failed?"UNAVAILABLE":"GUARDED"));
+            assessment.put("ocrReview",cn.bidcheck.compat.Java8Api.mapOf("required", false, "incomplete", false, "locations", cn.bidcheck.compat.Java8Api.listOf(), "reason", ""));
+            assessment.put("retrieval",cn.bidcheck.compat.Java8Api.mapOf("mode", "LEXICAL"));assessment.put("model",cn.bidcheck.compat.Java8Api.mapOf("state", failed?"UNAVAILABLE":"GUARDED"));
             Finding finding=new Finding(seed.findingId(),seed.runId(),original.checkpoint(),finalEvaluation,assessment);store.save("finding",finding.id(),project,seed.runId(),finding);
-            String expected=switch(code) { case "MODEL_TIMEOUT"->"模型核验未完成";case "MODEL_CITATION_INVALID"->"模型输出未通过校验";case "EVIDENCE_SCOPE_INCOMPLETE"->"证据未覆盖检查范围";default->"证据覆盖不足"; };
+            String expected;
+switch (code) {case "MODEL_TIMEOUT":expected = "模型核验未完成"; break;case "MODEL_CITATION_INVALID":expected = "模型输出未通过校验"; break;case "EVIDENCE_SCOPE_INCOMPLETE":expected = "证据未覆盖检查范围"; break;default:expected = "证据覆盖不足"; break;}
             String html=report(seed.runId(),"html");assertThat(html).contains("核验状态："+expected,"本次校验调整 &lt;依据&gt;。","查看原始判断与调整说明").doesNotContain("<依据>");
             List<List<String>> rows=csvRows(report(seed.runId(),"csv"));List<String> header=rows.get(0),row=rows.get(1);
             assertThat(row.get(header.indexOf("核验状态"))).isEqualTo(expected);assertThat(row.get(header.indexOf("自动结论"))).isEqualTo("待确认");

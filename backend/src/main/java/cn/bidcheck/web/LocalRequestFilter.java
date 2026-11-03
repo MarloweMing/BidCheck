@@ -1,7 +1,7 @@
 package cn.bidcheck.web;
 
-import jakarta.servlet.*;
-import jakarta.servlet.http.*;
+import javax.servlet.*;
+import javax.servlet.http.*;
 import java.io.IOException;
 import java.net.URI;
 import java.util.Set;
@@ -19,8 +19,8 @@ public class LocalRequestFilter extends OncePerRequestFilter {
         response.setHeader("Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
         String origin=request.getHeader("Origin");
         // An attacker-controlled hostname can rebind to loopback and otherwise become "same-origin".
-        if(!Set.of("localhost","127.0.0.1","::1","[::1]").contains(request.getServerName().toLowerCase(java.util.Locale.ROOT))
-            ||!Set.of("127.0.0.1","::1","0:0:0:0:0:0:0:1").contains(request.getRemoteAddr())) {
+        if(!cn.bidcheck.compat.Java8Api.setOf("localhost", "127.0.0.1", "::1", "[::1]").contains(request.getServerName().toLowerCase(java.util.Locale.ROOT))
+            ||!cn.bidcheck.compat.Java8Api.setOf("127.0.0.1", "::1", "0:0:0:0:0:0:0:1").contains(request.getRemoteAddr())) {
             reject(response,403,"本机工作台仅接受本机地址访问"); return;
         }
         if("cross-site".equals(request.getHeader("Sec-Fetch-Site"))) { reject(response,403,"不允许跨站访问本机数据"); return; }

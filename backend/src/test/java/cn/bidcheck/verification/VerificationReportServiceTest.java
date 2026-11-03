@@ -8,15 +8,15 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class VerificationReportServiceTest {
     @Test void preparedScopeUsesFrozenEvidenceVersionAndKeepsDeferredSeparate() {
-        Map<String,Object> prepared=Map.of("documentId","new","name","证据版本.pdf","version",2,"sha256","newhash");
-        Map<String,Object> run=Map.of("evidenceDocumentIds",List.of("new"),"preparedManifest",List.of(prepared,Map.of("documentId","foreign","name","不在证据集合")));
-        Map<String,Object> coverage=Map.of("notice","按检查计划已识别 1 处，1 处待按需补识别","deferredLocations",List.of(Map.of("documentId","new","label","第 2 页","warning","[OCR_DEFERRED][OCR未完成] 延期")),"failedLocations",List.of(Map.of("documentId","new","label","第 3 页","warning","识别超时")));
-        Map<String,Object> actual=Map.of("id","new","version",2,"sha256","newhash","ocrCoverage",coverage);
-        String result=VerificationReportService.preparedScope(run,List.of(actual,Map.of("id","old","version",1,"sha256","oldhash","ocrCoverage",Map.of("notice","旧版本不能混入"))));
+        Map<String,Object> prepared=cn.bidcheck.compat.Java8Api.mapOf("documentId", "new", "name", "证据版本.pdf", "version", 2, "sha256", "newhash");
+        Map<String,Object> run=cn.bidcheck.compat.Java8Api.mapOf("evidenceDocumentIds", cn.bidcheck.compat.Java8Api.listOf("new"), "preparedManifest", cn.bidcheck.compat.Java8Api.listOf(prepared, cn.bidcheck.compat.Java8Api.mapOf("documentId", "foreign", "name", "不在证据集合")));
+        Map<String,Object> coverage=cn.bidcheck.compat.Java8Api.mapOf("notice", "按检查计划已识别 1 处，1 处待按需补识别", "deferredLocations", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("documentId", "new", "label", "第 2 页", "warning", "[OCR_DEFERRED][OCR未完成] 延期")), "failedLocations", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("documentId", "new", "label", "第 3 页", "warning", "识别超时")));
+        Map<String,Object> actual=cn.bidcheck.compat.Java8Api.mapOf("id", "new", "version", 2, "sha256", "newhash", "ocrCoverage", coverage);
+        String result=VerificationReportService.preparedScope(run,cn.bidcheck.compat.Java8Api.listOf(actual, cn.bidcheck.compat.Java8Api.mapOf("id", "old", "version", 1, "sha256", "oldhash", "ocrCoverage", cn.bidcheck.compat.Java8Api.mapOf("notice", "旧版本不能混入"))));
         assertTrue(result.contains("证据版本.pdf · V2"));assertTrue(result.contains("待按需补识别 · 第 2 页"));assertTrue(result.contains("识别未完成 · 第 3 页"));
         assertFalse(result.contains("旧版本不能混入"));assertFalse(result.contains("不在证据集合"));
-        assertTrue(VerificationReportService.preparedScope(Map.of("manifest",List.of(prepared)),List.of(actual)).isEmpty(),"Legacy reports never acquire a later prepared manifest");
-        String mismatch=VerificationReportService.preparedScope(run,List.of(Map.of("id","new","version",3,"sha256","newhash","ocrCoverage",coverage)));
+        assertTrue(VerificationReportService.preparedScope(cn.bidcheck.compat.Java8Api.mapOf("manifest", cn.bidcheck.compat.Java8Api.listOf(prepared)),cn.bidcheck.compat.Java8Api.listOf(actual)).isEmpty(),"Legacy reports never acquire a later prepared manifest");
+        String mismatch=VerificationReportService.preparedScope(run,cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("id", "new", "version", 3, "sha256", "newhash", "ocrCoverage", coverage)));
         assertFalse(mismatch.contains("按检查计划已识别 1 处"));assertTrue(mismatch.contains("未返回识别范围说明"));
     }
     @ParameterizedTest

@@ -19,11 +19,11 @@ final class RequirementPrimitiveSemantics {
             if(!prefix.matches("(?s).*(?:不要求|无需|不必|不用).{0,16}"))return m.group(1);
         }return "";
     }
-    private static boolean uniquePriceField(Rule rule){String field=uniqueField(rule.sourceQuote());return !field.isBlank()&&(field.equals(rule.field())||Set.of("price","amount","quote").contains(rule.field()));}
+    private static boolean uniquePriceField(Rule rule){String field=uniqueField(rule.sourceQuote());return !cn.bidcheck.compat.Java8Api.isBlank(field)&&(field.equals(rule.field())||cn.bidcheck.compat.Java8Api.setOf("price", "amount", "quote").contains(rule.field()));}
     static String issue(Rule rule){
         if(!"NUMBER".equals(rule.predicate()))return null;
-        if(uniquePriceField(rule)&&"1".equals(rule.expected())&&Set.of("=","==","EQ").contains(rule.operator())
-                &&Set.of("","个","份","项").contains(rule.unit())&&!explicitMonetaryConstraint(rule.sourceQuote()))return UNIQUE_ISSUE;
+        if(uniquePriceField(rule)&&"1".equals(rule.expected())&&cn.bidcheck.compat.Java8Api.setOf("=", "==", "EQ").contains(rule.operator())
+                &&cn.bidcheck.compat.Java8Api.setOf("", "个", "份", "项").contains(rule.unit())&&!explicitMonetaryConstraint(rule.sourceQuote()))return UNIQUE_ISSUE;
         String quote=rule.sourceQuote();
         if(quote.matches("(?s).*(?:不低于|不得低于|低于)(?:实际|本次|项目)?成本.*")
                 &&"0".equals(rule.expected())&&!quote.matches("(?s).*成本(?:价|金额)?\\s*(?:为|是|[:：])\\s*(?:人民币|CNY)?\\s*0(?:\\.0+)?\\s*(?:亿元|万元|元).*")
@@ -34,15 +34,11 @@ final class RequirementPrimitiveSemantics {
     private static boolean separateZeroAmount(Rule rule){
         String field=clean(rule.field()),basis=clean(str(rule.parameters(),"amountBasis"));
         if(field.length()<2||field.length()>40||field.matches("(?s).*(?:报价|成本|总价|投标价).*")
-                ||Set.of("price","amount","quote","金额","数额").contains(field.toLowerCase(Locale.ROOT))
-                ||!basis.isBlank()&&!basis.equals(field)||!Set.of("元","万元","亿元").contains(rule.unit()))return false;
-        String op=switch(RequirementGrounding.canonicalOp(rule.operator())){
-            case "="->"(?:为|是|等于|[:：]|=)";
-            case ">="->"(?:不少于|不低于|至少|≥|>=)";
-            case "<="->"(?:不超过|不得超过|不高于|至多|≤|<=)";
-            default->"";
-        };
-        if(op.isBlank())return false;
+                ||cn.bidcheck.compat.Java8Api.setOf("price", "amount", "quote", "金额", "数额").contains(field.toLowerCase(Locale.ROOT))
+                ||!cn.bidcheck.compat.Java8Api.isBlank(basis)&&!basis.equals(field)||!cn.bidcheck.compat.Java8Api.setOf("元", "万元", "亿元").contains(rule.unit()))return false;
+        String op;
+switch (RequirementGrounding.canonicalOp(rule.operator())) {case "=":op = "(?:为|是|等于|[:：]|=)"; break;case ">=":op = "(?:不少于|不低于|至少|≥|>=)"; break;case "<=":op = "(?:不超过|不得超过|不高于|至多|≤|<=)"; break;default:op = ""; break;}
+        if(cn.bidcheck.compat.Java8Api.isBlank(op))return false;
         String text=rule.sourceQuote().replaceAll("[\\t \\u00a0\\u3000]+","");
         return Pattern.compile("(?:^|[。；;，,\\r\\n])(?:本项目|本次|投标人)?"+Pattern.quote(field)
                 +"(?:金额|数额)?(?:应当|必须|应|须)?"+op+"(?:人民币|CNY)?0(?:\\.0+)?"+Pattern.quote(rule.unit())+"(?=$|[。；;，,\\r\\n])").matcher(text).find();
@@ -64,16 +60,16 @@ final class RequirementPrimitiveSemantics {
         if(!UNIQUE_ISSUE.equals(issue(numeric))||original.sourceQuote().matches("(?s).*(?:备选|备择|替代方案|多个报价|两(?:个|份)以上).*")||!verifiedUniqueness(repaired)||!original.children().isEmpty()||!repaired.children().isEmpty()
                 ||!original.id().equals(repaired.id())||!original.sourceQuote().equals(repaired.sourceQuote())
                 ||!original.subject().equals(repaired.subject())||!original.field().equals(repaired.field())
-                ||!original.logic().equals(repaired.logic())||!repaired.expected().isBlank()||!repaired.operator().isBlank()||!repaired.unit().isBlank())return false;
-        for(String key:List.of("lot","currency","amountBasis","taxBasis","employer"))
+                ||!original.logic().equals(repaired.logic())||!cn.bidcheck.compat.Java8Api.isBlank(repaired.expected())||!cn.bidcheck.compat.Java8Api.isBlank(repaired.operator())||!cn.bidcheck.compat.Java8Api.isBlank(repaired.unit()))return false;
+        for(String key:cn.bidcheck.compat.Java8Api.listOf("lot", "currency", "amountBasis", "taxBasis", "employer"))
             if(!str(original.parameters(),key).equals(str(repaired.parameters(),key)))return false;
         return RequirementGrounding.issue(repaired,repaired.sourceQuote())==null;
     }
     static Map<String,Object> diagnostic(Rule rule){
-        if(!"UNSUPPORTED".equals(rule.predicate()))return Map.of();
+        if(!"UNSUPPORTED".equals(rule.predicate()))return cn.bidcheck.compat.Java8Api.mapOf();
         String issue=str(rule.parameters(),"compilationIssue");
-        if(UNIQUE_ISSUE.equals(issue))return linked("kind","SOURCE_BOUND_PRIMITIVE_REPAIR","allowedPredicates",rule.sourceQuote().matches("(?s).*(?:备选|备择|替代方案|多个报价|两(?:个|份)以上).*")?List.of("UNSUPPORTED"):List.of("SAME_FIELD","UNSUPPORTED"),"requiredField",rule.field(),"clearFabricatedThreshold",true,"wholeScopeProofStillRequired",true);
-        if(COST_ISSUE.equals(issue))return linked("kind","SOURCE_BOUND_COST_REQUIREMENT","allowedPredicates",List.of("NUMBER","UNSUPPORTED"),"fabricatedZeroForbidden",true,"missingCostNotAssumedZero",true);
-        return Map.of();
+        if(UNIQUE_ISSUE.equals(issue))return linked("kind","SOURCE_BOUND_PRIMITIVE_REPAIR","allowedPredicates",rule.sourceQuote().matches("(?s).*(?:备选|备择|替代方案|多个报价|两(?:个|份)以上).*")?cn.bidcheck.compat.Java8Api.listOf("UNSUPPORTED"):cn.bidcheck.compat.Java8Api.listOf("SAME_FIELD", "UNSUPPORTED"),"requiredField",rule.field(),"clearFabricatedThreshold",true,"wholeScopeProofStillRequired",true);
+        if(COST_ISSUE.equals(issue))return linked("kind","SOURCE_BOUND_COST_REQUIREMENT","allowedPredicates",cn.bidcheck.compat.Java8Api.listOf("NUMBER", "UNSUPPORTED"),"fabricatedZeroForbidden",true,"missingCostNotAssumedZero",true);
+        return cn.bidcheck.compat.Java8Api.mapOf();
     }
 }

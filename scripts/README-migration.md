@@ -2,9 +2,9 @@
 
 先停止旧、新应用，备份 H2 的 `.mv.db` 和 `data/files`。工具只读备份，目标 MySQL 的 `qc_record`、`qc_task` 必须为空。先使用 `backend/src/main/resources/schema-mysql.sql` 初始化完整目标 schema；迁移工具只复制 `qc_record`、`qc_task`，不会创建或修改 schema。
 
-需要 Java 17、已打包的应用 JAR，以及通过当前进程环境注入的变量：`BIDCHECK_MYSQL_URL`、`BIDCHECK_MYSQL_USER`、`BIDCHECK_MYSQL_PASSWORD`、`BIDCHECK_STORAGE_ENDPOINT`、`BIDCHECK_STORAGE_ACCESS_KEY`、`BIDCHECK_STORAGE_SECRET_KEY`。不要把密钥写进命令参数、脚本或版本库。
+需要 JDK 8、已打包的应用 JAR，以及通过当前进程环境注入的变量：`BIDCHECK_MYSQL_URL`、`BIDCHECK_MYSQL_USER`、`BIDCHECK_MYSQL_PASSWORD`、`BIDCHECK_STORAGE_ENDPOINT`、`BIDCHECK_STORAGE_ACCESS_KEY`、`BIDCHECK_STORAGE_SECRET_KEY`。不要把密钥写进命令参数、脚本或版本库。
 
-在项目根目录提取运行依赖，然后用 Java 源码启动器运行，无需启动 Spring：
+在项目根目录提取运行依赖，再使用 JDK 8 先编译、后运行，无需启动 Spring：
 
 ```powershell
 $migrationJar = (Resolve-Path 'backend/target/bidcheck-0.1.0.jar').Path
@@ -13,13 +13,19 @@ New-Item -ItemType Directory -Force -Path $migrationLibs | Out-Null
 Push-Location $migrationLibs
 jar xf $migrationJar BOOT-INF/lib
 Pop-Location
-java --class-path "$migrationLibs/BOOT-INF/lib/*" scripts/MigrateLocalData.java 'C:/backup/bidcheck' 'C:/backup/files'
+$migrationClasses = Join-Path $migrationLibs 'classes'
+New-Item -ItemType Directory -Force -Path $migrationClasses | Out-Null
+javac -encoding UTF-8 -source 8 -target 8 -cp "$migrationLibs/BOOT-INF/lib/*" -d $migrationClasses scripts/MigrateLocalData.java
+if ($LASTEXITCODE -ne 0) { throw 'Migration tool compilation failed.' }
+java -cp "$migrationClasses;$migrationLibs/BOOT-INF/lib/*" MigrateLocalData 'C:/backup/bidcheck' 'C:/backup/files'
 ```
 
 Linux 下同样先在新目录执行 `jar xf /absolute/path/bidcheck-0.1.0.jar BOOT-INF/lib`，再运行：
 
 ```bash
-java --class-path '/absolute/path/migration-runtime/BOOT-INF/lib/*' scripts/MigrateLocalData.java /backup/bidcheck /backup/files
+mkdir -p /absolute/path/migration-runtime/classes
+javac -encoding UTF-8 -source 8 -target 8 -cp '/absolute/path/migration-runtime/BOOT-INF/lib/*' -d /absolute/path/migration-runtime/classes scripts/MigrateLocalData.java &&
+java -cp '/absolute/path/migration-runtime/classes:/absolute/path/migration-runtime/BOOT-INF/lib/*' MigrateLocalData /backup/bidcheck /backup/files
 ```
 
 第一个参数是数据库基本路径，例如 `C:/backup/bidcheck`，不要带 `.mv.db`。源 H2 使用原应用默认的 `sa` / 空密码，以 `IFEXISTS` 和只读模式打开。旧任务表没有租约列也可迁移：仅复制固定两张表的共同列。

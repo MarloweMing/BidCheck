@@ -17,14 +17,14 @@ class CheckpointCompletionTest {
                 if(index==3)fourthStarted.countDown();
                 return index;
             },(index,value)->{assertSame(caller,Thread.currentThread());assertEquals(index,value);persisted.add(index);});
-            assertEquals(Set.of(0,1,2,3,4),new HashSet<>(persisted));assertEquals(5,persisted.size());assertNotEquals(0,persisted.get(0));
+            assertEquals(cn.bidcheck.compat.Java8Api.setOf(0, 1, 2, 3, 4),new HashSet<>(persisted));assertEquals(5,persisted.size());assertNotEquals(0,persisted.get(0));
         } finally {executor.shutdown();}
     }
     @Test void failedPersistenceStopsFurtherSubmission() {
         CheckpointExecutor executor=new CheckpointExecutor(1);List<Integer> started=new CopyOnWriteArrayList<>();
         try {
             assertThrows(IllegalStateException.class,()->executor.forEachCompleted(3,i->{started.add(i);return i;},(i,v)->{throw new IllegalStateException("lease lost");}));
-            assertEquals(List.of(0),started);
+            assertEquals(cn.bidcheck.compat.Java8Api.listOf(0),started);
         } finally {executor.shutdown();}
     }
     @Test void shutdownReleasesCallersWhoseTasksAreQueuedBehindAnotherInvocation() throws Exception {

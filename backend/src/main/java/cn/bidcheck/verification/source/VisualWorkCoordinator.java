@@ -8,8 +8,34 @@ import java.util.function.*;
 /** Workers only render/call models. Admission transactions and completion writes execute on the caller. */
 public final class VisualWorkCoordinator {
     @FunctionalInterface public interface Work { Map<String,Object> run(BooleanSupplier permit); }
-    public record Job(String id,Work work) {}
-    private record Event(Job job,CompletableFuture<Boolean> permit,Map<String,Object> response,Throwable failure) {}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public static final class Job {
+        private final String id;
+        private final Work work;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public Job(@com.fasterxml.jackson.annotation.JsonProperty("id") String id, @com.fasterxml.jackson.annotation.JsonProperty("work") Work work) { this.id = id; this.work = work; }
+        public String id() { return id; }
+        public Work work() { return work; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Job that = (Job) other; return java.util.Objects.equals(this.id, that.id) && java.util.Objects.equals(this.work, that.work); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.id); hash = 31 * hash + java.util.Objects.hashCode(this.work); return hash; }
+        @Override public String toString() { return "Job[" + "id=" + id + ", work=" + work + "]"; }
+}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Event {
+        private final Job job;
+        private final CompletableFuture<Boolean> permit;
+        private final Map<String,Object> response;
+        private final Throwable failure;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Event(@com.fasterxml.jackson.annotation.JsonProperty("job") Job job, @com.fasterxml.jackson.annotation.JsonProperty("permit") CompletableFuture<Boolean> permit, @com.fasterxml.jackson.annotation.JsonProperty("response") Map<String,Object> response, @com.fasterxml.jackson.annotation.JsonProperty("failure") Throwable failure) { this.job = job; this.permit = permit; this.response = response; this.failure = failure; }
+        public Job job() { return job; }
+        public CompletableFuture<Boolean> permit() { return permit; }
+        public Map<String,Object> response() { return response; }
+        public Throwable failure() { return failure; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Event that = (Event) other; return java.util.Objects.equals(this.job, that.job) && java.util.Objects.equals(this.permit, that.permit) && java.util.Objects.equals(this.response, that.response) && java.util.Objects.equals(this.failure, that.failure); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.job); hash = 31 * hash + java.util.Objects.hashCode(this.permit); hash = 31 * hash + java.util.Objects.hashCode(this.response); hash = 31 * hash + java.util.Objects.hashCode(this.failure); return hash; }
+        @Override public String toString() { return "Event[" + "job=" + job + ", permit=" + permit + ", response=" + response + ", failure=" + failure + "]"; }
+}
     private VisualWorkCoordinator() {}
 
     public static void run(List<Job> initial,int parallelism,BooleanSupplier reserve,BooleanSupplier schedule,
@@ -63,8 +89,8 @@ public final class VisualWorkCoordinator {
     }
     private static void interrupted(){if(Thread.currentThread().isInterrupted())throw new CancellationException("视觉批次已中断");}
     private static RuntimeException propagate(Throwable error){
-        if(error instanceof Error fatal)throw fatal;
-        if(error instanceof RuntimeException runtime)return runtime;
+        if(error instanceof Error)throw ((Error) (error));
+        if(error instanceof RuntimeException)return ((RuntimeException) (error));
         CancellationException stopped=new CancellationException("视觉执行未完成，已停止批次");stopped.initCause(error);return stopped;
     }
 }

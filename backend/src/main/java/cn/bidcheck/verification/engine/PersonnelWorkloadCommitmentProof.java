@@ -27,14 +27,14 @@ final class PersonnelWorkloadCommitmentProof {
     static Decision evaluate(Rule r,List<Fact> matched,RuleEvaluator evaluator){
         Binding binding=binding(r,evaluator);Matcher requirement=REQUIREMENT.matcher(clean(r.expected()));
         if(binding==null||!requirement.matches()||!clean(r.sourceQuote()).replaceAll("[。；;]$","").equals(clean(r.expected()).replaceAll("[。；;]$","")))
-            return evaluator.unknown(r,"COMMITMENT_REQUIREMENT_BINDING_REQUIRED","人员承诺的人员范围、法定上限和本项目范围尚未与招标原要求对应",List.of());
-        Rule collective=new Rule(r.id(),r.description(),r.predicate(),requirement.group(1),r.field(),r.operator(),r.expected(),r.unit(),Map.of(),r.sourceQuote(),"",List.of());
-        Rule bound=new RequirementContextBindings(binding.evidence().quote(),"FROZEN_TENDER").bind(collective,List.of());
+            return evaluator.unknown(r,"COMMITMENT_REQUIREMENT_BINDING_REQUIRED","人员承诺的人员范围、法定上限和本项目范围尚未与招标原要求对应",cn.bidcheck.compat.Java8Api.listOf());
+        Rule collective=new Rule(r.id(),r.description(),r.predicate(),requirement.group(1),r.field(),r.operator(),r.expected(),r.unit(),cn.bidcheck.compat.Java8Api.mapOf(),r.sourceQuote(),"",cn.bidcheck.compat.Java8Api.listOf());
+        Rule bound=new RequirementContextBindings(binding.evidence().quote(),"FROZEN_TENDER").bind(collective,cn.bidcheck.compat.Java8Api.listOf());
         List<String> roles=RequirementContextBindings.validatedSubjectSet(bound);
-        if(roles.isEmpty())return evaluator.unknown(r,"COMMITMENT_PERSONNEL_SCOPE_REQUIRED","“上述人员”的同条款岗位集合尚未明确，不能把部分岗位承诺当作全体承诺",List.of());
+        if(roles.isEmpty())return evaluator.unknown(r,"COMMITMENT_PERSONNEL_SCOPE_REQUIRED","“上述人员”的同条款岗位集合尚未明确，不能把部分岗位承诺当作全体承诺",cn.bidcheck.compat.Java8Api.listOf());
 
-        Rule party=new Rule(r.id()+":issuer","当前投标人","RELATION","投标人","名称","","","",Map.of(),"","",List.of());
-        List<Fact> parties=EnterpriseSubjectBindings.extract(List.of(party),evaluator.corpus.all);
+        Rule party=new Rule(r.id()+":issuer","当前投标人","RELATION","投标人","名称","","","",cn.bidcheck.compat.Java8Api.mapOf(),"","",cn.bidcheck.compat.Java8Api.listOf());
+        List<Fact> parties=EnterpriseSubjectBindings.extract(cn.bidcheck.compat.Java8Api.listOf(party),evaluator.corpus.all);
         Set<String> companies=new LinkedHashSet<>(DomainBindings.subjects("投标人",parties,evaluator.corpus));
         Map<String,DocumentScopeProof.Resolver> resolvers=new HashMap<>();
         Map<String,Map<String,Object>> sourceProofs=new LinkedHashMap<>();List<Fact> accepted=new ArrayList<>();
@@ -44,9 +44,9 @@ final class PersonnelWorkloadCommitmentProof {
             Document document=evaluator.corpus.documents.stream().filter(d->d.id().equals(source.evidence().documentId())&&d.role().equals("BID")&&d.projectId().equals(binding.document().projectId())).findFirst().orElse(null);
             if(document==null)continue;
             Map<String,Object> scope=resolvers.computeIfAbsent(document.id(),id->DocumentScopeProof.forDocument(document)).currentEvidence(source.evidence());
-            if(!Boolean.TRUE.equals(scope.get("verifiedCurrent"))||!(scope.get("sourceScope") instanceof Map<?,?> scoped))continue;
-            String project=Objects.toString(scoped.get("projectName"),"");
-            if(project.isBlank()||binding.document().pages().stream().limit(12).noneMatch(p->clean(p.text()).contains(clean(project))))continue;
+            if(!Boolean.TRUE.equals(scope.get("verifiedCurrent"))||!(scope.get("sourceScope") instanceof Map<?,?>))continue;
+            String project=Objects.toString(((Map<?,?>) (scope.get("sourceScope"))).get("projectName"),"");
+            if(cn.bidcheck.compat.Java8Api.isBlank(project)||binding.document().pages().stream().limit(12).noneMatch(p->clean(p.text()).contains(clean(project))))continue;
             String original=source.evidence().quote(),text=clean(original);Matcher issuer=ISSUER.matcher(original);
             if(!issuer.find())continue;String company=issuer.group(1);if(issuer.find()||!companies.contains(company))continue;
             Matcher response=RESPONSE.matcher(text);boolean positive=response.find();
@@ -56,8 +56,8 @@ final class PersonnelWorkloadCommitmentProof {
                 if(text.contains("承接项目")&&text.contains("最大数量"))contradictions.add(source.id());continue;
             }
             if(!positive)continue;
-            List<Fact> candidates=matched.stream().filter(f->f.kind().equals("DECLARATION")&&f.scope().equals("CURRENT_PROJECT")
-                &&(f.subject().isBlank()||f.subject().equals(company))&&f.sourceIds().contains(source.id())).toList();
+            List<Fact> candidates=cn.bidcheck.compat.Java8Api.toList(matched.stream().filter(f->f.kind().equals("DECLARATION")&&f.scope().equals("CURRENT_PROJECT")
+                &&(cn.bidcheck.compat.Java8Api.isBlank(f.subject())||f.subject().equals(company))&&f.sourceIds().contains(source.id())));
             for(Fact fact:candidates){
                 // Revalidate the source-local raw and normalized value. A model basis/explanation is not evidence.
                 String issue=new ProofVerifier().issue(fact,evaluator.corpus.byId);
@@ -74,21 +74,32 @@ final class PersonnelWorkloadCommitmentProof {
             "sourceProofs",sourceProofs,"rejectedCandidates",rejected,"actualWorkloadVerified",false,"signatureVerified",false);
         if(!contradictions.isEmpty()){proof.put("conflictingSourceIds",contradictions);return evaluator.unknown(r,"COMMITMENT_RESPONSE_CONFLICT","同范围人员承诺出现否定、例外或限制条件，不能按笼统承诺覆盖",accepted,proof);}
         if(accepted.isEmpty())return evaluator.unknown(r,"CONTENT_EVIDENCE_REQUIRED","尚未取得当前投标主体对全部拟派关键岗位人员、不超法定承接上限且覆盖本项目的完整书面承诺",matched,proof);
-        return evaluator.pass(r,"当前投标主体已书面承诺拟派关键岗位人员承接本项目不超过法定同时承接上限；仅证明承诺内容，不证明实际在建数量或签章",accepted.stream().distinct().toList(),proof);
+        return evaluator.pass(r,"当前投标主体已书面承诺拟派关键岗位人员承接本项目不超过法定同时承接上限；仅证明承诺内容，不证明实际在建数量或签章",cn.bidcheck.compat.Java8Api.toList(accepted.stream().distinct()),proof);
     }
 
-    private record Binding(Document document,Evidence evidence){}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Binding{
+        private final Document document;
+        private final Evidence evidence;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Binding(@com.fasterxml.jackson.annotation.JsonProperty("document") Document document, @com.fasterxml.jackson.annotation.JsonProperty("evidence") Evidence evidence) { this.document = document; this.evidence = evidence; }
+        public Document document() { return document; }
+        public Evidence evidence() { return evidence; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Binding that = (Binding) other; return java.util.Objects.equals(this.document, that.document) && java.util.Objects.equals(this.evidence, that.evidence); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.document); hash = 31 * hash + java.util.Objects.hashCode(this.evidence); return hash; }
+        @Override public String toString() { return "Binding[" + "document=" + document + ", evidence=" + evidence + "]"; }
+}
     private static Binding binding(Rule rule,RuleEvaluator evaluator){
-        if(!(rule.parameters().get("requirementSourceContext") instanceof Map<?,?> context)||!(context.get("identity") instanceof Map<?,?> id)
-            ||!(evaluator.context.get("tenderDocuments") instanceof List<?> documents))return null;
-        for(Object item:documents)if(item instanceof Document document&&document.role().equals("TENDER")&&document.id().equals(id.get("documentId"))
-            &&document.sha256().equals(id.get("documentHash"))&&document.projectId().equals(id.get("projectId"))&&Objects.equals(document.version(),id.get("documentVersion"))){
-            for(Page page:document.pages())if(Objects.equals(page.number(),id.get("location"))&&page.locationType().equals(id.get("locationType"))
-                &&id.get("start") instanceof Number a&&id.get("end") instanceof Number b){
-                int start=a.intValue(),end=b.intValue();if(start<0||end<=start||end>page.text().length())continue;String quote=page.text().substring(start,end);
-                if(identity(quote).equals(id.get("sourceHash"))&&RequirementContextBindings.uniqueOffset(quote,rule.sourceQuote())>=0
+        if(!(rule.parameters().get("requirementSourceContext") instanceof Map<?,?>)||!(((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity") instanceof Map<?,?>)
+            ||!(evaluator.context.get("tenderDocuments") instanceof List<?>))return null;
+        for(Object item:((List<?>) (evaluator.context.get("tenderDocuments"))))if(item instanceof Document&&((Document) (item)).role().equals("TENDER")&&((Document) (item)).id().equals(((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("documentId"))
+            &&((Document) (item)).sha256().equals(((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("documentHash"))&&((Document) (item)).projectId().equals(((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("projectId"))&&Objects.equals(((Document) (item)).version(),((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("documentVersion"))){
+            for(Page page:((Document) (item)).pages())if(Objects.equals(page.number(),((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("location"))&&page.locationType().equals(((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("locationType"))
+                &&((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("start") instanceof Number&&((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("end") instanceof Number){
+                int start=((Number) (((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("start"))).intValue(),end=((Number) (((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("end"))).intValue();if(start<0||end<=start||end>page.text().length())continue;String quote=page.text().substring(start,end);
+                if(identity(quote).equals(((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementSourceContext"))).get("identity"))).get("sourceHash"))&&RequirementContextBindings.uniqueOffset(quote,rule.sourceQuote())>=0
                     &&quote.contains("《人员承诺书》")&&quote.matches("(?s).*(?:须|应|需)(?:出具|提供|提交)承诺(?:文件|书).*"))
-                    return new Binding(document,new Evidence(document.id(),document.name(),page.number(),page.locationType(),quote,"chars:"+start+"-"+end,1));
+                    return new Binding(((Document) (item)),new Evidence(((Document) (item)).id(),((Document) (item)).name(),page.number(),page.locationType(),quote,"chars:"+start+"-"+end,1));
             }
         }return null;
     }

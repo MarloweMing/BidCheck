@@ -12,29 +12,29 @@ final class AgentReviewState {
     private AgentReviewState(){}
 
     static Map<String,Object> findApprovedPlan(RunSession session,String requirementFingerprint,String planRevision){
-        if(requirementFingerprint==null||requirementFingerprint.isBlank()||planRevision==null||planRevision.isBlank())return Map.of();
-        String fingerprint=session.fingerprint(PLAN,Map.of("planRevision",planRevision));
+        if(requirementFingerprint==null||cn.bidcheck.compat.Java8Api.isBlank(requirementFingerprint)||planRevision==null||cn.bidcheck.compat.Java8Api.isBlank(planRevision))return cn.bidcheck.compat.Java8Api.mapOf();
+        String fingerprint=session.fingerprint(PLAN,cn.bidcheck.compat.Java8Api.mapOf("planRevision", planRevision));
         List<Map<String,Object>> prior=prior(session);
         for(int i=prior.size()-1;i>=0;i--){Map<String,Object> step=prior.get(i);
             if(!current(session,step,PLAN,fingerprint))continue;
             Map<String,Object> output=output(session,step);
             if(requirementFingerprint.equals(output.get("requirementFingerprint")))return output;
         }
-        return Map.of();
+        return cn.bidcheck.compat.Java8Api.mapOf();
     }
 
     static List<Map<String,Object>> acceptedJudgments(RunSession session,String planRevision){
-        if(planRevision==null||planRevision.isBlank())return List.of();
+        if(planRevision==null||cn.bidcheck.compat.Java8Api.isBlank(planRevision))return cn.bidcheck.compat.Java8Api.listOf();
         List<Map<String,Object>> accepted=new ArrayList<>();
         for(Map<String,Object> step:prior(session)){
             Map<String,Object> output=output(session,step);String target=str(output,"targetObligationId");
-            if(target.isBlank()||!planRevision.equals(output.get("planRevision")))continue;
-            String fingerprint=session.fingerprint(JUDGMENT,Map.of("targetObligationId",target,"planRevision",planRevision));
+            if(cn.bidcheck.compat.Java8Api.isBlank(target)||!planRevision.equals(output.get("planRevision")))continue;
+            String fingerprint=session.fingerprint(JUDGMENT,cn.bidcheck.compat.Java8Api.mapOf("targetObligationId", target, "planRevision", planRevision));
             if(current(session,step,JUDGMENT,fingerprint))accepted.add(output);
         }
         // Keep all eligible revisions in persistence encounter order. Only the caller
         // knows which exact evidence dependency revision is still valid today.
-        return List.copyOf(accepted);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(accepted);
     }
 
     private static List<Map<String,Object>> prior(RunSession session){
@@ -48,6 +48,6 @@ final class AgentReviewState {
             &&fingerprint.equals(step.get("inputFingerprint"))&&step.get("output") instanceof Map<?,?>;
     }
     @SuppressWarnings("unchecked") private static Map<String,Object> output(RunSession session,Map<String,Object> step){
-        return step.get("output") instanceof Map<?,?> value?session.json.convertValue(value,Map.class):Map.of();
+        return step.get("output") instanceof Map<?,?>?session.json.convertValue(((Map<?,?>) (step.get("output"))),Map.class):cn.bidcheck.compat.Java8Api.mapOf();
     }
 }

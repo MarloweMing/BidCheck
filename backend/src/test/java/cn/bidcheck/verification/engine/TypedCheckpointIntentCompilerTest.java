@@ -14,7 +14,7 @@ class TypedCheckpointIntentCompilerTest {
     private Plan compile(Checkpoint checkpoint,boolean focused)throws Exception{
         Map<String,Object> context=new LinkedHashMap<>();
         if(checkpoint.source()!=null)context.put("originalRequirement",checkpoint.source().quote());
-        if(focused){context.put("focusedCheck",true);context.put("atomicDomains",List.of("FIELD","MATERIAL","DATE","TEXT"));}
+        if(focused){context.put("focusedCheck",true);context.put("atomicDomains",cn.bidcheck.compat.Java8Api.listOf("FIELD", "MATERIAL", "DATE", "TEXT"));}
         return new RequirementCompiler().compile(checkpoint,new RunSession(ModelGateway.disabled(),context,"typed-intent-test"));
     }
     private Checkpoint checkpoint(String title,String type,String field,String operator,String expected,Evidence source){
@@ -57,7 +57,7 @@ class TypedCheckpointIntentCompilerTest {
     }
 
     @Test void commonFullTextChecksBecomeProgramRulesWithExplicitCapabilityGaps()throws Exception{
-        for(String field:List.of("amountAccuracy","missingFields","signatureDate","signingAfterOpening","typos")){
+        for(String field:cn.bidcheck.compat.Java8Api.listOf("amountAccuracy", "missingFields", "signatureDate", "signingAfterOpening", "typos")){
             Plan plan=compile(checkpoint("全文检查-"+field,"FULL_TEXT_REVIEW",field,"REVIEW","核对"+field,null),true);
             Rule rule=only(plan);
             assertEquals("TEXT_ANOMALY",rule.predicate(),field);assertEquals("全文",rule.parameters().get("textScope"),field);
@@ -82,12 +82,12 @@ class TypedCheckpointIntentCompilerTest {
         Rule rule=only(compile(checkpoint("证书在投标截止日有效","DATE_VALIDITY","certificateExpiry",">=","2026-08-05",source("投标截止时间为：2026年08月05日09时30分。")),true));
         EvidenceCorpus corpus=certificateCorpus();
         Fact expired=certificate(corpus,"expired","CURRENT_PROJECT","2024-01-01","2026-08-04");
-        Decision failure=new RuleEvaluator(List.of(expired),corpus,deadlineContext(true)).evaluate(rule);
+        Decision failure=new RuleEvaluator(cn.bidcheck.compat.Java8Api.listOf(expired),corpus,deadlineContext(true)).evaluate(rule);
         assertEquals("FAIL",failure.status(),failure.toString());
 
         Fact valid=certificate(corpus,"valid","CURRENT_PROJECT","2024-01-01","2027-08-04");
         Fact historical=certificate(corpus,"historical","HISTORICAL","2020-01-01","2021-01-01");
-        Decision pass=new RuleEvaluator(List.of(valid,historical),corpus,deadlineContext(true)).evaluate(rule);
+        Decision pass=new RuleEvaluator(cn.bidcheck.compat.Java8Api.listOf(valid, historical),corpus,deadlineContext(true)).evaluate(rule);
         assertEquals("PASS",pass.status(),pass.toString());
         assertEquals(1,pass.evidences().size(),"historical credentials do not enter the current-project decision");
     }
@@ -96,25 +96,21 @@ class TypedCheckpointIntentCompilerTest {
         Rule rule=only(compile(checkpoint("证书在投标截止日有效","DATE_VALIDITY","certificateExpiry",">=","2026-08-05",source("投标截止时间为：2026年08月05日09时30分。")),true));
         EvidenceCorpus corpus=certificateCorpus();
         Fact valid=certificate(corpus,"valid","CURRENT_PROJECT","2024-01-01","2027-08-04");
-        Decision pending=new RuleEvaluator(List.of(valid),corpus,deadlineContext(false)).evaluate(rule);
+        Decision pending=new RuleEvaluator(cn.bidcheck.compat.Java8Api.listOf(valid),corpus,deadlineContext(false)).evaluate(rule);
         assertEquals("UNDETERMINED",pending.status(),pending.toString());
         assertEquals("CERTIFICATE_SET_COVERAGE_REQUIRED",pending.gaps().get(0).code());
     }
 
     private EvidenceCorpus certificateCorpus(){
         Document document=new Document("bid","project","BID","投标文件.pdf",1,"bid-hash","",
-                List.of(new Page(1,"张三 注册证书 证书编号：R001 有效期2024年1月1日至2027年8月4日","PAGE","TEXT","")),List.of());
-        return new EvidenceCorpus(List.of(document));
+                cn.bidcheck.compat.Java8Api.listOf(new Page(1,"张三 注册证书 证书编号：R001 有效期2024年1月1日至2027年8月4日","PAGE","TEXT","")),cn.bidcheck.compat.Java8Api.listOf());
+        return new EvidenceCorpus(cn.bidcheck.compat.Java8Api.listOf(document));
     }
     private Fact certificate(EvidenceCorpus corpus,String id,String scope,String start,String end){
         return new Fact(id,"CERTIFICATE","张三","certificateExpiry",start+"至"+end,end,"","",scope,
-                List.of(corpus.all.get(0).id()),Map.of("category","注册证书","number","R001","numberField","证书编号",
-                        "validityField","有效期","start",start,"end",end));
+                cn.bidcheck.compat.Java8Api.listOf(corpus.all.get(0).id()),cn.bidcheck.compat.Java8Api.mapOf("category", "注册证书", "number", "R001", "numberField", "证书编号", "validityField", "有效期", "start", start, "end", end));
     }
     private Map<String,Object> deadlineContext(boolean complete){
-        return Map.of("certificateSetComplete",complete,"referenceDates",Map.of("BID_DEADLINE",Map.of(
-                "referenceDate","2026-08-05","referenceDateSourceVerified",true,
-                "referenceDateEvidence",Map.of("documentId","tender","quote","投标截止时间为：2026年08月05日09时30分。",
-                        "confirmation","USER_SELECTED_VERSION"))));
+        return cn.bidcheck.compat.Java8Api.mapOf("certificateSetComplete", complete, "referenceDates", cn.bidcheck.compat.Java8Api.mapOf("BID_DEADLINE", cn.bidcheck.compat.Java8Api.mapOf("referenceDate", "2026-08-05", "referenceDateSourceVerified", true, "referenceDateEvidence", cn.bidcheck.compat.Java8Api.mapOf("documentId", "tender", "quote", "投标截止时间为：2026年08月05日09时30分。", "confirmation", "USER_SELECTED_VERSION"))));
     }
 }

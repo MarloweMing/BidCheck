@@ -5,8 +5,7 @@ import java.util.*;
 /** Versioned business vocabulary shared by extraction, comparisons and presentation. */
 public final class ConsistencyCatalog {
     public static final String VERSION = "consistency-catalog-2.1-person-credentials";
-    public static final Set<String> DIMENSION_KEYS = Collections.unmodifiableSet(new LinkedHashSet<>(List.of(
-            "object", "stage", "trigger", "condition", "version", "range", "period", "currency", "taxBasis", "unitBasis", "dayType")));
+    public static final Set<String> DIMENSION_KEYS = Collections.unmodifiableSet(new LinkedHashSet<>(cn.bidcheck.compat.Java8Api.listOf("object", "stage", "trigger", "condition", "version", "range", "period", "currency", "taxBasis", "unitBasis", "dayType")));
     private static final Map<String,String> CATEGORIES = new LinkedHashMap<>();
     private static final Map<String,Map<String,Object>> DEFINITIONS = new LinkedHashMap<>();
     static {
@@ -132,12 +131,12 @@ public final class ConsistencyCatalog {
     private static void add(String id,String title,String category,String type,String subject,String... aliases) {
         Map<String,Object> item=new LinkedHashMap<>();
         item.put("id",id); item.put("title",title); item.put("categoryId",category); item.put("valueType",type);
-        item.put("subjectMode",subject); item.put("aliases",List.of(aliases));
+        item.put("subjectMode",subject); item.put("aliases",cn.bidcheck.compat.Java8Api.listOf(aliases));
         DEFINITIONS.put(id,Collections.unmodifiableMap(item));
     }
-    public static List<String> fields() { return List.copyOf(DEFINITIONS.keySet()); }
-    public static Map<String,Object> definition(String field) { return DEFINITIONS.getOrDefault(field,Map.of()); }
-    public static List<Map<String,Object>> definitions() { return List.copyOf(DEFINITIONS.values()); }
-    public static List<String> categories() { return List.copyOf(CATEGORIES.keySet()); }
+    public static List<String> fields() { return cn.bidcheck.compat.Java8Api.listCopyOf(DEFINITIONS.keySet()); }
+    public static Map<String,Object> definition(String field) { return DEFINITIONS.getOrDefault(field,cn.bidcheck.compat.Java8Api.mapOf()); }
+    public static List<Map<String,Object>> definitions() { return cn.bidcheck.compat.Java8Api.listCopyOf(DEFINITIONS.values()); }
+    public static List<String> categories() { return cn.bidcheck.compat.Java8Api.listCopyOf(CATEGORIES.keySet()); }
     public static String categoryTitle(String id) { return CATEGORIES.getOrDefault(id,id); }
 }

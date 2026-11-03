@@ -39,14 +39,12 @@ final class CompletenessProof {
         Matcher enumeration=ENUMERATION.matcher(requirement);
         if(enumeration.find()) {
             String list=enumeration.group(1).replaceFirst("^.*(?:对本项目的|包括|包含|内容为)","");
-            List<String> items=Arrays.stream(list.split("、")).map(String::strip).filter(s->!s.isBlank()).toList();
+            List<String> items=cn.bidcheck.compat.Java8Api.toList(Arrays.stream(list.split("、")).map(cn.bidcheck.compat.Java8Api::strip).filter(s->!cn.bidcheck.compat.Java8Api.isBlank(s)));
             boolean closed=items.size()==Integer.parseInt(enumeration.group(2))&&new HashSet<>(items).size()==items.size();
-            return Map.of("required",true,"inventoryResolved",closed,"items",items,"sourceQuote",enumeration.group(),
-                "boundary","每个清单项需要对应本项目正文。目录、同意承诺、章节标题或其他项正文不能代替；不能据未召回判缺失。");
+            return cn.bidcheck.compat.Java8Api.mapOf("required", true, "inventoryResolved", closed, "items", items, "sourceQuote", enumeration.group(), "boundary", "每个清单项需要对应本项目正文。目录、同意承诺、章节标题或其他项正文不能代替；不能据未召回判缺失。");
         }
-        if(COLLECTION.matcher(requirement).find())return Map.of("required",true,"inventoryResolved",false,"items",List.of(),
-            "sourceQuote",requirement,"boundary","本项要求完整集合；须先解析明确引用的全部清单，再逐项核对正文。模型不得自行宣称集合完整。");
-        return Map.of("required",false);
+        if(COLLECTION.matcher(requirement).find())return cn.bidcheck.compat.Java8Api.mapOf("required", true, "inventoryResolved", false, "items", cn.bidcheck.compat.Java8Api.listOf(), "sourceQuote", requirement, "boundary", "本项要求完整集合；须先解析明确引用的全部清单，再逐项核对正文。模型不得自行宣称集合完整。");
+        return cn.bidcheck.compat.Java8Api.mapOf("required", false);
     }
 
     static Map<String,Object> contract(Checkpoint checkpoint,Document tender) {
@@ -59,8 +57,8 @@ final class CompletenessProof {
         Map<String,Object> out=new LinkedHashMap<>(base);
         out.put("requirementText",Objects.toString(checkpoint.expected(),""));
         out.put("inventoryId",TenderChecklistResolver.id(checkpoint.id()+":"+checkpoint.expected()+":"+(tender==null?"":tender.sha256())));
-        out.put("inventorySources",checkpoint.source()==null?List.of():List.of(checkpoint.source()));
-        out.put("unresolvedReferences",List.of());
+        out.put("inventorySources",checkpoint.source()==null?cn.bidcheck.compat.Java8Api.listOf():cn.bidcheck.compat.Java8Api.listOf(checkpoint.source()));
+        out.put("unresolvedReferences",cn.bidcheck.compat.Java8Api.listOf());
         return out;
     }
 
@@ -69,35 +67,35 @@ final class CompletenessProof {
         return assess(inventory,answer,available,bid,ChecklistBodyRecall.recall(inventory,bid));
     }
     static Map<String,Object> assess(Map<String,Object> inventory,JsonNode answer,Map<String,Evidence> available,Document bid,ChecklistBodyRecall.Recall recall) {
-        if(!Boolean.TRUE.equals(inventory.get("required")))return Map.of();
+        if(!Boolean.TRUE.equals(inventory.get("required")))return cn.bidcheck.compat.Java8Api.mapOf();
         Map<String,Object> report=new LinkedHashMap<>(inventory);
         report.put("assessmentStage",answer.path("claims").isArray()?"BODY_EVIDENCE_ASSESSED":"AWAITING_MODEL_CLAIMS");
         report.put("proofScope","BODY_PRESENCE_ONLY");
         List<String> missing=new ArrayList<>();List<Map<String,Object>> verified=new ArrayList<>(),results=new ArrayList<>();
-        List<?> requirements=inventory.get("itemRequirements") instanceof List<?> list?list:List.of();
+        List<?> requirements=inventory.get("itemRequirements") instanceof List<?>?((List<?>) (inventory.get("itemRequirements"))):cn.bidcheck.compat.Java8Api.listOf();
         for(ChecklistBodyRecall.Item item:recall.items()) {
-            Map<?,?> requirement=requirements.stream().filter(v->v instanceof Map<?,?> map&&item.item().equals(map.get("item"))).map(v->(Map<?,?>)v).findFirst().orElse(Map.of());
+            Map<?,?> requirement=requirements.stream().filter(v->v instanceof Map<?,?>&&item.item().equals(((Map<?,?>) (v)).get("item"))).map(v->(Map<?,?>)v).findFirst().orElse(cn.bidcheck.compat.Java8Api.mapOf());
             String applicability=Objects.toString(requirement.get("applicability"),"REQUIRED");
             List<String> ids=new ArrayList<>();
             for(JsonNode claim:answer.path("claims")) {
                 String text=claim.path("text").asText();
-                if(!Set.of("MATERIAL","TEXT").contains(claim.path("kind").asText())
+                if(!cn.bidcheck.compat.Java8Api.setOf("MATERIAL", "TEXT").contains(claim.path("kind").asText())
                     ||!"CURRENT_PROJECT".equals(claim.path("scope").asText())||!text.contains(item.item())
                     ||text.matches("(?s).*(?:未发现|未提供|缺少|尚无|待补充|未确认|未能|无法|不能确认|尚未|待核|待确认|未完成|存疑|需核).*"))continue;
                 for(JsonNode id:claim.path("evidenceIds"))if(id.asText().startsWith("C")&&available.containsKey(id.asText()))ids.add(id.asText());
             }
-            List<Evidence> used=ids.stream().distinct().map(available::get).toList();
+            List<Evidence> used=cn.bidcheck.compat.Java8Api.toList(ids.stream().distinct().map(available::get));
             List<Evidence> citedCopy=item.equivalentCopies().stream().filter(copy->!copy.isEmpty()
-                &&copy.stream().allMatch(required->used.stream().anyMatch(actual->covers(actual,required)))).findFirst().orElse(List.of());
+                &&copy.stream().allMatch(required->used.stream().anyMatch(actual->covers(actual,required)))).findFirst().orElse(cn.bidcheck.compat.Java8Api.listOf());
             boolean cited=!citedCopy.isEmpty();
             boolean complete=item.bodyLocated()&&item.currentScope()&&cited&&!item.evidences().isEmpty()&&applicability.equals("REQUIRED");
             String reason=complete?"该项独立正文已定位并被逐项引用；仅证明文字材料存在，不替代全部内容或签章核验":applicability.equals("CONDITIONAL")?"提交条件尚未确认："+Objects.toString(requirement.get("condition"),"")
                 :!item.bodyLocated()||!item.currentScope()?item.reason():"已找到正文位置，但本次判断尚未逐项引用完整标题与正文证据链";
             Map<String,Object> result=new LinkedHashMap<>();result.put("id",requirement.get("id")==null?TenderChecklistResolver.id(item.item()):requirement.get("id"));result.put("item",item.item());
             result.put("status",complete?"VERIFIED":applicability.equals("CONDITIONAL")?"REQUIREMENT_UNRESOLVED":"EVIDENCE_PENDING");
-            result.put("requirementSources",requirement.get("requirementSources")==null?inventory.getOrDefault("inventorySources",List.of()):requirement.get("requirementSources"));
+            result.put("requirementSources",requirement.get("requirementSources")==null?inventory.getOrDefault("inventorySources",cn.bidcheck.compat.Java8Api.listOf()):requirement.get("requirementSources"));
             result.put("evidences",complete?citedCopy:item.evidences());result.put("reason",reason);result.put("excerpted",item.excerpted());results.add(result);
-            if(complete)verified.add(Map.of("item",item.item(),"evidenceIds",ids.stream().distinct().toList(),"evidences",citedCopy));else missing.add(item.item());
+            if(complete)verified.add(cn.bidcheck.compat.Java8Api.mapOf("item", item.item(), "evidenceIds", cn.bidcheck.compat.Java8Api.toList(ids.stream().distinct()), "evidences", citedCopy));else missing.add(item.item());
         }
         String explanation=answer.path("reason").asText()+"。"+answer.path("suggestion").asText();
         List<Map<String,Object>> contentPending=deferredContentObligations(Objects.toString(inventory.get("requirementText"),""),answer);
@@ -131,18 +129,18 @@ final class CompletenessProof {
                 if(sentence.matches("(?s).*(?:可选优化|仅供参考|不影响本项结论|如需进一步优化).*"))continue;
                 if(sentence.matches("(?s).*(?:保留|保存|归档|整理).{0,30}(?:评估|评审|评价|核验|判断)(?:记录|过程|依据|资料|报告).*"))continue;
                 boolean deferred=sentence.matches("(?s).*(?:后续|评标时|仍需|尚需|有待|待|进一步|建议).{0,55}(?:评估|评判|评审|评价|核验|核对|核实|检查|确认|验证|分析|判断).*" );
-                if(deferred){pending.add(Map.of("type",topic[0],"label",topic[1],"status","DEFERRED","requirementQuote",requiredClause.strip(),"reason",sentence.strip()));break;}
+                if(deferred){pending.add(cn.bidcheck.compat.Java8Api.mapOf("type", topic[0], "label", topic[1], "status", "DEFERRED", "requirementQuote", cn.bidcheck.compat.Java8Api.strip(requiredClause), "reason", cn.bidcheck.compat.Java8Api.strip(sentence)));break;}
             }
         }
-        return List.copyOf(pending);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(pending);
     }
 
     /** Bidder-added titles are navigation, never additional tender obligations. */
     static List<String> extraRequiredMaterials(Map<String,Object> inventory,JsonNode answer,Map<String,Evidence> available) {
-        if(!Boolean.TRUE.equals(inventory.get("required"))||!Boolean.TRUE.equals(inventory.get("inventoryResolved")))return List.of();
-        List<?> required=inventory.get("items") instanceof List<?> list?list:List.of();
+        if(!Boolean.TRUE.equals(inventory.get("required"))||!Boolean.TRUE.equals(inventory.get("inventoryResolved")))return cn.bidcheck.compat.Java8Api.listOf();
+        List<?> required=inventory.get("items") instanceof List<?>?((List<?>) (inventory.get("items"))):cn.bidcheck.compat.Java8Api.listOf();
         Set<String> titles=new LinkedHashSet<>();
-        for(var entry:available.entrySet())if(entry.getKey().startsWith("C")) {
+        for(java.util.Map.Entry<java.lang.String, cn.bidcheck.domain.Domain.Evidence> entry:available.entrySet())if(entry.getKey().startsWith("C")) {
             Matcher matcher=MATERIAL_TITLE.matcher(Objects.toString(entry.getValue().quote(),""));
             while(matcher.find())titles.add(matcher.group(1));
         }
@@ -156,7 +154,7 @@ final class CompletenessProof {
             if(!sentence.matches("(?s).*(?:未召回|未提供|未提交|缺少|缺失|补充提供|补交|必须提交|必须提供|待核实是否提交|无法确认是否提交).*"))continue;
             for(String title:titles)if(sentence.contains(title))added.add(title);
         }
-        return List.copyOf(added);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(added);
     }
     private static String materialName(String title){return title.replaceAll("[\\s《》“”‘’]","").replaceFirst("书$","");}
     private static boolean covers(Evidence actual,Evidence required) {

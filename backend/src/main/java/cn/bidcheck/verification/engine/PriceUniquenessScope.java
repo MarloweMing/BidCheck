@@ -19,6 +19,6 @@ final class PriceUniquenessScope {
         proof.put("requirementUniqueness",sourceBound.parameters().get("requirementUniqueness"));
         String reason="已核到的同口径报价一致，但尚未证明本项目全部适用报价及备选方案范围，不能据局部一致认定报价唯一";
         Gap missing=new Gap("UNIQUE_PRICE_SCOPE_REQUIRED",reason,"系统需核全适用报价材料及备选报价条件；本提示不表示已经发现重复报价","APPLICABLE_QUOTE_SCOPE_VERIFIED");
-        return new Decision(comparison.id(),comparison.description(),"UNDETERMINED",reason,comparison.evidences(),List.of(missing),proof);
+        return new Decision(comparison.id(),comparison.description(),"UNDETERMINED",reason,comparison.evidences(),cn.bidcheck.compat.Java8Api.listOf(missing),proof);
     }
 }

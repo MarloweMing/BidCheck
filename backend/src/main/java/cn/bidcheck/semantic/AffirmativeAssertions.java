@@ -60,7 +60,7 @@ final class AffirmativeAssertions {
         return UNCERTAIN.matcher(sentence).find()||TEMPLATE.matcher(sentence).find()||REQUIREMENT.matcher(requirements).find();
     }
     private static String[] sentences(String text) {
-        if(text==null||text.isBlank()) return new String[0];
+        if(text==null||cn.bidcheck.compat.Java8Api.isBlank(text)) return new String[0];
         return text.replaceAll("[\\t \\u00a0\\u3000]+","").split("[。！？!?；;\\r\\n]+");
     }
 }

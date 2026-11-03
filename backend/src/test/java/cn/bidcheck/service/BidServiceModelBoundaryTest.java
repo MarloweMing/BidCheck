@@ -28,13 +28,13 @@ class BidServiceModelBoundaryTest {
     }
 
     @Test void productionLegacySemanticBranchDoesNotCallSemanticChecker(){
-        Store store=mock(Store.class);when(store.getMap("run","run")).thenReturn(Map.of("templateRouteEnabled",false));
+        Store store=mock(Store.class);when(store.getMap("run","run")).thenReturn(cn.bidcheck.compat.Java8Api.mapOf("templateRouteEnabled", false));
         SemanticChecker semantic=mock(SemanticChecker.class);
         BidService service=new BidService(store,mock(PlatformTransactionManager.class),semantic,mock(ArtifactStorage.class),mock(OcrClient.class));
         Checkpoint checkpoint=new Checkpoint("c","复杂条款","资格","HIGH","SEMANTIC_RESPONSE","","","提交相关材料","",true,true,true,null);
-        Document bid=new Document("bid","project","BID","投标文件",1,"sha","",List.of(new Page(1,"投标材料","PARAGRAPH","TEXT","")),List.of());
+        Document bid=new Document("bid","project","BID","投标文件",1,"sha","",cn.bidcheck.compat.Java8Api.listOf(new Page(1,"投标材料","PARAGRAPH","TEXT","")),cn.bidcheck.compat.Java8Api.listOf());
         BooleanSupplier paidCall=()->{fail("legacy semantic path must not reserve a model call");return false;};
-        Finding finding=ReflectionTestUtils.invokeMethod(service,"evaluateFinding","run",checkpoint,bid,null,List.of(),Map.of(),paidCall,Map.of());
+        Finding finding=ReflectionTestUtils.invokeMethod(service,"evaluateFinding","run",checkpoint,bid,null,cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.mapOf(),paidCall,cn.bidcheck.compat.Java8Api.mapOf());
         assertNotNull(finding);assertEquals("UNDETERMINED",finding.evaluation().status());
         assertTrue(finding.evaluation().method().startsWith("ATOMIC_CONTEXT_UNAVAILABLE"));
         assertEquals("NOT_REQUESTED",finding.assessment().get("modelOutputRole"));

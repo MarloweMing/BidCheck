@@ -12,30 +12,30 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 final class AgentReviewPrimitives {
     static final String VERSION="agent-source-primitive-binding-1";
     private static final ObjectMapper JSON=new ObjectMapper();
-    private static final Set<String> KEYS=Set.of("obligationId","description","requirementQuote","method","predicate","subject","field","operator","expected","unit","expectedEvidence");
-    private static final Set<String> SOURCE_KINDS=Set.of("OBLIGATION","SCOPED_OBLIGATION","SCOPED_PROOF","SCOPED_BOOK_CONDITION","SCOPED_SCORING_CONTINUATION","REFERENCE_CLAUSE","EXECUTABLE_REFERENCE");
+    private static final Set<String> KEYS=cn.bidcheck.compat.Java8Api.setOf("obligationId", "description", "requirementQuote", "method", "predicate", "subject", "field", "operator", "expected", "unit", "expectedEvidence");
+    private static final Set<String> SOURCE_KINDS=cn.bidcheck.compat.Java8Api.setOf("OBLIGATION", "SCOPED_OBLIGATION", "SCOPED_PROOF", "SCOPED_BOOK_CONDITION", "SCOPED_SCORING_CONTINUATION", "REFERENCE_CLAUSE", "EXECUTABLE_REFERENCE");
     private AgentReviewPrimitives(){}
 
     static Rule bind(Map<String,Object> condition,Checkpoint cp,RequirementSourceContext.Context source,String fullRequirement,Map<String,Object> ctx){
         if(condition==null||cp==null||source==null||source.identity().isEmpty()||!KEYS.containsAll(condition.keySet()))return rejected(condition,"AGENT_PRIMITIVE_INPUT_INVALID");
-        for(String key:List.of("obligationId","description","requirementQuote","method","predicate","subject","field","operator","expected","unit"))
+        for(String key:cn.bidcheck.compat.Java8Api.listOf("obligationId", "description", "requirementQuote", "method", "predicate", "subject", "field", "operator", "expected", "unit"))
             if(condition.containsKey(key)&&!(condition.get(key) instanceof String))return rejected(condition,"AGENT_PRIMITIVE_INPUT_INVALID");
         String quote=str(condition,"requirementQuote");
-        if(!"DETERMINISTIC".equals(str(condition,"method"))||str(condition,"obligationId").isBlank()||quote.isBlank()||fullRequirement==null||!fullRequirement.contains(quote))return rejected(condition,"AGENT_PRIMITIVE_SOURCE_INVALID");
+        if(!"DETERMINISTIC".equals(str(condition,"method"))||cn.bidcheck.compat.Java8Api.isBlank(str(condition,"obligationId"))||cn.bidcheck.compat.Java8Api.isBlank(quote)||fullRequirement==null||!fullRequirement.contains(quote))return rejected(condition,"AGENT_PRIMITIVE_SOURCE_INVALID");
         RequirementSourceContext.Context scoped=scoped(source,quote);
         if(scoped==null)return rejected(condition,"AGENT_PRIMITIVE_SOURCE_AMBIGUOUS");
         RequirementCompiler validator=new RequirementCompiler();
-        Rule simple=validator.agentCondition(JSON.valueToTree(primitive(condition,Map.of(),quote)),source,fullRequirement);
+        Rule simple=validator.agentCondition(JSON.valueToTree(primitive(condition,cn.bidcheck.compat.Java8Api.mapOf(),quote)),source,fullRequirement);
         if(executable(simple))return simple;
 
         // The compiler sees only this condition's original span. Original heading
         // context is retained for identity binding, not added as more obligations.
         Checkpoint selected=checkpoint(cp,condition,scoped);
-        var compiled=new DeterministicRequirementCompiler(JSON).compile(selected,quote,scoped,ctx==null?Map.of():ctx);
+        cn.bidcheck.verification.engine.DeterministicRequirementCompiler.Result compiled=new DeterministicRequirementCompiler(JSON).compile(selected,quote,scoped,ctx==null?cn.bidcheck.compat.Java8Api.mapOf():ctx);
         List<Rule> leaves=new ArrayList<>();for(Rule root:compiled.rules())eligibleLeaves(root,leaves);
         List<Rule> matching=new ArrayList<>();
         for(Rule candidate:leaves){
-            if(!executable(candidate)||!str(condition,"predicate").equals(candidate.predicate())||candidate.sourceQuote().isBlank()||!quote.contains(candidate.sourceQuote()))continue;
+            if(!executable(candidate)||!str(condition,"predicate").equals(candidate.predicate())||cn.bidcheck.compat.Java8Api.isBlank(candidate.sourceQuote())||!quote.contains(candidate.sourceQuote()))continue;
             // The native mapper uses 上述人员 as a fallback for social clauses. It
             // may be replaced only by the normal server heading binder, never by an agent's name.
             if("上述人员".equals(candidate.subject())&&!candidate.sourceQuote().contains("上述人员"))
@@ -55,19 +55,19 @@ final class AgentReviewPrimitives {
 
     private static boolean matches(Map<String,Object> condition,Rule candidate){
         String declaredSubject=str(condition,"subject"),declaredField=str(condition,"field"),declaredExpected=str(condition,"expected"),declaredOperator=str(condition,"operator"),declaredUnit=str(condition,"unit");
-        if(!declaredSubject.isBlank()&&!PersonnelRoles.canonical(declaredSubject).equals(PersonnelRoles.canonical(candidate.subject())))return false;
-        if(!declaredField.isBlank()&&!field(candidate.predicate(),declaredField).equals(field(candidate.predicate(),candidate.field())))return false;
-        if(!declaredUnit.isBlank()&&!RequirementGrounding.unitEquals(declaredUnit,candidate.unit()))return false;
+        if(!cn.bidcheck.compat.Java8Api.isBlank(declaredSubject)&&!PersonnelRoles.canonical(declaredSubject).equals(PersonnelRoles.canonical(candidate.subject())))return false;
+        if(!cn.bidcheck.compat.Java8Api.isBlank(declaredField)&&!field(candidate.predicate(),declaredField).equals(field(candidate.predicate(),candidate.field())))return false;
+        if(!cn.bidcheck.compat.Java8Api.isBlank(declaredUnit)&&!RequirementGrounding.unitEquals(declaredUnit,candidate.unit()))return false;
         String expected=candidate.expected(),operator=candidate.operator();
         if("MONTHS".equals(candidate.predicate())){expected=str(candidate.parameters(),"count");operator=">=";}
-        if(!declaredExpected.isBlank()&&!sameValue(declaredExpected,expected))return false;
-        if(!declaredOperator.isBlank()&&!Objects.equals(canonicalOperator(declaredOperator),canonicalOperator(operator)))return false;
+        if(!cn.bidcheck.compat.Java8Api.isBlank(declaredExpected)&&!sameValue(declaredExpected,expected))return false;
+        if(!cn.bidcheck.compat.Java8Api.isBlank(declaredOperator)&&!Objects.equals(canonicalOperator(declaredOperator),canonicalOperator(operator)))return false;
         return true;
     }
     private static String field(String predicate,String value){String text=clean(value);
-        if("MONTHS".equals(predicate)&&Set.of("socialInsurance","社保","社保证明","社保缴费","连续缴费月份","连续社保月份").contains(text))return "socialInsurance";
-        if(Set.of("PERSON_COUNT","ENTITY_COUNT").contains(predicate)&&Set.of("personnelCount","memberCount","人数","人员数量","成员数量").contains(text))return "count";
-        if("CERTIFICATE".equals(predicate)&&Set.of("certificate","证书","证照").contains(text))return "certificate";
+        if("MONTHS".equals(predicate)&&cn.bidcheck.compat.Java8Api.setOf("socialInsurance", "社保", "社保证明", "社保缴费", "连续缴费月份", "连续社保月份").contains(text))return "socialInsurance";
+        if(cn.bidcheck.compat.Java8Api.setOf("PERSON_COUNT", "ENTITY_COUNT").contains(predicate)&&cn.bidcheck.compat.Java8Api.setOf("personnelCount", "memberCount", "人数", "人员数量", "成员数量").contains(text))return "count";
+        if("CERTIFICATE".equals(predicate)&&cn.bidcheck.compat.Java8Api.setOf("certificate", "证书", "证照").contains(text))return "certificate";
         return text;
     }
     private static boolean sameValue(String declared,String original){BigDecimal left=RequirementGrounding.number(declared),right=RequirementGrounding.number(original);return left!=null&&right!=null?left.compareTo(right)==0:clean(declared).equals(clean(original));}
@@ -79,7 +79,7 @@ final class AgentReviewPrimitives {
         if(!"ALL".equals(rule.logic()))return;
         rule.children().forEach(child->eligibleLeaves(child,out));
     }
-    private static boolean executable(Rule rule){return rule!=null&&!"UNSUPPORTED".equals(rule.predicate())&&rule.children().isEmpty()&&rule.logic().isBlank();}
+    private static boolean executable(Rule rule){return rule!=null&&!"UNSUPPORTED".equals(rule.predicate())&&rule.children().isEmpty()&&cn.bidcheck.compat.Java8Api.isBlank(rule.logic());}
     private static Map<String,Object> primitive(Map<String,Object> c,Map<String,Object> parameters,String quote){return linked("id",str(c,"obligationId"),"description",str(c,"description"),"predicate",str(c,"predicate"),"subject",str(c,"subject"),"field",str(c,"field"),"operator",str(c,"operator"),"expected",str(c,"expected"),"unit",str(c,"unit"),"parameters",parameters,"sourceQuote",quote);}
 
     private static RequirementSourceContext.Context scoped(RequirementSourceContext.Context source,String quote){
@@ -92,14 +92,14 @@ final class AgentReviewPrimitives {
             String key=str(span,"documentId")+"|"+str(span,"documentHash")+"|"+span.get("documentVersion")+"|"+str(span,"locationType")+"|"+span.get("location")+"|"+span.get("start")+"|"+span.get("end");spans.putIfAbsent(key,span);
         }
         if(spans.size()!=1)return null;Map<String,Object> span=spans.values().iterator().next();
-        Map<String,Object> identity=new LinkedHashMap<>(source.identity());for(String key:List.of("documentId","documentHash","documentVersion","locationType","location","start","end","sourceHash"))identity.put(key,span.get(key));
+        Map<String,Object> identity=new LinkedHashMap<>(source.identity());for(String key:cn.bidcheck.compat.Java8Api.listOf("documentId", "documentHash", "documentVersion", "locationType", "location", "start", "end", "sourceHash"))identity.put(key,span.get(key));
         List<Map<String,Object>> rows=new ArrayList<>();rows.add(span);
-        for(Map<String,Object> row:source.sources())if(Set.of("SECTION_SUBJECT","TABLE_ROW_SUBJECT","TABLE_HEADER").contains(str(row,"kind")))rows.add(row);
-        return new RequirementSourceContext.Context(source.bindingSource(),Map.copyOf(identity),List.copyOf(rows));
+        for(Map<String,Object> row:source.sources())if(cn.bidcheck.compat.Java8Api.setOf("SECTION_SUBJECT", "TABLE_ROW_SUBJECT", "TABLE_HEADER").contains(str(row,"kind")))rows.add(row);
+        return new RequirementSourceContext.Context(source.bindingSource(),cn.bidcheck.compat.Java8Api.mapCopyOf(identity),cn.bidcheck.compat.Java8Api.listCopyOf(rows));
     }
     private static Checkpoint checkpoint(Checkpoint original,Map<String,Object> condition,RequirementSourceContext.Context scoped){
         String quote=str(condition,"requirementQuote");Map<String,Object> identity=scoped.identity();Evidence evidence=new Evidence(str(identity,"documentId"),original.source()==null?"":original.source().documentName(),RunSession.number(identity.get("location"),0),str(identity,"locationType"),quote,original.source()==null?"":original.source().anchor(),0);
         return new Checkpoint(original.id(),str(condition,"description"),original.category(),original.severity(),original.type(),str(condition,"field"),str(condition,"operator"),quote,str(condition,"unit"),original.required(),original.confirmed(),original.enabled(),evidence);
     }
-    private static Rule rejected(Map<String,Object> condition,String issue){Map<String,Object> c=condition==null?Map.of():condition;return new Rule(str(c,"obligationId"),str(c,"description"),"UNSUPPORTED",str(c,"subject"),str(c,"field"),str(c,"operator"),str(c,"expected"),str(c,"unit"),Map.of("compilationIssue",issue,"primitiveBindingVersion",VERSION),str(c,"requirementQuote"),"",List.of());}
+    private static Rule rejected(Map<String,Object> condition,String issue){Map<String,Object> c=condition==null?cn.bidcheck.compat.Java8Api.mapOf():condition;return new Rule(str(c,"obligationId"),str(c,"description"),"UNSUPPORTED",str(c,"subject"),str(c,"field"),str(c,"operator"),str(c,"expected"),str(c,"unit"),cn.bidcheck.compat.Java8Api.mapOf("compilationIssue", issue, "primitiveBindingVersion", VERSION),str(c,"requirementQuote"),"",cn.bidcheck.compat.Java8Api.listOf());}
 }

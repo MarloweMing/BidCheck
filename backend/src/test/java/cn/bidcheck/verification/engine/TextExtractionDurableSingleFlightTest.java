@@ -37,38 +37,38 @@ class TextExtractionDurableSingleFlightTest {
         try(SqlSession firstSession=database.openSession(true);SqlSession secondSession=database.openSession(true)){
             EvidenceOperationRepository firstRepository=independent(new Store(firstSession.getMapper(RecordMapper.class),new ObjectMapper()));
             EvidenceOperationRepository secondRepository=independent(new Store(secondSession.getMapper(RecordMapper.class),new ObjectMapper()));
-            EvidenceCorpus corpus=new EvidenceCorpus(List.of(doc("durable-text","p",1,"报价：80元")));
-            Rule rule=rule();Fact fact=new Fact("fact","NUMBER","","amount","80","80","元","报价","CURRENT_PROJECT",List.of(corpus.all.get(0).id()),Map.of());
+            EvidenceCorpus corpus=new EvidenceCorpus(cn.bidcheck.compat.Java8Api.listOf(doc("durable-text","p",1,"报价：80元")));
+            Rule rule=rule();Fact fact=new Fact("fact","NUMBER","","amount","80","80","元","报价","CURRENT_PROJECT",cn.bidcheck.compat.Java8Api.listOf(corpus.all.get(0).id()),cn.bidcheck.compat.Java8Api.mapOf());
             SharedFactReuse first=new SharedFactReuse(corpus,context(firstRepository),"model","engine","instance-a:");
             SharedFactReuse second=new SharedFactReuse(corpus,context(secondRepository),"model","engine","instance-b:");
             ExecutorService worker=Executors.newSingleThreadExecutor();
-            try(SharedFactReuse.Lease owner=first.coordinate(List.of(rule),corpus.all)){
-                Future<Map<String,Object>> follower=worker.submit(()->{try(var ignored=second.coordinate(List.of(rule),corpus.all)){
-                    List<Fact> reused=second.lookup(List.of(rule),corpus.all,List.of());
-                    boolean noExtraction=second.extractionRules(List.of(rule),corpus.all,new RuleEvaluator(reused,corpus,Map.of())).isEmpty();
-                    return Map.of("facts",reused.size(),"noExtraction",noExtraction);
+            try(SharedFactReuse.Lease owner=first.coordinate(cn.bidcheck.compat.Java8Api.listOf(rule),corpus.all)){
+                Future<Map<String,Object>> follower=worker.submit(()->{try(cn.bidcheck.verification.engine.SharedFactReuse.Lease ignored=second.coordinate(cn.bidcheck.compat.Java8Api.listOf(rule),corpus.all)){
+                    List<Fact> reused=second.lookup(cn.bidcheck.compat.Java8Api.listOf(rule),corpus.all,cn.bidcheck.compat.Java8Api.listOf());
+                    boolean noExtraction=second.extractionRules(cn.bidcheck.compat.Java8Api.listOf(rule),corpus.all,new RuleEvaluator(reused,corpus,cn.bidcheck.compat.Java8Api.mapOf())).isEmpty();
+                    return cn.bidcheck.compat.Java8Api.mapOf("facts", reused.size(), "noExtraction", noExtraction);
                 }});
                 assertThrows(TimeoutException.class,()->follower.get(100,TimeUnit.MILLISECONDS),"separate instance must wait on the database lease");
-                first.publish(List.of(fact),corpus.all,List.of(rule),List.of(),true,"EXTRACTED");
+                first.publish(cn.bidcheck.compat.Java8Api.listOf(fact),corpus.all,cn.bidcheck.compat.Java8Api.listOf(rule),cn.bidcheck.compat.Java8Api.listOf(),true,"EXTRACTED");
                 owner.close();
-                assertEquals(Map.of("facts",1,"noExtraction",true),follower.get(3,TimeUnit.SECONDS));
+                assertEquals(cn.bidcheck.compat.Java8Api.mapOf("facts", 1, "noExtraction", true),follower.get(3,TimeUnit.SECONDS));
             }finally{worker.shutdownNow();}
         }
     }
 
     private static Map<String,Object> context(EvidenceOperationRepository repository){
         Map<String,Object> context=new HashMap<>();context.put("evidenceOperationRepository",repository);
-        context.put("evidenceOperationLookup",(Function<Map<String,Object>,Map<String,Object>>)request->repository.completed("p",String.valueOf(request.get("operationKey"))).orElse(Map.of()));
+        context.put("evidenceOperationLookup",(Function<Map<String,Object>,Map<String,Object>>)request->repository.completed("p",String.valueOf(request.get("operationKey"))).orElse(cn.bidcheck.compat.Java8Api.mapOf()));
         context.put("sharedFactPublisher",(Consumer<Map<String,Object>>)batch->{
-            if(!"EXTRACTED".equals(batch.get("origin"))||!(batch.get("evidenceOperationDescriptor") instanceof Map<?,?> raw))return;
-            Map<String,Object> descriptor=new ObjectMapper().convertValue(raw,Map.class);String key=String.valueOf(batch.get("evidenceOperationKey"));
-            repository.publishCompleted("p",key,descriptor,Map.of("facts",batch.getOrDefault("facts",List.of()),"sources",batch.getOrDefault("sources",List.of()),"fieldCoverage",batch.getOrDefault("fieldCoverage",List.of())));
+            if(!"EXTRACTED".equals(batch.get("origin"))||!(batch.get("evidenceOperationDescriptor") instanceof Map<?,?>))return;
+            Map<String,Object> descriptor=new ObjectMapper().convertValue(((Map<?,?>) (batch.get("evidenceOperationDescriptor"))),Map.class);String key=String.valueOf(batch.get("evidenceOperationKey"));
+            repository.publishCompleted("p",key,descriptor,cn.bidcheck.compat.Java8Api.mapOf("facts", batch.getOrDefault("facts",cn.bidcheck.compat.Java8Api.listOf()), "sources", batch.getOrDefault("sources",cn.bidcheck.compat.Java8Api.listOf()), "fieldCoverage", batch.getOrDefault("fieldCoverage",cn.bidcheck.compat.Java8Api.listOf())));
         });return context;
     }
     private static Document doc(String id,String project,int version,String text){
-        return new Document(id,project,"BID",id+".pdf",version,"hash-"+id,"",List.of(new Page(1,text,"PAGE","PDF","")),List.of());
+        return new Document(id,project,"BID",id+".pdf",version,"hash-"+id,"",cn.bidcheck.compat.Java8Api.listOf(new Page(1,text,"PAGE","PDF","")),cn.bidcheck.compat.Java8Api.listOf());
     }
-    private static Rule rule(){return new Rule("O1","报价","NUMBER","","amount","<=","100","元",Map.of(),"100","",List.of());}
+    private static Rule rule(){return new Rule("O1","报价","NUMBER","","amount","<=","100","元",cn.bidcheck.compat.Java8Api.mapOf(),"100","",cn.bidcheck.compat.Java8Api.listOf());}
 
     @SuppressWarnings("unchecked") private static EvidenceOperationRepository independent(Store store)throws Exception{
         Constructor<EvidenceOperationRepository> constructor=EvidenceOperationRepository.class.getDeclaredConstructor(Store.class,boolean.class,long.class,long.class,long.class);
@@ -79,6 +79,6 @@ class TextExtractionDurableSingleFlightTest {
         new ResourceDatabasePopulator(new ClassPathResource("schema.sql")).execute(source);
         SqlSessionFactoryBean factory=new SqlSessionFactoryBean();factory.setDataSource(source);
         factory.setDatabaseIdProvider(new DatabaseConfiguration().databaseIdProvider());
-        factory.setMapperLocations(new ClassPathResource("mappers/RecordMapper.xml"));return factory.getObject();
+        factory.setMapperLocations(new org.springframework.core.io.Resource[]{new ClassPathResource("mappers/RecordMapper.xml")});return factory.getObject();
     }
 }

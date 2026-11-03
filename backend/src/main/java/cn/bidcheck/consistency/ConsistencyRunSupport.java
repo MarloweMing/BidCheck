@@ -18,7 +18,7 @@ public final class ConsistencyRunSupport {
     /** Caller owns a fenced transaction and the project row lock. Batches never truncate the scan. */
     public static void publish(Store store, FactLedgerService ledger, String runId, Document doc,
                                String engineIdentity, Map<String,Object> report) {
-        publish(store,ledger,runId,List.of(doc),engineIdentity,report);
+        publish(store,ledger,runId,cn.bidcheck.compat.Java8Api.listOf(doc),engineIdentity,report);
     }
 
     /** Separate source documents remain separate in both provenance and the shared snapshot. */
@@ -47,8 +47,8 @@ public final class ConsistencyRunSupport {
         report.put("ledgerSummary",snapshot.get("summary"));
         report.put("id",reportId(runId));
         report.put("runId",runId);
-        report.put("documentIds",documents.stream().map(Document::id).toList());
-        report.put("sourceManifest",documents.stream().map(doc->values("documentId",doc.id(),"documentName",doc.name(),"documentHash",doc.sha256(),"documentVersion",doc.version())).toList());
+        report.put("documentIds",cn.bidcheck.compat.Java8Api.toList(documents.stream().map(Document::id)));
+        report.put("sourceManifest",cn.bidcheck.compat.Java8Api.toList(documents.stream().map(doc->values("documentId",doc.id(),"documentName",doc.name(),"documentHash",doc.sha256(),"documentVersion",doc.version()))));
         if(documents.size()==1){Document doc=documents.get(0);report.put("documentId",doc.id());report.put("documentHash",doc.sha256());report.put("documentVersion",doc.version());}
         report.put("engineIdentity",engineIdentity);
     }
@@ -85,9 +85,9 @@ public final class ConsistencyRunSupport {
                 List<Evidence> references=new ArrayList<>();references.add(evidence);
                 references.addAll(evidences(store,occurrence.get("contextEvidences")));
                 String contextQuote=string(occurrence,"contextQuote");
-                if(!contextQuote.isBlank()&&!evidence.quote().contains(contextQuote))
+                if(!cn.bidcheck.compat.Java8Api.isBlank(contextQuote)&&!evidence.quote().contains(contextQuote))
                     references.add(new Evidence(doc.id(),doc.name(),page.number(),page.locationType(),contextQuote,evidence.anchor()+"-context",evidence.confidence()));
-                references=references.stream().distinct().toList();
+                references=cn.bidcheck.compat.Java8Api.toList(references.stream().distinct());
                 if(references.size()>16)throw new IllegalArgumentException("一致性事实引用超限");
                 if(sources.size()+references.size()>maxSources)break;
                 List<String> sourceIds=new ArrayList<>();
@@ -102,12 +102,9 @@ public final class ConsistencyRunSupport {
                             "parserFingerprint",fingerprints.computeIfAbsent(referenceDoc.id()+":"+referencePage.locationType()+":"+referencePage.number(),key->FactLedgerService.parserFingerprint(referencePage))));
                 }
                 String scope = string(occurrence,"scope");
-                if (!Set.of("CURRENT_PROJECT","HISTORICAL_PROJECT","UNRESOLVED").contains(scope)) scope="UNRESOLVED";
+                if (!cn.bidcheck.compat.Java8Api.setOf("CURRENT_PROJECT", "HISTORICAL_PROJECT", "UNRESOLVED").contains(scope)) scope="UNRESOLVED";
                 Map<String,Object> attributes = new LinkedHashMap<>();
-                for (String key : List.of("id","lot","time","scopeReason","comparability","extractionMethod","confidence","contextQuote","revision",
-                        "categoryId","fieldLabel","dimensions","ruleId","sourceOffset","sourceRowLine","comparator","precision",
-                        "rowId","parameterName","operator","valueType","missingContext","sourceUnit",
-                        "recordKey","credentialType","personCredentialField","personCredentialContext","contextAssignment","subjectAssignment","sectionId","tableAssociation"))
+                for (String key : cn.bidcheck.compat.Java8Api.listOf("id", "lot", "time", "scopeReason", "comparability", "extractionMethod", "confidence", "contextQuote", "revision", "categoryId", "fieldLabel", "dimensions", "ruleId", "sourceOffset", "sourceRowLine", "comparator", "precision", "rowId", "parameterName", "operator", "valueType", "missingContext", "sourceUnit", "recordKey", "credentialType", "personCredentialField", "personCredentialContext", "contextAssignment", "subjectAssignment", "sectionId", "tableAssociation"))
                     if (occurrence.containsKey(key)) attributes.put(key, occurrence.get(key));
                 Map<String,Object> candidateFact=values("id",string(occurrence,"id"),"kind","FIELD","subject",string(occurrence,"subject"),
                         "field",string(occurrence,"field"),"rawValue",string(occurrence,"rawValue"),
@@ -125,7 +122,7 @@ public final class ConsistencyRunSupport {
             batches.add(values("operationIdentity",reportId(runId)+":"+start,"engineVersion",ConsistencyEngine.VERSION,
                     "sources",sources,"facts",facts));
         }
-        return List.copyOf(batches);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(batches);
     }
 
     public static Evaluation summary(Map<String,Object> report, Store store) {
@@ -134,24 +131,24 @@ public final class ConsistencyRunSupport {
         long gaps = groups.stream().filter(g->"EVIDENCE_INSUFFICIENT".equals(string(g,"status"))).count();
         String reason = groups.isEmpty() ? "已扫描的文本范围内未发现可比较字段的冲突；不代表全文所有信息均已核实。"
                 : "发现 " + conflicts + " 组明确冲突、" + (groups.size()-conflicts-gaps) + " 组疑似差异、" + gaps + " 组比较证据不足；请逐组查看原文并复核。";
-        List<Evidence> evidence = groups.stream().flatMap(g->evidences(store,g.get("evidences")).stream()).distinct().toList();
+        List<Evidence> evidence = cn.bidcheck.compat.Java8Api.toList(groups.stream().flatMap(g->evidences(store,g.get("evidences")).stream()).distinct());
         return new Evaluation(groups.isEmpty()||gaps==groups.size()?"UNDETERMINED":"WARNING",reason,
                 "查看全文一致性面板中的扫描范围及各组原文；正确值以确认的招标要求、有效补遗或人工复核为准。",
                 evidence,groups.isEmpty()?0:0.8,"FULL_TEXT_CONSISTENCY");
     }
 
     public static List<Evidence> evidences(Store store,Object raw) {
-        if (!(raw instanceof List<?> list)) return List.of();
-        return list.stream().map(v->evidence(store,v)).toList();
+        if (!(raw instanceof List<?>)) return cn.bidcheck.compat.Java8Api.listOf();
+        return cn.bidcheck.compat.Java8Api.toList(((List<?>) (raw)).stream().map(v->evidence(store,v)));
     }
     public static Evidence evidence(Store store,Object raw) {
-        return raw instanceof Evidence e ? e : store.decode(store.encode(raw),Evidence.class);
+        return raw instanceof Evidence ? ((Evidence) (raw)) : store.decode(store.encode(raw),Evidence.class);
     }
     @SuppressWarnings("unchecked") public static Map<String,Object> map(Object value) {
-        return value instanceof Map<?,?> ? (Map<String,Object>)value : Map.of();
+        return value instanceof Map<?,?> ? (Map<String,Object>)value : cn.bidcheck.compat.Java8Api.mapOf();
     }
     public static List<Map<String,Object>> maps(Object value) {
-        return value instanceof List<?> list ? list.stream().filter(Map.class::isInstance).map(ConsistencyRunSupport::map).toList() : List.of();
+        return value instanceof List<?> ? cn.bidcheck.compat.Java8Api.toList(((List<?>) (value)).stream().filter(Map.class::isInstance).map(ConsistencyRunSupport::map)) : cn.bidcheck.compat.Java8Api.listOf();
     }
     public static String string(Map<String,Object> value,String key) { return Objects.toString(value.get(key),""); }
     public static Map<String,Object> values(Object... pairs) {

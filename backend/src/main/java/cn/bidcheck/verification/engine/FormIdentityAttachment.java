@@ -10,7 +10,7 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 final class FormIdentityAttachment {
     private FormIdentityAttachment(){}
     static boolean applies(String template,String form){
-        if(!Set.of("法定代表人身份证明","法定代表人授权委托书").contains(TenderFormAudit.canonicalForm(form)))return false;
+        if(!cn.bidcheck.compat.Java8Api.setOf("法定代表人身份证明", "法定代表人授权委托书").contains(TenderFormAudit.canonicalForm(form)))return false;
         String text=clean(template).replace("【文本框原文】","");
         return text.matches("(?:(?:法定代表人(?:[（(]负责人[）)])?|委托代理人)身份证复印件或扫描件贴于此处)+");
     }
@@ -21,7 +21,7 @@ final class FormIdentityAttachment {
         String text=clean(formatted),cardText=cardRegion(formatted),card=clean(cardText);
         Set<String> requiredRoles=new LinkedHashSet<>();Matcher roles=Pattern.compile("(法定代表人(?:[（(]负责人[）)])?|委托代理人)身份证").matcher(template);
         while(roles.find())requiredRoles.add(roles.group(1).startsWith("法定代表人")?"法定代表人":"委托代理人");
-        boolean agent=requiredRoles.equals(Set.of("委托代理人")),authority=TenderFormAudit.canonicalForm(form).equals("法定代表人授权委托书");
+        boolean agent=requiredRoles.equals(cn.bidcheck.compat.Java8Api.setOf("委托代理人")),authority=TenderFormAudit.canonicalForm(form).equals("法定代表人授权委托书");
         Pattern named=Pattern.compile(agent?"现委托([\\p{IsHan}·]{2,12})为我方代理人":authority?"本人([\\p{IsHan}·]{2,12})系":"姓名:([\\p{IsHan}·]{2,12})性别:");
         Set<String> people=new LinkedHashSet<>();Matcher name=named.matcher(text);while(name.find())people.add(name.group(1));
         Set<String> cardNames=new LinkedHashSet<>(),numbers=new LinkedHashSet<>();
@@ -42,11 +42,11 @@ final class FormIdentityAttachment {
     private static String cardRegion(String source){
         int start=-1,end=source.length(),offset=0,previousStart=0;String previous="";
         for(String line:source.split("\n",-1)){
-            String heading=line.strip().replaceFirst("^#{1,6}[\\t ]*","");
+            String heading=cn.bidcheck.compat.Java8Api.strip(line).replaceFirst("^#{1,6}[\\t ]*","");
             boolean marker=heading.matches("(?:中华人民共和国)?\\s*居民身份证")
                     ||heading.matches("身份证(?:正面|背面)(?:[（(].*[）)])?")
                     ||heading.matches("(?:法定代表人(?:[（(]负责人[）)])?|委托代理人)身份证复印件或扫描件贴于此处[（(](?:正面|背面)[）)]");
-            if(start<0&&marker)start=previous.strip().equals("中华人民共和国")?previousStart:offset;
+            if(start<0&&marker)start=cn.bidcheck.compat.Java8Api.strip(previous).equals("中华人民共和国")?previousStart:offset;
             else if(start>=0&&heading.matches("(?:说明|编制及签署要求[:：]?|投标人[（(]盖章[）)][:：].*|日期[:：].*|✅.*)")){end=offset;break;}
             previousStart=offset;previous=line;offset+=line.length()+1;
         }

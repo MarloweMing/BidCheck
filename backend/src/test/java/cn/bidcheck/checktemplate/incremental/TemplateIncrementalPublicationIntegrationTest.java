@@ -93,7 +93,7 @@ class TemplateIncrementalPublicationIntegrationTest {
         Map<String,Object> blankNote=new LinkedHashMap<>(request("REJECT","审核员乙","有效说明",candidate));blankNote.put("note","  ");
         assertThatThrownBy(()->publications.decide(fixture.runId(),BidService.text(candidate,"id"),blankNote))
             .isInstanceOfSatisfying(TemplateApiException.class,error->{assertThat(error.code()).isEqualTo("SPEC_VALIDATION_FAILED");assertThat(error.fieldErrors()).singleElement().satisfies(field->assertThat(field.get("field")).isEqualTo("note"));});
-        Map<String,Object> longNote=new LinkedHashMap<>(request("REJECT","审核员乙","有效说明",candidate));longNote.put("note","核".repeat(3001));
+        Map<String,Object> longNote=new LinkedHashMap<>(request("REJECT","审核员乙","有效说明",candidate));longNote.put("note",cn.bidcheck.compat.Java8Api.repeat("核", 3001));
         assertThatThrownBy(()->publications.decide(fixture.runId(),BidService.text(candidate,"id"),longNote))
             .isInstanceOfSatisfying(TemplateApiException.class,error->assertThat(error.code()).isEqualTo("SPEC_VALIDATION_FAILED"));
         Map<String,Object> wrongRevision=new LinkedHashMap<>(request("REJECT","审核员乙","原文定位仍需核实",candidate));wrongRevision.put("expectedDecisionRevision",1);
@@ -173,12 +173,12 @@ class TemplateIncrementalPublicationIntegrationTest {
     }
 
     private Map<String,Object> candidate(Fixture fixture,String checkpointId){Map<String,Object> graph=bids.templateDependencyGraph(fixture.runId());long revision=((Number)graph.get("revision")).longValue();String need=needFor(graph,checkpointId);
-        Map<String,Object> plan=recalculations.plan(fixture.runId(),revision,List.of(need));return recalculations.recalculate(fixture.runId(),revision,List.of(need),BidService.text(plan,"sourceResultDigest"));}
+        Map<String,Object> plan=recalculations.plan(fixture.runId(),revision,cn.bidcheck.compat.Java8Api.listOf(need));return recalculations.recalculate(fixture.runId(),revision,cn.bidcheck.compat.Java8Api.listOf(need),BidService.text(plan,"sourceResultDigest"));}
     private static Map<String,Object> request(String decision,String reviewer,String note,Map<String,Object> candidate){Map<String,Object> request=new LinkedHashMap<>();request.put("decision",decision);request.put("reviewer",reviewer);request.put("note",note);request.put("expectedDecisionRevision",0);
         request.put("expectedSourceResultDigest",candidate.get("sourceResultDigest"));request.put("expectedEvidenceSnapshotDigest",candidate.get("evidenceSnapshotDigest"));return request;}
 
     private Fixture fixture() throws Exception {
-        String project=BidService.text(bids.createProject(Map.of("name","增量候选审核发布测试")),"id");
+        String project=BidService.text(bids.createProject(cn.bidcheck.compat.Java8Api.mapOf("name", "增量候选审核发布测试")),"id");
         String tender=parsed(project,"TENDER","投标文件应提供营业执照正文和法定代表人身份证明正文。");bids.execute(bids.extract(project,tender));
         for(Checkpoint checkpoint:checkpoints(project))bids.updateCheckpoint(checkpoint.id(),disabled(checkpoint));
         Document tenderDocument=bids.document(tender);Checkpoint first=material(tenderDocument,"营业执照"),second=material(tenderDocument,"法定代表人身份证明");
@@ -188,16 +188,33 @@ class TemplateIncrementalPublicationIntegrationTest {
         return new Fixture(project,run.get("id").toString(),bid,first.id(),second.id());
     }
     private void backfillBid(Fixture fixture){setBidText(fixture,COMPLETE_BID_TEXT);}
-    private void setBidText(Fixture fixture,String text){Document document=bids.document(fixture.bidDocumentId());List<Page> pages=document.pages().stream().map(page->new Page(page.number(),text,page.locationType(),page.parser(),page.warning(),page.layout())).toList();
+    private void setBidText(Fixture fixture,String text){Document document=bids.document(fixture.bidDocumentId());List<Page> pages=cn.bidcheck.compat.Java8Api.toList(document.pages().stream().map(page->new Page(page.number(),text,page.locationType(),page.parser(),page.warning(),page.layout())));
         store.save("document",document.id(),document.projectId(),"",new Document(document.id(),document.projectId(),document.role(),document.name(),document.version(),document.sha256(),document.createdAt(),pages,document.warnings()));}
-    private void appendBidText(Fixture fixture,String addition){Document document=bids.document(fixture.bidDocumentId());List<Page> pages=document.pages().stream().map(page->new Page(page.number(),page.text()+addition,page.locationType(),page.parser(),page.warning(),page.layout())).toList();
+    private void appendBidText(Fixture fixture,String addition){Document document=bids.document(fixture.bidDocumentId());List<Page> pages=cn.bidcheck.compat.Java8Api.toList(document.pages().stream().map(page->new Page(page.number(),page.text()+addition,page.locationType(),page.parser(),page.warning(),page.layout())));
         store.save("document",document.id(),document.projectId(),"",new Document(document.id(),document.projectId(),document.role(),document.name(),document.version(),document.sha256(),document.createdAt(),pages,document.warnings()));}
     private static Checkpoint material(Document tender,String title){String quote=tender.pages().get(0).text();Evidence source=new Evidence(tender.id(),tender.name(),tender.pages().get(0).number(),tender.pages().get(0).locationType(),quote,"tender-requirement",1d);
         return new Checkpoint(Store.id(),title,"形式检查","HIGH","MATERIAL_EXISTENCE","material","EXISTS",title,"",true,true,true,source);}
     private static Checkpoint disabled(Checkpoint checkpoint){return new Checkpoint(checkpoint.id(),checkpoint.title(),checkpoint.category(),checkpoint.severity(),checkpoint.type(),checkpoint.field(),checkpoint.operator(),checkpoint.expected(),checkpoint.unit(),checkpoint.required(),true,false,checkpoint.source());}
     @SuppressWarnings("unchecked") private List<Checkpoint> checkpoints(String project){return (List<Checkpoint>)bids.detail(project).get("checkpoints");}
     private String parsed(String project,String role,String text)throws Exception{TaskRow task=bids.upload(project,role,new MockMultipartFile("file",role.toLowerCase()+".txt","text/plain",text.getBytes(StandardCharsets.UTF_8)));bids.execute(task);return BidService.text(store.map(task.inputJson),"documentId");}
-    private static String needFor(Map<String,Object> graph,String checkpointId){Map<?,?> reverse=(Map<?,?>)graph.get("reverseNeedIndex");return reverse.entrySet().stream().filter(entry->entry.getValue() instanceof Collection<?> ids&&ids.contains(checkpointId)).map(entry->entry.getKey().toString()).findFirst().orElseThrow();}
-    private Map<String,String> findingBodies(Fixture fixture){Map<String,String> bodies=new LinkedHashMap<>();for(String checkpointId:List.of(fixture.firstCheckpoint(),fixture.secondCheckpoint()))bodies.put(checkpointId,store.require("finding",BidService.stableId(fixture.runId()+":"+checkpointId)).body);return bodies;}
-    private record Fixture(String projectId,String runId,String bidDocumentId,String firstCheckpoint,String secondCheckpoint){}
+    private static String needFor(Map<String,Object> graph,String checkpointId){Map<?,?> reverse=(Map<?,?>)graph.get("reverseNeedIndex");return reverse.entrySet().stream().filter(entry->entry.getValue() instanceof Collection<?>&&((Collection<?>) (entry.getValue())).contains(checkpointId)).map(entry->entry.getKey().toString()).findFirst().orElseThrow(java.util.NoSuchElementException::new);}
+    private Map<String,String> findingBodies(Fixture fixture){Map<String,String> bodies=new LinkedHashMap<>();for(String checkpointId:cn.bidcheck.compat.Java8Api.listOf(fixture.firstCheckpoint(), fixture.secondCheckpoint()))bodies.put(checkpointId,store.require("finding",BidService.stableId(fixture.runId()+":"+checkpointId)).body);return bodies;}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Fixture{
+        private final String projectId;
+        private final String runId;
+        private final String bidDocumentId;
+        private final String firstCheckpoint;
+        private final String secondCheckpoint;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Fixture(@com.fasterxml.jackson.annotation.JsonProperty("projectId") String projectId, @com.fasterxml.jackson.annotation.JsonProperty("runId") String runId, @com.fasterxml.jackson.annotation.JsonProperty("bidDocumentId") String bidDocumentId, @com.fasterxml.jackson.annotation.JsonProperty("firstCheckpoint") String firstCheckpoint, @com.fasterxml.jackson.annotation.JsonProperty("secondCheckpoint") String secondCheckpoint) { this.projectId = projectId; this.runId = runId; this.bidDocumentId = bidDocumentId; this.firstCheckpoint = firstCheckpoint; this.secondCheckpoint = secondCheckpoint; }
+        public String projectId() { return projectId; }
+        public String runId() { return runId; }
+        public String bidDocumentId() { return bidDocumentId; }
+        public String firstCheckpoint() { return firstCheckpoint; }
+        public String secondCheckpoint() { return secondCheckpoint; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Fixture that = (Fixture) other; return java.util.Objects.equals(this.projectId, that.projectId) && java.util.Objects.equals(this.runId, that.runId) && java.util.Objects.equals(this.bidDocumentId, that.bidDocumentId) && java.util.Objects.equals(this.firstCheckpoint, that.firstCheckpoint) && java.util.Objects.equals(this.secondCheckpoint, that.secondCheckpoint); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.projectId); hash = 31 * hash + java.util.Objects.hashCode(this.runId); hash = 31 * hash + java.util.Objects.hashCode(this.bidDocumentId); hash = 31 * hash + java.util.Objects.hashCode(this.firstCheckpoint); hash = 31 * hash + java.util.Objects.hashCode(this.secondCheckpoint); return hash; }
+        @Override public String toString() { return "Fixture[" + "projectId=" + projectId + ", runId=" + runId + ", bidDocumentId=" + bidDocumentId + ", firstCheckpoint=" + firstCheckpoint + ", secondCheckpoint=" + secondCheckpoint + "]"; }
+}
 }

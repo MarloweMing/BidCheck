@@ -11,15 +11,17 @@ public final class MaterialAliasProof {
         return evaluate(cp,doc,null);
     }
     public static Optional<Evaluation> evaluate(Checkpoint cp,Document doc,Document tender) {
-        if(!"MATERIAL_EXISTENCE".equals(cp.type())||!Set.of("组成检查","形式检查").contains(cp.category())||!Objects.toString(cp.unit(),"").isBlank())return Optional.empty();
+        if(!"MATERIAL_EXISTENCE".equals(cp.type())||!cn.bidcheck.compat.Java8Api.setOf("组成检查", "形式检查").contains(cp.category())||!cn.bidcheck.compat.Java8Api.isBlank(Objects.toString(cp.unit(),"")))return Optional.empty();
         String requirement=compact(cp.expected());
-        String kind=switch(requirement){case "第一分册商务投标文件"->"BUSINESS_VOLUME";case "第二分册技术投标文件"->"TECHNICAL_VOLUME";case "商务技术评审索引表"->"BUSINESS_INDEX";case "技术投标索引表"->"TECHNICAL_INDEX";default->"";};
+        String kind;
+switch (requirement) {case "第一分册商务投标文件":kind = "BUSINESS_VOLUME"; break;case "第二分册技术投标文件":kind = "TECHNICAL_VOLUME"; break;case "商务技术评审索引表":kind = "BUSINESS_INDEX"; break;case "技术投标索引表":kind = "TECHNICAL_INDEX"; break;default:kind = ""; break;}
         if(kind.isEmpty())return Optional.empty();
         if(kind.equals("BUSINESS_INDEX")&&!businessVolumeRequirement(cp,tender))return Optional.empty();
-        List<String> names=switch(kind){case "BUSINESS_VOLUME"->List.of("投标文件（商务部分）","商务投标文件");case "TECHNICAL_VOLUME"->List.of("投标文件（技术部分）","技术投标文件");case "BUSINESS_INDEX"->List.of("商务评审索引表","商务技术评审索引表");default->List.of("技术评审索引表","技术投标索引表");};
-        List<Evidence> sources=new ArrayList<>();var scope=DocumentScopeProof.forDocument(doc);
+        List<String> names;
+switch (kind) {case "BUSINESS_VOLUME":names = cn.bidcheck.compat.Java8Api.listOf("投标文件（商务部分）", "商务投标文件"); break;case "TECHNICAL_VOLUME":names = cn.bidcheck.compat.Java8Api.listOf("投标文件（技术部分）", "技术投标文件"); break;case "BUSINESS_INDEX":names = cn.bidcheck.compat.Java8Api.listOf("商务评审索引表", "商务技术评审索引表"); break;default:names = cn.bidcheck.compat.Java8Api.listOf("技术评审索引表", "技术投标索引表"); break;}
+        List<Evidence> sources=new ArrayList<>();cn.bidcheck.verification.engine.DocumentScopeProof.Resolver scope=DocumentScopeProof.forDocument(doc);
         for(Page page:doc.pages()) {
-            String text=Objects.toString(page.text(),"");List<String> lines=text.lines().filter(s->!s.isBlank()).toList();
+            String text=Objects.toString(page.text(),"");List<String> lines=cn.bidcheck.compat.Java8Api.toList(cn.bidcheck.compat.Java8Extras.lines(text).filter(s->!cn.bidcheck.compat.Java8Api.isBlank(s)));
             if(lines.stream().limit(4).noneMatch(line->names.stream().anyMatch(name->title(line).equals(compact(name)))))continue;
             Evidence evidence=EngineText.evidence(doc,page,1,text);
             if(!Boolean.TRUE.equals(scope.currentEvidence(evidence).get("verifiedCurrent")))continue;
@@ -41,7 +43,7 @@ public final class MaterialAliasProof {
         if(location<0)return false;String text=Objects.toString(pages.get(location).text(),"");int at=text.indexOf(source.quote());if(at<0||text.indexOf(source.quote(),at+1)>=0)return false;
         // The nearest structural volume governs this title. A similar label elsewhere does not.
         for(int i=location;i>=Math.max(0,location-24);i--){
-            String part=i==location?text.substring(0,at):Objects.toString(pages.get(i).text(),"");List<String> lines=part.lines().toList();
+            String part=i==location?text.substring(0,at):Objects.toString(pages.get(i).text(),"");List<String> lines=cn.bidcheck.compat.Java8Api.toList(cn.bidcheck.compat.Java8Extras.lines(part));
             for(int j=lines.size()-1;j>=0;j--){String line=compact(lines.get(j));
                 if(line.equals("第一分册商务投标文件"))return true;
                 if(line.matches("第[一二三四五六七八九十0-9]+(?:分册|章).*"))return false;

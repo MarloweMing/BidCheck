@@ -4,19 +4,21 @@ import cn.bidcheck.infrastructure.queue.TaskLeaseLostException;
 import cn.bidcheck.infrastructure.queue.TaskNotificationPublisher;
 import cn.bidcheck.persistence.RecordMapper;
 import cn.bidcheck.persistence.TaskRow;
-import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
+import javax.annotation.PostConstruct;
+import javax.annotation.PreDestroy;
 import java.util.*;
 import java.util.concurrent.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.sql.init.dependency.DependsOnDatabaseInitialization;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /** Two bounded executors for a single instance; MySQL/H2 is the recoverable task source. */
 @Component
+@DependsOnDatabaseInitialization
 public class TaskWorker {
     public enum Acceptance { STARTED, BUSY, NOT_PENDING }
     private static final Logger log=LoggerFactory.getLogger(TaskWorker.class);
@@ -130,7 +132,7 @@ public class TaskWorker {
                     TaskRow current=mapper.task(execution.task.id);
                     // Some MySQL configurations report changed rows, so a same-value renewal can return zero.
                     if(current!=null && "RUNNING".equals(current.status) && execution.task.leaseOwner.equals(current.leaseOwner) && current.leaseUntil!=null && current.leaseUntil>System.currentTimeMillis()) execution.deadline=current.leaseUntil;
-                    else if(current==null || !Set.of("SUCCEEDED","FAILED","CANCELLED").contains(current.status)) loseLease(execution);
+                    else if(current==null || !cn.bidcheck.compat.Java8Api.setOf("SUCCEEDED", "FAILED", "CANCELLED").contains(current.status)) loseLease(execution);
                 }
             } catch(RuntimeException unavailable) {
                 if(System.currentTimeMillis()>=execution.deadline) loseLease(execution);

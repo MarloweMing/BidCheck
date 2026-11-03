@@ -37,7 +37,7 @@ final class EvidenceLeaseClaimRetry {
         Set<Throwable> seen=Collections.newSetFromMap(new IdentityHashMap<>());
         for(Throwable next=error;next!=null&&seen.add(next);next=next.getCause()){
             if(next instanceof TransactionSystemException||next instanceof CancellationException||next instanceof cn.bidcheck.infrastructure.queue.TaskLeaseLostException)return null;
-            if(next instanceof SQLException sql&&(sql.getErrorCode()==1213||"40001".equals(sql.getSQLState())))return sql;
+            if(next instanceof SQLException&&(((SQLException) (next)).getErrorCode()==1213||"40001".equals(((SQLException) (next)).getSQLState())))return ((SQLException) (next));
         }
         return null;
     }

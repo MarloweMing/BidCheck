@@ -16,22 +16,22 @@ public final class DateFieldValues {
      * Only this small alias family may use a generic date beside the document's signing block.
      * Certificate validity, issue dates and reference dates retain exact-label matching. */
     public static List<LocalDate> readAssertion(String quote,String field,int maximum){
-        if(quote==null||field==null||field.isBlank()||maximum<1)return List.of();
+        if(quote==null||field==null||cn.bidcheck.compat.Java8Api.isBlank(field)||maximum<1)return cn.bidcheck.compat.Java8Api.listOf();
         List<LocalDate> exact=read(quote,field,maximum);if(!exact.isEmpty())return exact;
-        if(quote==null||maximum!=1||!Set.of("签署日期","落款日期","签字日期","落款时间","签署时间").contains(field))return List.of();
+        if(quote==null||maximum!=1||!cn.bidcheck.compat.Java8Api.setOf("签署日期", "落款日期", "签字日期", "落款时间", "签署时间").contains(field))return cn.bidcheck.compat.Java8Api.listOf();
         String text=quote.replaceAll("(?is)<[^>]+>"," ").replace("&nbsp;"," ");
-        if(!text.matches("(?s).*(?:承诺书|声明书|声明函|投标函|授权委托书|联合体协议书|证明书).*"))return List.of();
+        if(!text.matches("(?s).*(?:承诺书|声明书|声明函|投标函|授权委托书|联合体协议书|证明书).*"))return cn.bidcheck.compat.Java8Api.listOf();
         Matcher generic=Pattern.compile("(?m)(?:^|[\\n|])\\s*日期\\s*[:：]").matcher(text);List<List<LocalDate>> dates=new ArrayList<>();
         while(generic.find()){
             String before=text.substring(Math.max(0,generic.start()-240),generic.start());
             if(!before.matches("(?s).*(?:投标人|供应商|承诺人|声明人|法定代表人|负责人|委托代理人|甲方|乙方)[^\\n]{0,90}(?:盖章|签字|签名|签章)[^\\n]*(?:\\n[^\\n]*){0,3}"))continue;
-            List<LocalDate> value=read(text.substring(generic.start()),"日期",1);if(value.isEmpty())return List.of();dates.add(value);
+            List<LocalDate> value=read(text.substring(generic.start()),"日期",1);if(value.isEmpty())return cn.bidcheck.compat.Java8Api.listOf();dates.add(value);
         }
-        if(dates.isEmpty())return List.of();List<LocalDate> first=dates.get(0);return dates.stream().allMatch(first::equals)?first:List.of();
+        if(dates.isEmpty())return cn.bidcheck.compat.Java8Api.listOf();List<LocalDate> first=dates.get(0);return dates.stream().allMatch(first::equals)?first:cn.bidcheck.compat.Java8Api.listOf();
     }
 
     public static List<LocalDate> read(String quote,String field,int maximum){
-        if(quote==null||field==null||field.isBlank()||maximum<1)return List.of();
+        if(quote==null||field==null||cn.bidcheck.compat.Java8Api.isBlank(field)||maximum<1)return cn.bidcheck.compat.Java8Api.listOf();
         // HTML cell tags and Markdown separators are formatting, not permission to cross the next label.
         String text=quote.replaceAll("(?is)<[^>]+>"," ").replace("&nbsp;"," ");
         String label=Pattern.quote(field);Matcher found=Pattern.compile(label).matcher(text);List<List<LocalDate>> occurrences=new ArrayList<>();
@@ -48,14 +48,14 @@ public final class DateFieldValues {
             Matcher dates=DATE.matcher(after);List<LocalDate> values=new ArrayList<>();int previousEnd=0;boolean invalid=false;
             while(dates.find()){
                 String between=after.substring(previousEnd,dates.start());
-                if(values.isEmpty()&&!between.isBlank()||!values.isEmpty()&&!between.matches("[\\s至到起止从—–~～－\\-:：|]*")){invalid=true;break;}
+                if(values.isEmpty()&&!cn.bidcheck.compat.Java8Api.isBlank(between)||!values.isEmpty()&&!between.matches("[\\s至到起止从—–~～－\\-:：|]*")){invalid=true;break;}
                 try{values.add(LocalDate.of(Integer.parseInt(dates.group(1)),Integer.parseInt(dates.group(2)),Integer.parseInt(dates.group(3))));}catch(RuntimeException e){invalid=true;break;}
                 previousEnd=dates.end();
             }
-            if(!invalid&&!values.isEmpty()&&values.size()<=maximum)occurrences.add(List.copyOf(values));
-            else if(invalid||values.size()>maximum)return List.of();
+            if(!invalid&&!values.isEmpty()&&values.size()<=maximum)occurrences.add(cn.bidcheck.compat.Java8Api.listCopyOf(values));
+            else if(invalid||values.size()>maximum)return cn.bidcheck.compat.Java8Api.listOf();
         }
-        if(occurrences.isEmpty())return List.of();List<LocalDate> first=occurrences.get(0);
-        return occurrences.stream().allMatch(first::equals)?first:List.of();
+        if(occurrences.isEmpty())return cn.bidcheck.compat.Java8Api.listOf();List<LocalDate> first=occurrences.get(0);
+        return occurrences.stream().allMatch(first::equals)?first:cn.bidcheck.compat.Java8Api.listOf();
     }
 }

@@ -30,7 +30,7 @@ class CheckRenewalIntegrationTest {
     @Autowired Store store;
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
-    String project(){return service.createProject(Map.of("name","待解析项目")).get("id").toString();}
+    String project(){return service.createProject(cn.bidcheck.compat.Java8Api.mapOf("name", "待解析项目")).get("id").toString();}
     TaskRow upload(String project,String role,String content) throws Exception {
         return service.upload(project,role,new MockMultipartFile("file","需求样例.txt","text/plain",content.getBytes(StandardCharsets.UTF_8)));
     }
@@ -62,7 +62,7 @@ class CheckRenewalIntegrationTest {
         assertThat(store.getMap("project",p)).containsEntry("name","新版本").containsEntry("projectNumber","NEW").containsEntry("openingTime","");
         assertThat(((Map<?,?>)store.getMap("project",p).get("fieldWarnings")).containsKey("openingTime")).isTrue();
         assertThat(service.publicTask(old)).containsEntry("fileName","需求样例.txt").containsEntry("role","TENDER");
-        service.updateProject(p,Map.of("openingTime","2026-12-01"));
+        service.updateProject(p,cn.bidcheck.compat.Java8Api.mapOf("openingTime", "2026-12-01"));
         assertThat(store.getMap("project",p)).containsEntry("openingTime","2026-12-01");
     }
 
@@ -81,25 +81,25 @@ class CheckRenewalIntegrationTest {
         assertThat(added.source()).isNull();assertThat(added.confirmed()).isFalse();
         String bid=parse(p,"BID","项目编号：CRUD-01\n投标有效期：100天");confirm(p);
         Map<String,Object> run=service.startRun(p,bid);String runId=run.get("id").toString();
-        Checkpoint extracted=((List<Checkpoint>)service.detail(p).get("checkpoints")).stream().filter(c->!c.id().equals(added.id())).findFirst().orElseThrow();
+        Checkpoint extracted=((List<Checkpoint>)service.detail(p).get("checkpoints")).stream().filter(c->!c.id().equals(added.id())).findFirst().orElseThrow(java.util.NoSuchElementException::new);
         mvc.perform(delete("/api/checkpoints/"+added.id())).andExpect(status().isOk());
         mvc.perform(delete("/api/checkpoints/"+extracted.id())).andExpect(status().isOk());
         service.execute(service.extract(p,tender));
-        assertThat((List<Checkpoint>)service.detail(p).get("checkpoints")).noneMatch(c->Set.of(added.id(),extracted.id()).contains(c.id()));
+        assertThat((List<Checkpoint>)service.detail(p).get("checkpoints")).noneMatch(c->cn.bidcheck.compat.Java8Api.setOf(added.id(), extracted.id()).contains(c.id()));
         assertThat(store.list("snapshot",p,runId,Checkpoint.class)).anyMatch(c->c.id().equals(added.id())).anyMatch(c->c.id().equals(extracted.id()));
-        assertThat(store.list("snapshot",p,runId,Checkpoint.class).stream().filter(c->c.id().equals(added.id())).findFirst().orElseThrow().confirmed()).isTrue();
+        assertThat(store.list("snapshot",p,runId,Checkpoint.class).stream().filter(c->c.id().equals(added.id())).findFirst().orElseThrow(java.util.NoSuchElementException::new).confirmed()).isTrue();
         mvc.perform(put("/api/checkpoints/"+added.id()).contentType(MediaType.APPLICATION_JSON).content(response)).andExpect(status().isNotFound());
         String other=project();mvc.perform(post("/api/projects/"+other+"/checkpoints").contentType(MediaType.APPLICATION_JSON).content(response)).andExpect(status().isBadRequest());
     }
 
     @Test void openingDateChangesProduceNewFrozenRunAndDoNotChangeExistingRun() throws Exception {
         String p=project();String tender=parse(p,"TENDER","项目名称：效期核对\n开标时间：2026-11-03\n投标截止时间：2026-11-02");service.execute(service.extract(p,tender));
-        Checkpoint c=service.createCheckpoint(p,Map.of("title","签署日期不得晚于开标时间","category","全文信息检查","type","FULL_TEXT_REVIEW","field","signingAfterOpening","operator","REVIEW","expected","2026-11-03","unit","DATE"));
+        Checkpoint c=service.createCheckpoint(p,cn.bidcheck.compat.Java8Api.mapOf("title", "签署日期不得晚于开标时间", "category", "全文信息检查", "type", "FULL_TEXT_REVIEW", "field", "signingAfterOpening", "operator", "REVIEW", "expected", "2026-11-03", "unit", "DATE"));
         String bid=parse(p,"BID","项目名称：效期核对\n签署日期：2026-11-04");confirm(p);
-        String run1=service.startRun(p,bid).get("id").toString();service.updateProject(p,Map.of("openingTime","2026-11-05"));
+        String run1=service.startRun(p,bid).get("id").toString();service.updateProject(p,cn.bidcheck.compat.Java8Api.mapOf("openingTime", "2026-11-05"));
         String run2=service.startRun(p,bid).get("id").toString();assertThat(run2).isNotEqualTo(run1);
-        assertThat(store.list("snapshot",p,run1,Checkpoint.class).stream().filter(x->x.id().equals(c.id())).findFirst().orElseThrow().expected()).isEqualTo("2026-11-03");
-        assertThat(store.list("snapshot",p,run2,Checkpoint.class).stream().filter(x->x.id().equals(c.id())).findFirst().orElseThrow().expected()).isEqualTo("2026-11-05");
+        assertThat(store.list("snapshot",p,run1,Checkpoint.class).stream().filter(x->x.id().equals(c.id())).findFirst().orElseThrow(java.util.NoSuchElementException::new).expected()).isEqualTo("2026-11-03");
+        assertThat(store.list("snapshot",p,run2,Checkpoint.class).stream().filter(x->x.id().equals(c.id())).findFirst().orElseThrow(java.util.NoSuchElementException::new).expected()).isEqualTo("2026-11-05");
     }
 
     @Test void emptyParsedTextBlocksExtractionAndUploadLimitIsExposed() throws Exception {

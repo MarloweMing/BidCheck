@@ -56,7 +56,7 @@ public final class EvidenceNeedCoordinator implements AutoCloseable {
         this.clock = Objects.requireNonNull(clock, "clock");
         this.scheduler = Objects.requireNonNull(scheduler, "scheduler");
         this.worker = Objects.requireNonNull(worker, "worker");
-        if (ownerId == null || ownerId.isBlank()) throw new IllegalArgumentException("ownerId is required");
+        if (ownerId == null || cn.bidcheck.compat.Java8Api.isBlank(ownerId)) throw new IllegalArgumentException("ownerId is required");
         this.ownerId = ownerId.trim();
         this.ownsExecutors = ownsExecutors;
     }
@@ -243,12 +243,12 @@ public final class EvidenceNeedCoordinator implements AutoCloseable {
 
     private static String safeMessage(Throwable failure) {
         String message = failure == null ? "" : failure.getMessage();
-        if (message == null || message.isBlank()) message = failure == null ? "" : failure.getClass().getSimpleName();
+        if (message == null || cn.bidcheck.compat.Java8Api.isBlank(message)) message = failure == null ? "" : failure.getClass().getSimpleName();
         return message.length() <= 500 ? message : message.substring(0, 500);
     }
 
     private static String required(String value, String field) {
-        if (value == null || value.isBlank()) throw new IllegalArgumentException(field + " is required");
+        if (value == null || cn.bidcheck.compat.Java8Api.isBlank(value)) throw new IllegalArgumentException(field + " is required");
         return value.trim();
     }
 
@@ -276,6 +276,6 @@ public final class EvidenceNeedCoordinator implements AutoCloseable {
     public void close() {
         if (!ownsExecutors) return;
         scheduler.shutdownNow();
-        if (worker instanceof ExecutorService service) service.shutdownNow();
+        if (worker instanceof ExecutorService) ((ExecutorService) (worker)).shutdownNow();
     }
 }

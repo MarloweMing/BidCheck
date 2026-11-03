@@ -32,7 +32,7 @@ public class TemplateIncrementalPublicationService {
     public static final String RESULT_VERSION_KIND="template_result_version";
     public static final String RESULT_HEAD_KIND="template_result_version_head";
     private static final String CANDIDATE_KIND="template_incremental_recalc";
-    private static final Set<String> DECISIONS=Set.of("APPROVE","REJECT");
+    private static final Set<String> DECISIONS=cn.bidcheck.compat.Java8Api.setOf("APPROVE", "REJECT");
 
     private final Store store;
     private final BidService bids;
@@ -91,7 +91,7 @@ public class TemplateIncrementalPublicationService {
 
     public Map<String,Object> decorate(Map<String,Object> raw){
         Map<String,Object> value=new LinkedHashMap<>(raw);String candidateId=BidService.text(value,"id");
-        if(candidateId.isBlank())return value;Stored row=store.mapper().get(decisionId(candidateId));
+        if(cn.bidcheck.compat.Java8Api.isBlank(candidateId))return value;Stored row=store.mapper().get(decisionId(candidateId));
         Map<String,Object> decision=row==null?pending(value):store.map(row.body);
         value.put("decision",decision);value.put("decisionRevision",decision.get("decisionRevision"));
         value.put("publicationState",decision.get("publicationState"));
@@ -100,7 +100,7 @@ public class TemplateIncrementalPublicationService {
     }
 
     public List<Map<String,Object>> decorateList(List<Map<String,Object>> candidates){
-        if(candidates==null||candidates.isEmpty())return List.of();
+        if(candidates==null||candidates.isEmpty())return cn.bidcheck.compat.Java8Api.listOf();
         Map<String,Map<String,Object>> byCandidate=new LinkedHashMap<>();
         String projectId=BidService.text(candidates.get(0),"projectId");
         for(Map<String,Object> value:store.maps(DECISION_KIND,projectId,null))byCandidate.put(BidService.text(value,"candidateRecordId"),value);
@@ -108,13 +108,13 @@ public class TemplateIncrementalPublicationService {
         for(Map<String,Object> raw:candidates){Map<String,Object> value=new LinkedHashMap<>(raw);Map<String,Object> decision=byCandidate.get(BidService.text(raw,"id"));
             if(decision==null)decision=pending(raw);value.put("decision",decision);value.put("decisionRevision",decision.get("decisionRevision"));
             value.put("publicationState",decision.get("publicationState"));value.put("publishedResultVersionId",decision.get("publishedResultVersionId"));out.add(value);}
-        return List.copyOf(out);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(out);
     }
 
     public List<Map<String,Object>> versions(String runId){
         Map<String,Object> run=store.getMap("run",runId);String projectId=BidService.text(run,"projectId");
-        return store.maps(RESULT_VERSION_KIND,projectId,runId).stream()
-            .sorted(Comparator.comparingInt(value->number(value.get("revision"),0))).toList();
+        return cn.bidcheck.compat.Java8Api.toList(store.maps(RESULT_VERSION_KIND,projectId,runId).stream()
+            .sorted(Comparator.comparingInt(value->number(value.get("revision"),0))));
     }
 
     public Map<String,Object> version(String runId,String versionId){
@@ -125,12 +125,12 @@ public class TemplateIncrementalPublicationService {
     public Map<String,Object> currentVersion(String runId){
         Map<String,Object> run=store.getMap("run",runId);String projectId=BidService.text(run,"projectId");Map<String,Object> head=currentHead(runId);
         Map<String,Object> out=new LinkedHashMap<>(head);String versionId=BidService.text(head,"currentVersionId");
-        out.put("projectId",projectId);out.put("sourceRunId",runId);out.put("published",!versionId.isBlank());
-        if(!versionId.isBlank())out.put("version",version(runId,versionId));return out;
+        out.put("projectId",projectId);out.put("sourceRunId",runId);out.put("published",!cn.bidcheck.compat.Java8Api.isBlank(versionId));
+        if(!cn.bidcheck.compat.Java8Api.isBlank(versionId))out.put("version",version(runId,versionId));return out;
     }
 
     public Map<String,Object> currentHead(String runId){
-        Stored row=store.mapper().get(headId(runId));if(row==null)return Map.of("revision",0,"currentVersionId","");
+        Stored row=store.mapper().get(headId(runId));if(row==null)return cn.bidcheck.compat.Java8Api.mapOf("revision", 0, "currentVersionId", "");
         if(!RESULT_HEAD_KIND.equals(row.kind)||!runId.equals(row.parentId))throw new IllegalStateException("RESULT_VERSION_HEAD_SCOPE_MISMATCH");
         return store.map(row.body);
     }
@@ -141,8 +141,8 @@ public class TemplateIncrementalPublicationService {
         if(!expectedBase.equals(BidService.text(head,"currentVersionId"))||expectedBaseRevision!=number(head.get("revision"),0))
             throw conflict("RESULT_VERSION_BASE_CHANGED","已有新的增量结果版本，请基于最新版本重新计算候选结论",number(head.get("revision"),0));
 
-        Map<String,Map<String,Object>> merged=new LinkedHashMap<>();Map<String,Object> baseVersion=Map.of();
-        if(!expectedBase.isBlank()){
+        Map<String,Map<String,Object>> merged=new LinkedHashMap<>();Map<String,Object> baseVersion=cn.bidcheck.compat.Java8Api.mapOf();
+        if(!cn.bidcheck.compat.Java8Api.isBlank(expectedBase)){
             baseVersion=version(candidate.runId(),expectedBase);List<Map<String,Object>> baseResults=maps(baseVersion.get("results"));
             if(number(baseVersion.get("revision"),-1)!=expectedBaseRevision
                 ||!BidService.hash(store.encode(baseResults)).equals(BidService.text(baseVersion,"resultDigest")))
@@ -162,7 +162,7 @@ public class TemplateIncrementalPublicationService {
             }
         }
         for(Map<String,Object> result:maps(body.get("results"))){String checkpointId=BidService.text(result,"checkpointId");Object finding=result.get("candidateFinding");
-            if(checkpointId.isBlank()||!(finding instanceof Map<?,?>))throw conflict("CANDIDATE_CONTENT_INVALID","候选结果内容不完整，不能发布",number(body.get("graphRevision"),0));
+            if(cn.bidcheck.compat.Java8Api.isBlank(checkpointId)||!(finding instanceof Map<?,?>))throw conflict("CANDIDATE_CONTENT_INVALID","候选结果内容不完整，不能发布",number(body.get("graphRevision"),0));
             Map<String,Object> current=merged.get(checkpointId);Object before=result.get("beforeFinding");
             if(current==null||!(before instanceof Map<?,?>)||!Objects.equals(current.get("finding"),before))
                 throw conflict("RESULT_VERSION_BASE_CHANGED","候选结论的比较基线已不是当前发布结果",expectedBaseRevision);
@@ -170,9 +170,9 @@ public class TemplateIncrementalPublicationService {
             Map<String,Object> entry=new LinkedHashMap<>();entry.put("checkpointId",checkpointId);entry.put("origin","INCREMENTAL_CANDIDATE");
             entry.put("candidateRecordId",candidate.id());entry.put("previousFindingId",result.getOrDefault("previousFindingId",""));entry.put("finding",finding);merged.put(checkpointId,entry);
         }
-        List<Map<String,Object>> results=merged.values().stream().sorted(Comparator.comparing(value->BidService.text(value,"checkpointId"))).toList();
+        List<Map<String,Object>> results=cn.bidcheck.compat.Java8Api.toList(merged.values().stream().sorted(Comparator.comparing(value->BidService.text(value,"checkpointId"))));
         int revision=expectedBaseRevision+1;String resultDigest=BidService.hash(store.encode(results));
-        if(!expectedBase.isBlank()&&resultDigest.equals(BidService.text(baseVersion,"resultDigest")))
+        if(!cn.bidcheck.compat.Java8Api.isBlank(expectedBase)&&resultDigest.equals(BidService.text(baseVersion,"resultDigest")))
             throw invalid("decision","候选结论与当前发布版本相同，无需创建新版本");
         String versionId=BidService.stableId("template-result-version:"+candidate.runId()+":"+candidate.id()+":"+resultDigest);
         Map<String,Object> version=new LinkedHashMap<>();version.put("schemaVersion",RESULT_VERSION_SCHEMA);version.put("id",versionId);
@@ -201,7 +201,7 @@ public class TemplateIncrementalPublicationService {
         if(!bids.templateCheckIdentity().equals(BidService.text(run,"templateCheckIdentity")))
             throw conflict("TEMPLATE_ENGINE_CHANGED","模板判定器已升级，请重新执行完整检查",number(body.get("graphRevision"),0));
         String frozenPolicy=BidService.text(body,"resolutionPolicyIdentity");
-        if(frozenPolicy.isBlank()||!frozenPolicy.equals(BidService.text(run,"resolutionPolicyIdentity"))
+        if(cn.bidcheck.compat.Java8Api.isBlank(frozenPolicy)||!frozenPolicy.equals(BidService.text(run,"resolutionPolicyIdentity"))
             ||!frozenPolicy.equals(bids.resolutionPolicyIdentity()))
             throw conflict("RESULT_POLICY_CHANGED","结果保护或证据复核策略已升级，请重新执行完整检查",number(body.get("graphRevision"),0));
         Map<String,Object> graph=graphs.get(candidate.runId());
@@ -228,16 +228,14 @@ public class TemplateIncrementalPublicationService {
 
     /** Digest deliberately excludes lifecycle fields, so the recalculation service can create it before publication. */
     public String candidateDigest(Map<String,Object> body){Map<String,Object> content=new LinkedHashMap<>();
-        for(String key:List.of("schemaVersion","sourceRunId","projectId","graphRevision","graphContentDigest","sourceResultDigest","affectedSourceDigest",
-            "baseResultDigest","affectedBaseResultDigest","resolutionPolicyIdentity","evidenceSnapshotDigest","changedNeedKeys","affectedCheckpointIds","recalculatedCheckpointIds","changedCheckpointIds","retainedCheckpointIds",
-            "newConclusions","results","baseResultVersionId","baseResultVersionRevision"))content.put(key,body.get(key));
+        for(String key:cn.bidcheck.compat.Java8Api.listOf("schemaVersion", "sourceRunId", "projectId", "graphRevision", "graphContentDigest", "sourceResultDigest", "affectedSourceDigest", "baseResultDigest", "affectedBaseResultDigest", "resolutionPolicyIdentity", "evidenceSnapshotDigest", "changedNeedKeys", "affectedCheckpointIds", "recalculatedCheckpointIds", "changedCheckpointIds", "retainedCheckpointIds", "newConclusions", "results", "baseResultVersionId", "baseResultVersionRevision"))content.put(key,body.get(key));
         return BidService.hash(store.encode(content));
     }
 
     private Candidate candidate(String runId,String candidateId){Map<String,Object> run=store.getMap("run",runId);String projectId=BidService.text(run,"projectId");Stored row=store.require(CANDIDATE_KIND,candidateId);
         if(!projectId.equals(row.projectId)||!runId.equals(row.parentId))throw missing("增量候选记录不属于该检查");return new Candidate(projectId,runId,candidateId,store.map(row.body));}
     private void verifyExpectedCandidate(Map<String,Object> candidate,DecisionRequest desired){
-        if(desired.expectedSourceDigest().isBlank()||desired.expectedEvidenceDigest().isBlank())throw invalid("expectedSourceResultDigest","必须绑定候选记录的来源结果和证据摘要");
+        if(cn.bidcheck.compat.Java8Api.isBlank(desired.expectedSourceDigest())||cn.bidcheck.compat.Java8Api.isBlank(desired.expectedEvidenceDigest()))throw invalid("expectedSourceResultDigest","必须绑定候选记录的来源结果和证据摘要");
         if(!desired.expectedSourceDigest().equals(BidService.text(candidate,"sourceResultDigest")))throw conflict("EXPECTED_SOURCE_DIGEST_MISMATCH","提交的来源结果摘要与候选记录不一致",number(candidate.get("graphRevision"),0));
         if(!desired.expectedEvidenceDigest().equals(BidService.text(candidate,"evidenceSnapshotDigest")))throw conflict("EXPECTED_EVIDENCE_DIGEST_MISMATCH","提交的证据快照摘要与候选记录不一致",number(candidate.get("graphRevision"),0));
     }
@@ -246,23 +244,57 @@ public class TemplateIncrementalPublicationService {
         Map<String,Object> prior=store.map(row.body);boolean same=desired.decision().equals(BidService.text(prior,"decision"))&&desired.reviewer().equals(BidService.text(prior,"reviewer"))&&desired.note().equals(BidService.text(prior,"note"));
         if(same)return prior;throw conflict("CANDIDATE_ALREADY_DECIDED","该候选结论已经完成审核，不能重复修改",number(prior.get("decisionRevision"),1));
     }
-    private static DecisionRequest request(Map<String,Object> body){if(body==null)body=Map.of();String decision=BidService.text(body,"decision").toUpperCase(java.util.Locale.ROOT);
+    private static DecisionRequest request(Map<String,Object> body){if(body==null)body=cn.bidcheck.compat.Java8Api.mapOf();String decision=BidService.text(body,"decision").toUpperCase(java.util.Locale.ROOT);
         if(!DECISIONS.contains(decision))throw invalid("decision","只能选择 APPROVE 或 REJECT");String reviewer=BidService.text(body,"reviewer");
-        if(reviewer.isBlank()||reviewer.length()>100)throw invalid("reviewer","审核人不能为空且不能超过100字");String note=BidService.text(body,"note");if(note.isBlank()||note.length()>3000)throw invalid("note","审核说明不能为空且不能超过3000字");
-        Object revision=body.get("expectedDecisionRevision");if(!(revision instanceof Number number)||number.intValue()<0||number.doubleValue()!=Math.rint(number.doubleValue()))throw invalid("expectedDecisionRevision","必须提供非负整数审核版本");
-        return new DecisionRequest(decision,reviewer,note,number.intValue(),BidService.text(body,"expectedSourceResultDigest"),BidService.text(body,"expectedEvidenceSnapshotDigest"));}
+        if(cn.bidcheck.compat.Java8Api.isBlank(reviewer)||reviewer.length()>100)throw invalid("reviewer","审核人不能为空且不能超过100字");String note=BidService.text(body,"note");if(cn.bidcheck.compat.Java8Api.isBlank(note)||note.length()>3000)throw invalid("note","审核说明不能为空且不能超过3000字");
+        Object revision=body.get("expectedDecisionRevision");if(!(revision instanceof Number)||((Number) (revision)).intValue()<0||((Number) (revision)).doubleValue()!=Math.rint(((Number) (revision)).doubleValue()))throw invalid("expectedDecisionRevision","必须提供非负整数审核版本");
+        return new DecisionRequest(decision,reviewer,note,((Number) (revision)).intValue(),BidService.text(body,"expectedSourceResultDigest"),BidService.text(body,"expectedEvidenceSnapshotDigest"));}
     private static Map<String,Object> pending(Map<String,Object> candidate){Map<String,Object> out=new LinkedHashMap<>();out.put("decision","");out.put("decisionRevision",0);out.put("publicationState","CANDIDATE_ONLY");out.put("publishedResultVersionId","");out.put("candidateRecordId",BidService.text(candidate,"id"));out.put("historicalRunUnchanged",true);return out;}
-    private static List<Map<String,Object>> maps(Object value){if(!(value instanceof Collection<?> collection))return List.of();List<Map<String,Object>> out=new ArrayList<>();for(Object item:collection)if(item instanceof Map<?,?> raw){Map<String,Object> map=new LinkedHashMap<>();raw.forEach((k,v)->map.put(Objects.toString(k),v));out.add(map);}return out;}
-    private static List<String> strings(Object value){if(!(value instanceof Collection<?> collection))return List.of();return collection.stream().filter(Objects::nonNull).map(Object::toString).filter(v->!v.isBlank()).distinct().sorted().toList();}
-    private static List<String> graphCheckpointIds(Map<String,Object> graph){LinkedHashSet<String> ids=new LinkedHashSet<>();for(Map<String,Object> fragment:maps(graph.get("fragments"))){String id=BidService.text(fragment,"checkpointId");if(!id.isBlank())ids.add(id);}return ids.stream().sorted().toList();}
-    private static int number(Object value,int fallback){return value instanceof Number number?number.intValue():fallback;}
+    private static List<Map<String,Object>> maps(Object value){if(!(value instanceof Collection<?>))return cn.bidcheck.compat.Java8Api.listOf();List<Map<String,Object>> out=new ArrayList<>();for(Object item:((Collection<?>) (value)))if(item instanceof Map<?,?>){Map<String,Object> map=new LinkedHashMap<>();((Map<?,?>) (item)).forEach((k,v)->map.put(Objects.toString(k),v));out.add(map);}return out;}
+    private static List<String> strings(Object value){if(!(value instanceof Collection<?>))return cn.bidcheck.compat.Java8Api.listOf();return cn.bidcheck.compat.Java8Api.toList(((Collection<?>) (value)).stream().filter(Objects::nonNull).map(Object::toString).filter(v->!cn.bidcheck.compat.Java8Api.isBlank(v)).distinct().sorted());}
+    private static List<String> graphCheckpointIds(Map<String,Object> graph){LinkedHashSet<String> ids=new LinkedHashSet<>();for(Map<String,Object> fragment:maps(graph.get("fragments"))){String id=BidService.text(fragment,"checkpointId");if(!cn.bidcheck.compat.Java8Api.isBlank(id))ids.add(id);}return cn.bidcheck.compat.Java8Api.toList(ids.stream().sorted());}
+    private static int number(Object value,int fallback){return value instanceof Number?((Number) (value)).intValue():fallback;}
     private static String decisionId(String candidateId){return BidService.stableId("template-incremental-decision:"+candidateId);}
     private static String auditId(String candidateId){return BidService.stableId("audit:template-incremental-decision:"+candidateId);}
     public static String headId(String runId){return BidService.stableId("template-result-version-head:"+runId);}
     private static TemplateApiException conflict(String code,String message,int revision){return TemplateApiException.conflict(code,message,revision);}
-    private static TemplateApiException invalid(String field,String message){return TemplateApiException.invalid("增量候选审核请求无效",List.of(Map.of("field",field,"message",message)));}
-    private static TemplateApiException missing(String message){return new TemplateApiException(HttpStatus.NOT_FOUND,"RESOURCE_NOT_FOUND",message,false,List.of(),null);}
+    private static TemplateApiException invalid(String field,String message){return TemplateApiException.invalid("增量候选审核请求无效",cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("field", field, "message", message)));}
+    private static TemplateApiException missing(String message){return new TemplateApiException(HttpStatus.NOT_FOUND,"RESOURCE_NOT_FOUND",message,false,cn.bidcheck.compat.Java8Api.listOf(),null);}
 
-    private record Candidate(String projectId,String runId,String id,Map<String,Object> body){}
-    private record DecisionRequest(String decision,String reviewer,String note,int expectedRevision,String expectedSourceDigest,String expectedEvidenceDigest){}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Candidate{
+        private final String projectId;
+        private final String runId;
+        private final String id;
+        private final Map<String,Object> body;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Candidate(@com.fasterxml.jackson.annotation.JsonProperty("projectId") String projectId, @com.fasterxml.jackson.annotation.JsonProperty("runId") String runId, @com.fasterxml.jackson.annotation.JsonProperty("id") String id, @com.fasterxml.jackson.annotation.JsonProperty("body") Map<String,Object> body) { this.projectId = projectId; this.runId = runId; this.id = id; this.body = body; }
+        public String projectId() { return projectId; }
+        public String runId() { return runId; }
+        public String id() { return id; }
+        public Map<String,Object> body() { return body; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Candidate that = (Candidate) other; return java.util.Objects.equals(this.projectId, that.projectId) && java.util.Objects.equals(this.runId, that.runId) && java.util.Objects.equals(this.id, that.id) && java.util.Objects.equals(this.body, that.body); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.projectId); hash = 31 * hash + java.util.Objects.hashCode(this.runId); hash = 31 * hash + java.util.Objects.hashCode(this.id); hash = 31 * hash + java.util.Objects.hashCode(this.body); return hash; }
+        @Override public String toString() { return "Candidate[" + "projectId=" + projectId + ", runId=" + runId + ", id=" + id + ", body=" + body + "]"; }
+}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class DecisionRequest{
+        private final String decision;
+        private final String reviewer;
+        private final String note;
+        private final int expectedRevision;
+        private final String expectedSourceDigest;
+        private final String expectedEvidenceDigest;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private DecisionRequest(@com.fasterxml.jackson.annotation.JsonProperty("decision") String decision, @com.fasterxml.jackson.annotation.JsonProperty("reviewer") String reviewer, @com.fasterxml.jackson.annotation.JsonProperty("note") String note, @com.fasterxml.jackson.annotation.JsonProperty("expectedRevision") int expectedRevision, @com.fasterxml.jackson.annotation.JsonProperty("expectedSourceDigest") String expectedSourceDigest, @com.fasterxml.jackson.annotation.JsonProperty("expectedEvidenceDigest") String expectedEvidenceDigest) { this.decision = decision; this.reviewer = reviewer; this.note = note; this.expectedRevision = expectedRevision; this.expectedSourceDigest = expectedSourceDigest; this.expectedEvidenceDigest = expectedEvidenceDigest; }
+        public String decision() { return decision; }
+        public String reviewer() { return reviewer; }
+        public String note() { return note; }
+        public int expectedRevision() { return expectedRevision; }
+        public String expectedSourceDigest() { return expectedSourceDigest; }
+        public String expectedEvidenceDigest() { return expectedEvidenceDigest; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; DecisionRequest that = (DecisionRequest) other; return java.util.Objects.equals(this.decision, that.decision) && java.util.Objects.equals(this.reviewer, that.reviewer) && java.util.Objects.equals(this.note, that.note) && java.util.Objects.equals(this.expectedRevision, that.expectedRevision) && java.util.Objects.equals(this.expectedSourceDigest, that.expectedSourceDigest) && java.util.Objects.equals(this.expectedEvidenceDigest, that.expectedEvidenceDigest); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.decision); hash = 31 * hash + java.util.Objects.hashCode(this.reviewer); hash = 31 * hash + java.util.Objects.hashCode(this.note); hash = 31 * hash + java.util.Objects.hashCode(this.expectedRevision); hash = 31 * hash + java.util.Objects.hashCode(this.expectedSourceDigest); hash = 31 * hash + java.util.Objects.hashCode(this.expectedEvidenceDigest); return hash; }
+        @Override public String toString() { return "DecisionRequest[" + "decision=" + decision + ", reviewer=" + reviewer + ", note=" + note + ", expectedRevision=" + expectedRevision + ", expectedSourceDigest=" + expectedSourceDigest + ", expectedEvidenceDigest=" + expectedEvidenceDigest + "]"; }
+}
 }

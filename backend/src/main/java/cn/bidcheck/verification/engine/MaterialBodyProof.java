@@ -38,13 +38,13 @@ final class MaterialBodyProof {
             }
             String value=body.toString();
             if(value.matches("(?s).*(?:仅供参考|填写示例|证书样本|证书模板|示例姓名|示例编号|待填写).*"))continue;
-            if(!subject.isBlank()&&!clean(value).contains(clean(subject)))continue;
+            if(!cn.bidcheck.compat.Java8Api.isBlank(subject)&&!clean(value).contains(clean(subject)))continue;
             // Filled certificate fields are required; unrelated long prose and CV identity columns do not qualify.
             boolean named=NAME.matcher(value).find(),numbered=NUMBER.matcher(value).find();
             int supporting=(named?1:0)+(DATE.matcher(value).find()?1:0)+(ISSUER.matcher(value).find()?1:0);
-            if(numbered&&(named||!subject.isBlank())||supporting>=2&&named)return true;
+            if(numbered&&(named||!cn.bidcheck.compat.Java8Api.isBlank(subject))||supporting>=2&&named)return true;
         }
         return false;
     }
-    private static String title(String value){return SectionCoverage.strip(value.strip().replaceFirst("^[#>*★]+\\s*","")).strip();}
+    private static String title(String value){return cn.bidcheck.compat.Java8Api.strip(SectionCoverage.strip(cn.bidcheck.compat.Java8Api.strip(value).replaceFirst("^[#>*★]+\\s*","")));}
 }

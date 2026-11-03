@@ -19,19 +19,19 @@ public final class DocumentScopeProof {
         private final MappedSectionScope mappedSections;
         private Resolver(Document document){this.document=document;this.scope=document==null?null:new DocumentSubjectScope(document);this.collections=new DocumentCollectionScope(document);this.commitments=new StandaloneCommitmentScope(document);this.mappedSections=new MappedSectionScope(document);}
         public Map<String,Object> currentEvidence(Evidence evidence){
-            if(document==null||evidence==null||!document.id().equals(evidence.documentId()))return result("UNRESOLVED","来源文件不能对应当前投标文件",Map.of());
-            List<Page> pages=document.pages().stream().filter(p->p.number()==evidence.page()&&p.locationType().equals(evidence.locationType())).toList();
-            if(pages.size()!=1)return result("UNRESOLVED","原文位置不唯一或不存在",Map.of());
+            if(document==null||evidence==null||!document.id().equals(evidence.documentId()))return result("UNRESOLVED","来源文件不能对应当前投标文件",cn.bidcheck.compat.Java8Api.mapOf());
+            List<Page> pages=cn.bidcheck.compat.Java8Api.toList(document.pages().stream().filter(p->p.number()==evidence.page()&&p.locationType().equals(evidence.locationType())));
+            if(pages.size()!=1)return result("UNRESOLVED","原文位置不唯一或不存在",cn.bidcheck.compat.Java8Api.mapOf());
             Page page=pages.get(0);String text=Objects.toString(page.text(),""),quote=Objects.toString(evidence.quote(),"");
-            if(quote.isBlank())return result("UNRESOLVED","未提供可定位原文",Map.of());
-            int at=text.indexOf(quote);if(at<0||text.indexOf(quote,at+1)>=0)return result("UNRESOLVED","原文引用未在原页唯一定位",Map.of());
+            if(cn.bidcheck.compat.Java8Api.isBlank(quote))return result("UNRESOLVED","未提供可定位原文",cn.bidcheck.compat.Java8Api.mapOf());
+            int at=text.indexOf(quote);if(at<0||text.indexOf(quote,at+1)>=0)return result("UNRESOLVED","原文引用未在原页唯一定位",cn.bidcheck.compat.Java8Api.mapOf());
             String opening=text.substring(0,Math.min(180,text.length()));
-            if(VerificationTypes.clean(opening).startsWith("目录")||text.lines().filter(line->line.matches(".*(?:\\.{3,}|…{2,}|·{3,})\\s*\\d+\\s*")).count()>=2)
-                return result("NAVIGATION_ONLY","目录仅用于定位，不能证明正文材料齐全",Map.of());
+            if(VerificationTypes.clean(opening).startsWith("目录")||cn.bidcheck.compat.Java8Extras.lines(text).filter(line->line.matches(".*(?:\\.{3,}|…{2,}|·{3,})\\s*\\d+\\s*")).count()>=2)
+                return result("NAVIGATION_ONLY","目录仅用于定位，不能证明正文材料齐全",cn.bidcheck.compat.Java8Api.mapOf());
             DocumentSubjectScope.Context context=scope.context(page,at,at+quote.length());
             if(context.appointmentBlocks().stream().noneMatch(block->block.equals(quote)))
                 return result("HISTORICAL_REGION","引用落入历史履历区域或跨越当前与历史区域",context.audit());
-            if(context.blocked()||!Set.of("CURRENT_PROJECT","CURRENT_BID_SECTION","CURRENT_DOCUMENT").contains(context.status()))
+            if(context.blocked()||!cn.bidcheck.compat.Java8Api.setOf("CURRENT_PROJECT", "CURRENT_BID_SECTION", "CURRENT_DOCUMENT").contains(context.status()))
             {
                 Map<String,Object> collection=collections.currentEvidence(page,quote);
                 if(!collection.isEmpty())return result("CURRENT_BID_SECTION","封面、当前投标声明、文书目录、印刷页码及项目编号共同确定当前承诺文书范围",collection);
@@ -45,6 +45,6 @@ public final class DocumentScopeProof {
         }
     }
     private static Map<String,Object> result(String status,String reason,Map<String,Object> sourceScope){
-        return Map.of("status",status,"verifiedCurrent",Set.of("CURRENT_PROJECT","CURRENT_BID_SECTION","CURRENT_DOCUMENT").contains(status),"reason",reason,"sourceScope",sourceScope);
+        return cn.bidcheck.compat.Java8Api.mapOf("status", status, "verifiedCurrent", cn.bidcheck.compat.Java8Api.setOf("CURRENT_PROJECT", "CURRENT_BID_SECTION", "CURRENT_DOCUMENT").contains(status), "reason", reason, "sourceScope", sourceScope);
     }
 }

@@ -10,10 +10,58 @@ import java.util.regex.*;
 /** Evaluation-only source guards. Stored extraction occurrences and OCR identities are unchanged. */
 final class FactScopePolicy {
     enum Scope { CURRENT, HISTORY, UNKNOWN }
-    record Selection(List<Fact> included,List<Fact> uncertain,List<Fact> excluded) {}
-    record DateCheck(String status,Fact fact) {}
-    private record Line(String text,Scope scope,String lot) {}
-    private record Cached(WeakReference<Document> document,FactScopePolicy policy) {}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    static final class Selection {
+        private final List<Fact> included;
+        private final List<Fact> uncertain;
+        private final List<Fact> excluded;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        Selection(@com.fasterxml.jackson.annotation.JsonProperty("included") List<Fact> included, @com.fasterxml.jackson.annotation.JsonProperty("uncertain") List<Fact> uncertain, @com.fasterxml.jackson.annotation.JsonProperty("excluded") List<Fact> excluded) { this.included = included; this.uncertain = uncertain; this.excluded = excluded; }
+        public List<Fact> included() { return included; }
+        public List<Fact> uncertain() { return uncertain; }
+        public List<Fact> excluded() { return excluded; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Selection that = (Selection) other; return java.util.Objects.equals(this.included, that.included) && java.util.Objects.equals(this.uncertain, that.uncertain) && java.util.Objects.equals(this.excluded, that.excluded); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.included); hash = 31 * hash + java.util.Objects.hashCode(this.uncertain); hash = 31 * hash + java.util.Objects.hashCode(this.excluded); return hash; }
+        @Override public String toString() { return "Selection[" + "included=" + included + ", uncertain=" + uncertain + ", excluded=" + excluded + "]"; }
+}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    static final class DateCheck {
+        private final String status;
+        private final Fact fact;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        DateCheck(@com.fasterxml.jackson.annotation.JsonProperty("status") String status, @com.fasterxml.jackson.annotation.JsonProperty("fact") Fact fact) { this.status = status; this.fact = fact; }
+        public String status() { return status; }
+        public Fact fact() { return fact; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; DateCheck that = (DateCheck) other; return java.util.Objects.equals(this.status, that.status) && java.util.Objects.equals(this.fact, that.fact); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.status); hash = 31 * hash + java.util.Objects.hashCode(this.fact); return hash; }
+        @Override public String toString() { return "DateCheck[" + "status=" + status + ", fact=" + fact + "]"; }
+}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Line {
+        private final String text;
+        private final Scope scope;
+        private final String lot;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Line(@com.fasterxml.jackson.annotation.JsonProperty("text") String text, @com.fasterxml.jackson.annotation.JsonProperty("scope") Scope scope, @com.fasterxml.jackson.annotation.JsonProperty("lot") String lot) { this.text = text; this.scope = scope; this.lot = lot; }
+        public String text() { return text; }
+        public Scope scope() { return scope; }
+        public String lot() { return lot; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Line that = (Line) other; return java.util.Objects.equals(this.text, that.text) && java.util.Objects.equals(this.scope, that.scope) && java.util.Objects.equals(this.lot, that.lot); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.text); hash = 31 * hash + java.util.Objects.hashCode(this.scope); hash = 31 * hash + java.util.Objects.hashCode(this.lot); return hash; }
+        @Override public String toString() { return "Line[" + "text=" + text + ", scope=" + scope + ", lot=" + lot + "]"; }
+}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Cached {
+        private final WeakReference<Document> document;
+        private final FactScopePolicy policy;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Cached(@com.fasterxml.jackson.annotation.JsonProperty("document") WeakReference<Document> document, @com.fasterxml.jackson.annotation.JsonProperty("policy") FactScopePolicy policy) { this.document = document; this.policy = policy; }
+        public WeakReference<Document> document() { return document; }
+        public FactScopePolicy policy() { return policy; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Cached that = (Cached) other; return java.util.Objects.equals(this.document, that.document) && java.util.Objects.equals(this.policy, that.policy); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.document); hash = 31 * hash + java.util.Objects.hashCode(this.policy); return hash; }
+        @Override public String toString() { return "Cached[" + "document=" + document + ", policy=" + policy + "]"; }
+}
     // Identity comparison avoids a deep Document.hashCode scan for every checkpoint. Bounded and weakly owned.
     private static final Deque<Cached> CACHE=new ArrayDeque<>();
     private static final Pattern HISTORY=Pattern.compile("历史业绩|历史项目|类似业绩|业绩(?:合同|证明|材料|情况|汇总)|已完(?:工|成)项目|合同复印件|合同协议书|合同总价|合同价款|竣工结算|竣工验收|发包人.*承包人|甲方.*乙方");
@@ -39,7 +87,7 @@ final class FactScopePolicy {
     private FactScopePolicy(Document document) {
         sharedScope=DocumentScopeProof.forDocument(document);
         Scope carried=Scope.UNKNOWN; String carriedLot="";
-        for(Page page:document.pages()==null?List.<Page>of():document.pages()) {
+        for(Page page:document.pages()==null?cn.bidcheck.compat.Java8Api.<Page>listOf():document.pages()) {
             List<String> text=EngineText.lines(page); List<Line> indexed=new ArrayList<>();
             Scope state="PAGE".equals(page.locationType()) && carried!=Scope.HISTORY?Scope.UNKNOWN:carried;
             String lot=carriedLot;
@@ -52,10 +100,10 @@ final class FactScopePolicy {
                 boolean explicitCurrent=plain.matches(".*(?:本次投标|本项目(?:证件|报价|人员|汇总)|当前项目|投标文件封面).*" );
                 if(!index && heading && CURRENT.matcher(plain).find() && (state!=Scope.HISTORY || explicitCurrent)) { state=Scope.CURRENT;lot=""; }
                 if(!index && HISTORY.matcher(plain).find()) state=Scope.HISTORY;
-                String explicitLot=lot(plain); if(!explicitLot.isBlank()) lot=explicitLot;
+                String explicitLot=lot(plain); if(!cn.bidcheck.compat.Java8Api.isBlank(explicitLot)) lot=explicitLot;
                 indexed.add(new Line(raw,index?Scope.UNKNOWN:state,lot));
             }
-            pages.put(page.number(),List.copyOf(indexed)); locationTypes.put(page.number(),page.locationType());carried=state;carriedLot=lot;
+            pages.put(page.number(),cn.bidcheck.compat.Java8Api.listCopyOf(indexed)); locationTypes.put(page.number(),page.locationType());carried=state;carriedLot=lot;
         }
     }
     Selection select(Checkpoint checkpoint,List<Fact> facts) {
@@ -66,13 +114,13 @@ final class FactScopePolicy {
             String quote=plain(source.text()),raw=Objects.toString(fact.rawValue(),"");
             // Project identity uses the same original-source scope proof as typed/object checks.
             // A historical sticky heading must not discard a later independently proven current form.
-            Map<String,Object> projectScope=Set.of("projectName","projectNumber").contains(fact.field())
-                ?sharedScope.currentEvidence(fact.evidence()):Map.of();
+            Map<String,Object> projectScope=cn.bidcheck.compat.Java8Api.setOf("projectName", "projectNumber").contains(fact.field())
+                ?sharedScope.currentEvidence(fact.evidence()):cn.bidcheck.compat.Java8Api.mapOf();
             String scopeStatus=Objects.toString(projectScope.get("status"),"");
             // CURRENT_DOCUMENT is only a carried outer scope. It cannot erase positive local
             // history/contract evidence; only a source-proven current project or bid-section
             // boundary can restore current scope after a historical attachment.
-            boolean explicitCurrentScope=Set.of("CURRENT_PROJECT","CURRENT_BID_SECTION").contains(scopeStatus);
+            boolean explicitCurrentScope=cn.bidcheck.compat.Java8Api.setOf("CURRENT_PROJECT", "CURRENT_BID_SECTION").contains(scopeStatus);
             boolean provenCurrent=Boolean.TRUE.equals(projectScope.get("verifiedCurrent"))
                 &&(explicitCurrentScope||source.scope()!=Scope.HISTORY&&!HISTORY.matcher(quote).find());
             if("OTHER_PROJECT".equals(scopeStatus)&&source.scope()==Scope.CURRENT){
@@ -80,19 +128,19 @@ final class FactScopePolicy {
                 // A foreign name alone is not proof that it is an unrelated historical attachment.
                 uncertain.add(fact);continue;
             }
-            if(Set.of("HISTORICAL_PROJECT","HISTORICAL_DOCUMENT","HISTORICAL_REGION","OTHER_PROJECT","NAVIGATION_ONLY").contains(scopeStatus)) { excluded.add(fact);continue; }
+            if(cn.bidcheck.compat.Java8Api.setOf("HISTORICAL_PROJECT", "HISTORICAL_DOCUMENT", "HISTORICAL_REGION", "OTHER_PROJECT", "NAVIGATION_ONLY").contains(scopeStatus)) { excluded.add(fact);continue; }
             if(!provenCurrent&&(source.scope()==Scope.HISTORY || HISTORY.matcher(quote).find())) { excluded.add(fact);continue; }
             String requiredLot=lot(Objects.toString(checkpoint.title(),""));
-            if(requiredLot.isBlank()) requiredLot=lot(checkpoint.source()==null?"":Objects.toString(checkpoint.source().quote(),""));
+            if(cn.bidcheck.compat.Java8Api.isBlank(requiredLot)) requiredLot=lot(checkpoint.source()==null?"":Objects.toString(checkpoint.source().quote(),""));
             if(AMBIGUOUS_LOT.equals(requiredLot) || AMBIGUOUS_LOT.equals(source.lot())) { uncertain.add(fact);continue; }
-            if(!source.lot().isBlank() || !requiredLot.isBlank()) {
-                if(source.lot().isBlank() || requiredLot.isBlank()) { uncertain.add(fact);continue; }
+            if(!cn.bidcheck.compat.Java8Api.isBlank(source.lot()) || !cn.bidcheck.compat.Java8Api.isBlank(requiredLot)) {
+                if(cn.bidcheck.compat.Java8Api.isBlank(source.lot()) || cn.bidcheck.compat.Java8Api.isBlank(requiredLot)) { uncertain.add(fact);continue; }
                 if(!source.lot().equals(requiredLot)) { excluded.add(fact);continue; }
             }
             boolean current=provenCurrent || source.scope()==Scope.CURRENT || quote.matches(".*(?:本次投标|本次招标|当前项目|本招标项目|本项目(?:投标|报价|总价|名称|编号)).*" );
             if(raw.matches("(?i)\\s*(?:缺省|未填写|不详|未知|无|0|X+|[-_—]+)\\s*") || META.matcher(quote).find()) { uncertain.add(fact);continue; }
-            if(Set.of("projectName","projectNumber","companyName","creditCode").contains(fact.field()) && !EngineText.normalized(raw).equals(fact.normalizedValue())) { uncertain.add(fact);continue; }
-            if(Set.of("projectName","projectNumber").contains(fact.field()) && !current) { uncertain.add(fact);continue; }
+            if(cn.bidcheck.compat.Java8Api.setOf("projectName", "projectNumber", "companyName", "creditCode").contains(fact.field()) && !EngineText.normalized(raw).equals(fact.normalizedValue())) { uncertain.add(fact);continue; }
+            if(cn.bidcheck.compat.Java8Api.setOf("projectName", "projectNumber").contains(fact.field()) && !current) { uncertain.add(fact);continue; }
             if("totalPrice".equals(fact.field())) {
                 String clause=amountClause(source.text(),raw);
                 if(clause==null) { uncertain.add(fact);continue; }
@@ -106,7 +154,7 @@ final class FactScopePolicy {
             }
             included.add(fact);
         }
-        return new Selection(List.copyOf(included),List.copyOf(uncertain),List.copyOf(excluded));
+        return new Selection(cn.bidcheck.compat.Java8Api.listCopyOf(included),cn.bidcheck.compat.Java8Api.listCopyOf(uncertain),cn.bidcheck.compat.Java8Api.listCopyOf(excluded));
     }
     DateCheck date(Fact fact,LocalDate deadline,boolean strictlyAfter) {
         Line source=source(fact);
@@ -121,7 +169,7 @@ final class FactScopePolicy {
             LocalDate first=dateValue(label.group(1)); LocalDate end=first,start=null;
             String tail=raw.substring(label.end()); Matcher range=RANGE.matcher(tail);
             if(range.find()) { start=first; end=dateValue(range.group(1)); }
-            else if(tail.stripLeading().matches("^(?:至|到|—|–|－|-|～|~).*")) return new DateCheck("UNRESOLVED",fact);
+            else if(cn.bidcheck.compat.Java8Api.stripLeading(tail).matches("^(?:至|到|—|–|－|-|～|~).*")) return new DateCheck("UNRESOLVED",fact);
             // A later renewal/issue/application date must not replace the labelled endpoint.
             if(!end.equals(LocalDate.parse(fact.normalizedValue())) || start!=null && start.isAfter(end)) return new DateCheck("UNRESOLVED",fact);
             boolean invalid=start!=null && start.isAfter(deadline) || (strictlyAfter?!end.isAfter(deadline):end.isBefore(deadline));
@@ -129,12 +177,12 @@ final class FactScopePolicy {
         } catch(RuntimeException invalid) { return new DateCheck("UNRESOLVED",fact); }
     }
     private static LocalDate dateValue(String value) {
-        if(Set.of("长期","永久").contains(value)) return LocalDate.of(9999,12,31);
+        if(cn.bidcheck.compat.Java8Api.setOf("长期", "永久").contains(value)) return LocalDate.of(9999,12,31);
         List<LocalDate> parsed=EngineText.dates(value); if(parsed.size()!=1) throw new IllegalArgumentException("invalid date");
         return parsed.get(0);
     }
     private Line source(Fact fact) {
-        Evidence evidence=fact.evidence(); if(evidence==null || evidence.quote()==null || evidence.quote().isBlank() || fact.rawValue()==null || fact.rawValue().isBlank()) return null;
+        Evidence evidence=fact.evidence(); if(evidence==null || evidence.quote()==null || cn.bidcheck.compat.Java8Api.isBlank(evidence.quote()) || fact.rawValue()==null || cn.bidcheck.compat.Java8Api.isBlank(fact.rawValue())) return null;
         if(!Objects.equals(evidence.locationType(),locationTypes.get(evidence.page()))) return null;
         List<Line> candidates=pages.get(evidence.page()); if(candidates==null) return null;
         Matcher anchor=Pattern.compile("p"+evidence.page()+"-l(\\d+)").matcher(Objects.toString(evidence.anchor(),""));
@@ -142,7 +190,7 @@ final class FactScopePolicy {
             int at=Integer.parseInt(anchor.group(1))-1;
             if(at>=0 && at<candidates.size() && candidates.get(at).text().contains(evidence.quote()) && evidence.quote().contains(Objects.toString(fact.rawValue(),""))) return candidates.get(at);
         }
-        List<Line> exact=candidates.stream().filter(line->line.text().contains(evidence.quote()) && evidence.quote().contains(Objects.toString(fact.rawValue(),""))).toList();
+        List<Line> exact=cn.bidcheck.compat.Java8Api.toList(candidates.stream().filter(line->line.text().contains(evidence.quote()) && evidence.quote().contains(Objects.toString(fact.rawValue(),""))));
         return exact.size()==1?exact.get(0):null;
     }
     private static String lot(String text) {
@@ -157,5 +205,5 @@ final class FactScopePolicy {
         while(end<text.length() && end-(at+raw.length())<60 && "；;。\n".indexOf(text.charAt(end))<0) end++;
         return plain(text.substring(start,end));
     }
-    private static String plain(String raw) { return raw.replaceAll("<[^>]*>"," ").replaceAll("[*#]","").strip(); }
+    private static String plain(String raw) { return cn.bidcheck.compat.Java8Api.strip(raw.replaceAll("<[^>]*>"," ").replaceAll("[*#]","")); }
 }

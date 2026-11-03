@@ -1,4 +1,4 @@
-BidCheck deterministic engine contract (Java 17)
+BidCheck deterministic engine contract (Java 8)
 
 Public classes (no framework dependency):
 CheckpointExtractor.extract(Domain.Document) -> List<Domain.Checkpoint>

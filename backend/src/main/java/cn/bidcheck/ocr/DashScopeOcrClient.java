@@ -1,4 +1,7 @@
 package cn.bidcheck.ocr;
+import cn.bidcheck.compat.HexFormat;
+
+import cn.bidcheck.compat.concurrent.Flow;
 
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.StreamReadConstraints;
@@ -10,8 +13,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpResponse;
+import cn.bidcheck.compat.http.HttpClient;
+import cn.bidcheck.compat.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -34,9 +37,9 @@ public final class DashScopeOcrClient implements OcrClient {
     private static final int MAX_RESPONSE_BYTES = 256 * 1024;
     private static final int MAX_TEXT_CHARACTERS = 50_000;
     private static final int MAX_CACHE_BYTES = 512 * 1024;
-    private static final Set<String> GEOMETRY_FIELDS = Set.of("pos_list", "rotate_rect", "bbox", "bounding_box", "bounding_boxes", "box", "boxes", "polygon", "polygons", "points", "coordinates");
-    private static final Set<String> METADATA_FIELDS = Set.of("x", "y", "width", "height", "angle", "rotation", "confidence", "score", "page", "page_index", "index", "data", "result", "results", "regions", "lines");
-    private static final Set<String> TRANSCRIPTION_FIELDS = Set.of("text", "texts", "content", "transcription", "word", "words", "label", "value");
+    private static final Set<String> GEOMETRY_FIELDS = cn.bidcheck.compat.Java8Api.setOf("pos_list", "rotate_rect", "bbox", "bounding_box", "bounding_boxes", "box", "boxes", "polygon", "polygons", "points", "coordinates");
+    private static final Set<String> METADATA_FIELDS = cn.bidcheck.compat.Java8Api.setOf("x", "y", "width", "height", "angle", "rotation", "confidence", "score", "page", "page_index", "index", "data", "result", "results", "regions", "lines");
+    private static final Set<String> TRANSCRIPTION_FIELDS = cn.bidcheck.compat.Java8Api.setOf("text", "texts", "content", "transcription", "word", "words", "label", "value");
     private final OcrRequestGovernor governor;
     private final OcrRequestSettings settings;
     private final DashScopeBatchOcrClient batches;
@@ -71,7 +74,7 @@ public final class DashScopeOcrClient implements OcrClient {
                              @Value("${bidcheck.ocr.model:qwen-vl-ocr-2025-11-20}") String model,
                              @Value("${bidcheck.data:./data}") String data,
                              @Value("${bidcheck.ocr.concurrency:4}") int concurrency, OcrRequestSettings settings, OcrBatchSettings batchSettings) {
-        this(enabled, url, key, model, Path.of(data).resolve("ocr-cache"), Duration.ofSeconds(60), false, concurrency, settings, batchSettings.policy());
+        this(enabled, url, key, model, java.nio.file.Paths.get(data).resolve("ocr-cache"), Duration.ofSeconds(60), false, concurrency, settings, batchSettings.policy());
     }
 
     /** Explicit test seam; production construction never permits plain HTTP, including loopback. */
@@ -90,16 +93,16 @@ public final class DashScopeOcrClient implements OcrClient {
     DashScopeOcrClient(boolean enabled, String url, String key, String model, Path cacheDirectory, Duration timeout, boolean allowLoopbackTest, int concurrency, OcrRequestSettings settings, OcrBatchPolicy batchPolicy) {
         if(concurrency < 1 || concurrency > 8) throw new IllegalArgumentException("OCR 并发数必须在 1 至 8 之间。");
         this.settings = Objects.requireNonNull(settings);
-        this.key = key == null ? "" : key.strip();
-        this.model = model == null ? "" : model.strip();
+        this.key = key == null ? "" : cn.bidcheck.compat.Java8Api.strip(key);
+        this.model = model == null ? "" : cn.bidcheck.compat.Java8Api.strip(model);
         this.cacheDirectory = cacheDirectory.toAbsolutePath().normalize();
         this.timeout = timeout == null || timeout.isNegative() || timeout.isZero() ? Duration.ofSeconds(60) : timeout.compareTo(Duration.ofSeconds(60)) > 0 ? Duration.ofSeconds(60) : timeout;
         URI parsed = null;
-        boolean valid = enabled && !this.key.isBlank() && this.key.length() <= 4096 && !this.key.contains("\r") && !this.key.contains("\n")
+        boolean valid = enabled && !cn.bidcheck.compat.Java8Api.isBlank(this.key) && this.key.length() <= 4096 && !this.key.contains("\r") && !this.key.contains("\n")
             && this.model.matches("[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}") && url != null && url.length() <= 2048;
         if (valid) {
             try {
-                parsed = URI.create(url.strip());
+                parsed = URI.create(cn.bidcheck.compat.Java8Api.strip(url));
                 boolean secure = "https".equalsIgnoreCase(parsed.getScheme());
                 boolean local = allowLoopbackTest && "http".equalsIgnoreCase(parsed.getScheme()) && "127.0.0.1".equals(parsed.getHost());
                 valid = (secure || local) && parsed.getHost() != null && parsed.getUserInfo() == null && parsed.getQuery() == null && parsed.getFragment() == null;
@@ -133,7 +136,7 @@ public final class DashScopeOcrClient implements OcrClient {
         Path cached = cacheDirectory.resolve(cacheKey + ".json");
         OcrResult hit = readCache(cached, imageHash);
         if (hit != null) { checkInterrupted(); governor.cacheHit(); return hit; }
-        var shared = governor.singleFlight(cacheKey, timeout, () -> recognizeUncached(image, mimeType, cached, imageHash));
+        cn.bidcheck.ocr.OcrRequestGovernor.Shared<cn.bidcheck.ocr.OcrResult> shared = governor.singleFlight(cacheKey, timeout, () -> recognizeUncached(image, mimeType, cached, imageHash));
         OcrResult result = shared.value();
         return shared.reused() ? new OcrResult(result.text(), result.provider(), result.model(), true, result.layout()) : result;
     }
@@ -143,10 +146,7 @@ public final class DashScopeOcrClient implements OcrClient {
             OcrResult hit = readCache(cached, imageHash);
             if (hit != null) { checkInterrupted(); governor.cacheHit(); return hit; }
             checkInterrupted();
-            Map<String, Object> payload = Map.of("model", model,
-                "input", Map.of("messages", List.of(Map.of("role", "user", "content", List.of(
-                    Map.of("image", "data:" + mimeType + ";base64," + Base64.getEncoder().encodeToString(image), "min_pixels", 3072, "max_pixels", 8388608, "enable_rotate", false))))),
-                "parameters", Map.of("max_tokens", 8192, "temperature", 0, "ocr_options", Map.of("task", TASK)));
+            Map<String, Object> payload = cn.bidcheck.compat.Java8Api.mapOf("model", model, "input", cn.bidcheck.compat.Java8Api.mapOf("messages", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("role", "user", "content", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("image", "data:" + mimeType + ";base64," + Base64.getEncoder().encodeToString(image), "min_pixels", 3072, "max_pixels", 8388608, "enable_rotate", false))))), "parameters", cn.bidcheck.compat.Java8Api.mapOf("max_tokens", 8192, "temperature", 0, "ocr_options", cn.bidcheck.compat.Java8Api.mapOf("task", TASK)));
             byte[] requestBody = json.writeValueAsBytes(payload);
             checkInterrupted();
             HttpResponse<byte[]> response = governor.send(client, endpoint, key, requestBody, MAX_RESPONSE_BYTES, timeout, settings);
@@ -179,25 +179,25 @@ public final class DashScopeOcrClient implements OcrClient {
         StringBuilder result = new StringBuilder();
         for (JsonNode part : content) {
             if (!part.path("text").isTextual()) throw safe("OCR 返回结构无效，本次识别未完成");
-            if (!result.isEmpty()) result.append('\n');
+            if (!(result.length() == 0)) result.append('\n');
             result.append(part.path("text").textValue());
             if (result.length() > MAX_TEXT_CHARACTERS) throw safe("OCR 正文超过长度限制，请拆分图片后重试");
         }
-        String text = result.toString().strip();
+        String text = cn.bidcheck.compat.Java8Api.strip(result.toString());
         validateTranscription(text);
         return text;
     }
 
     /** Inspect complete structured replies only; source prose, page numbers and textual JSON remain verbatim. */
     private void validateTranscription(String text) throws IOException {
-        if (text.isBlank() || text.length() > MAX_TEXT_CHARACTERS || text.indexOf('\0') >= 0) throw safe("OCR 未识别出可用文字，请人工核对图片原件");
-        String candidate = text.strip();
+        if (cn.bidcheck.compat.Java8Api.isBlank(text) || text.length() > MAX_TEXT_CHARACTERS || text.indexOf('\0') >= 0) throw safe("OCR 未识别出可用文字，请人工核对图片原件");
+        String candidate = cn.bidcheck.compat.Java8Api.strip(text);
         if (candidate.startsWith("```")) {
             int line = candidate.indexOf('\n');
             if (line < 0 || !candidate.endsWith("```")) return;
-            String language = candidate.substring(3, line).strip();
+            String language = cn.bidcheck.compat.Java8Api.strip(candidate.substring(3, line));
             if (!language.isEmpty() && !"json".equalsIgnoreCase(language)) return;
-            candidate = candidate.substring(line + 1, candidate.length() - 3).strip();
+            candidate = cn.bidcheck.compat.Java8Api.strip(candidate.substring(line + 1, candidate.length() - 3));
         }
         if (!candidate.startsWith("[") && !candidate.startsWith("{")) return;
         JsonNode structured;
@@ -210,7 +210,7 @@ public final class DashScopeOcrClient implements OcrClient {
 
     private static boolean emptyStructure(JsonNode value) {
         if (value == null || value.isNull()) return true;
-        if (value.isTextual()) return value.textValue().isBlank();
+        if (value.isTextual()) return cn.bidcheck.compat.Java8Api.isBlank(value.textValue());
         if (!value.isContainerNode()) return false;
         for (JsonNode child : value) if (!emptyStructure(child)) return false;
         return true;
@@ -218,9 +218,9 @@ public final class DashScopeOcrClient implements OcrClient {
 
     private static boolean hasGeometry(JsonNode value) {
         if (value.isObject()) {
-            var fields = value.fields();
+            java.util.Iterator<java.util.Map.Entry<java.lang.String, com.fasterxml.jackson.databind.JsonNode>> fields = value.fields();
             while (fields.hasNext()) {
-                var field = fields.next();
+                java.util.Map.Entry<java.lang.String, com.fasterxml.jackson.databind.JsonNode> field = fields.next();
                 if (GEOMETRY_FIELDS.contains(field.getKey()) || hasGeometry(field.getValue())) return true;
             }
         } else if (value.isArray()) for (JsonNode child : value) if (hasGeometry(child)) return true;
@@ -229,9 +229,9 @@ public final class DashScopeOcrClient implements OcrClient {
 
     private static boolean onlyGeometryMetadata(JsonNode value) {
         if (value.isObject()) {
-            var fields = value.fields();
+            java.util.Iterator<java.util.Map.Entry<java.lang.String, com.fasterxml.jackson.databind.JsonNode>> fields = value.fields();
             while (fields.hasNext()) {
-                var field = fields.next();
+                java.util.Map.Entry<java.lang.String, com.fasterxml.jackson.databind.JsonNode> field = fields.next();
                 // Any real transcription value, including a numeric page number, makes this usable source JSON.
                 if (TRANSCRIPTION_FIELDS.contains(field.getKey())) {
                     if (hasTranscriptionValue(field.getValue())) return false;
@@ -248,18 +248,18 @@ public final class DashScopeOcrClient implements OcrClient {
             return true;
         }
         return value.isNumber() || value.isBoolean() || value.isNull() || (value.isTextual()
-            && (value.textValue().isBlank() || value.textValue().strip().matches("[-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][-+]?\\d+)?")));
+            && (cn.bidcheck.compat.Java8Api.isBlank(value.textValue()) || cn.bidcheck.compat.Java8Api.strip(value.textValue()).matches("[-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][-+]?\\d+)?")));
     }
 
     private static boolean hasTranscriptionValue(JsonNode value) {
-        if (value.isTextual()) return !value.textValue().isBlank();
+        if (value.isTextual()) return !cn.bidcheck.compat.Java8Api.isBlank(value.textValue());
         if (value.isNumber()) return true;
         if (value.isArray()) {
             for (JsonNode child : value) if (hasTranscriptionValue(child)) return true;
         } else if (value.isObject()) {
-            var fields = value.fields();
+            java.util.Iterator<java.util.Map.Entry<java.lang.String, com.fasterxml.jackson.databind.JsonNode>> fields = value.fields();
             while (fields.hasNext()) {
-                var field = fields.next();
+                java.util.Map.Entry<java.lang.String, com.fasterxml.jackson.databind.JsonNode> field = fields.next();
                 if (TRANSCRIPTION_FIELDS.contains(field.getKey()) && hasTranscriptionValue(field.getValue())) return true;
             }
         }
@@ -271,13 +271,13 @@ public final class DashScopeOcrClient implements OcrClient {
         try {
             if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || Files.size(path) > MAX_CACHE_BYTES) return null;
             byte[] bytes;
-            try (var input = Files.newInputStream(path)) { bytes = input.readNBytes(MAX_CACHE_BYTES + 1); }
+            try (java.io.InputStream input = Files.newInputStream(path)) { bytes = cn.bidcheck.compat.Java8Api.readNBytes(input, MAX_CACHE_BYTES + 1); }
             if (bytes.length > MAX_CACHE_BYTES) return null;
             JsonNode value = json.readTree(bytes);
             String text = value.path("text").asText("");
             if (!identity.equals(value.path("identity").asText()) || !imageHash.equals(value.path("imageHash").asText())
                 || !model.equals(value.path("model").asText()) || !PROVIDER.equals(value.path("provider").asText())
-                || text.isBlank() || text.length() > MAX_TEXT_CHARACTERS || text.indexOf('\0') >= 0
+                || cn.bidcheck.compat.Java8Api.isBlank(text) || text.length() > MAX_TEXT_CHARACTERS || text.indexOf('\0') >= 0
                 || !digest(text.getBytes(StandardCharsets.UTF_8)).equals(value.path("textHash").asText())) return null;
             validateTranscription(text);
             return new OcrResult(text, PROVIDER, model, true);
@@ -288,8 +288,7 @@ public final class DashScopeOcrClient implements OcrClient {
         Path temporary = null;
         try {
             Files.createDirectories(cacheDirectory);
-            byte[] bytes = json.writeValueAsBytes(Map.of("identity", identity, "imageHash", imageHash, "provider", PROVIDER,
-                "model", model, "text", result.text(), "textHash", digest(result.text().getBytes(StandardCharsets.UTF_8))));
+            byte[] bytes = json.writeValueAsBytes(cn.bidcheck.compat.Java8Api.mapOf("identity", identity, "imageHash", imageHash, "provider", PROVIDER, "model", model, "text", result.text(), "textHash", digest(result.text().getBytes(StandardCharsets.UTF_8))));
             if (bytes.length > MAX_CACHE_BYTES) return;
             temporary = Files.createTempFile(cacheDirectory, "ocr-", ".tmp");
             Files.write(temporary, bytes, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
@@ -335,13 +334,13 @@ public final class DashScopeOcrClient implements OcrClient {
             if (cancelled || future.isDone()) return;
             for (ByteBuffer buffer : buffers) {
                 if (buffer.remaining() > limit - bytes.size()) { limitExceeded = true;cancel();future.completeExceptionally(safe("OCR 响应超过限制"));return; }
-                byte[] copy = new byte[buffer.remaining()];buffer.get(copy);bytes.writeBytes(copy);
+                byte[] copy = new byte[buffer.remaining()];buffer.get(copy);cn.bidcheck.compat.Java8Extras.writeBytes(bytes, copy);
             }
             if (!cancelled) subscription.request(1);
         }
         @Override public void onError(Throwable error) {
-            future.completeExceptionally(error instanceof java.net.http.HttpTimeoutException
-                    ? new java.net.http.HttpTimeoutException("OCR 响应超时") : safe("OCR 响应传输失败"));
+            future.completeExceptionally(error instanceof cn.bidcheck.compat.http.HttpTimeoutException
+                    ? new cn.bidcheck.compat.http.HttpTimeoutException("OCR 响应超时") : safe("OCR 响应传输失败"));
         }
         @Override public void onComplete() { future.complete(bytes.toByteArray()); }
         void cancel() { cancelled = true;Flow.Subscription current = subscription;if (current != null) current.cancel(); }

@@ -19,7 +19,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.web.servlet.MockMvc;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -34,13 +34,13 @@ class OcrRecoveryIntegrationTest {
     static {try{DATA=Files.createTempDirectory("bidcheck-ocr-recovery-");}catch(IOException e){throw new IllegalStateException(e);}}
     @DynamicPropertySource static void config(DynamicPropertyRegistry r){r.add("bidcheck.data",()->DATA.toString());}
     @Autowired BidService service;@Autowired Store store;@Autowired MockMvc mvc;
-    @MockitoBean OcrClient ocr;
+    @MockBean OcrClient ocr;
     @BeforeEach void setup()throws Exception {
         when(ocr.enabled()).thenReturn(true);when(ocr.identity()).thenReturn("recovery-test-v1");when(ocr.modelName()).thenReturn("offline-test");
         when(ocr.recognize(any(byte[].class),anyString())).thenReturn(new OcrResult("营业执照：测试企业\n投标有效期：90天","TEST","offline-test",false));
     }
     TaskRow upload(int pages)throws Exception {
-        String project=(String)service.createProject(Map.of("name","逐页恢复测试")).get("id");
+        String project=(String)service.createProject(cn.bidcheck.compat.Java8Api.mapOf("name", "逐页恢复测试")).get("id");
         return service.upload(project,"TENDER",new MockMultipartFile("file","scan.pdf","application/pdf",pdf(pages)));
     }
     String documentId(TaskRow task){return (String)store.map(task.inputJson).get("documentId");}
@@ -88,7 +88,7 @@ class OcrRecoveryIntegrationTest {
         try(PDDocument document=new PDDocument();ByteArrayOutputStream out=new ByteArrayOutputStream()) {
             for(int i=0;i<pages;i++) {
                 PDPage page=new PDPage();document.addPage(page);BufferedImage image=new BufferedImage(80,60,BufferedImage.TYPE_INT_RGB);
-                var g=image.createGraphics();g.setColor(Color.WHITE);g.fillRect(0,0,80,60);g.setColor(new Color(20+i*30,40,70));g.fillRect(5+i,5,50,40);g.dispose();
+                java.awt.Graphics2D g=image.createGraphics();g.setColor(Color.WHITE);g.fillRect(0,0,80,60);g.setColor(new Color(20+i*30,40,70));g.fillRect(5+i,5,50,40);g.dispose();
                 try(PDPageContentStream stream=new PDPageContentStream(document,page)){stream.drawImage(LosslessFactory.createFromImage(document,image),40,300,400,300);}finally{image.flush();}
             }
             document.save(out);return out.toByteArray();

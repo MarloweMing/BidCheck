@@ -52,26 +52,23 @@ class ReportTraceabilityTest {
     private ReportService reports() throws Exception {
         BidService service = mock(BidService.class);
         Store store = mock(Store.class);
-        var field = BidService.class.getField("store");
+        java.lang.reflect.Field field = BidService.class.getField("store");
         field.setAccessible(true);
         field.set(service, store);
         ObjectMapper mapper = new ObjectMapper();
         when(store.encode(any())).thenAnswer(call -> mapper.writeValueAsString(call.getArgument(0)));
         when(store.getMap(eq("project"), anyString())).thenReturn(
-                new LinkedHashMap<>(Map.of("id", PROJECT_ID, "name", "追踪测试项目")));
-        when(service.publishedTemplateResultVersion(eq(RUN_ID), anyString())).thenReturn(Map.of());
+                new LinkedHashMap<>(cn.bidcheck.compat.Java8Api.mapOf("id", PROJECT_ID, "name", "追踪测试项目")));
+        when(service.publishedTemplateResultVersion(eq(RUN_ID), anyString())).thenReturn(cn.bidcheck.compat.Java8Api.mapOf());
         Document document = new Document("bid", PROJECT_ID, "BID", "投标文件.pdf", 1,
-                "sha256", "2026-10-19T00:00:00Z", List.of(), List.of());
+                "sha256", "2026-10-19T00:00:00Z", cn.bidcheck.compat.Java8Api.listOf(), cn.bidcheck.compat.Java8Api.listOf());
         when(service.document("bid")).thenReturn(document);
         Finding finding = new Finding("finding-1", RUN_ID,
                 new Checkpoint("checkpoint-1", "测试检查项", "资格检查", "HIGH",
                         "SEMANTIC_RESPONSE", "", "", "", "", true, true, true, null),
-                new Evaluation("UNDETERMINED", "证据待定位", "继续定位证据", List.of(), 0,
+                new Evaluation("UNDETERMINED", "证据待定位", "继续定位证据", cn.bidcheck.compat.Java8Api.listOf(), 0,
                         "TEST"));
-        when(service.run(RUN_ID, false)).thenReturn(Map.of(
-                "run", Map.of("id", RUN_ID, "projectId", PROJECT_ID, "documentId", "bid",
-                        "status", "COMPLETED"),
-                "results", List.of(finding), "reviews", List.of(), "documents", List.of()));
+        when(service.run(RUN_ID, false)).thenReturn(cn.bidcheck.compat.Java8Api.mapOf("run", cn.bidcheck.compat.Java8Api.mapOf("id", RUN_ID, "projectId", PROJECT_ID, "documentId", "bid", "status", "COMPLETED"), "results", cn.bidcheck.compat.Java8Api.listOf(finding), "reviews", cn.bidcheck.compat.Java8Api.listOf(), "documents", cn.bidcheck.compat.Java8Api.listOf()));
         return new ReportService(service);
     }
 

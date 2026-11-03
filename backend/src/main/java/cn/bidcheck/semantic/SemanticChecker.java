@@ -21,10 +21,10 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.net.http.HttpTimeoutException;
+import cn.bidcheck.compat.http.HttpClient;
+import cn.bidcheck.compat.http.HttpRequest;
+import cn.bidcheck.compat.http.HttpResponse;
+import cn.bidcheck.compat.http.HttpTimeoutException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -35,7 +35,7 @@ import java.util.Objects;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
-import java.util.HexFormat;
+import cn.bidcheck.compat.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -44,7 +44,7 @@ import java.util.regex.Pattern;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Flow;
+import cn.bidcheck.compat.concurrent.Flow;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -59,15 +59,9 @@ public class SemanticChecker {
     private static final int MAX_RESPONSE_BYTES = 128 * 1024;
     private static final int MAX_MODEL_JSON_CHARACTERS = 16_000;
     // Exact labels guide retrieval, not conclusions about certificate validity or equivalence.
-    private static final List<String> CERTIFICATE_LABELS = List.of("营业执照", "登记证书", "安全生产许可证",
-            "安全生产考核合格证", "注册建筑师", "注册建造师", "资质证书");
+    private static final List<String> CERTIFICATE_LABELS = cn.bidcheck.compat.Java8Api.listOf("营业执照", "登记证书", "安全生产许可证", "安全生产考核合格证", "注册建筑师", "注册建造师", "资质证书");
     private static final String POLICY_VERSION = "semantic-grounding-6.24-signing-modal-scope";
-    private static final Map<String, List<String>> PERSONNEL_ROLES = Map.of(
-            "项目负责人", List.of("项目负责人", "项目经理"),
-            "施工企业主要负责人", List.of("施工企业主要负责人"),
-            "施工部分负责人", List.of("施工部分负责人", "施工负责人"),
-            "设计部分负责人", List.of("设计部分负责人", "设计负责人"),
-            "专职安全员", List.of("专职安全员", "专职安全生产管理人员"));
+    private static final Map<String, List<String>> PERSONNEL_ROLES = cn.bidcheck.compat.Java8Api.mapOf("项目负责人", cn.bidcheck.compat.Java8Api.listOf("项目负责人", "项目经理"), "施工企业主要负责人", cn.bidcheck.compat.Java8Api.listOf("施工企业主要负责人"), "施工部分负责人", cn.bidcheck.compat.Java8Api.listOf("施工部分负责人", "施工负责人"), "设计部分负责人", cn.bidcheck.compat.Java8Api.listOf("设计部分负责人", "设计负责人"), "专职安全员", cn.bidcheck.compat.Java8Api.listOf("专职安全员", "专职安全生产管理人员"));
     private static final Pattern PERSON_NAME = Pattern.compile("姓\\s*名\\s*[:：]?\\s*([\\p{IsHan}·]{2,12})(?=\\s|[，,；;|]|$)");
     private static final String SYSTEM = "你是招投标文件语义核对助手。仅核对给定检查点与候选证据。"
             + "断言协议：目录/索引仅表示导航，使用TEXT且proofPurpose=NAVIGATION_ONLY；各项正文须各自引用独立正文。DATE描述签署、落款等印刷日期时须标明validityField的原字段，不表示实际已签字盖章。建议避免未签章的风险是预防建议，不能写成实际观察。"
@@ -146,19 +140,19 @@ public class SemanticChecker {
 
     SemanticChecker(String url, String key, String model, Duration timeout, HybridRetriever retriever) {
         this.retriever = retriever;
-        this.key = key == null ? "" : key.strip();
-        this.model = model == null ? "" : model.strip();
+        this.key = key == null ? "" : cn.bidcheck.compat.Java8Api.strip(key);
+        this.model = model == null ? "" : cn.bidcheck.compat.Java8Api.strip(model);
         this.timeout = timeout;
         URI parsed = null;
         String issue = "";
-        if (url == null || url.isBlank() || this.key.isBlank() || this.model.isBlank()) {
+        if (url == null || cn.bidcheck.compat.Java8Api.isBlank(url) || cn.bidcheck.compat.Java8Api.isBlank(this.key) || cn.bidcheck.compat.Java8Api.isBlank(this.model)) {
             issue = "尚未完整配置语义模型地址、密钥和模型名称，当前需要人工核对。";
         } else if (this.key.length() > 4096 || this.model.length() > 160 || url.length() > 2048
                 || this.key.contains("\r") || this.key.contains("\n")) {
             issue = "语义模型配置格式不正确，当前需要人工核对。";
         } else {
             try {
-                parsed = URI.create(url.strip());
+                parsed = URI.create(cn.bidcheck.compat.Java8Api.strip(url));
                 boolean secure = "https".equalsIgnoreCase(parsed.getScheme());
                 boolean localTest = "http".equalsIgnoreCase(parsed.getScheme()) && "127.0.0.1".equals(parsed.getHost());
                 if ((!secure && !localTest) || parsed.getHost() == null || parsed.getUserInfo() != null || parsed.getFragment() != null) {
@@ -196,11 +190,11 @@ public class SemanticChecker {
     public String modelName() { return model; }
 
     public RetrievalResult prepareRetrieval(Document document) throws InterruptedIOException {
-        return retriever == null ? new RetrievalResult(List.of(), "BM25_DISABLED", Map.of()) : retriever.warmup(document);
+        return retriever == null ? new RetrievalResult(cn.bidcheck.compat.Java8Api.listOf(), "BM25_DISABLED", cn.bidcheck.compat.Java8Api.mapOf()) : retriever.warmup(document);
     }
 
     public RetrievalResult prepareRetrieval(Document document, java.util.function.Consumer<Map<String,Object>> progress) throws InterruptedIOException {
-        return retriever == null ? new RetrievalResult(List.of(), "BM25_DISABLED", Map.of()) : retriever.warmup(document, progress);
+        return retriever == null ? new RetrievalResult(cn.bidcheck.compat.Java8Api.listOf(), "BM25_DISABLED", cn.bidcheck.compat.Java8Api.mapOf()) : retriever.warmup(document, progress);
     }
 
     public Evaluation evaluate(Checkpoint checkpoint, Document document) {
@@ -223,7 +217,7 @@ public class SemanticChecker {
     /** A source-validated doubt packet is indivisible: retrieval cannot evict either comparison side. */
     public SemanticAssessment assessConsistencyPacket(Checkpoint checkpoint, Document document, List<Evidence> packet,
                                                        java.util.function.BooleanSupplier reserveAttempt) {
-        return assessInternal(checkpoint, document, null, java.util.Objects.requireNonNull(reserveAttempt), List.copyOf(packet));
+        return assessInternal(checkpoint, document, null, java.util.Objects.requireNonNull(reserveAttempt), cn.bidcheck.compat.Java8Api.listCopyOf(packet));
     }
 
     private SemanticAssessment assessInternal(Checkpoint checkpoint, Document document, Document tender,
@@ -246,7 +240,7 @@ public class SemanticChecker {
             Map<String,Object> last = trace.attempts.get(trace.attempts.size()-1);
             last.put("evaluation", evaluated);
             if (trace.raw != null) last.put("rawEvaluation", trace.raw);
-            last.put("guards", List.copyOf(trace.guards));
+            last.put("guards", cn.bidcheck.compat.Java8Api.listCopyOf(trace.guards));
         }
         if (!trace.memberScopeRepair.isEmpty()) {
             trace.memberScopeRepair.put("finalStatus", evaluated.status());
@@ -274,7 +268,7 @@ public class SemanticChecker {
         CompletableFuture<HttpResponse<byte[]>> requestFuture = null;
         cn.bidcheck.verification.engine.VerificationModelAudit.Call transportAudit=null;
         try {
-            var declared=cn.bidcheck.engine.BidLetterResponseProof.evaluate(checkpoint,document,tender);
+            java.util.Optional<cn.bidcheck.engine.BidLetterResponseProof.Decision> declared=cn.bidcheck.engine.BidLetterResponseProof.evaluate(checkpoint,document,tender);
             if(declared.isPresent()) {
                 trace.model.put("decision","RULE_DECIDED");trace.model.put("requested",false);
                 trace.coverage.put("responseFieldProof",declared.get().proof());
@@ -285,7 +279,7 @@ public class SemanticChecker {
             trace.completenessContract=CompletenessProof.contract(checkpoint,tender);
             trace.completenessRecall=ChecklistBodyRecall.recall(trace.completenessContract,document);
             if(Boolean.TRUE.equals(trace.completenessContract.get("required"))) {
-                trace.coverage.put("completeness",CompletenessProof.assess(trace.completenessContract,mapper.createObjectNode(),Map.of(),document,trace.completenessRecall));
+                trace.coverage.put("completeness",CompletenessProof.assess(trace.completenessContract,mapper.createObjectNode(),cn.bidcheck.compat.Java8Api.mapOf(),document,trace.completenessRecall));
                 if(!Boolean.TRUE.equals(trace.completenessContract.get("inventoryResolved")))return rejected(trace,"REQUIREMENT_INVENTORY_UNRESOLVED","引用清单尚有未定位、歧义或循环引用；已展开部分和出处保留，不能以部分材料证明全部齐全。");
             }
             PersonnelPlan personnel = personnelPlan(checkpoint, document);
@@ -305,18 +299,18 @@ public class SemanticChecker {
                 candidates=perItem;trace.retrieval.put("checklistRecall",trace.completenessRecall.audit());trace.retrieval.put("candidateLimit",24);
             }
             if (trace.reserveAttempt != null) {
-                OnDemandPolicy.Decision gate = OnDemandPolicy.decide(checkpoint, candidates.stream().map(Candidate::evidence).toList());
+                OnDemandPolicy.Decision gate = OnDemandPolicy.decide(checkpoint, cn.bidcheck.compat.Java8Api.toList(candidates.stream().map(Candidate::evidence)));
                 trace.model.put("decision", gate.code());
                 trace.model.put("decisionReason", gate.reason());
                 if (!gate.requestModel()) {
                     captureContext(trace, checkpoint, candidates, personnel, links);
                     return new Evaluation("UNDETERMINED", gate.reason(),
-                        "对照候选原文、主体和适用条件继续核对；检索未命中不表示文件缺失。", candidates.stream().map(Candidate::evidence).toList(), 0d, "RULES_RETRIEVAL");
+                        "对照候选原文、主体和适用条件继续核对；检索未命中不表示文件缺失。", cn.bidcheck.compat.Java8Api.toList(candidates.stream().map(Candidate::evidence)), 0d, "RULES_RETRIEVAL");
                 }
                 if (!enabled()) return rejected(trace, "MODEL_NOT_CONFIGURED", configurationIssue);
             }
             if (candidates.isEmpty()) return rejected(trace, "EVIDENCE_MISSING", "未召回与检查点相关的原文证据，不能依据检索缺失判定不符合，请人工核对。");
-            List<SourceRelations.Link> headers = SourceRelations.supportingHeaders(document, candidates.stream().map(Candidate::evidence).toList());
+            List<SourceRelations.Link> headers = SourceRelations.supportingHeaders(document, cn.bidcheck.compat.Java8Api.toList(candidates.stream().map(Candidate::evidence)));
             int addedHeaders = 0;
             for (SourceRelations.Link header : headers) {
                 links.add(header);
@@ -348,7 +342,7 @@ public class SemanticChecker {
             trace.applicability = TenderApplicabilityContext.collect(checkpoint, tender, consortiumContext);
             if (!trace.applicability.audit().isEmpty()) trace.coverage.put("tenderApplicability", trace.applicability.audit());
             if (trace.applicability.overflow()) return rejected(trace, "CONTEXT_BUDGET_EXCEEDED", "适用通用条款与格式例外来源过多，不能删除适用条件后判断，需分批补核。");
-            for (var reference : trace.applicability.references())
+            for (cn.bidcheck.semantic.TenderApplicabilityContext.Reference reference : trace.applicability.references())
                 candidates.add(new Candidate(reference.id(), reference.evidence(), "", "", true, reference.purpose(), true));
             String user = prompt(checkpoint, document, candidates, personnel, links,trace.completenessContract,trace.completenessRecall,trace.applicability);
             String system = SYSTEM + (retriever == null && trace.packet == null ? "" : CLAIM_CONTRACT)
@@ -381,7 +375,7 @@ public class SemanticChecker {
                 if (memberRepair) attemptUser += memberScopeRepairInstruction(repairReason);
                 else if ("PROTOCOL".equals(repairKind)) attemptUser += "\n修复上次JSON结构/引用错误。重新生成完整JSON，仅引用本次candidates中实际存在的ID；不得添加证据、改变来源、删除义务或预设结论。不得将缺少原文证明的事实通过更改类型冒充已验证事实。原错误类别：" + trace.lastProtocolIssue + "；具体错误：" + trace.lastProtocolReason;
                 if (system.length() + attemptUser.length() > inputLimit) return rejected(trace, "CONTEXT_BUDGET_EXCEEDED", "修复请求超过上下文长度限制，未删除原文或义务后重判。");
-                List<Map<String, String>> messages = List.of(Map.of("role", "system", "content", system), Map.of("role", "user", "content", attemptUser));
+                List<Map<String, String>> messages = cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("role", "system", "content", system), cn.bidcheck.compat.Java8Api.mapOf("role", "user", "content", attemptUser));
                 attempt.put("sourceContextSha256", textHash(user));
                 attempt.put("requestSha256", textHash(mapper.writeValueAsString(messages)));
                 if (memberRepair) {
@@ -392,10 +386,8 @@ public class SemanticChecker {
                 }
                 boolean compatible = compatibleProtocol();
                 Map<String, Object> payload = compatible
-                        ? Map.of("model", model, "messages", messages, "temperature", 0, "enable_thinking", false,
-                                "preserve_thinking", false, "max_tokens", retriever == null ? 2048 : 4096)
-                        : Map.of("model", model, "input", Map.of("messages", messages),
-                                "parameters", Map.of("result_format", "message", "temperature", 0, "enable_thinking", false, "max_tokens", retriever == null ? 2048 : 4096));
+                        ? cn.bidcheck.compat.Java8Api.mapOf("model", model, "messages", messages, "temperature", 0, "enable_thinking", false, "preserve_thinking", false, "max_tokens", retriever == null ? 2048 : 4096)
+                        : cn.bidcheck.compat.Java8Api.mapOf("model", model, "input", cn.bidcheck.compat.Java8Api.mapOf("messages", messages), "parameters", cn.bidcheck.compat.Java8Api.mapOf("result_format", "message", "temperature", 0, "enable_thinking", false, "max_tokens", retriever == null ? 2048 : 4096));
                 String requestBody = mapper.writeValueAsString(payload);
                 if (requestBody.length() > 70_000) return rejected(trace, "CONTEXT_BUDGET_EXCEEDED", "语义请求超出长度限制，请拆分检查点。");
                 HttpRequest request = HttpRequest.newBuilder(endpoint).timeout(timeout)
@@ -419,7 +411,7 @@ public class SemanticChecker {
                 HttpResponse<byte[]> response = requestFuture.get(timeout.toMillis() + 1000, TimeUnit.MILLISECONDS);
                 transportAudit.received(response.body(),response.statusCode());
                 transportAudit.result(response.statusCode()==200?"TRANSPORT_COMPLETED":"HTTP_ERROR",response.statusCode()==200?"":"MODEL_HTTP_ERROR",response.statusCode(),"BUSINESS_VALIDATION_RECORDED_SEPARATELY","");
-                attempt.put("transportAudit",transportAudit.finish(Map.of(),Map.of()));transportAudit=null;
+                attempt.put("transportAudit",transportAudit.finish(cn.bidcheck.compat.Java8Api.mapOf(),cn.bidcheck.compat.Java8Api.mapOf()));transportAudit=null;
                 attempt.put("elapsedMillis", (System.nanoTime()-attemptStarted)/1_000_000);
                 attempt.put("httpStatus", response.statusCode());
                 if (response.statusCode() != 200) { attempt.put("state", "HTTP_ERROR"); return rejected(trace, "MODEL_HTTP_ERROR", "语义模型接口返回 HTTP " + response.statusCode() + "，本检查点暂无法判定。"); }
@@ -437,19 +429,19 @@ public class SemanticChecker {
                 Evaluation result = parseResult(content.textValue(), candidates, trace, attempt, checkpoint, document, tender);
                 attempt.put("evaluation", result);
                 if (trace.raw != null) attempt.put("rawEvaluation", trace.raw);
-                attempt.put("guards", List.copyOf(trace.guards));
+                attempt.put("guards", cn.bidcheck.compat.Java8Api.listCopyOf(trace.guards));
                 if (!trace.protocolIssue.isEmpty()) {
                     attempt.put("state", "INVALID_OUTPUT"); attempt.put("issueCode", trace.protocolIssue);
                     trace.lastProtocolIssue = trace.protocolIssue;
                     trace.lastProtocolReason = result.reason();
                     attempt.put("requestMessages", messages);
-                    attempt.put("guards", List.of(Map.of("code", trace.protocolIssue, "reason", result.reason())));
+                    attempt.put("guards", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("code", trace.protocolIssue, "reason", result.reason())));
                     if (!protocolRepairUsed && !memberRepairUsed) { protocolRepairUsed = true; repairKind = "PROTOCOL"; continue; }
                     trace.guard(trace.protocolIssue, result.reason()); return result;
                 }
                 if (!trace.memberSubmissionIssue.isEmpty()) {
                     attempt.put("state", "GUARDED_OUTPUT"); attempt.put("issueCode", "REQUIREMENT_SCOPE_EXPANDED");
-                    attempt.put("requestMessages", messages); attempt.put("coverage", Map.copyOf(trace.coverage));
+                    attempt.put("requestMessages", messages); attempt.put("coverage", cn.bidcheck.compat.Java8Api.mapCopyOf(trace.coverage));
                     if (!memberRepairUsed) {
                         memberRepairUsed = true; repairKind = "MEMBER_SUBMISSION_SCOPE"; repairReason = trace.memberSubmissionIssue;
                         trace.memberScopeRepair.put("triggerAttempt", attemptNumber);
@@ -493,31 +485,31 @@ public class SemanticChecker {
             return rejected(trace, "MODEL_COMMUNICATION_ERROR", "检索或语义模型通信失败、响应过大或返回无效数据，暂无法判定。");
         } finally {
             if (requestFuture != null && !requestFuture.isDone()) requestFuture.cancel(true);
-            if(transportAudit!=null){transportAudit.result("FAILED","NO_COMPLETE_RESPONSE",0,"SEE_SEMANTIC_ATTEMPT_DECISION","");trace.model.put("lastTransportFailureAudit",transportAudit.finish(Map.of(),Map.of()));}
+            if(transportAudit!=null){transportAudit.result("FAILED","NO_COMPLETE_RESPONSE",0,"SEE_SEMANTIC_ATTEMPT_DECISION","");trace.model.put("lastTransportFailureAudit",transportAudit.finish(cn.bidcheck.compat.Java8Api.mapOf(),cn.bidcheck.compat.Java8Api.mapOf()));}
         }
     }
 
     private Evaluation parseResult(String text, List<Candidate> candidates, AssessmentTrace trace, Map<String, Object> attempt, Checkpoint checkpoint, Document document, Document tender) throws IOException {
         if (text.length() > MAX_MODEL_JSON_CHARACTERS) return protocolFailure(trace, "MODEL_SCHEMA_INVALID", "语义模型输出超过长度限制，暂无法判定。");
-        String json = text.strip();
-        if (json.startsWith("```json\n") && json.endsWith("```")) json = json.substring(8, json.length() - 3).strip();
-        else if (json.startsWith("```\n") && json.endsWith("```")) json = json.substring(4, json.length() - 3).strip();
+        String json = cn.bidcheck.compat.Java8Api.strip(text);
+        if (json.startsWith("```json\n") && json.endsWith("```")) json = cn.bidcheck.compat.Java8Api.strip(json.substring(8, json.length() - 3));
+        else if (json.startsWith("```\n") && json.endsWith("```")) json = cn.bidcheck.compat.Java8Api.strip(json.substring(4, json.length() - 3));
         JsonNode answer;
         try { answer = mapper.readTree(json); }
         catch (IOException invalid) { return protocolFailure(trace, "MODEL_JSON_INVALID", "语义模型返回无效 JSON，暂无法判定。"); }
         if (answer == null || !answer.isObject()) return protocolFailure(trace, "MODEL_SCHEMA_INVALID", "语义模型未返回有效的结果对象，暂无法判定。");
         attempt.put("response", sanitizedResponse(answer));
         String status = answer.path("status").asText("");
-        if (!Set.of("PASS", "FAIL", "WARNING", "UNDETERMINED").contains(status)) return protocolFailure(trace, "MODEL_SCHEMA_INVALID", "语义模型返回未知判断状态，暂无法判定。");
+        if (!cn.bidcheck.compat.Java8Api.setOf("PASS", "FAIL", "WARNING", "UNDETERMINED").contains(status)) return protocolFailure(trace, "MODEL_SCHEMA_INVALID", "语义模型返回未知判断状态，暂无法判定。");
         JsonNode reason = answer.path("reason"), suggestion = answer.path("suggestion");
-        if (!reason.isTextual() || reason.textValue().isBlank() || reason.textValue().length() > 2000
+        if (!reason.isTextual() || cn.bidcheck.compat.Java8Api.isBlank(reason.textValue()) || reason.textValue().length() > 2000
                 || !suggestion.isTextual() || suggestion.textValue().length() > 2000) return protocolFailure(trace, "MODEL_SCHEMA_INVALID", "语义模型缺少有效的判断原因或建议，暂无法判定。");
         JsonNode ids = answer.path("evidenceIds");
         if (!ids.isArray()) return protocolFailure(trace, "MODEL_CITATION_INVALID", "语义模型没有提供有效的证据引用列表，暂无法判定。");
         Map<String, Evidence> available = new LinkedHashMap<>();
         for (Candidate candidate : candidates) available.put(candidate.id(), candidate.evidence());
         List<Map<String,Object>> normalizations=ClaimProtocol.normalize(answer,available);
-        trace.coverage.put("claimProtocol",Map.of("version",ClaimProtocol.VERSION,"normalizations",normalizations));
+        trace.coverage.put("claimProtocol",cn.bidcheck.compat.Java8Api.mapOf("version", ClaimProtocol.VERSION, "normalizations", normalizations));
         if(!normalizations.isEmpty())attempt.put("normalizedResponse",sanitizedResponse(answer));
         List<Evidence> sources = new ArrayList<>();
         Set<String> distinct = new LinkedHashSet<>();
@@ -527,7 +519,7 @@ public class SemanticChecker {
         }
         if (ids.size() > candidates.size()) return protocolFailure(trace, "MODEL_CITATION_INVALID", "语义模型证据引用数量超过实际发送白名单，暂无法判定。");
         if (!"UNDETERMINED".equals(status) && sources.isEmpty()) return protocolFailure(trace, "MODEL_CITATION_INVALID", "语义模型结论没有原文证据支持，已撤回结论并转为待定。");
-        if ((retriever != null || trace.packet != null) && Set.of("PASS", "FAIL").contains(status) && (!answer.path("claims").isArray() || answer.path("claims").isEmpty())) {
+        if ((retriever != null || trace.packet != null) && cn.bidcheck.compat.Java8Api.setOf("PASS", "FAIL").contains(status) && (!answer.path("claims").isArray() || answer.path("claims").isEmpty())) {
             return protocolFailure(trace, "MODEL_SCHEMA_INVALID", "确定结论缺少逐项事实和引用映射，暂无法判定。");
         }
         if (answer.path("claims").isArray()) for (JsonNode claim : answer.path("claims")) {
@@ -535,14 +527,14 @@ public class SemanticChecker {
             if ("DATE".equals(claim.path("kind").asText()) && claimText.matches("(?s).*(印刷页|物理页|PDF页|页码).*(对应|映射|换算|=).*" )
                     && !claim.path("value").asText().matches("(?s).*\\d{4}\\s*(?:年|[-./])\\s*\\d{1,2}.*"))
                 return protocolFailure(trace,"MODEL_SCHEMA_INVALID","页码或印刷页映射被标为日期类型，需修复输出类型后核对；不能据此认定原文日期缺失。");
-            for (String field : List.of("evidenceIds", "referenceEvidenceIds")) if (claim.path(field).isArray()) for (JsonNode id : claim.path(field))
+            for (String field : cn.bidcheck.compat.Java8Api.listOf("evidenceIds", "referenceEvidenceIds")) if (claim.path(field).isArray()) for (JsonNode id : claim.path(field))
                 if (id.isTextual() && !available.containsKey(id.asText())) return protocolFailure(trace, "MODEL_CITATION_INVALID", "逐项断言引用了实际发送白名单之外的ID，暂无法判定；检查点文本不是可自行命名的证据ID。");
             if (claim.path("comparisons").isArray()) for (JsonNode comparison : claim.path("comparisons")) {
                 JsonNode id = comparison.path("evidenceId");
                 if (id.isTextual() && !available.containsKey(id.asText())) return protocolFailure(trace, "MODEL_CITATION_INVALID", "字段比较引用了实际发送白名单之外的ID，暂无法判定。");
             }
         }
-        trace.raw = new Evaluation(status, redactIdentityNumbers(reason.textValue()), redactIdentityNumbers(suggestion.textValue()), List.copyOf(sources), 0d, method());
+        trace.raw = new Evaluation(status, redactIdentityNumbers(reason.textValue()), redactIdentityNumbers(suggestion.textValue()), cn.bidcheck.compat.Java8Api.listCopyOf(sources), 0d, method());
         String schemaIssue = claimSchemaIssue(answer.path("claims"), available);
         if (!schemaIssue.isEmpty()) return protocolFailure(trace, "MODEL_SCHEMA_INVALID", schemaIssue);
         // Body presence is a separate, frozen-source proof. Preserve it even when a later
@@ -551,8 +543,7 @@ public class SemanticChecker {
         if(!completeness.isEmpty())trace.coverage.put("completeness",completeness);
         List<String> extraMaterials=CompletenessProof.extraRequiredMaterials(trace.completenessContract,answer,available);
         if(!extraMaterials.isEmpty()) {
-            trace.coverage.put("checklistScope",Map.of("inventoryId",trace.completenessContract.get("inventoryId"),"extraRequiredItems",extraMaterials,
-                "reason","投标目录中的额外材料不能扩充招标必需清单；这不表示原文件缺少材料。"));
+            trace.coverage.put("checklistScope",cn.bidcheck.compat.Java8Api.mapOf("inventoryId", trace.completenessContract.get("inventoryId"), "extraRequiredItems", extraMaterials, "reason", "投标目录中的额外材料不能扩充招标必需清单；这不表示原文件缺少材料。"));
             return rejectedWithSources(trace,"REQUIREMENT_SCOPE_EXPANDED","模型将投标目录中的额外材料纳入本项必需清单："+String.join("、",extraMaterials)+"。已保留招标清单各项正文核验；需修正判断范围，不能据此要求补交材料。",sources);
         }
         VisualAssertionScope.Assessment assertionScope=VisualAssertionScope.assess(reason.textValue(),suggestion.textValue(),answer.path("claims"),requiresVisibleSigning(checkpoint));
@@ -585,7 +576,7 @@ public class SemanticChecker {
         if (!templateIssue.isEmpty()) return rejectedWithSources(trace, "EVIDENCE_SCOPE_INCOMPLETE", templateIssue, sources);
         String scopeIssue = EvidenceScope.issue(checkpoint, status, reason.textValue() + "。" + suggestion.textValue(), answer.path("claims"), available);
         if (!scopeIssue.isEmpty()) return rejectedWithSources(trace, "EVIDENCE_SCOPE_INCOMPLETE", scopeIssue, sources);
-        if (Set.of("PASS", "FAIL").contains(status) && distinct.stream().noneMatch(id -> id.startsWith("C"))) {
+        if (cn.bidcheck.compat.Java8Api.setOf("PASS", "FAIL").contains(status) && distinct.stream().noneMatch(id -> id.startsWith("C"))) {
             return rejectedWithSources(trace, "EVIDENCE_MISSING", "仅引用招标日期基准不能证明投标响应符合或不符合，已转为待定。", sources);
         }
         StringBuilder assertions = new StringBuilder(reason.textValue()).append('。').append(suggestion.textValue());
@@ -594,26 +585,26 @@ public class SemanticChecker {
             boolean signing=assertionScope.unsupportedObservation()||AffirmativeAssertions.visualCompletion(assertionScope.decisionText());
             String issue=signing?"模型仅凭文字或模板判断签字盖章有无，尚无要求文书及位置的原图观察。":"模型把投标人自填响应当成已获正式评审认可，尚无对应评审记录。";
             trace.guard("VISUAL_ASSERTION_UNGROUNDED",issue);
-            return new Evaluation("UNDETERMINED",issue,signing?"核对所要求文书及位置是否有签字或盖章。":"核对对应的正式评审记录。",List.copyOf(sources),0d,method());
+            return new Evaluation("UNDETERMINED",issue,signing?"核对所要求文书及位置是否有签字或盖章。":"核对对应的正式评审记录。",cn.bidcheck.compat.Java8Api.listCopyOf(sources),0d,method());
         }
         if (AffirmativeAssertions.certificateValidity(assertions.toString()) && !ClaimGrounding.hasValidatedCertificateTiming(answer.path("claims"),available,distinct)) {
             trace.guard("DATE_ASSERTION_UNGROUNDED","证照有效性的肯定解释缺少经原文核验的完整适用期与参照日期链。");
             return new Evaluation("UNDETERMINED","模型声称证照有效或均在有效期内，但尚未完成同一证照适用期、明确参照日期及来源的核对，已撤回该肯定解释。证书起止日期原文可保留，不能据此自动认定投标时有效。",
-                    "请核对各证照适用的有效期限，以及最终投标或其他明确核验时点；没有时点依据时应保留待核。",List.copyOf(sources),0d,method());
+                    "请核对各证照适用的有效期限，以及最终投标或其他明确核验时点；没有时点依据时应保留待核。",cn.bidcheck.compat.Java8Api.listCopyOf(sources),0d,method());
         }
         if (unsupportedDeadlineAssertion(reason.textValue()) || unsupportedDeadlineAssertion(suggestion.textValue())) {
             trace.guard("DATE_ASSERTION_UNGROUNDED", "未确认截止版本或实际提交/到账记录，日期解释触发复核守卫。");
             return new Evaluation("UNDETERMINED", "模型依据尚未核实的截止版本或签署、付款等日期断定时间合规或违规，已撤回该解释。现有日期差异需要进一步核实，不能据此认定逾期、无效或及时到账。",
-                    "请核对最终招标版本、延期澄清，以及实际递交和代理机构到账记录；签署日期、回单日期不能替代这些证据。", List.copyOf(sources), 0d, method());
+                    "请核对最终招标版本、延期澄清，以及实际递交和代理机构到账记录；签署日期、回单日期不能替代这些证据。", cn.bidcheck.compat.Java8Api.listCopyOf(sources), 0d, method());
         }
         if("PASS".equals(status)&&requiresVisibleSigning(checkpoint)) {
-            trace.coverage.put("signaturePresence",Map.of("required",true,"status","OBSERVATION_PENDING","scope","CHECKPOINT_ONLY"));
+            trace.coverage.put("signaturePresence",cn.bidcheck.compat.Java8Api.mapOf("required", true, "status", "OBSERVATION_PENDING", "scope", "CHECKPOINT_ONLY"));
             return rejectedWithSources(trace,"VISUAL_OBSERVATION_REQUIRED","本项明确要求签字或盖章，尚无对应位置的原图观察；已有文字材料核验结果保留。",sources);
         }
         Map<String,Object> proof=ClaimProtocol.proof(answer,available),gap=ClaimProtocol.gap(answer,available);
         if(!proof.isEmpty())trace.coverage.put("semanticProof",proof);
         if(!gap.isEmpty())trace.coverage.put("semanticGap",gap);
-        return new Evaluation(trace.raw.status(), trace.raw.reason(), trace.raw.suggestion(), List.copyOf(sources), 0d, method());
+        return new Evaluation(trace.raw.status(), trace.raw.reason(), trace.raw.suggestion(), cn.bidcheck.compat.Java8Api.listCopyOf(sources), 0d, method());
     }
 
     /** This text-only path cannot complete an explicitly requested visual obligation. */
@@ -638,23 +629,23 @@ public class SemanticChecker {
         for (JsonNode claim : claims) {
             String prefix = "claims[" + index++ + "]：";
             if (!claim.isObject()) return prefix + "断言必须为对象。";
-            if (!claim.path("text").isTextual() || claim.path("text").asText().isBlank() || claim.path("text").asText().length() > 800)
+            if (!claim.path("text").isTextual() || cn.bidcheck.compat.Java8Api.isBlank(claim.path("text").asText()) || claim.path("text").asText().length() > 800)
                 return prefix + "text 必须为非空且不超过800字的字符串。";
-            if (!claim.path("kind").isTextual() || !Set.of("TEXT", "MATERIAL", "IDENTITY", "AMOUNT", "DURATION", "DATE", "RELATION", "QUALITY", "SIGNATURE", "FIELD_COMPARISON").contains(claim.path("kind").asText()))
+            if (!claim.path("kind").isTextual() || !cn.bidcheck.compat.Java8Api.setOf("TEXT", "MATERIAL", "IDENTITY", "AMOUNT", "DURATION", "DATE", "RELATION", "QUALITY", "SIGNATURE", "FIELD_COMPARISON").contains(claim.path("kind").asText()))
                 return prefix + "kind 缺失或不属于允许的断言类型；TENDER_REFERENCE 是 scope，不能用作 kind。";
-            if (!claim.path("scope").isTextual() || !Set.of("CURRENT_PROJECT", "HISTORICAL_PROJECT", "TENDER_REFERENCE").contains(claim.path("scope").asText()))
+            if (!claim.path("scope").isTextual() || !cn.bidcheck.compat.Java8Api.setOf("CURRENT_PROJECT", "HISTORICAL_PROJECT", "TENDER_REFERENCE").contains(claim.path("scope").asText()))
                 return prefix + "scope 缺失或不属于允许的适用范围。";
             JsonNode ids = claim.path("evidenceIds");
             if (!ids.isArray() || ids.isEmpty() || ids.size() > available.size()) return prefix + "evidenceIds 必须为实际候选ID组成的非空数组。";
-            for (String field : List.of("evidenceIds", "referenceEvidenceIds")) {
+            for (String field : cn.bidcheck.compat.Java8Api.listOf("evidenceIds", "referenceEvidenceIds")) {
                 JsonNode references = claim.path(field);
                 if (references.isMissingNode()) continue;
                 if (!references.isArray()) return prefix + field + " 必须为候选ID数组。";
-                for (JsonNode id : references) if (!id.isTextual() || id.asText().isBlank()) return prefix + field + " 中的ID必须为非空字符串。";
+                for (JsonNode id : references) if (!id.isTextual() || cn.bidcheck.compat.Java8Api.isBlank(id.asText())) return prefix + field + " 中的ID必须为非空字符串。";
             }
             if (!claim.path("comparisons").isMissingNode()) {
                 if (!claim.path("comparisons").isArray()) return prefix + "comparisons 必须为数组。";
-                for (JsonNode comparison : claim.path("comparisons")) if (!comparison.isObject() || !comparison.path("evidenceId").isTextual() || comparison.path("evidenceId").asText().isBlank())
+                for (JsonNode comparison : claim.path("comparisons")) if (!comparison.isObject() || !comparison.path("evidenceId").isTextual() || cn.bidcheck.compat.Java8Api.isBlank(comparison.path("evidenceId").asText()))
                     return prefix + "comparisons 中每项必须包含字符串 evidenceId。";
             }
         }
@@ -667,8 +658,8 @@ public class SemanticChecker {
         for (JsonNode claim : claims) {
             String kind = claim.path("kind").asText(), statement = claim.path("text").asText(), scope = claim.path("scope").asText();
             JsonNode ids = claim.path("evidenceIds");
-            if (!claim.isObject() || statement.isBlank() || statement.length() > 800 || !Set.of("TEXT", "MATERIAL", "IDENTITY", "AMOUNT", "DURATION", "DATE", "RELATION", "QUALITY", "SIGNATURE", "FIELD_COMPARISON").contains(kind)
-                    || !Set.of("CURRENT_PROJECT", "HISTORICAL_PROJECT", "TENDER_REFERENCE").contains(scope) || !ids.isArray() || ids.isEmpty() || ids.size() > available.size()) return "逐项断言缺少明确类型、适用范围或引用，暂不能确认。";
+            if (!claim.isObject() || cn.bidcheck.compat.Java8Api.isBlank(statement) || statement.length() > 800 || !cn.bidcheck.compat.Java8Api.setOf("TEXT", "MATERIAL", "IDENTITY", "AMOUNT", "DURATION", "DATE", "RELATION", "QUALITY", "SIGNATURE", "FIELD_COMPARISON").contains(kind)
+                    || !cn.bidcheck.compat.Java8Api.setOf("CURRENT_PROJECT", "HISTORICAL_PROJECT", "TENDER_REFERENCE").contains(scope) || !ids.isArray() || ids.isEmpty() || ids.size() > available.size()) return "逐项断言缺少明确类型、适用范围或引用，暂不能确认。";
             List<Evidence> supports = new ArrayList<>();
             for (JsonNode id : ids) {
                 if (!id.isTextual() || !available.containsKey(id.asText())) return "逐项断言使用了实际发送白名单之外的证据，已撤回确定结论。";
@@ -682,14 +673,14 @@ public class SemanticChecker {
                 String scopeIssue = ClaimGrounding.amountScopeIssue(claim, bidSources);
                 if (!scopeIssue.isEmpty()) return scopeIssue;
                 if (!ClaimGrounding.amountValueGrounded(claim.path("value").asText(),supports)) return "金额原值匹配未通过，暂无法确认断言原值与该引用的对应关系；小数点必须保留，单位换算不能当作相同原值。这不表示原文件没有该金额。";
-                if (claim.path("amountBasis").asText().isBlank() || claim.path("taxBasis").asText().isBlank()) return "金额断言未区分总价/施工分项及税基，不能替代所要求的金额口径。";
+                if (cn.bidcheck.compat.Java8Api.isBlank(claim.path("amountBasis").asText()) || cn.bidcheck.compat.Java8Api.isBlank(claim.path("taxBasis").asText())) return "金额断言未区分总价/施工分项及税基，不能替代所要求的金额口径。";
             }
             if ("DATE".equals(kind)) {
                 if (!ClaimGrounding.dateValueGrounded(claim, supports)) return "日期或月份的起止原值未被所引原文支持；DATE可用value或同字段startDate/endDate，不能从未引用的日期推定。";
-            } else if (Set.of("IDENTITY", "DURATION").contains(kind)) {
+            } else if (cn.bidcheck.compat.Java8Api.setOf("IDENTITY", "DURATION").contains(kind)) {
                 String value = claim.path("value").asText();
                 String normalized = SourceRelations.normalized(value);
-                if (normalized.isBlank() || value.length() > 200 || ("IDENTITY".equals(kind) && normalized.length() < 2)
+                if (cn.bidcheck.compat.Java8Api.isBlank(normalized) || value.length() > 200 || ("IDENTITY".equals(kind) && normalized.length() < 2)
                         || (!"IDENTITY".equals(kind) && !value.matches("(?s).*[0-9一二三四五六七八九十百千万亿〇零壹贰叁肆伍陆柒捌玖拾佰仟].*"))
                         || supports.stream().noneMatch(e -> SourceRelations.normalized(e.quote()).contains(normalized)
                                 || ("DATE".equals(kind) && ClaimGrounding.sourceContainsDateValue(e.quote(), value)))) return "金额、期限、日期或身份断言的明确原值没有出现在所引证据中，不能据检索相似度确认。";
@@ -700,8 +691,8 @@ public class SemanticChecker {
 
     private Map<String, Object> sanitizedResponse(JsonNode answer) {
         Map<String, Object> out = new LinkedHashMap<>();
-        for (String field : List.of("status", "reason", "suggestion")) if (answer.path(field).isTextual()) out.put(field, bounded(redactIdentityNumbers(answer.path(field).asText()), field.equals("status") ? 40 : 2000));
-        for (String field : List.of("evidenceIds", "claims")) {
+        for (String field : cn.bidcheck.compat.Java8Api.listOf("status", "reason", "suggestion")) if (answer.path(field).isTextual()) out.put(field, bounded(redactIdentityNumbers(answer.path(field).asText()), field.equals("status") ? 40 : 2000));
+        for (String field : cn.bidcheck.compat.Java8Api.listOf("evidenceIds", "claims")) {
             if (!answer.path(field).isArray()) continue;
             List<Object> values = new ArrayList<>();
             for (JsonNode node : answer.path(field)) {
@@ -709,11 +700,11 @@ public class SemanticChecker {
                 if (field.equals("evidenceIds")) values.add(bounded(node.asText(), 80));
                 else {
                     Map<String, Object> claim = new LinkedHashMap<>();
-                    for (String key : List.of("kind", "scope", "text", "value", "subject", "object", "relation", "field", "validityField", "startDate", "endDate", "referenceDate", "referenceBasis", "amountBasis", "taxBasis", "proofPurpose")) if (node.path(key).isTextual()) claim.put(key, bounded(redactIdentityNumbers(node.path(key).asText()), key.equals("text") ? 800 : 200));
+                    for (String key : cn.bidcheck.compat.Java8Api.listOf("kind", "scope", "text", "value", "subject", "object", "relation", "field", "validityField", "startDate", "endDate", "referenceDate", "referenceBasis", "amountBasis", "taxBasis", "proofPurpose")) if (node.path(key).isTextual()) claim.put(key, bounded(redactIdentityNumbers(node.path(key).asText()), key.equals("text") ? 800 : 200));
                     if (node.path("evidenceIds").isArray()) { List<String> references = new ArrayList<>(); for (JsonNode id : node.path("evidenceIds")) if (references.size() < 24) references.add(bounded(id.asText(), 80)); claim.put("evidenceIds", references); }
                     if (node.path("referenceEvidenceIds").isArray()) { List<String> references = new ArrayList<>();for (JsonNode id : node.path("referenceEvidenceIds")) if (references.size() < 24) references.add(bounded(id.asText(), 80));claim.put("referenceEvidenceIds", references); }
                     if (node.path("comparisons").isArray()) { List<Map<String,String>> entries = new ArrayList<>();for(JsonNode entry : node.path("comparisons")) if(entries.size()<8) {
-                        Map<String,String> valuesByField = new LinkedHashMap<>();for(String key : List.of("evidenceId","label","value")) if(entry.path(key).isTextual()) valuesByField.put(key,bounded(redactIdentityNumbers(entry.path(key).asText()),200));entries.add(valuesByField);
+                        Map<String,String> valuesByField = new LinkedHashMap<>();for(String key : cn.bidcheck.compat.Java8Api.listOf("evidenceId", "label", "value")) if(entry.path(key).isTextual()) valuesByField.put(key,bounded(redactIdentityNumbers(entry.path(key).asText()),200));entries.add(valuesByField);
                     }claim.put("comparisons",entries); }
                     values.add(claim);
                 }
@@ -722,7 +713,7 @@ public class SemanticChecker {
         }
         if(answer.path("gap").isObject()){
             JsonNode gap=answer.path("gap");Map<String,Object> recorded=new LinkedHashMap<>();
-            for(String key:List.of("kind","reason"))if(gap.path(key).isTextual())recorded.put(key,bounded(redactIdentityNumbers(gap.path(key).asText()),key.equals("kind")?80:800));
+            for(String key:cn.bidcheck.compat.Java8Api.listOf("kind", "reason"))if(gap.path(key).isTextual())recorded.put(key,bounded(redactIdentityNumbers(gap.path(key).asText()),key.equals("kind")?80:800));
             if(gap.path("evidenceIds").isArray()){List<String> refs=new ArrayList<>();for(JsonNode id:gap.path("evidenceIds"))if(refs.size()<24)refs.add(bounded(id.asText(),80));recorded.put("evidenceIds",refs);}
             out.put("gap",recorded);
         }
@@ -740,14 +731,14 @@ public class SemanticChecker {
         for (PersonnelAnchor anchor : personnel.anchors()) tokens.addAll(bigrams(anchor.name()));
         if (tokens.isEmpty()) return new ArrayList<>();
         Set<String> titleTokens = bigrams(bounded(checkpoint.title(), 300));
-        List<String> certificateLabels = CERTIFICATE_LABELS.stream().filter(query::contains).toList();
+        List<String> certificateLabels = cn.bidcheck.compat.Java8Api.toList(CERTIFICATE_LABELS.stream().filter(query::contains));
         List<RetrievalBlock> blocks = new ArrayList<>();
         Map<String, Integer> frequencies = new LinkedHashMap<>();
         long totalLength = 0;
         int order = 0;
         int examined = 0;
         for (Page page : document.pages()) {
-            if (page.text() == null || page.text().isBlank()) continue;
+            if (page.text() == null || cn.bidcheck.compat.Java8Api.isBlank(page.text())) continue;
             if (examined >= 2_000_000) break;
             String text = bounded(page.text(), 2_000_000 - examined);
             examined += text.length();
@@ -759,11 +750,11 @@ public class SemanticChecker {
                     if (newline > start + MAX_QUOTE_CHARACTERS / 2) end = newline + 1;
                 }
                 String raw = text.substring(start, end);
-                String quote = raw.strip();
+                String quote = cn.bidcheck.compat.Java8Api.strip(raw);
                 Set<String> actual = bigrams(quote);
                 Set<String> matches = new LinkedHashSet<>(actual);
                 matches.retainAll(tokens);
-                if (!matches.isEmpty() && !quote.isBlank()) {
+                if (!matches.isEmpty() && !cn.bidcheck.compat.Java8Api.isBlank(quote)) {
                     int quoteLine = line;
                     for (int i = 0; i < raw.length() && Character.isWhitespace(raw.charAt(i)); i++) {
                         if (raw.charAt(i) == '\n') quoteLine++;
@@ -835,10 +826,10 @@ public class SemanticChecker {
                 throw new IllegalArgumentException("Consistency packet source or size invalid");
             trace.retrieval.put("mode", "SOURCE_BOUND_PACKET");
             trace.retrieval.put("candidateLimit", 24);
-            trace.retrieval.put("followUp", Map.of("attempted", false));
+            trace.retrieval.put("followUp", cn.bidcheck.compat.Java8Api.mapOf("attempted", false));
             List<Candidate> result = new ArrayList<>();
             for (Evidence evidence : trace.packet) {
-                Page page = document.pages().stream().filter(p -> p.number() == evidence.page() && java.util.Objects.equals(p.locationType(), evidence.locationType())).findFirst().orElseThrow();
+                Page page = document.pages().stream().filter(p -> p.number() == evidence.page() && java.util.Objects.equals(p.locationType(), evidence.locationType())).findFirst().orElseThrow(java.util.NoSuchElementException::new);
                 int offset = page.text().indexOf(evidence.quote());
                 boolean ambiguous=page.text().indexOf(evidence.quote(),offset+1)>=0;
                 if(ambiguous) trace.guard("SOURCE_POSITION_AMBIGUOUS","同一页存在重复引文，无法仅凭文字确定具体位置，未附加猜测的邻近上下文；需对照原文位置核对。");
@@ -856,7 +847,7 @@ public class SemanticChecker {
             primary.addAll(lexical); trace.retrieval.put("mode", "OFFLINE_LEXICAL");
         } else {
             RetrievalResult initial = retriever.retrieve(checkpoint, document);
-            trace.retrieval.put("mode", initial.mode()); trace.retrieval.put("initial", Map.of("mode", initial.mode(), "diagnostics", initial.diagnostics()));
+            trace.retrieval.put("mode", initial.mode()); trace.retrieval.put("initial", cn.bidcheck.compat.Java8Api.mapOf("mode", initial.mode(), "diagnostics", initial.diagnostics()));
             for (Evidence hit : initial.hits()) if (validHit(hit, document)) primary.add(candidate(hit, "HYBRID_CANDIDATE", false));
         }
         List<Candidate> assembled = mergeCandidates(checkpoint, personnel, links, lexical, primary, limit);
@@ -869,17 +860,17 @@ public class SemanticChecker {
             String query = bounded(checkpoint.title() + " " + names + " " + String.join("；", unresolved), 1600);
             RetrievalResult extra = retriever.search(document, query, Math.min(16, limit));
             trace.followUp = true;
-            trace.retrieval.put("followUp", Map.of("attempted", true, "mode", extra.mode(), "diagnostics", extra.diagnostics(), "query", redactIdentityNumbers(query)));
+            trace.retrieval.put("followUp", cn.bidcheck.compat.Java8Api.mapOf("attempted", true, "mode", extra.mode(), "diagnostics", extra.diagnostics(), "query", redactIdentityNumbers(query)));
             for (Evidence hit : extra.hits()) if (validHit(hit, document)) primary.add(candidate(hit, "DIRECTED_FOLLOW_UP", false));
             // New name-linked proofs are selected before unlinked relevance hits in the same budget.
             List<Candidate> expanded = new ArrayList<>(lexical); expanded.addAll(primary);
             assembled = mergeCandidates(checkpoint, personnel, links, expanded, primary, limit);
-        } else trace.retrieval.put("followUp", Map.of("attempted", false));
+        } else trace.retrieval.put("followUp", cn.bidcheck.compat.Java8Api.mapOf("attempted", false));
         return assembled;
     }
 
     private static boolean validHit(Evidence hit, Document document) {
-        if (hit == null || !document.id().equals(hit.documentId()) || hit.quote() == null || hit.quote().isBlank() || hit.quote().length() > MAX_QUOTE_CHARACTERS) return false;
+        if (hit == null || !document.id().equals(hit.documentId()) || hit.quote() == null || cn.bidcheck.compat.Java8Api.isBlank(hit.quote()) || hit.quote().length() > MAX_QUOTE_CHARACTERS) return false;
         return document.pages().stream().anyMatch(page -> page.number() == hit.page() && java.util.Objects.equals(page.locationType(), hit.locationType())
                 && page.text() != null && page.text().contains(hit.quote()));
     }
@@ -934,8 +925,8 @@ public class SemanticChecker {
                     + String.join("、", personnel.proofKinds()));
         } else {
             for (String clause : (checkpoint.expected() == null ? "" : checkpoint.expected()).split("[；;\\n]| / ")) {
-                if (clause.strip().length() < 8 || descriptions.size() >= 6) continue;
-                descriptions.add(bounded(clause.strip(), 600));
+                if (cn.bidcheck.compat.Java8Api.strip(clause).length() < 8 || descriptions.size() >= 6) continue;
+                descriptions.add(bounded(cn.bidcheck.compat.Java8Api.strip(clause), 600));
             }
         }
         List<Map<String, Object>> result = new ArrayList<>();
@@ -949,8 +940,7 @@ public class SemanticChecker {
             }
             Map<String, Object> group = new LinkedHashMap<>();
             group.put("id", "O" + (result.size() + 1)); group.put("description", description);
-            group.put("source", checkpoint.source() == null ? "USER_CONFIRMED_RULE" : Map.of("documentId", checkpoint.source().documentId(),
-                    "locationType", checkpoint.source().locationType(), "location", checkpoint.source().page(), "anchor", checkpoint.source().anchor()));
+            group.put("source", checkpoint.source() == null ? "USER_CONFIRMED_RULE" : cn.bidcheck.compat.Java8Api.mapOf("documentId", checkpoint.source().documentId(), "locationType", checkpoint.source().locationType(), "location", checkpoint.source().page(), "anchor", checkpoint.source().anchor()));
             group.put("candidateIds", ids); group.put("state", ids.isEmpty() ? "NOT_RETRIEVED" : "CANDIDATES_AVAILABLE_NOT_VERIFIED");
             result.add(group);
         }
@@ -960,23 +950,22 @@ public class SemanticChecker {
     private static List<Map<String, Object>> relationRecords(List<Candidate> candidates, PersonnelPlan personnel, List<SourceRelations.Link> links) {
         List<Map<String, Object>> records = new ArrayList<>();
         for (SourceRelations.Link link : links) {
-            List<String> ids = candidates.stream().filter(c -> c.evidence().documentId().equals(link.evidence().documentId())
+            List<String> ids = cn.bidcheck.compat.Java8Api.toList(candidates.stream().filter(c -> c.evidence().documentId().equals(link.evidence().documentId())
                     && ((c.evidence().page() == link.evidence().page() && c.evidence().quote().contains(link.evidence().quote()))
-                    || ("PAGINATED_SOCIAL_INSURANCE_HEADER".equals(link.type()) && link.attributes().get("memberLocations") instanceof List<?> members
-                    && members.contains(c.evidence().page())))).map(Candidate::id).toList();
-            if (!ids.isEmpty()) records.add(Map.of("type", link.type(), "sourceEvidenceIds", ids, "attributes", link.attributes(), "status", "SOURCE_BACKED_CANDIDATES"));
+                    || ("PAGINATED_SOCIAL_INSURANCE_HEADER".equals(link.type()) && link.attributes().get("memberLocations") instanceof List<?>
+                    && ((List<?>) (link.attributes().get("memberLocations"))).contains(c.evidence().page())))).map(Candidate::id));
+            if (!ids.isEmpty()) records.add(cn.bidcheck.compat.Java8Api.mapOf("type", link.type(), "sourceEvidenceIds", ids, "attributes", link.attributes(), "status", "SOURCE_BACKED_CANDIDATES"));
         }
         for (PersonnelAnchor anchor : personnel.anchors()) {
-            List<String> ids = candidates.stream().filter(c -> isAnchor(c.evidence(), anchor)).map(Candidate::id).toList();
-            if (!ids.isEmpty()) records.add(Map.of("type", "施工企业主要负责人".equals(anchor.role()) ? "PERSON_CORPORATE_ROLE" : "PERSON_ROLE_APPOINTMENT", "sourceEvidenceIds", ids,
-                    "attributes", Map.of("role", anchor.role(), "name", anchor.name(), "uniqueNameForRole", uniqueRoleName(personnel, anchor)), "status", "SOURCE_BACKED_CANDIDATES"));
+            List<String> ids = cn.bidcheck.compat.Java8Api.toList(candidates.stream().filter(c -> isAnchor(c.evidence(), anchor)).map(Candidate::id));
+            if (!ids.isEmpty()) records.add(cn.bidcheck.compat.Java8Api.mapOf("type", "施工企业主要负责人".equals(anchor.role()) ? "PERSON_CORPORATE_ROLE" : "PERSON_ROLE_APPOINTMENT", "sourceEvidenceIds", ids, "attributes", cn.bidcheck.compat.Java8Api.mapOf("role", anchor.role(), "name", anchor.name(), "uniqueNameForRole", uniqueRoleName(personnel, anchor)), "status", "SOURCE_BACKED_CANDIDATES"));
         }
         return records;
     }
 
     private static void captureContext(AssessmentTrace trace, Checkpoint checkpoint, List<Candidate> candidates,
                                        PersonnelPlan personnel, List<SourceRelations.Link> links) {
-        for (Candidate candidate : candidates) trace.candidates.add(Map.of("id", candidate.id(), "purpose", candidate.purpose(), "required", candidate.required(), "evidence", candidate.evidence()));
+        for (Candidate candidate : candidates) trace.candidates.add(cn.bidcheck.compat.Java8Api.mapOf("id", candidate.id(), "purpose", candidate.purpose(), "required", candidate.required(), "evidence", candidate.evidence()));
         trace.relations.addAll(relationRecords(candidates, personnel, links));
         trace.coverage.put("obligations", obligations(checkpoint, candidates, personnel));
         trace.coverage.put("unresolved", personnelCoverage(personnel, candidates));
@@ -1000,7 +989,7 @@ public class SemanticChecker {
                 if (entry.getValue().stream().anyMatch(requirements::contains)) roles.add(entry.getKey());
             });
         }
-        if (roles.isEmpty()) return new PersonnelPlan(List.of(), List.of(), List.of());
+        if (roles.isEmpty()) return new PersonnelPlan(cn.bidcheck.compat.Java8Api.listOf(), cn.bidcheck.compat.Java8Api.listOf(), cn.bidcheck.compat.Java8Api.listOf());
         List<PersonnelAnchor> anchors = new ArrayList<>();
         int examined = 0;
         boolean historicalScope = false;
@@ -1011,7 +1000,7 @@ public class SemanticChecker {
             String header = heading(text);
             // A history section continues through ordinary intervening pages. Only an explicit
             // current-personnel section boundary may reopen appointment discovery.
-            String firstLine = text.lines().map(String::strip).filter(line -> !line.isBlank() && !line.matches("【[^】]*】|\\d+")).findFirst().orElse("");
+            String firstLine = cn.bidcheck.compat.Java8Extras.lines(text).map(cn.bidcheck.compat.Java8Api::strip).filter(line -> !cn.bidcheck.compat.Java8Api.isBlank(line) && !line.matches("【[^】]*】|\\d+")).findFirst().orElse("");
             boolean currentBoundary = firstLine.matches(".*(?:本项目拟派|本次拟派|本项目人员|本次人员|有效人员资格证明文件).*")
                     || firstLine.matches("\\d{1,2}[.．、]\\s*(?:项目负责人|施工企业主要负责人|施工部分负责人|设计部分负责人|专职安全员)\\s*");
             if (currentBoundary) historicalScope = false;
@@ -1019,10 +1008,10 @@ public class SemanticChecker {
                     && header.matches("(?s).*(历史|往年|过往|业绩|合同协议书|竣工|中标).*")) historicalScope = true;
             if (historicalScope) continue;
             if (!header.contains("情况表") || header.matches("(?s).*(历史|往年|过往|业绩|合同协议书|竣工|中标|承诺书).*")) continue;
-            var names = PERSON_NAME.matcher(text);
+            java.util.regex.Matcher names = PERSON_NAME.matcher(text);
             if (!names.find()) continue;
             String name = names.group(1);
-            if (Set.of("年龄", "性别", "学历", "职称", "身份证号", "拟派人员", "待填写").contains(name) || names.find()) continue;
+            if (cn.bidcheck.compat.Java8Api.setOf("年龄", "性别", "学历", "职称", "身份证号", "拟派人员", "待填写").contains(name) || names.find()) continue;
             for (String role : roles) {
                 boolean explicitRole = PERSONNEL_ROLES.get(role).stream().anyMatch(alias ->
                         header.contains(alias) && Pattern.compile("拟在本(?:合同|项目)(?:任职|担任)\\s*[:：]?\\s*" + Pattern.quote(alias) + "(?=\\s|[，,；;。]|$)").matcher(text).find());
@@ -1040,7 +1029,7 @@ public class SemanticChecker {
         if (kinds.stream().noneMatch(kind -> kind.endsWith("CERTIFICATE"))
                 && requirements.matches("(?s).*(资格|证件|证书|执业|有效证明).*")) kinds.add("CERTIFICATE");
         if (requirements.contains("查询")) kinds.add("QUERY");
-        return new PersonnelPlan(List.copyOf(roles), List.copyOf(anchors), List.copyOf(kinds));
+        return new PersonnelPlan(cn.bidcheck.compat.Java8Api.listCopyOf(roles), cn.bidcheck.compat.Java8Api.listCopyOf(anchors), cn.bidcheck.compat.Java8Api.listCopyOf(kinds));
     }
 
     private static boolean samePerson(String quote, String name) {
@@ -1076,7 +1065,7 @@ public class SemanticChecker {
         List<String> missing = new ArrayList<>();
         if (plan.anchors().isEmpty()) return missing;
         for (String role : plan.roles()) {
-            List<PersonnelAnchor> matches = plan.anchors().stream().filter(anchor -> anchor.role().equals(role)).toList();
+            List<PersonnelAnchor> matches = cn.bidcheck.compat.Java8Api.toList(plan.anchors().stream().filter(anchor -> anchor.role().equals(role)));
             if (matches.isEmpty()) { missing.add(role + ("施工企业主要负责人".equals(role) ? "：未召回企业负责人身份情况表" : "：未召回明确本次任职表")); continue; }
             for (PersonnelAnchor anchor : matches) {
                 if (!uniqueRoleName(plan, anchor)) { missing.add(role + "：出现不同姓名任职线索，不能自动绑定"); break; }
@@ -1102,8 +1091,8 @@ public class SemanticChecker {
     private List<Candidate> deadlineReferences(Document tender) {
         List<Candidate> references = new ArrayList<>();
         if (tender == null || tender.pages() == null) return references;
-        var labels = java.util.regex.Pattern.compile("投标(?:文件)?(?:递交)?截止|文件递交截止|递交截止|开标时间");
-        var date = java.util.regex.Pattern.compile("\\d{4}\\s*(?:年|[-./])\\s*\\d{1,2}\\s*(?:月|[-./])\\s*\\d{1,2}");
+        java.util.regex.Pattern labels = java.util.regex.Pattern.compile("投标(?:文件)?(?:递交)?截止|文件递交截止|递交截止|开标时间");
+        java.util.regex.Pattern date = java.util.regex.Pattern.compile("\\d{4}\\s*(?:年|[-./])\\s*\\d{1,2}\\s*(?:月|[-./])\\s*\\d{1,2}");
         Set<String> seen = new LinkedHashSet<>();
         int examined = 0;
         for (Page page : tender.pages()) {
@@ -1117,7 +1106,7 @@ public class SemanticChecker {
                         int nextEnd = text.indexOf('\n', Math.min(text.length(), end + 1));
                         end = Math.min(offset + 600, nextEnd < 0 ? text.length() : nextEnd);
                     }
-                    String quote = text.substring(offset, end).strip();
+                    String quote = cn.bidcheck.compat.Java8Api.strip(text.substring(offset, end));
                     if (labels.matcher(quote).find() && date.matcher(quote).find() && seen.add(quote)) {
                         Evidence evidence = new Evidence(tender.id(), tender.name(), page.number(), page.locationType(), quote,
                                 "p" + page.number() + "-l" + line, page.parser() != null && page.parser().contains("OCR") ? 0d : 0.75d);
@@ -1133,7 +1122,7 @@ public class SemanticChecker {
 
     private Candidate requirementReference(Checkpoint checkpoint, Document tender) {
         Evidence source = checkpoint.source();
-        if (retriever == null || tender == null || tender.pages() == null || source == null || source.quote() == null || source.quote().isBlank()
+        if (retriever == null || tender == null || tender.pages() == null || source == null || source.quote() == null || cn.bidcheck.compat.Java8Api.isBlank(source.quote())
                 || !tender.id().equals(source.documentId())) return null;
         for (Page page : tender.pages()) if (page.number() == source.page() && java.util.Objects.equals(page.locationType(), source.locationType())
                 && page.text() != null && page.text().contains(source.quote())) {
@@ -1146,7 +1135,7 @@ public class SemanticChecker {
 
     private static boolean misinterpretsOptionalPeriod(Checkpoint checkpoint, String explanation) {
         String expected = checkpoint.expected() == null ? "" : checkpoint.expected();
-        var window = Pattern.compile("(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月[^。；;\\n]{0,120}任意\\s*连续\\s*[一二三四五六七八九十0-9]+\\s*个?月").matcher(expected);
+        java.util.regex.Matcher window = Pattern.compile("(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月[^。；;\\n]{0,120}任意\\s*连续\\s*[一二三四五六七八九十0-9]+\\s*个?月").matcher(expected);
         while (window.find()) {
             String month = window.group(1) + "\\s*年\\s*0?" + Integer.parseInt(window.group(2)) + "\\s*月";
             for (String sentence : explanation.split("[。；！？\\n]")) {
@@ -1198,9 +1187,9 @@ public class SemanticChecker {
     private static String heading(String text) {
         StringBuilder value = new StringBuilder();
         for (String line : bounded(text, 800).split("\\R")) {
-            String stripped = line.strip();
+            String stripped = cn.bidcheck.compat.Java8Api.strip(line);
             if (stripped.isEmpty() || stripped.matches("【[^】]*】|\\d{1,4}")) continue;
-            if (!value.isEmpty()) value.append(' ');
+            if (!(value.length() == 0)) value.append(' ');
             value.append(bounded(stripped, 180 - value.length()));
             if (value.length() >= 180) break;
         }
@@ -1217,7 +1206,7 @@ public class SemanticChecker {
         boolean requirementReference = candidates.stream().anyMatch(c -> c.id().equals("R0"));
         rule.put("sourceRequirement", requirementReference || checkpoint.source() == null ? "" : bounded(checkpoint.source().quote(), 1800));
         if (requirementReference) rule.put("sourceRequirementReferenceId", "R0");
-        List<Map<String, Object>> evidence = candidates.stream().map(candidate -> {
+        List<Map<String, Object>> evidence = cn.bidcheck.compat.Java8Api.toList(candidates.stream().map(candidate -> {
             Map<String, Object> value = new LinkedHashMap<>();
             value.put("id", candidate.id());
             value.put("locationType", candidate.evidence().locationType());
@@ -1233,13 +1222,13 @@ public class SemanticChecker {
             value.put("precedingText", candidate.precedingText());
             value.put("textSource", candidate.evidence().confidence() == 0d ? "OCR文字，准确性待核实；模板盖章字样不是原图章的观察" : "原生文字，模板盖章字样不是原图章的观察");
             return value;
-        }).toList();
+        }));
         List<Map<String, Object>> opening = new ArrayList<>();
         int remaining = 1200;
         for (Page page : document.pages()) {
-            if (page.text() == null || page.text().isBlank()) continue;
+            if (page.text() == null || cn.bidcheck.compat.Java8Api.isBlank(page.text())) continue;
             String quote = bounded(page.text(), Math.min(600, remaining));
-            opening.add(Map.of("location", page.number(), "locationType", page.locationType() == null ? "UNKNOWN" : page.locationType(), "quote", quote));
+            opening.add(cn.bidcheck.compat.Java8Api.mapOf("location", page.number(), "locationType", page.locationType() == null ? "UNKNOWN" : page.locationType(), "quote", quote));
             remaining -= quote.length();
             if (remaining <= 0 || opening.size() >= 6) break;
         }
@@ -1251,7 +1240,7 @@ public class SemanticChecker {
             // Source text stays in candidates; this metadata cannot itself be cited as evidence.
             Map<String,Object> context = new LinkedHashMap<>(applicability.audit());
             context.remove("references");
-            context.put("referenceIds", applicability.references().stream().map(TenderApplicabilityContext.Reference::id).toList());
+            context.put("referenceIds", cn.bidcheck.compat.Java8Api.toList(applicability.references().stream().map(TenderApplicabilityContext.Reference::id)));
             payload.put("tenderApplicabilityContext", context);
             payload.put("tenderApplicabilityInstruction", TenderApplicabilityContext.BOUNDARY
                 + " 若断言本材料须由各成员另交或共同签署，须给出TENDER_REFERENCE claim并引用明确要求该材料的原文；"
@@ -1268,18 +1257,17 @@ public class SemanticChecker {
         if(Boolean.TRUE.equals(completenessContract.get("required"))) {
             List<Map<String,Object>> bindings=new ArrayList<>();
             for(ChecklistBodyRecall.Item item:completenessRecall.items()) {
-                List<String> ids=candidates.stream().filter(c->c.id().startsWith("C")&&item.evidences().stream().anyMatch(e->
+                List<String> ids=cn.bidcheck.compat.Java8Api.toList(candidates.stream().filter(c->c.id().startsWith("C")&&item.evidences().stream().anyMatch(e->
                     Objects.equals(e.documentId(),c.evidence().documentId())&&e.page()==c.evidence().page()
                     &&Objects.equals(e.locationType(),c.evidence().locationType())&&c.evidence().quote().contains(e.quote())))
-                    .map(Candidate::id).toList();
-                bindings.add(Map.of("item",item.item(),"evidenceIds",ids,"bodyLocated",item.bodyLocated(),"currentScope",item.currentScope(),"excerpted",item.excerpted(),"reason",item.reason()));
+                    .map(Candidate::id));
+                bindings.add(cn.bidcheck.compat.Java8Api.mapOf("item", item.item(), "evidenceIds", ids, "bodyLocated", item.bodyLocated(), "currentScope", item.currentScope(), "excerpted", item.excerpted(), "reason", item.reason()));
             }
             payload.put("checklistBodyBindings",bindings);
             payload.put("checklistProofInstruction","逐项核验独立材料正文；每个清单项分别生成claim并引用该项全部evidenceIds。标题和正文可能分处相邻原页，这些来源保持各自位置；只引用标题或别项正文不能证明本项。服务器正文定位不代表签章、所有内容或真实性已经核验；currentScope=false不得凭标题改为本项目。正文为摘录时不得声称整份内容全部已核验。");
         }
         if (!personnel.anchors().isEmpty()) {
-            payload.put("personnelCoverage", Map.of("roles", personnel.roles(), "unresolved", personnelCoverage(personnel, candidates),
-                    "boundary", "仅为检索覆盖，不确认任职、同名身份或材料真实性；原文件未被完整核验，未召回不等于缺失。"));
+            payload.put("personnelCoverage", cn.bidcheck.compat.Java8Api.mapOf("roles", personnel.roles(), "unresolved", personnelCoverage(personnel, candidates), "boundary", "仅为检索覆盖，不确认任职、同名身份或材料真实性；原文件未被完整核验，未召回不等于缺失。"));
         }
         return mapper.writeValueAsString(payload);
     }
@@ -1292,7 +1280,7 @@ public class SemanticChecker {
     }
 
     private Evaluation undetermined(String reason) {
-        return new Evaluation("UNDETERMINED", reason, "请查看原始证据并人工核对；配置或恢复模型服务后可重新检查。", List.of(), 0d, method());
+        return new Evaluation("UNDETERMINED", reason, "请查看原始证据并人工核对；配置或恢复模型服务后可重新检查。", cn.bidcheck.compat.Java8Api.listOf(), 0d, method());
     }
 
     private Evaluation rejected(AssessmentTrace trace, String code, String reason) {
@@ -1301,14 +1289,14 @@ public class SemanticChecker {
 
     private Evaluation rejectedWithSources(AssessmentTrace trace, String code, String reason, List<Evidence> sources) {
         trace.guard(code, reason);
-        return new Evaluation("UNDETERMINED", reason, "请查看原始证据及适用范围，不能将未核实的断言作为确定结论。", List.copyOf(sources), 0d, method());
+        return new Evaluation("UNDETERMINED", reason, "请查看原始证据及适用范围，不能将未核实的断言作为确定结论。", cn.bidcheck.compat.Java8Api.listCopyOf(sources), 0d, method());
     }
 
     private Evaluation protocolFailure(AssessmentTrace trace, String code, String reason) {
         trace.protocolIssue = code; return undetermined(reason);
     }
 
-    private String method() { return "DASHSCOPE:" + (model.isBlank() ? "UNCONFIGURED" : bounded(model, 160)); }
+    private String method() { return "DASHSCOPE:" + (cn.bidcheck.compat.Java8Api.isBlank(model) ? "UNCONFIGURED" : bounded(model, 160)); }
     private static String memberScopeRepairInstruction(String issue) {
         return "\n本次仅允许一次适用范围重判。上次回答被拒绝的具体新增义务或范围断言：" + issue
             + "\n使用完全相同的检查点与候选原文重新给出完整JSON；不得添加或删除来源、实质要求、成员声明覆盖或其他核验义务。"
@@ -1322,15 +1310,94 @@ public class SemanticChecker {
     }
     private static boolean tooLong(String value, int limit) { return value != null && value.length() > limit; }
     private static String bounded(String text, int maximum) { return text == null ? "" : text.substring(0, Math.min(text.length(), maximum)); }
-    private record Candidate(String id, Evidence evidence, String pageOpening, String precedingText, boolean dateReference, String purpose, boolean required) {
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Candidate {
+        private final String id;
+        private final Evidence evidence;
+        private final String pageOpening;
+        private final String precedingText;
+        private final boolean dateReference;
+        private final String purpose;
+        private final boolean required;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Candidate(@com.fasterxml.jackson.annotation.JsonProperty("id") String id, @com.fasterxml.jackson.annotation.JsonProperty("evidence") Evidence evidence, @com.fasterxml.jackson.annotation.JsonProperty("pageOpening") String pageOpening, @com.fasterxml.jackson.annotation.JsonProperty("precedingText") String precedingText, @com.fasterxml.jackson.annotation.JsonProperty("dateReference") boolean dateReference, @com.fasterxml.jackson.annotation.JsonProperty("purpose") String purpose, @com.fasterxml.jackson.annotation.JsonProperty("required") boolean required) { this.id = id; this.evidence = evidence; this.pageOpening = pageOpening; this.precedingText = precedingText; this.dateReference = dateReference; this.purpose = purpose; this.required = required; }
+        public String id() { return id; }
+        public Evidence evidence() { return evidence; }
+        public String pageOpening() { return pageOpening; }
+        public String precedingText() { return precedingText; }
+        public boolean dateReference() { return dateReference; }
+        public String purpose() { return purpose; }
+        public boolean required() { return required; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Candidate that = (Candidate) other; return java.util.Objects.equals(this.id, that.id) && java.util.Objects.equals(this.evidence, that.evidence) && java.util.Objects.equals(this.pageOpening, that.pageOpening) && java.util.Objects.equals(this.precedingText, that.precedingText) && java.util.Objects.equals(this.dateReference, that.dateReference) && java.util.Objects.equals(this.purpose, that.purpose) && java.util.Objects.equals(this.required, that.required); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.id); hash = 31 * hash + java.util.Objects.hashCode(this.evidence); hash = 31 * hash + java.util.Objects.hashCode(this.pageOpening); hash = 31 * hash + java.util.Objects.hashCode(this.precedingText); hash = 31 * hash + java.util.Objects.hashCode(this.dateReference); hash = 31 * hash + java.util.Objects.hashCode(this.purpose); hash = 31 * hash + java.util.Objects.hashCode(this.required); return hash; }
+        @Override public String toString() { return "Candidate[" + "id=" + id + ", evidence=" + evidence + ", pageOpening=" + pageOpening + ", precedingText=" + precedingText + ", dateReference=" + dateReference + ", purpose=" + purpose + ", required=" + required + "]"; }
+
         Candidate(String id, Evidence evidence, String pageOpening, String precedingText, boolean dateReference) {
             this(id, evidence, pageOpening, precedingText, dateReference, dateReference ? "TENDER_DATE_REFERENCE" : "LEXICAL_CANDIDATE", false);
         }
     }
-    private record RetrievalBlock(int order, Evidence evidence, Set<String> matches, int length, String pageOpening, String precedingText, String heading) { }
-    private record ScoredBlock(double score, RetrievalBlock block) { }
-    private record PersonnelAnchor(String role, String name, int page) { }
-    private record PersonnelPlan(List<String> roles, List<PersonnelAnchor> anchors, List<String> proofKinds) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class RetrievalBlock {
+        private final int order;
+        private final Evidence evidence;
+        private final Set<String> matches;
+        private final int length;
+        private final String pageOpening;
+        private final String precedingText;
+        private final String heading;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private RetrievalBlock(@com.fasterxml.jackson.annotation.JsonProperty("order") int order, @com.fasterxml.jackson.annotation.JsonProperty("evidence") Evidence evidence, @com.fasterxml.jackson.annotation.JsonProperty("matches") Set<String> matches, @com.fasterxml.jackson.annotation.JsonProperty("length") int length, @com.fasterxml.jackson.annotation.JsonProperty("pageOpening") String pageOpening, @com.fasterxml.jackson.annotation.JsonProperty("precedingText") String precedingText, @com.fasterxml.jackson.annotation.JsonProperty("heading") String heading) { this.order = order; this.evidence = evidence; this.matches = matches; this.length = length; this.pageOpening = pageOpening; this.precedingText = precedingText; this.heading = heading; }
+        public int order() { return order; }
+        public Evidence evidence() { return evidence; }
+        public Set<String> matches() { return matches; }
+        public int length() { return length; }
+        public String pageOpening() { return pageOpening; }
+        public String precedingText() { return precedingText; }
+        public String heading() { return heading; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; RetrievalBlock that = (RetrievalBlock) other; return java.util.Objects.equals(this.order, that.order) && java.util.Objects.equals(this.evidence, that.evidence) && java.util.Objects.equals(this.matches, that.matches) && java.util.Objects.equals(this.length, that.length) && java.util.Objects.equals(this.pageOpening, that.pageOpening) && java.util.Objects.equals(this.precedingText, that.precedingText) && java.util.Objects.equals(this.heading, that.heading); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.order); hash = 31 * hash + java.util.Objects.hashCode(this.evidence); hash = 31 * hash + java.util.Objects.hashCode(this.matches); hash = 31 * hash + java.util.Objects.hashCode(this.length); hash = 31 * hash + java.util.Objects.hashCode(this.pageOpening); hash = 31 * hash + java.util.Objects.hashCode(this.precedingText); hash = 31 * hash + java.util.Objects.hashCode(this.heading); return hash; }
+        @Override public String toString() { return "RetrievalBlock[" + "order=" + order + ", evidence=" + evidence + ", matches=" + matches + ", length=" + length + ", pageOpening=" + pageOpening + ", precedingText=" + precedingText + ", heading=" + heading + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class ScoredBlock {
+        private final double score;
+        private final RetrievalBlock block;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private ScoredBlock(@com.fasterxml.jackson.annotation.JsonProperty("score") double score, @com.fasterxml.jackson.annotation.JsonProperty("block") RetrievalBlock block) { this.score = score; this.block = block; }
+        public double score() { return score; }
+        public RetrievalBlock block() { return block; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; ScoredBlock that = (ScoredBlock) other; return java.util.Objects.equals(this.score, that.score) && java.util.Objects.equals(this.block, that.block); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.score); hash = 31 * hash + java.util.Objects.hashCode(this.block); return hash; }
+        @Override public String toString() { return "ScoredBlock[" + "score=" + score + ", block=" + block + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class PersonnelAnchor {
+        private final String role;
+        private final String name;
+        private final int page;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private PersonnelAnchor(@com.fasterxml.jackson.annotation.JsonProperty("role") String role, @com.fasterxml.jackson.annotation.JsonProperty("name") String name, @com.fasterxml.jackson.annotation.JsonProperty("page") int page) { this.role = role; this.name = name; this.page = page; }
+        public String role() { return role; }
+        public String name() { return name; }
+        public int page() { return page; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; PersonnelAnchor that = (PersonnelAnchor) other; return java.util.Objects.equals(this.role, that.role) && java.util.Objects.equals(this.name, that.name) && java.util.Objects.equals(this.page, that.page); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.role); hash = 31 * hash + java.util.Objects.hashCode(this.name); hash = 31 * hash + java.util.Objects.hashCode(this.page); return hash; }
+        @Override public String toString() { return "PersonnelAnchor[" + "role=" + role + ", name=" + name + ", page=" + page + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class PersonnelPlan {
+        private final List<String> roles;
+        private final List<PersonnelAnchor> anchors;
+        private final List<String> proofKinds;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private PersonnelPlan(@com.fasterxml.jackson.annotation.JsonProperty("roles") List<String> roles, @com.fasterxml.jackson.annotation.JsonProperty("anchors") List<PersonnelAnchor> anchors, @com.fasterxml.jackson.annotation.JsonProperty("proofKinds") List<String> proofKinds) { this.roles = roles; this.anchors = anchors; this.proofKinds = proofKinds; }
+        public List<String> roles() { return roles; }
+        public List<PersonnelAnchor> anchors() { return anchors; }
+        public List<String> proofKinds() { return proofKinds; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; PersonnelPlan that = (PersonnelPlan) other; return java.util.Objects.equals(this.roles, that.roles) && java.util.Objects.equals(this.anchors, that.anchors) && java.util.Objects.equals(this.proofKinds, that.proofKinds); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.roles); hash = 31 * hash + java.util.Objects.hashCode(this.anchors); hash = 31 * hash + java.util.Objects.hashCode(this.proofKinds); return hash; }
+        @Override public String toString() { return "PersonnelPlan[" + "roles=" + roles + ", anchors=" + anchors + ", proofKinds=" + proofKinds + "]"; }
+ }
 
     private static final class AssessmentTrace {
         Evaluation raw;
@@ -1338,19 +1405,18 @@ public class SemanticChecker {
         boolean followUp;
         java.util.function.BooleanSupplier reserveAttempt;
         List<Evidence> packet;
-        Map<String,Object> completenessContract=Map.of();
-        ChecklistBodyRecall.Recall completenessRecall=new ChecklistBodyRecall.Recall(List.of());
+        Map<String,Object> completenessContract=cn.bidcheck.compat.Java8Api.mapOf();
+        ChecklistBodyRecall.Recall completenessRecall=new ChecklistBodyRecall.Recall(cn.bidcheck.compat.Java8Api.listOf());
         TenderApplicabilityContext.Context applicability = TenderApplicabilityContext.Context.empty();
         final List<Map<String, Object>> guards = new ArrayList<>(), attempts = new ArrayList<>(), candidates = new ArrayList<>(), relations = new ArrayList<>();
         final Map<String, Object> retrieval = new LinkedHashMap<>(), model = new LinkedHashMap<>(), coverage = new LinkedHashMap<>();
         final Map<String,Object> memberScopeRepair = new LinkedHashMap<>();
-        void guard(String code, String reason) { guards.add(Map.of("code", code, "reason", bounded(redactIdentityNumbers(reason), 2000))); }
+        void guard(String code, String reason) { guards.add(cn.bidcheck.compat.Java8Api.mapOf("code", code, "reason", bounded(redactIdentityNumbers(reason), 2000))); }
         Map<String, Object> audit() {
             for (Map<String,Object> attempt : attempts) if (!attempt.containsKey("state")) attempt.put("state", "FAILED");
-            model.put("attempts", List.copyOf(attempts));
+            model.put("attempts", cn.bidcheck.compat.Java8Api.listCopyOf(attempts));
             retrieval.putIfAbsent("mode", "NOT_RUN");
-            return Map.of("policyVersion", POLICY_VERSION, "guards", List.copyOf(guards), "retrieval", Map.copyOf(retrieval),
-                    "model", Map.copyOf(model), "candidates", List.copyOf(candidates), "relations", List.copyOf(relations), "coverage", Map.copyOf(coverage));
+            return cn.bidcheck.compat.Java8Api.mapOf("policyVersion", POLICY_VERSION, "guards", cn.bidcheck.compat.Java8Api.listCopyOf(guards), "retrieval", cn.bidcheck.compat.Java8Api.mapCopyOf(retrieval), "model", cn.bidcheck.compat.Java8Api.mapCopyOf(model), "candidates", cn.bidcheck.compat.Java8Api.listCopyOf(candidates), "relations", cn.bidcheck.compat.Java8Api.listCopyOf(relations), "coverage", cn.bidcheck.compat.Java8Api.mapCopyOf(coverage));
         }
     }
 
@@ -1371,7 +1437,7 @@ public class SemanticChecker {
                 }
                 byte[] bytes = new byte[item.remaining()];
                 item.get(bytes);
-                buffer.writeBytes(bytes);
+                cn.bidcheck.compat.Java8Extras.writeBytes(buffer, bytes);
             }
             subscription.request(1);
         }

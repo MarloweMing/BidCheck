@@ -1,4 +1,5 @@
 package cn.bidcheck.ocr;
+import cn.bidcheck.compat.HexFormat;
 
 import com.fasterxml.jackson.core.*;
 import com.fasterxml.jackson.databind.*;
@@ -9,7 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.*;
 import java.net.*;
-import java.net.http.*;
+import cn.bidcheck.compat.http.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.security.MessageDigest;
@@ -54,7 +55,7 @@ public final class QwenPdfOcrClient implements PdfOcrClient {
             @Value("${bidcheck.ocr.pdf.timeout-seconds:300}") int timeoutSeconds,
             @Value("${bidcheck.ocr.pdf.batch-pages:10}") int batchPages,
             @Value("${bidcheck.ocr.pdf.concurrency:5}") int concurrency) {
-        this(enabled,url,policyUrl,key,model,Path.of(data).resolve("pdf-ocr-cache"),Duration.ofSeconds(timeoutSeconds),batchPages,concurrency,false);
+        this(enabled,url,policyUrl,key,model,java.nio.file.Paths.get(data).resolve("pdf-ocr-cache"),Duration.ofSeconds(timeoutSeconds),batchPages,concurrency,false);
     }
 
     /** Package-private loopback seam: ordinary production construction requires Beijing HTTPS. */
@@ -62,12 +63,12 @@ public final class QwenPdfOcrClient implements PdfOcrClient {
                      Duration timeout,int batchPages,int concurrency,boolean testLoopback) {
         if(batchPages<1||batchPages>10||concurrency<1||concurrency>5||timeout==null||timeout.isNegative()||timeout.isZero()||timeout.compareTo(Duration.ofSeconds(600))>0)
             throw new IllegalArgumentException("PDF OCR 批大小、并发或超时配置无效");
-        this.key=key==null?"":key.strip();this.model=model==null?"":model.strip();this.timeout=timeout;
+        this.key=key==null?"":cn.bidcheck.compat.Java8Api.strip(key);this.model=model==null?"":cn.bidcheck.compat.Java8Api.strip(model);this.timeout=timeout;
         this.batchPages=batchPages;this.concurrency=concurrency;this.testLoopback=testLoopback;this.local=new Semaphore(concurrency,true);
         this.cacheDirectory=cacheDirectory.toAbsolutePath().normalize();
         this.endpoint=validateEndpoint(url,"/compatible-mode/v1/responses",testLoopback);
         this.policyEndpoint=validateEndpoint(policyUrl,"/api/v1/uploads",testLoopback);
-        this.active=enabled&&endpoint!=null&&policyEndpoint!=null&&!this.key.isBlank()&&this.key.length()<=4096
+        this.active=enabled&&endpoint!=null&&policyEndpoint!=null&&!cn.bidcheck.compat.Java8Api.isBlank(this.key)&&this.key.length()<=4096
             &&!this.key.contains("\r")&&!this.key.contains("\n")&&this.model.matches("[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}");
         this.identity=active?PROVIDER+":"+hash((POLICY+"\n"+endpoint+"\n"+policyEndpoint+"\n"+this.model).getBytes(StandardCharsets.UTF_8)):"DISABLED";
         this.http=HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER)
@@ -82,10 +83,10 @@ public final class QwenPdfOcrClient implements PdfOcrClient {
     /** Process-cumulative metadata only; contains no document text, URLs or credentials. */
     public static Map<String,Long> summary(){
         Map<String,Long> result=new TreeMap<>();
-        for(String name:List.of("httpRequests","policyRequests","uploadRequests","ocrRequests","retries","http2xx","http3xx","http4xx","http5xx","timeouts","cancellations","transportErrors","policyMillis","uploadMillis","ocrMillis"))
+        for(String name:cn.bidcheck.compat.Java8Api.listOf("httpRequests", "policyRequests", "uploadRequests", "ocrRequests", "retries", "http2xx", "http3xx", "http4xx", "http5xx", "timeouts", "cancellations", "transportErrors", "policyMillis", "uploadMillis", "ocrMillis"))
             result.put(name,TOTALS.getOrDefault(name,new LongAdder()).sum());
         result.put("activeBatches",5L-GLOBAL.availablePermits());result.put("waitingRequests",(long)MAX_QUEUE-WAITERS.availablePermits());
-        return Map.copyOf(result);
+        return cn.bidcheck.compat.Java8Api.mapCopyOf(result);
     }
     private static void total(String name,long value){TOTALS.computeIfAbsent(name,ignored->new LongAdder()).add(value);}
 
@@ -129,7 +130,7 @@ public final class QwenPdfOcrClient implements PdfOcrClient {
             try {return bind(flight.get(remaining(deadline),TimeUnit.NANOSECONDS),sources,true,new Stats(),started);}
             catch(InterruptedException stopped){throw interruptedFailure();}
             catch(TimeoutException expired){throw failure("TIMEOUT",true);}
-            catch(ExecutionException failed){if(failed.getCause() instanceof InterruptedIOException)throw failure("SHARED_CANCELLED",true);if(failed.getCause() instanceof IOException safe)throw safe;throw failure("INVALID_RESPONSE",false);}
+            catch(ExecutionException failed){if(failed.getCause() instanceof InterruptedIOException)throw failure("SHARED_CANCELLED",true);if(failed.getCause() instanceof IOException)throw ((IOException) (failed.getCause()));throw failure("INVALID_RESPONSE",false);}
             finally{WAITERS.release();}
         }
         boolean heldGlobal=false,heldLocal=false;
@@ -142,9 +143,9 @@ public final class QwenPdfOcrClient implements PdfOcrClient {
             interrupted();if(result.errors().isEmpty())writeCache(cache,inputHash,result);
             interrupted();flight.complete(result);return bind(result,sources,false,stats,started);
         }catch(IOException|RuntimeException|Error failed){
-            IOException safe=failed instanceof IOException io?io:failure("INVALID_RESPONSE",false);
+            IOException safe=failed instanceof IOException?((IOException) (failed)):failure("INVALID_RESPONSE",false);
             flight.completeExceptionally(safe);
-            if(failed instanceof Error fatal)throw fatal;
+            if(failed instanceof Error)throw ((Error) (failed));
             throw safe;
         }finally{
             if(heldGlobal)GLOBAL.release();if(heldLocal)local.release();
@@ -155,10 +156,10 @@ public final class QwenPdfOcrClient implements PdfOcrClient {
     private List<Integer> validatePdf(byte[] pdf,List<Integer> sources)throws IOException {
         if(pdf==null||pdf.length<5||pdf.length>MAX_PDF_BYTES||!new String(pdf,0,5,StandardCharsets.US_ASCII).equals("%PDF-"))throw failure("INVALID_PDF",false);
         if(sources==null||sources.isEmpty()||sources.size()>batchPages||sources.stream().anyMatch(p->p==null||p<1)||new HashSet<>(sources).size()!=sources.size())throw failure("INVALID_PAGE_MANIFEST",false);
-        try(var document=Loader.loadPDF(pdf)){
+        try(org.apache.pdfbox.pdmodel.PDDocument document=Loader.loadPDF(pdf)){
             if(document.isEncrypted()||document.getNumberOfPages()!=sources.size())throw failure("PDF_PAGE_COUNT_MISMATCH",false);
         }catch(OcrFailure safe){throw safe;}catch(Exception invalid){throw failure("INVALID_PDF",false);}
-        interrupted();return List.copyOf(sources);
+        interrupted();return cn.bidcheck.compat.Java8Api.listCopyOf(sources);
     }
 
     private static void acquire(Semaphore semaphore,long deadline)throws IOException {
@@ -170,10 +171,10 @@ public final class QwenPdfOcrClient implements PdfOcrClient {
     }
 
     private Parsed execute(byte[] pdf,int pages,long deadline,Stats stats)throws IOException {
-        URI policyRequest=URI.create(policyEndpoint+"?action=getPolicy&model="+URLEncoder.encode(model,StandardCharsets.UTF_8));
+        URI policyRequest=URI.create(policyEndpoint+"?action=getPolicy&model="+cn.bidcheck.compat.Java8Extras.urlEncode(model, StandardCharsets.UTF_8));
         JsonNode policy;
         try {
-            HttpResponse<byte[]> policyResponse=send("GET",policyRequest,null,Map.of("Authorization","Bearer "+key,"Content-Type","application/json"),1_048_576,deadline,true,"policy",stats);
+            HttpResponse<byte[]> policyResponse=send("GET",policyRequest,null,cn.bidcheck.compat.Java8Api.mapOf("Authorization", "Bearer "+key, "Content-Type", "application/json"),1_048_576,deadline,true,"policy",stats);
             policy=tree(policyResponse.body()).path("data");
             if(!policy.isObject()||!"private".equals(policy.path("x_oss_object_acl").asText())||!"true".equals(policy.path("x_oss_forbid_overwrite").asText()))throw failure("PRIVATE_UPLOAD_POLICY_REQUIRED",false);
             long maxMb=policy.path("max_file_size_mb").asLong(-1);
@@ -185,10 +186,9 @@ public final class QwenPdfOcrClient implements PdfOcrClient {
             String boundary="pdf-ocr-"+UUID.randomUUID();
             byte[] multipart=multipart(policy,pdf,objectKey,filename,boundary);
             // An upload with an uncertain response must not be repeated or overwrite a private object.
-            send("POST",upload,multipart,Map.of("Content-Type","multipart/form-data; boundary="+boundary),1_048_576,deadline,false,"upload",stats);
-            Map<String,Object> body=Map.of("model",model,"input",List.of(Map.of("role","user","content",List.of(Map.of("type","input_file","file_url","oss://"+objectKey)))),
-                "ocr_options",Map.of("task","document_parsing"),"stream",false);
-            HttpResponse<byte[]> response=send("POST",endpoint,json.writeValueAsBytes(body),Map.of("Authorization","Bearer "+key,"Content-Type","application/json","X-DashScope-OssResourceResolve","enable"),MAX_RESPONSE_BYTES,deadline,true,"ocr",stats);
+            send("POST",upload,multipart,cn.bidcheck.compat.Java8Api.mapOf("Content-Type", "multipart/form-data; boundary="+boundary),1_048_576,deadline,false,"upload",stats);
+            Map<String,Object> body=cn.bidcheck.compat.Java8Api.mapOf("model", model, "input", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("role", "user", "content", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("type", "input_file", "file_url", "oss://"+objectKey)))), "ocr_options", cn.bidcheck.compat.Java8Api.mapOf("task", "document_parsing"), "stream", false);
+            HttpResponse<byte[]> response=send("POST",endpoint,json.writeValueAsBytes(body),cn.bidcheck.compat.Java8Api.mapOf("Authorization", "Bearer "+key, "Content-Type", "application/json", "X-DashScope-OssResourceResolve", "enable"),MAX_RESPONSE_BYTES,deadline,true,"ocr",stats);
             if(response.headers().firstValue("x-dashscope-partialresponse").map("true"::equalsIgnoreCase).orElse(false))throw failure("INCOMPLETE_RESPONSE",false);
             JsonNode envelope=tree(response.body());stats.usage=numericObject(envelope.path("usage"));
             return parse(envelope,pages);
@@ -202,7 +202,7 @@ public final class QwenPdfOcrClient implements PdfOcrClient {
         fields.put("Signature",requiredText(policy,"signature"));fields.put("policy",requiredText(policy,"policy"));
         fields.put("x-oss-object-acl","private");fields.put("x-oss-forbid-overwrite","true");fields.put("key",objectKey);fields.put("success_action_status","200");
         ByteArrayOutputStream bytes=new ByteArrayOutputStream(pdf.length+8192);
-        for(var entry:fields.entrySet()){
+        for(java.util.Map.Entry<java.lang.String, java.lang.String> entry:fields.entrySet()){
             if(entry.getValue().indexOf('\r')>=0||entry.getValue().indexOf('\n')>=0)throw failure("INVALID_UPLOAD_POLICY",false);
             bytes.write(("--"+boundary+"\r\nContent-Disposition: form-data; name=\""+entry.getKey()+"\"\r\n\r\n"+entry.getValue()+"\r\n").getBytes(StandardCharsets.UTF_8));
         }
@@ -219,7 +219,7 @@ public final class QwenPdfOcrClient implements PdfOcrClient {
             // the entire batch deadline. Uploads remain non-retryable because acceptance is uncertain.
             long left=remaining(deadline);
             Duration budget=Duration.ofNanos(retryable&&attempt==0?Math.max(1,left/2):left);
-            var subscriber=new DashScopeOcrClient.LimitedBodySubscriber(limit);
+            cn.bidcheck.ocr.DashScopeOcrClient.LimitedBodySubscriber subscriber=new DashScopeOcrClient.LimitedBodySubscriber(limit);
             CompletableFuture<HttpResponse<byte[]>> pending=null;long retryDelay=250;
             try {
                 HttpRequest.Builder builder=HttpRequest.newBuilder(uri).timeout(budget);headers.forEach(builder::header);
@@ -257,8 +257,36 @@ public final class QwenPdfOcrClient implements PdfOcrClient {
         catch(Exception ignored){return 250;}
     }
 
-    private record Block(int index,int encounter,String markdown,String text,String type){}
-    private record Parsed(Map<Integer,String> texts,Map<Integer,String> errors){}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Block{
+        private final int index;
+        private final int encounter;
+        private final String markdown;
+        private final String text;
+        private final String type;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Block(@com.fasterxml.jackson.annotation.JsonProperty("index") int index, @com.fasterxml.jackson.annotation.JsonProperty("encounter") int encounter, @com.fasterxml.jackson.annotation.JsonProperty("markdown") String markdown, @com.fasterxml.jackson.annotation.JsonProperty("text") String text, @com.fasterxml.jackson.annotation.JsonProperty("type") String type) { this.index = index; this.encounter = encounter; this.markdown = markdown; this.text = text; this.type = type; }
+        public int index() { return index; }
+        public int encounter() { return encounter; }
+        public String markdown() { return markdown; }
+        public String text() { return text; }
+        public String type() { return type; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Block that = (Block) other; return java.util.Objects.equals(this.index, that.index) && java.util.Objects.equals(this.encounter, that.encounter) && java.util.Objects.equals(this.markdown, that.markdown) && java.util.Objects.equals(this.text, that.text) && java.util.Objects.equals(this.type, that.type); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.index); hash = 31 * hash + java.util.Objects.hashCode(this.encounter); hash = 31 * hash + java.util.Objects.hashCode(this.markdown); hash = 31 * hash + java.util.Objects.hashCode(this.text); hash = 31 * hash + java.util.Objects.hashCode(this.type); return hash; }
+        @Override public String toString() { return "Block[" + "index=" + index + ", encounter=" + encounter + ", markdown=" + markdown + ", text=" + text + ", type=" + type + "]"; }
+}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Parsed{
+        private final Map<Integer,String> texts;
+        private final Map<Integer,String> errors;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Parsed(@com.fasterxml.jackson.annotation.JsonProperty("texts") Map<Integer,String> texts, @com.fasterxml.jackson.annotation.JsonProperty("errors") Map<Integer,String> errors) { this.texts = texts; this.errors = errors; }
+        public Map<Integer,String> texts() { return texts; }
+        public Map<Integer,String> errors() { return errors; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Parsed that = (Parsed) other; return java.util.Objects.equals(this.texts, that.texts) && java.util.Objects.equals(this.errors, that.errors); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.texts); hash = 31 * hash + java.util.Objects.hashCode(this.errors); return hash; }
+        @Override public String toString() { return "Parsed[" + "texts=" + texts + ", errors=" + errors + "]"; }
+}
     private Parsed parse(JsonNode envelope,int pageCount)throws IOException {
         if(!envelope.isObject()||!"completed".equals(envelope.path("status").asText())||envelope.hasNonNull("error")||envelope.hasNonNull("incomplete_details"))throw failure("INCOMPLETE_RESPONSE",false);
         JsonNode output=envelope.path("output");if(!output.isArray()||output.isEmpty())throw failure("UNKNOWN_RESPONSE_SCHEMA",false);
@@ -286,14 +314,14 @@ public final class QwenPdfOcrClient implements PdfOcrClient {
             if(blocks.stream().allMatch(b->b.index()>=0)&&blocks.stream().map(Block::index).distinct().count()==blocks.size())blocks.sort(Comparator.comparingInt(Block::index));
             StringBuilder text=new StringBuilder();
             for(Block block:blocks){String chosen=blockText(block);
-                if(!chosen.isBlank()){if(!text.isEmpty())text.append("\n\n");text.append(chosen);}
+                if(!cn.bidcheck.compat.Java8Api.isBlank(chosen)){if(!(text.length() == 0))text.append("\n\n");text.append(chosen);}
                 if(text.length()>MAX_PAGE_TEXT)throw failure("PAGE_TEXT_LIMIT",false);
             }
-            String value=text.toString().strip();
-            if(value.isBlank()||usefulMarkdown(value).isBlank()){errors.put(page,"PDF_OCR_EMPTY_PAGE");continue;}
+            String value=cn.bidcheck.compat.Java8Api.strip(text.toString());
+            if(cn.bidcheck.compat.Java8Api.isBlank(value)||cn.bidcheck.compat.Java8Api.isBlank(usefulMarkdown(value))){errors.put(page,"PDF_OCR_EMPTY_PAGE");continue;}
             if(value.indexOf('\0')>=0)throw failure("INVALID_TEXT",false);texts.put(page,value);
         }
-        return new Parsed(Map.copyOf(texts),Map.copyOf(errors));
+        return new Parsed(cn.bidcheck.compat.Java8Api.mapCopyOf(texts),cn.bidcheck.compat.Java8Api.mapCopyOf(errors));
     }
 
     static String sanitize(String input){
@@ -303,8 +331,8 @@ public final class QwenPdfOcrClient implements PdfOcrClient {
             try{
                 String query=URI.create(candidate.replace("&amp;","&")).getRawQuery();
                 if(query!=null)for(String pair:query.split("&")){
-                    String name=URLDecoder.decode(pair.split("=",2)[0],StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);
-                    if(Set.of("expires","ossaccesskeyid","signature","security-token","x-oss-security-token","x-oss-signature","x-amz-signature").contains(name)){
+                    String name=cn.bidcheck.compat.Java8Extras.urlDecode(pair.split("=",2)[0], StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);
+                    if(cn.bidcheck.compat.Java8Api.setOf("expires", "ossaccesskeyid", "signature", "security-token", "x-oss-security-token", "x-oss-signature", "x-amz-signature").contains(name)){
                         replacement=RESOURCE_MARKER+original.substring(candidate.length());break;
                     }
                 }
@@ -315,24 +343,24 @@ public final class QwenPdfOcrClient implements PdfOcrClient {
         }
         return matcher.appendTail(out).toString();
     }
-    private static String usefulMarkdown(String value){return value.replaceAll("!\\[[^\\]]*\\]\\([^)]*\\)","").replaceAll("(?is)<img\\b[^>]*>","").replace(RESOURCE_MARKER,"").strip();}
+    private static String usefulMarkdown(String value){return cn.bidcheck.compat.Java8Api.strip(value.replaceAll("!\\[[^\\]]*\\]\\([^)]*\\)","").replaceAll("(?is)<img\\b[^>]*>","").replace(RESOURCE_MARKER,""));}
 
     private static String blockText(Block block){
-        String markdown=usefulMarkdown(block.markdown()),text=block.text().strip();
-        if(Set.of("figure","image","picture").contains(block.type().toLowerCase(Locale.ROOT))){
+        String markdown=usefulMarkdown(block.markdown()),text=cn.bidcheck.compat.Java8Api.strip(block.text());
+        if(cn.bidcheck.compat.Java8Api.setOf("figure", "image", "picture").contains(block.type().toLowerCase(Locale.ROOT))){
             // A caption and the OCR inside its image are separate evidence in this same block.
-            if(markdown.isBlank())return text;
-            if(text.isBlank()||markdown.contains(text))return markdown;
+            if(cn.bidcheck.compat.Java8Api.isBlank(markdown))return text;
+            if(cn.bidcheck.compat.Java8Api.isBlank(text)||markdown.contains(text))return markdown;
             if(text.contains(markdown))return text;
             return markdown+"\n\n"+text;
         }
-        return markdown.isBlank()?text:block.markdown();
+        return cn.bidcheck.compat.Java8Api.isBlank(markdown)?text:block.markdown();
     }
 
     private BatchResult bind(Parsed parsed,List<Integer> sources,boolean cached,Stats stats,long started)throws IOException {
         interrupted();Map<Integer,OcrResult> pages=new LinkedHashMap<>();Map<Integer,String> errors=new LinkedHashMap<>();
-        for(var item:parsed.texts().entrySet())pages.put(sources.get(item.getKey()),new OcrResult(item.getValue(),PROVIDER,model,cached,null));
-        for(var item:parsed.errors().entrySet())errors.put(sources.get(item.getKey()),item.getValue());
+        for(java.util.Map.Entry<java.lang.Integer, java.lang.String> item:parsed.texts().entrySet())pages.put(sources.get(item.getKey()),new OcrResult(item.getValue(),PROVIDER,model,cached,null));
+        for(java.util.Map.Entry<java.lang.Integer, java.lang.String> item:parsed.errors().entrySet())errors.put(sources.get(item.getKey()),item.getValue());
         Map<String,Object> metrics=stats.metrics();metrics.put("model",model);metrics.put("policy",POLICY);metrics.put("cached",cached);
         metrics.put("resultPages",pages.size());metrics.put("errorPages",errors.size());metrics.put("elapsedMillis",TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started));
         return new BatchResult(pages,errors,metrics);
@@ -344,17 +372,17 @@ public final class QwenPdfOcrClient implements PdfOcrClient {
             if(!identity.equals(root.path("identity").asText())||!inputHash.equals(root.path("inputHash").asText())||root.path("pageCount").asInt()!=pages)return null;
             JsonNode values=root.path("pages");if(!values.isArray()||values.size()!=pages)return null;Map<Integer,String> texts=new TreeMap<>();
             for(int i=0;i<pages;i++){JsonNode page=values.get(i);String text=page.path("text").asText("");
-                if(!page.path("text").isTextual()||text.isBlank()||text.length()>MAX_PAGE_TEXT||text.indexOf('\0')>=0||!sanitize(text).equals(text)
+                if(!page.path("text").isTextual()||cn.bidcheck.compat.Java8Api.isBlank(text)||text.length()>MAX_PAGE_TEXT||text.indexOf('\0')>=0||!sanitize(text).equals(text)
                     ||!hash(text.getBytes(StandardCharsets.UTF_8)).equals(page.path("textHash").asText()))return null;texts.put(i,text);}
-            return new Parsed(Map.copyOf(texts),Map.of());
+            return new Parsed(cn.bidcheck.compat.Java8Api.mapCopyOf(texts),cn.bidcheck.compat.Java8Api.mapOf());
         }catch(Exception invalid){return null;}
     }
     private void writeCache(Path path,String inputHash,Parsed result){
         Path temporary=null;
         try{
             Files.createDirectories(cacheDirectory);List<Object> pages=new ArrayList<>();
-            for(int i=0;i<result.texts().size();i++){String text=result.texts().get(i);pages.add(Map.of("text",text,"textHash",hash(text.getBytes(StandardCharsets.UTF_8))));}
-            byte[] bytes=json.writeValueAsBytes(Map.of("identity",identity,"inputHash",inputHash,"pageCount",pages.size(),"pages",pages));
+            for(int i=0;i<result.texts().size();i++){String text=result.texts().get(i);pages.add(cn.bidcheck.compat.Java8Api.mapOf("text", text, "textHash", hash(text.getBytes(StandardCharsets.UTF_8))));}
+            byte[] bytes=json.writeValueAsBytes(cn.bidcheck.compat.Java8Api.mapOf("identity", identity, "inputHash", inputHash, "pageCount", pages.size(), "pages", pages));
             if(bytes.length>MAX_RESPONSE_BYTES)return;temporary=Files.createTempFile(cacheDirectory,"pdf-ocr-",".tmp");Files.write(temporary,bytes);
             Files.move(temporary,path,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
         }catch(Exception ignored){/* Disk cache failure does not discard successful OCR. */}
@@ -362,7 +390,7 @@ public final class QwenPdfOcrClient implements PdfOcrClient {
     }
 
     private JsonNode tree(byte[] bytes)throws IOException{try{JsonNode value=json.readTree(bytes);if(value==null)throw failure("INVALID_RESPONSE",false);return value;}catch(OcrFailure safe){throw safe;}catch(Exception invalid){throw failure("INVALID_RESPONSE",false);}}
-    private static String requiredText(JsonNode node,String key)throws IOException{JsonNode value=node.path(key);if(!value.isTextual()||value.textValue().isBlank()||value.textValue().length()>256_000)throw failure("INVALID_UPLOAD_POLICY",false);return value.textValue();}
+    private static String requiredText(JsonNode node,String key)throws IOException{JsonNode value=node.path(key);if(!value.isTextual()||cn.bidcheck.compat.Java8Api.isBlank(value.textValue())||value.textValue().length()>256_000)throw failure("INVALID_UPLOAD_POLICY",false);return value.textValue();}
     private static Map<String,Object> numericObject(JsonNode node){Map<String,Object> result=new LinkedHashMap<>();if(node.isObject())node.fields().forEachRemaining(e->{if(e.getKey().matches("[A-Za-z0-9_]{1,80}")){if(e.getValue().isIntegralNumber())result.put(e.getKey(),e.getValue().longValue());else if(e.getValue().isObject())result.put(e.getKey(),numericObject(e.getValue()));}});return result;}
     private static long remaining(long deadline)throws IOException{long left=deadline-System.nanoTime();if(left<=0)throw failure("TIMEOUT",true);return left;}
     private static void interrupted()throws InterruptedIOException{if(Thread.currentThread().isInterrupted())throw interruptedFailure();}
@@ -370,9 +398,9 @@ public final class QwenPdfOcrClient implements PdfOcrClient {
     private static OcrFailure failure(String code,boolean temporary){return OcrFailure.of("PDF_"+code,temporary);}
     private static String hash(byte[] value){try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value));}catch(Exception impossible){throw new IllegalStateException("SHA-256 unavailable");}}
     private static final class Stats {
-        long policyRequests,uploadRequests,ocrRequests,policyMillis,uploadMillis,ocrMillis,retries;int lastHttp;Map<String,Object> usage=Map.of();
-        void request(String stage){total("httpRequests",1);total(stage+"Requests",1);switch(stage){case "policy"->policyRequests++;case "upload"->uploadRequests++;default->ocrRequests++;}}
-        void time(String stage,long nanos){long millis=TimeUnit.NANOSECONDS.toMillis(nanos);total(stage+"Millis",millis);switch(stage){case "policy"->policyMillis+=millis;case "upload"->uploadMillis+=millis;default->ocrMillis+=millis;}}
+        long policyRequests,uploadRequests,ocrRequests,policyMillis,uploadMillis,ocrMillis,retries;int lastHttp;Map<String,Object> usage=cn.bidcheck.compat.Java8Api.mapOf();
+        void request(String stage){total("httpRequests",1);total(stage+"Requests",1);switch (stage) {case "policy":policyRequests++; break;case "upload":uploadRequests++; break;default:ocrRequests++; break;}}
+        void time(String stage,long nanos){long millis=TimeUnit.NANOSECONDS.toMillis(nanos);total(stage+"Millis",millis);switch (stage) {case "policy":policyMillis+=millis; break;case "upload":uploadMillis+=millis; break;default:ocrMillis+=millis; break;}}
         Map<String,Object> metrics(){Map<String,Object> value=new LinkedHashMap<>();value.put("httpRequests",policyRequests+uploadRequests+ocrRequests);value.put("policyRequests",policyRequests);value.put("uploadRequests",uploadRequests);value.put("ocrRequests",ocrRequests);value.put("retries",retries);value.put("policyMillis",policyMillis);value.put("uploadMillis",uploadMillis);value.put("ocrMillis",ocrMillis);value.put("httpStatus",lastHttp);value.put("usage",usage);return value;}
     }
 }

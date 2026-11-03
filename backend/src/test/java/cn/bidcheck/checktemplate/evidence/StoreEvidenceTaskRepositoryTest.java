@@ -85,7 +85,7 @@ class StoreEvidenceTaskRepositoryTest {
                     .isInstanceOf(Observation.MaterialObservation.class);
         }
 
-        EvidenceTask durable = restartedRepository.find(key.id()).orElseThrow();
+        EvidenceTask durable = restartedRepository.find(key.id()).orElseThrow(java.util.NoSuchElementException::new);
         assertThat(durable.status()).isEqualTo(EvidenceTaskStatus.SUCCEEDED);
         assertThat(durable.subscriberIds()).containsExactlyInAnyOrder("check-a", "check-b");
         assertThat(extractionCalls).hasValue(1);
@@ -103,7 +103,7 @@ class StoreEvidenceTaskRepositoryTest {
         assertThat(repository.replace(winner, 0)).isTrue();
         assertThat(repository.replace(stale, 0)).isFalse();
 
-        EvidenceTask restored = repository().find(key.id()).orElseThrow();
+        EvidenceTask restored = repository().find(key.id()).orElseThrow(java.util.NoSuchElementException::new);
         assertThat(restored.revision()).isEqualTo(1);
         assertThat(restored.subscriberIds()).containsExactly("winner");
     }
@@ -125,9 +125,9 @@ class StoreEvidenceTaskRepositoryTest {
         }
         assertThat(ready.await(2, TimeUnit.SECONDS)).isTrue();
         start.countDown();
-        for (var created : creates) assertThat(created.get(3, TimeUnit.SECONDS).taskId()).isEqualTo(key.id());
+        for (java.util.concurrent.Future<cn.bidcheck.checktemplate.evidence.EvidenceTask> created : creates) assertThat(created.get(3, TimeUnit.SECONDS).taskId()).isEqualTo(key.id());
 
-        EvidenceTask initial = repository().find(key.id()).orElseThrow();
+        EvidenceTask initial = repository().find(key.id()).orElseThrow(java.util.NoSuchElementException::new);
         CountDownLatch writeStart = new CountDownLatch(1);
         List<java.util.concurrent.Future<Boolean>> writes = new ArrayList<>();
         for (int index = 0; index < workers; index++) {
@@ -140,17 +140,17 @@ class StoreEvidenceTaskRepositoryTest {
         }
         writeStart.countDown();
         int successes = 0;
-        for (var write : writes) if (write.get(3, TimeUnit.SECONDS)) successes++;
+        for (java.util.concurrent.Future<java.lang.Boolean> write : writes) if (write.get(3, TimeUnit.SECONDS)) successes++;
         pool.shutdownNow();
 
         assertThat(successes).isEqualTo(1);
-        assertThat(repository().find(key.id()).orElseThrow().subscriberIds()).hasSize(1);
+        assertThat(repository().find(key.id()).orElseThrow(java.util.NoSuchElementException::new).subscriberIds()).hasSize(1);
     }
 
     @Test
     void stablePrimaryKeyCannotAliasAnotherRecordKind() {
         EvidenceNeedKey key = key("collision-" + UUID.randomUUID());
-        store.save("finding", key.id(), "project", "", Map.of("value", "unrelated"));
+        store.save("finding", key.id(), "project", "", cn.bidcheck.compat.Java8Api.mapOf("value", "unrelated"));
         assertThatThrownBy(() -> repository().createOrGet(key, 3, Instant.now()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("EVIDENCE_TASK_ID_COLLISION");
@@ -161,20 +161,20 @@ class StoreEvidenceTaskRepositoryTest {
     }
 
     private static EvidenceNeedKey key(String documentId) {
-        return new EvidenceNeedKey(List.of(new EvidenceNeedKey.DocumentVersion(
-                documentId, 1, "a".repeat(64), "parser-v1")),
-                "BIDDER", "MATERIAL", "营业执照", Map.of("scope", "CURRENT_PROJECT"),
+        return new EvidenceNeedKey(cn.bidcheck.compat.Java8Api.listOf(new EvidenceNeedKey.DocumentVersion(
+                documentId, 1, cn.bidcheck.compat.Java8Api.repeat("a", 64), "parser-v1")),
+                "BIDDER", "MATERIAL", "营业执照", cn.bidcheck.compat.Java8Api.mapOf("scope", "CURRENT_PROJECT"),
                 "durable-local", "1");
     }
 
     private static EvidenceExtractionResult positive() {
-        SourceRef source = new SourceRef("bid", 1, "a".repeat(64), "parser-v1",
-                "b".repeat(64), "PAGE", 3, "营业执照正文", null, null);
+        SourceRef source = new SourceRef("bid", 1, cn.bidcheck.compat.Java8Api.repeat("a", 64), "parser-v1",
+                cn.bidcheck.compat.Java8Api.repeat("b", 64), "PAGE", 3, "营业执照正文", null, null);
         Observation observation = new Observation.MaterialObservation(
-                "observation-1", "营业执照", Set.of("营业执照副本"), "BIDDER",
-                true, true, false, Set.of(), TemplateTypes.ObservationState.SUPPORTED,
-                List.of(source), 0.99);
-        return EvidenceExtractionResult.positive(List.of(observation),
+                "observation-1", "营业执照", cn.bidcheck.compat.Java8Api.setOf("营业执照副本"), "BIDDER",
+                true, true, false, cn.bidcheck.compat.Java8Api.setOf(), TemplateTypes.ObservationState.SUPPORTED,
+                cn.bidcheck.compat.Java8Api.listOf(source), 0.99);
+        return EvidenceExtractionResult.positive(cn.bidcheck.compat.Java8Api.listOf(observation),
                 EvidenceScope.closed(10, "全部十页均已读取"));
     }
 

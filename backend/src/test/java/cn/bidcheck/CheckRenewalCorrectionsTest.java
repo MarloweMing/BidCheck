@@ -46,7 +46,7 @@ class CheckRenewalCorrectionsTest {
         String second=parse(project,"TENDER","项目名称：第二版本\n资格要求\n提供营业执照复印件");
         service.execute(service.extract(project,second));
         Map<String,Object> selected=store.getMap("project",project);
-        selected.put("checkpointRuleVersions",Map.of(second,BidService.RULE_VERSION));
+        selected.put("checkpointRuleVersions",cn.bidcheck.compat.Java8Api.mapOf(second, BidService.RULE_VERSION));
         selected.put("activeTenderId",first);selected.put("informationTenderId",first);
         store.save("project",project,project,"",selected);
         assertThatThrownBy(()->service.startRun(project,bid)).hasMessageContaining("提取规则已更新");
@@ -75,9 +75,9 @@ class CheckRenewalCorrectionsTest {
         selectTender(project, "项目名称：原项目\n项目编号：OLD-01\n开标时间：2026-11-03");
         String bid = parse(project, "BID", "项目名称：原项目\n项目编号：OLD-01");
         Map<String,Object> first = service.startRun(project, bid);
-        service.updateProject(project, Map.of("name", "人工核定项目"));
+        service.updateProject(project, cn.bidcheck.compat.Java8Api.mapOf("name", "人工核定项目"));
         Map<String,Object> second = service.startRun(project, bid);
-        service.updateProject(project, Map.of("projectNumber", "CORRECTED-01"));
+        service.updateProject(project, cn.bidcheck.compat.Java8Api.mapOf("projectNumber", "CORRECTED-01"));
         Map<String,Object> third = service.startRun(project, bid);
         assertThat(second.get("id")).isNotEqualTo(first.get("id"));
         assertThat(third.get("id")).isNotEqualTo(second.get("id"));
@@ -93,7 +93,7 @@ class CheckRenewalCorrectionsTest {
         selectTender(project, "项目名称：清空日期核验\n开标时间：2026-11-03");
         String bid = parse(project, "BID", "签署日期：2026-11-04\n证书有效期至：2026-11-04");
         String previous = service.startRun(project, bid).get("id").toString();
-        service.updateProject(project, Map.of("openingTime", ""));
+        service.updateProject(project, cn.bidcheck.compat.Java8Api.mapOf("openingTime", ""));
         Map<String,Object> current = service.startRun(project, bid);
         assertThat(current.get("id")).isNotEqualTo(previous);
         assertThat(information(current)).containsEntry("openingTime", "");
@@ -120,7 +120,7 @@ class CheckRenewalCorrectionsTest {
         selectTender(project, "项目名称：证照基准项目\n开标时间：2026-11-03 09:30");
         String bid = parse(project, "BID", "证书有效期至：2026-11-04");
         Map<String,Object> original = service.startRun(project, bid);
-        service.updateProject(project, Map.of("openingTime", "2026-11-05T10:00"));
+        service.updateProject(project, cn.bidcheck.compat.Java8Api.mapOf("openingTime", "2026-11-05T10:00"));
         Map<String,Object> corrected = service.startRun(project, bid);
         List<Checkpoint> snapshot = snapshot(project, corrected);
         assertThat(rule(snapshot, "signingAfterOpening").expected()).isEqualTo("2026-11-05T10:00");
@@ -133,7 +133,7 @@ class CheckRenewalCorrectionsTest {
         String project = project();
         selectTender(project, "项目名称：独立截止日期\n开标时间：2026-11-03\n投标截止时间：2026-11-02");
         String bid = parse(project, "BID", "证书有效期至：2026-11-04");
-        service.updateProject(project, Map.of("openingTime", "2026-11-05T10:00"));
+        service.updateProject(project, cn.bidcheck.compat.Java8Api.mapOf("openingTime", "2026-11-05T10:00"));
         List<Checkpoint> snapshot = snapshot(project, service.startRun(project, bid));
         assertThat(rule(snapshot, "signingAfterOpening").expected()).isEqualTo("2026-11-05T10:00");
         assertThat(rule(snapshot, "certificateCoverage").expected()).isEqualTo("2026-11-02");
@@ -141,7 +141,7 @@ class CheckRenewalCorrectionsTest {
     }
 
     @Test void explicitlyEnteredCreationFieldsSurviveMissingAndConflictingExtraction() throws Exception {
-        String project = service.createProject(Map.of("name", "人工创建项目", "projectNumber", "MANUAL-01", "openingTime", "2026-11-05 10:00"))
+        String project = service.createProject(cn.bidcheck.compat.Java8Api.mapOf("name", "人工创建项目", "projectNumber", "MANUAL-01", "openingTime", "2026-11-05 10:00"))
                 .get("id").toString();
         parse(project, "TENDER", "投标有效期：90天");
         assertThat(store.getMap("project", project))
@@ -154,7 +154,7 @@ class CheckRenewalCorrectionsTest {
         assertThat(information.get("manualFields")).asList().contains("projectNumber", "openingTime");
     }
 
-    private String project() { return service.createProject(Map.of("name", "待解析项目")).get("id").toString(); }
+    private String project() { return service.createProject(cn.bidcheck.compat.Java8Api.mapOf("name", "待解析项目")).get("id").toString(); }
     private TaskRow upload(String project, String role, String content) throws Exception {
         return service.upload(project, role, new MockMultipartFile("file", "修正样例.txt", "text/plain", content.getBytes(StandardCharsets.UTF_8)));
     }
@@ -176,7 +176,7 @@ class CheckRenewalCorrectionsTest {
         return store.list("snapshot", project, run.get("id").toString(), Checkpoint.class);
     }
     private Checkpoint rule(List<Checkpoint> rules, String field) {
-        return rules.stream().filter(rule -> field.equals(rule.field())).findFirst().orElseThrow();
+        return rules.stream().filter(rule -> field.equals(rule.field())).findFirst().orElseThrow(java.util.NoSuchElementException::new);
     }
     @SuppressWarnings("unchecked")
     private Map<String,Object> information(Map<String,Object> run) { return (Map<String,Object>) run.get("projectInformation"); }

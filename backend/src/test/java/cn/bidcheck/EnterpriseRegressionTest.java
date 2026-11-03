@@ -32,14 +32,27 @@ class EnterpriseRegressionTest {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
 
-    private String project() { return (String)service.createProject(Map.of("name","代码审查回归","code","REVIEW")).get("id"); }
+    private String project() { return (String)service.createProject(cn.bidcheck.compat.Java8Api.mapOf("name", "代码审查回归", "code", "REVIEW")).get("id"); }
     private TaskRow upload(String project,String role,String text) throws Exception {
         return service.upload(project,role,new MockMultipartFile("file","fixture.txt","text/plain",text.getBytes(StandardCharsets.UTF_8)));
     }
     private String parsed(String project,String role,String text) throws Exception {
         TaskRow task=upload(project,role,text); service.execute(task); return (String)store.map(task.inputJson).get("documentId");
     }
-    private record Ready(String project,String tender,String bid) {}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Ready {
+        private final String project;
+        private final String tender;
+        private final String bid;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Ready(@com.fasterxml.jackson.annotation.JsonProperty("project") String project, @com.fasterxml.jackson.annotation.JsonProperty("tender") String tender, @com.fasterxml.jackson.annotation.JsonProperty("bid") String bid) { this.project = project; this.tender = tender; this.bid = bid; }
+        public String project() { return project; }
+        public String tender() { return tender; }
+        public String bid() { return bid; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Ready that = (Ready) other; return java.util.Objects.equals(this.project, that.project) && java.util.Objects.equals(this.tender, that.tender) && java.util.Objects.equals(this.bid, that.bid); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.project); hash = 31 * hash + java.util.Objects.hashCode(this.tender); hash = 31 * hash + java.util.Objects.hashCode(this.bid); return hash; }
+        @Override public String toString() { return "Ready[" + "project=" + project + ", tender=" + tender + ", bid=" + bid + "]"; }
+}
     private Ready ready() throws Exception {
         String p=project(),t=parsed(p,"TENDER","项目编号：REVIEW\n投标有效期：不少于90天"),b=parsed(p,"BID","项目编号：REVIEW\n投标有效期：100天");
         service.execute(service.extract(p,t));
@@ -48,7 +61,7 @@ class EnterpriseRegressionTest {
     }
 
     @Test void compactPollingOmitsOriginalTextAndRetainsLocations() throws Exception {
-        String p=project(); String body="项目编号：REVIEW\n"+"原始正文不会在轮询传输。".repeat(8000); String id=parsed(p,"BID",body);
+        String p=project(); String body="项目编号：REVIEW\n"+cn.bidcheck.compat.Java8Api.repeat("原始正文不会在轮询传输。", 8000); String id=parsed(p,"BID",body);
         String compact=mvc.perform(get("/api/projects/"+p).param("includeContent","false")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
         String full=mvc.perform(get("/api/documents/"+id)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
         assertThat(compact).doesNotContain("原始正文").contains("pageCount","locationType","contentIncluded");
@@ -94,12 +107,12 @@ class EnterpriseRegressionTest {
     }
     @Test void modifiedCachedOriginalCannotBeDownloadedAsEvidence() throws Exception {
         String p=project(),id=parsed(p,"BID","项目编号：REVIEW\n投标有效期：90天");
-        Files.writeString(DATA.resolve("files").resolve(id+".bin"),"被修改的缓存",StandardCharsets.UTF_8);
+        cn.bidcheck.compat.Java8Api.writeString(DATA.resolve("files").resolve(id+".bin"), "被修改的缓存", StandardCharsets.UTF_8);
         mvc.perform(get("/api/documents/"+id+"/raw")).andExpect(status().isBadRequest());
     }
     @Test void oldDocumentsGetMetadataWithoutLosingOriginal() throws Exception {
         String p=project(),id=Store.id();
-        Document document=new Document(id,p,"BID","legacy.txt",1,"hash",BidService.now(),List.of(new Page(1,"原件保留","PAGE","TEXT",null)),List.of());
+        Document document=new Document(id,p,"BID","legacy.txt",1,"hash",BidService.now(),cn.bidcheck.compat.Java8Api.listOf(new Page(1,"原件保留","PAGE","TEXT",null)),cn.bidcheck.compat.Java8Api.listOf());
         Stored row=new Stored();row.id=id;row.kind="document";row.projectId=p;row.parentId="";row.body=store.encode(document);row.createdAt=System.currentTimeMillis();mapper.save(row);
         assertThat(store.documentSummaries(p)).hasSize(1);
         assertThat(service.document(id).pages().get(0).text()).isEqualTo("原件保留");
@@ -108,7 +121,7 @@ class EnterpriseRegressionTest {
         String p=project(),id=parsed(p,"BID","投标人名称：测试科技有限公司\n投标有效期：100天");
         String original=store.require("document",id).body;
         store.mapper().deleteChildren("fact",id);
-        store.save("fact_index","facts-version:"+id,p,id,Map.of("version","legacy-engine"));
+        store.save("fact_index","facts-version:"+id,p,id,cn.bidcheck.compat.Java8Api.mapOf("version", "legacy-engine"));
         List<Fact> refreshed=service.facts(id);
         assertThat(refreshed).isNotEmpty().anyMatch(f->f.rawValue().contains("测试科技"));
         assertThat(store.getMap("fact_index","facts-version:"+id)).containsEntry("version",BidService.RULE_VERSION);
@@ -122,7 +135,7 @@ class EnterpriseRegressionTest {
         mvc.perform(get("/api/projects")).andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store"));
     }
     @Test void oversizedJsonAndMissingParametersReturnClientErrors() throws Exception {
-        mvc.perform(post("/api/projects").contentType("application/json").content("{\"name\":\""+"x".repeat(66000)+"\"}")).andExpect(status().isPayloadTooLarge());
+        mvc.perform(post("/api/projects").contentType("application/json").content("{\"name\":\""+cn.bidcheck.compat.Java8Api.repeat("x", 66000)+"\"}")).andExpect(status().isPayloadTooLarge());
         mvc.perform(multipart("/api/projects/"+project()+"/documents")).andExpect(status().isBadRequest());
     }
 }

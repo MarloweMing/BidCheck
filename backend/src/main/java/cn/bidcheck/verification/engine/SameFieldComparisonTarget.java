@@ -19,7 +19,7 @@ final class SameFieldComparisonTarget {
             String target=match.group(1).replaceFirst("(?:应|须|必须|需|保持|完全)+$","");
             // Anchored document nouns plus field labels distinguish a source reference from an
             // actual company such as “证书科技有限公司”, or a quoted literal project/name/value.
-            if(DOCUMENT_FIELD.matcher(target).matches()||ENTERPRISE_DOCUMENTS.matcher(target).matches()||Set.of("登记信息","注册信息").contains(target))return target;
+            if(DOCUMENT_FIELD.matcher(target).matches()||ENTERPRISE_DOCUMENTS.matcher(target).matches()||cn.bidcheck.compat.Java8Api.setOf("登记信息", "注册信息").contains(target))return target;
         }
         return "";
     }
@@ -31,22 +31,22 @@ final class SameFieldComparisonTarget {
         Map<String,Object> parameters=new LinkedHashMap<>(rule.parameters());
         parameters.remove("comparisonOperandKind");parameters.remove("comparisonTargetReference");
         String target=reference(rule);
-        if(!target.isBlank()) {
+        if(!cn.bidcheck.compat.Java8Api.isBlank(target)) {
             parameters.put("comparisonOperandKind","SOURCE_REFERENCE");
             parameters.put("comparisonTargetReference",target);
         }
         return new Rule(rule.id(),rule.description(),rule.predicate(),rule.subject(),rule.field(),rule.operator(),
-            target.isBlank()?rule.expected():"",rule.unit(),parameters,rule.sourceQuote(),rule.logic(),rule.children());
+            cn.bidcheck.compat.Java8Api.isBlank(target)?rule.expected():"",rule.unit(),parameters,rule.sourceQuote(),rule.logic(),rule.children());
     }
 
     static Decision unresolved(Rule rule,List<Fact> matched,RuleEvaluator evaluator) {
         String target=reference(rule);
         String reason="本项要求跨来源信息一致，尚未建立“"+target+"”对应原文、逐字段映射与完整比较范围；该引用名称不是待比较的实际值";
         return evaluator.result(rule,"UNDETERMINED",reason,matched,
-            List.of(new Gap("REQUIREMENT_COMPARISON_TARGET_UNRESOLVED",reason,
+            cn.bidcheck.compat.Java8Api.listOf(new Gap("REQUIREMENT_COMPARISON_TARGET_UNRESOLVED",reason,
                 "由系统明确比较两端来源、对应字段及覆盖范围；不要求用户补交已经存在的材料","REQUIREMENT_MAPPING_CHANGED")),
             linked("comparisonOperandKind","SOURCE_REFERENCE","comparisonTargetReference",target,
-                "missingBindings",List.of("RIGHT_SOURCE","FIELD_CORRESPONDENCE","COMPARISON_FIELD_SET"),
+                "missingBindings",cn.bidcheck.compat.Java8Api.listOf("RIGHT_SOURCE", "FIELD_CORRESPONDENCE", "COMPARISON_FIELD_SET"),
                 "literalTargetComparisonRejected",true,"materialMissingProven",false));
     }
 }

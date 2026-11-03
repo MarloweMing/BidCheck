@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Offline Aspose.Words API/Java 17 compatibility probe; no license is supplied.
+"""Offline Aspose.Words API/Java 8 compatibility probe; no license is supplied.
 
 Example (PowerShell, append --compile-production after changing the adapter):
-  python scripts/test_words_compat.py --java-home C:/path/to/jdk-17 `
+  python scripts/test_words_compat.py --java-home C:/path/to/jdk-8 `
     --jar legacy=C:/path/to/aspose-words-19.7-jdk17.jar `
     --jar current=.local/aspose-word/aspose-words-26.9-jdk17.jar
 
@@ -61,7 +61,7 @@ public final class WordsCompatibilityProbe {
     public static void main(String[] args) throws Exception {
         boolean useAdapter=args.length>1 && args[1].equals("adapter");
         Runnable deadline=()->{if(Thread.currentThread().isInterrupted()) throw new IllegalStateException("INTERRUPTED");};
-        Path temp=Path.of(System.getProperty("java.io.tmpdir"));
+        Path temp=Paths.get(System.getProperty("java.io.tmpdir"));
         emit("mode", "EVALUATION_ONLY");
         emit("licenseProvided", false);
         emit("usableForEvidence", false);
@@ -93,7 +93,7 @@ public final class WordsCompatibilityProbe {
         options.setWarningCallback(w -> warnings.add(w.getWarningType()));
         if(useAdapter) adapter("configureLoad",new Class<?>[]{LoadOptions.class,Path.class,Runnable.class},options,temp,deadline);
         Document document;
-        try (InputStream in=Files.newInputStream(Path.of(args[0]))) {
+        try (InputStream in=Files.newInputStream(Paths.get(args[0]))) {
             document = new Document(in, options);
         }
         document.setResourceLoadingCallback(deny);
@@ -148,7 +148,7 @@ public final class WordsCompatibilityProbe {
         }
         if(seen[0]!=1 || seen[1]!=1) throw new IOException("SYNTHETIC_MARKER_COUNT");
         emit("resourceRequestsBlocked", resourceRequests[0]);
-        emit("warningTypes", warnings.stream().distinct().sorted().toList());
+        emit("warningTypes", warnings.stream().distinct().sorted().collect(java.util.stream.Collectors.toList()));
         emit("mappingPassed", true);
         emit("businessEvidenceProduced", false);
         collector.setDocument(null);
@@ -192,6 +192,12 @@ def java_args(path: Path, args: list[str]) -> str:
     path.write_text("\n".join('"'+a.replace("\\", "/").replace('"', '\\"')+'"'
                               for a in args)+"\n", encoding="utf-8")
     return "@"+str(path)
+
+
+def java_run_args(path: Path, args: list[str]) -> list[str]:
+    # Java 8 supports javac argfiles, but the java launcher accepts direct arguments only.
+    java_args(path, args)
+    return args
 
 
 def fixture(path: Path) -> None:
@@ -272,7 +278,7 @@ def main() -> int:
     javac = java.with_name("javac.exe" if os.name == "nt" else "javac")
     javap = java.with_name("javap.exe" if os.name == "nt" else "javap")
     if not all(path.is_file() for path in (java, javac, javap)):
-        parser.error("Java 17 JDK executables not found")
+        parser.error("Java 8 JDK executables not found")
     jars = []
     for argument in args.jar:
         label, separator, raw_path = argument.partition("=")
@@ -315,33 +321,33 @@ def main() -> int:
         api = execute([str(javap), "-classpath", str(jar), *["com.aspose.words."+name for name in API_CLASSES]], area, args.timeout)
         (area/"public-api.txt").write_text(api["stdout"], encoding="utf-8")
         row["apiInspection"] = clean_result(api)
-        compile_args = java_args(area/"probe-compile.args", ["-J-Xmx256m", "-proc:none", "--release", "17", "-encoding", "UTF-8", "-cp", str(jar), "-d", str(classes), str(source)])
-        compiled = execute([str(javac), compile_args], area, args.timeout)
+        compile_args = java_args(area/"probe-compile.args", ["-proc:none", "-source", "8", "-target", "8", "-encoding", "UTF-8", "-cp", str(jar), "-d", str(classes), str(source)])
+        compiled = execute([str(javac), "-J-Xmx384m", compile_args], area, args.timeout)
         (area/"probe-compile.log").write_text(compiled["stderr"], encoding="utf-8")
         row["probeCompile"] = clean_result(compiled)
         if compiled["exitCode"] == 0:
-            run_args = java_args(area/"probe-run.args", ["-Xmx256m", "-XX:MaxMetaspaceSize=192m", "-Djava.awt.headless=true", "-Djava.io.tmpdir="+str(temporary), "-cp", os.pathsep.join(map(str, [classes, jar])), "WordsCompatibilityProbe", str(original)])
-            run = execute([str(java), run_args], area, args.timeout)
+            run_args = java_run_args(area/"probe-run.args", ["-Xmx256m", "-XX:MaxMetaspaceSize=192m", "-Djava.awt.headless=true", "-Djava.io.tmpdir="+str(temporary), "-cp", os.pathsep.join(map(str, [classes, jar])), "WordsCompatibilityProbe", str(original)])
+            run = execute([str(java), *run_args], area, args.timeout)
             row["runtime"] = {**clean_result(run), "properties": properties(run)}
             (area/"probe-runtime.log").write_text(run["stderr"], encoding="utf-8")
         if args.compile_production:
             production = area/"production-classes"
             production.mkdir()
             classpath = os.pathsep.join(map(str, [jar, *dependencies]))
-            compile_args = java_args(area/"production-compile.args", ["-J-Xmx384m", "-proc:none", "--release", "17", "-encoding", "UTF-8", "-cp", classpath, "-d", str(production), *map(str, sources)])
-            built = execute([str(javac), compile_args], area, args.timeout)
+            compile_args = java_args(area/"production-compile.args", ["-proc:none", "-source", "8", "-target", "8", "-encoding", "UTF-8", "-cp", classpath, "-d", str(production), *map(str, sources)])
+            built = execute([str(javac), "-J-Xmx384m", compile_args], area, args.timeout)
             row["productionCompile"] = clean_result(built)
             (area/"production-compile.log").write_text(built["stderr"], encoding="utf-8")
             if built["exitCode"] == 0:
-                adapter_args = java_args(area/"production-adapter.args", ["-Xmx256m", "-XX:MaxMetaspaceSize=192m", "-Djava.awt.headless=true", "-Djava.io.tmpdir="+str(temporary), "-cp", os.pathsep.join(map(str, [production, classes, jar, *dependencies])), "WordsCompatibilityProbe", str(original), "adapter"])
-                adapted = execute([str(java), adapter_args], area, args.timeout)
+                adapter_args = java_run_args(area/"production-adapter.args", ["-Xmx256m", "-XX:MaxMetaspaceSize=192m", "-Djava.awt.headless=true", "-Djava.io.tmpdir="+str(temporary), "-cp", os.pathsep.join(map(str, [production, classes, jar, *dependencies])), "WordsCompatibilityProbe", str(original), "adapter"])
+                adapted = execute([str(java), *adapter_args], area, args.timeout)
                 row["productionAdapterRuntime"] = {**clean_result(adapted), "properties": properties(adapted)}
                 (area/"production-adapter.log").write_text(adapted["stderr"], encoding="utf-8")
                 gate = area/"missing-license-gate"
                 gate.mkdir()
-                worker_args = java_args(area/"worker-gate.args", ["-Xmx256m", "-Djava.awt.headless=true", "-Djava.io.tmpdir="+str(temporary), "-cp", os.pathsep.join(map(str, [production, jar, *dependencies])), "cn.bidcheck.document.word.WordRenderWorker"])
+                worker_args = java_run_args(area/"worker-gate.args", ["-Xmx256m", "-Djava.awt.headless=true", "-Djava.io.tmpdir="+str(temporary), "-cp", os.pathsep.join(map(str, [production, jar, *dependencies])), "cn.bidcheck.document.word.WordRenderWorker"])
                 request = {"outputDirectory": str(gate), "licensePath": str(gate/"not-provided.lic")}
-                worker = execute([str(java), worker_args], area, args.timeout, json.dumps(request))
+                worker = execute([str(java), *worker_args], area, args.timeout, json.dumps(request))
                 result_path = gate/"result.json"
                 response = json.loads(result_path.read_text(encoding="utf-8")) if result_path.is_file() and result_path.stat().st_size<100000 else {}
                 row["productionLicenseGate"] = {**clean_result(worker), "status": response.get("status"), "errorCode": response.get("errorCode"), "usableForEvidence": response.get("usableForEvidence"), "derivedPdfProduced": (gate/"rendered.pdf").exists(), "passed": worker["exitCode"]==0 and response.get("errorCode", response.get("status")) in {"LICENSE_INVALID", "LICENSE_REQUIRED"} and response.get("usableForEvidence") is False and not (gate/"rendered.pdf").exists()}

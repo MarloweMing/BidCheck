@@ -51,18 +51,16 @@ public class ApiController {
     void configureVisualModels(VisualVerificationService visualModels) { this.visualModels=visualModels; }
     @Autowired(required=false)
     void configureEvidenceGraphReads(EvidenceGraphReadService evidenceGraphReads) { this.evidenceGraphReads=evidenceGraphReads; }
-    @GetMapping("/health") public Map<String,Object> health() { return Map.of("status","UP","version","0.1.0"); }
+    @GetMapping("/health") public Map<String,Object> health() { return cn.bidcheck.compat.Java8Api.mapOf("status", "UP", "version", "0.1.0"); }
     @GetMapping("/processing-metrics") public Object processingMetrics() {
-        return Map.of("scope","CURRENT_PROCESS","ocr",cn.bidcheck.ocr.OcrRequestGovernor.summary(),"ocrBatches",cn.bidcheck.ocr.OcrBatchMetrics.summary(),
-            "pdfOcr",cn.bidcheck.ocr.QwenPdfOcrClient.summary(),
-            "boundary","当前进程累计调度计数与耗时，不代表单份文档费用或识别准确率；重启后重新累计");
+        return cn.bidcheck.compat.Java8Api.mapOf("scope", "CURRENT_PROCESS", "ocr", cn.bidcheck.ocr.OcrRequestGovernor.summary(), "ocrBatches", cn.bidcheck.ocr.OcrBatchMetrics.summary(), "pdfOcr", cn.bidcheck.ocr.QwenPdfOcrClient.summary(), "boundary", "当前进程累计调度计数与耗时，不代表单份文档费用或识别准确率；重启后重新累计");
     }
-    @GetMapping("/config") public Map<String,Object> config() { return BidService.fields("appName","BidCheck 标书检查","version","0.1.0","storageMode",service.storageMode(),"ocrEnabled",service.ocrEnabled(),"ocrModel",service.ocrModel(),"ocrMaxImages",service.ocrMaxImages(),"ocrConcurrency",service.ocrConcurrency(),"ocrBatchMaxPages",service.ocrBatchMaxPages(),"formats",List.of("pdf","docx","txt","md","png","jpg","jpeg"),"semanticEnabled",service.semanticEnabled(),"semanticModel",service.semanticModel(),"maxFileSizeMb",DocumentLimits.MAX_FILE_MB,
+    @GetMapping("/config") public Map<String,Object> config() { return BidService.fields("appName","BidCheck 标书检查","version","0.1.0","storageMode",service.storageMode(),"ocrEnabled",service.ocrEnabled(),"ocrModel",service.ocrModel(),"ocrMaxImages",service.ocrMaxImages(),"ocrConcurrency",service.ocrConcurrency(),"ocrBatchMaxPages",service.ocrBatchMaxPages(),"formats",cn.bidcheck.compat.Java8Api.listOf("pdf", "docx", "txt", "md", "png", "jpg", "jpeg"),"semanticEnabled",service.semanticEnabled(),"semanticModel",service.semanticModel(),"maxFileSizeMb",DocumentLimits.MAX_FILE_MB,
         "pdfOcrEnabled",service.pdfOcrEnabled(),"pdfOcrModel",service.pdfOcrModel(),"pdfOcrBatchPages",service.pdfOcrBatchPages(),"pdfOcrConcurrency",service.pdfOcrConcurrency(),"pdfOcrMaxPages",service.pdfOcrMaxPages(),
         "pageRoutingEnabled",true,"contextWindowPages",3,"contextOverlapPages",1,"incrementalChecksEnabled",true,"processingFactStorage","RELATIONAL_PAGE_FACTS",
         "verificationEnabled",verificationModels!=null&&verificationModels.enabled(),"semanticExtractionModel",verificationModels==null?"":verificationModels.extractionModelName(),
-        "agentInvestigationEnabled",evidenceInvestigator!=null&&evidenceInvestigator.enabled(),"agentInvestigationDomains",List.of("PERSONNEL","SIGNING_AUTHORITY"),
-        "agentReviewEnabled",service.agentReviewAvailable(),"defaultReviewMode","FIXED_WORKFLOW","reviewModes",List.of("FIXED_WORKFLOW","AGENT_LED"),
+        "agentInvestigationEnabled",evidenceInvestigator!=null&&evidenceInvestigator.enabled(),"agentInvestigationDomains",cn.bidcheck.compat.Java8Api.listOf("PERSONNEL", "SIGNING_AUTHORITY"),
+        "agentReviewEnabled",service.agentReviewAvailable(),"defaultReviewMode","FIXED_WORKFLOW","reviewModes",cn.bidcheck.compat.Java8Api.listOf("FIXED_WORKFLOW", "AGENT_LED"),
         "semanticVerificationModel",verificationModels==null?"":verificationModels.primaryModelName(),"semanticRoutingPolicy",verificationModels==null?"":verificationModels.routingPolicy(),
         "automaticVisualProcessingEnabled",service.automaticVisualProcessingEnabled(),"documentProcessingMode",service.documentProcessingMode(),
         "visualEnabled",visualModels!=null&&visualModels.enabled(),"visualModel",visualModels==null?"":visualModels.modelName(),
@@ -72,11 +70,11 @@ public class ApiController {
         "visualStructuredRoutingPolicy",visualModels==null?"":visualModels.structuredRoutingPolicy(),
         "maxDocumentsPerProject",BidService.MAX_DOCUMENTS_PER_PROJECT,"checkCategories",BidService.CHECK_CATEGORIES,
         "checkMode",service.checkMode(),"onDemandAttemptBudget",service.onDemandAttemptBudget(),"onDemandAttemptsUnlimited",true,"onDemandPolicyVersion",service.onDemandPolicyVersion(),
-        "focusedCheckIdentity",service.focusedCheckIdentity(),"focusedCheckDomains",List.of("PERSONNEL_CONSORTIUM","CERTIFICATE_VALIDITY","PRICE_BASIS"),
+        "focusedCheckIdentity",service.focusedCheckIdentity(),"focusedCheckDomains",cn.bidcheck.compat.Java8Api.listOf("PERSONNEL_CONSORTIUM", "CERTIFICATE_VALIDITY", "PRICE_BASIS"),
         "templateRouteEnabled",service.templateRouteEnabled(),"templateCheckIdentity",service.templateCheckIdentity(),"templateCatalogCount",checkSpecifications==null?0:checkSpecifications.templates().size(),"templateSpecSchema",CheckSpecificationStoreService.SPEC_SCHEMA,"templateSnapshotSchema",CheckSpecificationStoreService.SNAPSHOT_SCHEMA,
         "checkConcurrency",service.checkConcurrency(),"ocrPlanningMode",service.ocrPlanningMode(),"factStorage","RELATIONAL_V3","ocrLayoutEnabled",service.ocrLayoutEnabled(),"ocrLayoutModel",service.ocrLayoutModel(),"ragEnabled",retrieval.enabled(),"ragEmbeddingModel",retrieval.enabled()?retrieval.embeddingModelName():"","ragRerankModel",retrieval.enabled()?retrieval.rerankModelName():"",
-        "capabilities",List.of("PDF/DOCX 原生解析",service.ocrEnabled()?"扫描页与图片OCR识别":"OCR可配置启用","规则抽取与确认",retrieval.enabled()?"关键词与向量混合检索、语义重排":"关键词检索","跨页事实比对","人员、单位、证书、联合体和项目关系追溯","证据定位与人工复核","持久化任务与报告导出"),
-        "limitations",List.of(service.ocrEnabled()?"待识别的页面和图片会发送至百炼；OCR文字需对照原图核实，不能证明签字盖章有效":"OCR尚未启用，扫描页与图片需人工核实",service.semanticEnabled()?"语义模型只提取有原文来源的候选事实；业务结论由程序规则计算，未映射条款会保留为系统缺口":"复杂技术响应需人工复核，尚未配置语义模型","本版为单用户工作台，多人生产环境仍需身份认证与访问权限")); }
+        "capabilities",cn.bidcheck.compat.Java8Api.listOf("PDF/DOCX 原生解析", service.ocrEnabled()?"扫描页与图片OCR识别":"OCR可配置启用", "规则抽取与确认", retrieval.enabled()?"关键词与向量混合检索、语义重排":"关键词检索", "跨页事实比对", "人员、单位、证书、联合体和项目关系追溯", "证据定位与人工复核", "持久化任务与报告导出"),
+        "limitations",cn.bidcheck.compat.Java8Api.listOf(service.ocrEnabled()?"待识别的页面和图片会发送至百炼；OCR文字需对照原图核实，不能证明签字盖章有效":"OCR尚未启用，扫描页与图片需人工核实", service.semanticEnabled()?"语义模型只提取有原文来源的候选事实；业务结论由程序规则计算，未映射条款会保留为系统缺口":"复杂技术响应需人工复核，尚未配置语义模型", "本版为单用户工作台，多人生产环境仍需身份认证与访问权限")); }
     @GetMapping("/projects") public Object projects() { return service.projects(); }
     @PostMapping("/projects/{id}/facts/migrate") public Object migrateFacts(@PathVariable String id) { return publicTask(service.migrateProjectFacts(id)); }
     @GetMapping("/projects/{id}/facts/migrations") public Object factMigrations(@PathVariable String id) { return service.factMigrations(id); }
@@ -100,11 +98,11 @@ public class ApiController {
     @PutMapping("/projects/{projectId}/check-sets/{setId}") public Object checkSet(@PathVariable String projectId,@PathVariable String setId,@RequestBody Map<String,Object> body) { return specifications().putCheckSet(projectId,setId,body); }
     @PostMapping("/projects/{projectId}/check-sets/{setId}/confirm") public Object confirmCheckSet(@PathVariable String projectId,@PathVariable String setId,@RequestBody Map<String,Object> body) { return specifications().confirmCheckSet(projectId,setId,body); }
     @PostMapping("/projects/{id}/runs") public Object run(@PathVariable String id,@RequestBody Map<String,Object> body) {
-        Integer manifest=body.get("manifestRevision") instanceof Number number?number.intValue():null;
+        Integer manifest=body.get("manifestRevision") instanceof Number?((Number) (body.get("manifestRevision"))).intValue():null;
         List<String> checkpointIds=null;
         if(body.containsKey("checkpointIds")){
-            if(!(body.get("checkpointIds") instanceof List<?> values)||values.isEmpty()||values.stream().anyMatch(v->!(v instanceof String)))throw BidService.bad("checkpointIds 必须是非空的检查项编号数组");
-            checkpointIds=((List<?>)body.get("checkpointIds")).stream().map(String.class::cast).toList();
+            if(!(body.get("checkpointIds") instanceof List<?>)||((List<?>) (body.get("checkpointIds"))).isEmpty()||((List<?>) (body.get("checkpointIds"))).stream().anyMatch(v->!(v instanceof String)))throw BidService.bad("checkpointIds 必须是非空的检查项编号数组");
+            checkpointIds=cn.bidcheck.compat.Java8Api.toList(((List<?>)body.get("checkpointIds")).stream().map(String.class::cast));
         }
         if(checkpointIds==null)return service.startRun(id,BidService.text(body,"documentId"),Boolean.TRUE.equals(body.get("force")),BidService.text(body,"checkSetId"),manifest,BidService.text(body,"idempotencyKey"),BidService.text(body,"reviewMode"));
         return service.startRun(id,BidService.text(body,"documentId"),Boolean.TRUE.equals(body.get("force")),BidService.text(body,"checkSetId"),manifest,BidService.text(body,"idempotencyKey"),BidService.text(body,"reviewMode"),checkpointIds);
@@ -135,7 +133,7 @@ public class ApiController {
     @GetMapping("/documents/{id}") public Object document(@PathVariable String id,@RequestParam(defaultValue="false") boolean includeLayout) {
         Document doc=service.document(id);if(includeLayout)return doc;
         // Large OCR geometry is loaded for a selected page; normal source previews remain bounded to text.
-        return new Document(doc.id(),doc.projectId(),doc.role(),doc.name(),doc.version(),doc.sha256(),doc.createdAt(),doc.pages().stream().map(p->new Page(p.number(),p.text(),p.locationType(),p.parser(),p.warning())).toList(),doc.warnings());
+        return new Document(doc.id(),doc.projectId(),doc.role(),doc.name(),doc.version(),doc.sha256(),doc.createdAt(),cn.bidcheck.compat.Java8Api.toList(doc.pages().stream().map(p->new Page(p.number(),p.text(),p.locationType(),p.parser(),p.warning()))),doc.warnings());
     }
     @GetMapping("/documents/{id}/profile") public Object profile(@PathVariable String id) { return service.profile(id); }
     @GetMapping("/documents/{id}/ocr-plan") public Object ocrPlan(@PathVariable String id) { service.document(id);return service.ocrPlan(id); }
@@ -181,8 +179,8 @@ public class ApiController {
     private EvidenceGraphReadService evidenceGraphReads() {
         if(evidenceGraphReads==null)throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"证据图查询服务尚未启用");return evidenceGraphReads;
     }
-    private static long requiredRevision(Map<String,Object> body){Object value=body.get("expectedRevision");if(!(value instanceof Number number)||number.longValue()<1)
-        throw TemplateApiException.invalid("增量重算请求无效",List.of(Map.of("field","expectedRevision","message","必须提供正整数依赖图版本")));return number.longValue();}
-    private static List<String> strings(Object value){if(!(value instanceof Collection<?> collection))return List.of();return collection.stream().filter(Objects::nonNull).map(Object::toString).toList();}
+    private static long requiredRevision(Map<String,Object> body){Object value=body.get("expectedRevision");if(!(value instanceof Number)||((Number) (value)).longValue()<1)
+        throw TemplateApiException.invalid("增量重算请求无效",cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("field", "expectedRevision", "message", "必须提供正整数依赖图版本")));return ((Number) (value)).longValue();}
+    private static List<String> strings(Object value){if(!(value instanceof Collection<?>))return cn.bidcheck.compat.Java8Api.listOf();return cn.bidcheck.compat.Java8Api.toList(((Collection<?>) (value)).stream().filter(Objects::nonNull).map(Object::toString));}
     private Map<String,Object> publicTask(TaskRow t) { return service.publicTask(t); }
 }

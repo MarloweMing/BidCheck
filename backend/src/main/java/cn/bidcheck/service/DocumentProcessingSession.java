@@ -32,7 +32,7 @@ final class DocumentProcessingSession implements OcrUnitObserver {
     private final Map<String,Set<String>> pageOccurrenceIds=new LinkedHashMap<>();
     private final Map<String,List<String>> pageIssues=new LinkedHashMap<>();
     private final Map<String,PersonCredentialFacts.Result> personPages=new LinkedHashMap<>();
-    private Map<String,Object> personComparison=Map.of();
+    private Map<String,Object> personComparison=cn.bidcheck.compat.Java8Api.mapOf();
     private final Map<String,Map<String,Object>> results=new LinkedHashMap<>();
     private final Map<String,Map<String,Object>> windows=new LinkedHashMap<>();
     private final IncrementalCheckEngine engine=new IncrementalCheckEngine();
@@ -54,14 +54,14 @@ final class DocumentProcessingSession implements OcrUnitObserver {
                               Document metadata,String taskId,String identity,List<Checkpoint> checks,boolean automaticVisualRequested) {
         this.store=store;this.tx=tx;this.fence=fence;this.journal=journal;this.ledger=ledger;this.metadata=metadata;
         this.taskId=taskId;this.identity=identity;this.automaticVisualRequested=automaticVisualRequested;
-        this.checks=checks.stream().filter(c->c.enabled()&&c.confirmed()).sorted(Comparator.comparingInt(IncrementalCheckEngine::priority)).toList();
+        this.checks=cn.bidcheck.compat.Java8Api.toList(checks.stream().filter(c->c.enabled()&&c.confirmed()).sorted(Comparator.comparingInt(IncrementalCheckEngine::priority)));
         scope=hash(VERSION+"|"+StructuredHtmlTableFacts.VERSION+"|"+PersonCredentialFacts.VERSION+"|"+PersonCredentialConsistency.VERSION+"|"+metadata.projectId()+"|"+metadata.id()+"|"+metadata.version()+"|"+metadata.sha256()+"|"+identity+(automaticVisualRequested?"":"|TEXT_ONLY_V1"));
         checkScope=hash(scope+"|"+store.encode(this.checks));
         for(Map<String,Object> row:store.maps("processing_page",metadata.projectId(),metadata.id()))if(scope.equals(row.get("scope"))) {
             Page page=store.decode(store.encode(row.get("page")),Page.class);
             pages.put(key(page),page);routes.put(key(page),store.decode(store.encode(row.get("route")),PageClassifier.Decision.class));
-            StructuredHtmlTableFacts.Result table=StructuredHtmlTableFacts.analyze(document(List.of(page)),page);
-            personPages.put(key(page),PersonCredentialFacts.analyze(document(List.of(page)),page));
+            StructuredHtmlTableFacts.Result table=StructuredHtmlTableFacts.analyze(document(cn.bidcheck.compat.Java8Api.listOf(page)),page);
+            personPages.put(key(page),PersonCredentialFacts.analyze(document(cn.bidcheck.compat.Java8Api.listOf(page)),page));
             facts.put(key(page),pageFacts(page,table));
             Map<String,Object> indexed=map(row.get("factResult"));
             personPages.put(key(page),personLedgerCoverage(personPages.get(key(page)),indexed));
@@ -91,22 +91,22 @@ final class DocumentProcessingSession implements OcrUnitObserver {
 
     @Override public void onPage(Page page,PageClassifier.Decision route)throws IOException {
         String key=key(page);Page old=pages.get(key);
-        StructuredHtmlTableFacts.Result table=StructuredHtmlTableFacts.analyze(document(List.of(page)),page);
+        StructuredHtmlTableFacts.Result table=StructuredHtmlTableFacts.analyze(document(cn.bidcheck.compat.Java8Api.listOf(page)),page);
         boolean parsedTable=!incomplete(page)&&table.complete()&&!table.facts().isEmpty();
         PageClassifier.Decision effectiveRoute=parsedTable?tableRoute(page,route,table.schema()):route;
         if(Objects.equals(page,old)&&Objects.equals(routes.get(key),effectiveRoute)){tx.executeWithoutResult(s->{fence.run();saveSummary();});return;}
-        personPages.put(key,PersonCredentialFacts.analyze(document(List.of(page)),page));
-        List<Fact> before=facts.getOrDefault(key,List.of()),after=pageFacts(page,table);
+        personPages.put(key,PersonCredentialFacts.analyze(document(cn.bidcheck.compat.Java8Api.listOf(page)),page));
+        List<Fact> before=facts.getOrDefault(key,cn.bidcheck.compat.Java8Api.listOf()),after=pageFacts(page,table);
         pages.put(key,page);routes.put(key,effectiveRoute);facts.put(key,after);
         Document partial=current();
         tx.executeWithoutResult(s->{
             fence.run();store.lock("project",metadata.projectId());Map<String,Object> indexed=new LinkedHashMap<>(ledger.persistSuppliedPageFacts(partial,page,after,identity));
             // Only personnel uses this receipt on restart; do not duplicate long unrelated table quotes here.
-            List<?> accepted=indexed.get("acceptedDomainFacts") instanceof List<?> list?list:List.of();
-            indexed.put("acceptedDomainFacts",accepted.stream().filter(value->value instanceof Fact f&&"PERSON_CREDENTIAL".equals(f.entityType())||value instanceof Map<?,?> m&&"PERSON_CREDENTIAL".equals(m.get("entityType"))).toList());
+            List<?> accepted=indexed.get("acceptedDomainFacts") instanceof List<?>?((List<?>) (indexed.get("acceptedDomainFacts"))):cn.bidcheck.compat.Java8Api.listOf();
+            indexed.put("acceptedDomainFacts",cn.bidcheck.compat.Java8Api.toList(accepted.stream().filter(value->value instanceof Fact&&"PERSON_CREDENTIAL".equals(((Fact) (value)).entityType())||value instanceof Map<?,?>&&"PERSON_CREDENTIAL".equals(((Map<?,?>) (value)).get("entityType")))));
             pageOccurrenceIds.put(key,strings(indexed.get("occurrenceIds")));
             personPages.put(key,personLedgerCoverage(personPages.get(key),indexed));retainAcceptedPersonFacts(key);refreshPersonComparison();
-            List<Fact> safeAfter=facts.getOrDefault(key,List.of()),all=allFacts();List<Map<String,Object>> changed=new ArrayList<>();
+            List<Fact> safeAfter=facts.getOrDefault(key,cn.bidcheck.compat.Java8Api.listOf()),all=allFacts();List<Map<String,Object>> changed=new ArrayList<>();
             for(Checkpoint cp:checks)if(!results.containsKey(cp.id())||engine.affected(cp,page,before,safeAfter)
                 ||"MATERIAL_EXISTENCE".equals(cp.type())&&old!=null&&engine.affected(cp,old,before,safeAfter))changed.add(engine.evaluate(cp,partial,all,false));
             List<String> issues=reviewIssues(page,table,indexed);pageIssues.put(key,issues);
@@ -132,18 +132,18 @@ final class DocumentProcessingSession implements OcrUnitObserver {
         if(!automaticVisualRequested){
             // Text coverage is independent of optional image/field/signature verification.
             // Do not manufacture pending jobs, successful windows, or image observations.
-            activeWindows=Set.of();visualPlannedJobs=0;visualRequiredCalls=0;visualCallLimit=0;visualHardLimit=0;
+            activeWindows=cn.bidcheck.compat.Java8Api.setOf();visualPlannedJobs=0;visualRequiredCalls=0;visualCallLimit=0;visualHardLimit=0;
             completeProcessing();return;
         }
         boolean waitForDocumentOcr=fullCoverage&&pages.values().stream().anyMatch(DocumentProcessingSession::incomplete);
         activeWindows=new HashSet<>();Map<String,List<Integer>> submitted=new LinkedHashMap<>();List<VisualWorkCoordinator.Job> jobs=new ArrayList<>();
         if("BID".equals(metadata.role()))for(List<Integer> window:visualWindows(document,visual,fullCoverage)) {
-            List<Page> members=document.pages().stream().filter(p->window.contains(p.number())).toList();
+            List<Page> members=cn.bidcheck.compat.Java8Api.toList(document.pages().stream().filter(p->window.contains(p.number())));
             if(members.stream().noneMatch(this::structured))continue;
             String windowKey=windowKey(document,visual,window);
             activeWindows.add(windowKey);for(int p:window)activeWindows.add(windowKey+":"+p);
             Map<String,Object> prior=windows.get(windowKey);
-            if(prior!=null&&Set.of("SUCCEEDED","NO_FACTS","RECOVERED","REVIEW_REQUIRED").contains(text(prior,"status")))continue;
+            if(prior!=null&&cn.bidcheck.compat.Java8Api.setOf("SUCCEEDED", "NO_FACTS", "RECOVERED", "REVIEW_REQUIRED").contains(text(prior,"status")))continue;
             if(waitForDocumentOcr){
                 Set<Integer> good=completedPages(prior);
                 for(int p:window)good.addAll(completedPages(windows.get(windowKey+":"+p)));
@@ -152,9 +152,9 @@ final class DocumentProcessingSession implements OcrUnitObserver {
                 continue;
             }
             if(members.stream().anyMatch(DocumentProcessingSession::incomplete)) {
-                saveWindow(windowKey,window,"WAITING_OCR",Map.of(),document);continue;
+                saveWindow(windowKey,window,"WAITING_OCR",cn.bidcheck.compat.Java8Api.mapOf(),document);continue;
             }
-            if(visual==null||!visual.enabled()){saveWindow(windowKey,window,"VISUAL_NOT_CONFIGURED",Map.of(),document);continue;}
+            if(visual==null||!visual.enabled()){saveWindow(windowKey,window,"VISUAL_NOT_CONFIGURED",cn.bidcheck.compat.Java8Api.mapOf(),document);continue;}
             Set<Integer> good=completedPages(prior);
             for(int p:window)good.addAll(completedPages(windows.get(windowKey+":"+p)));
             if(good.containsAll(window)){saveRecoveredWindow(windowKey,window,prior,document);continue;}
@@ -163,7 +163,7 @@ final class DocumentProcessingSession implements OcrUnitObserver {
                 for(int p:window)if(!good.contains(p)){
                     String splitKey=windowKey+":"+p;Map<String,Object> saved=windows.get(splitKey);
                     if(saved!=null&&longNumber(map(saved.get("response")).get("retryNotBeforeEpochMillis"))>System.currentTimeMillis())continue;
-                    submitted.put(splitKey,List.of(p));jobs.add(visualJob(splitKey,visual,document,original,List.of(p)));
+                    submitted.put(splitKey,cn.bidcheck.compat.Java8Api.listOf(p));jobs.add(visualJob(splitKey,visual,document,original,cn.bidcheck.compat.Java8Api.listOf(p)));
                 }
             }else{submitted.put(windowKey,window);jobs.add(visualJob(windowKey,visual,document,original,window));}
         }
@@ -182,22 +182,22 @@ final class DocumentProcessingSession implements OcrUnitObserver {
             if(window.size()>1&&VisualVerificationService.splitRetryable(response)) {
                 Set<Integer> good=new HashSet<>();for(Map<String,Object> p:maps(response.get("pageResults")))if("COMPLETED".equals(p.get("status")))good.add(number(p.get("page")));
                 List<VisualWorkCoordinator.Job> split=new ArrayList<>();
-                for(int p:window)if(!good.contains(p)){String id=canonical+":"+p;submitted.put(id,List.of(p));split.add(visualJob(id,visual,document,original,List.of(p)));}
+                for(int p:window)if(!good.contains(p)){String id=canonical+":"+p;submitted.put(id,cn.bidcheck.compat.Java8Api.listOf(p));split.add(visualJob(id,visual,document,original,cn.bidcheck.compat.Java8Api.listOf(p)));}
                 return split;
             }
             if(fullCoverage&&window.size()==1&&VisualVerificationService.singleRetryable(response)&&repairedSingles.add(canonical)){
                 String retry=canonical+"#repair";canonicalJobs.put(retry,canonical);
-                return List.of(visualJob(retry,visual,document,original,window));
+                return cn.bidcheck.compat.Java8Api.listOf(visualJob(retry,visual,document,original,window));
             }
-            return List.of();
+            return cn.bidcheck.compat.Java8Api.listOf();
         });
         // Capacity exhaustion is visible for every unscheduled window, never reported as missing material.
-        for(var pending:submitted.entrySet())if(!windows.containsKey(pending.getKey()))saveWindow(pending.getKey(),pending.getValue(),"BUDGET_EXHAUSTED",Map.of(),document);
-        for(var parent:new ArrayList<>(windows.entrySet())){
+        for(java.util.Map.Entry<java.lang.String, java.util.List<java.lang.Integer>> pending:submitted.entrySet())if(!windows.containsKey(pending.getKey()))saveWindow(pending.getKey(),pending.getValue(),"BUDGET_EXHAUSTED",cn.bidcheck.compat.Java8Api.mapOf(),document);
+        for(java.util.Map.Entry<java.lang.String, java.util.Map<java.lang.String, java.lang.Object>> parent:new ArrayList<>(windows.entrySet())){
             if(!activeWindows.contains(parent.getKey()))continue;
             List<Integer> window=integers(parent.getValue().get("pages"));if(window.size()<2)continue;
             Set<Integer> good=completedPages(parent.getValue());for(int p:window)good.addAll(completedPages(windows.get(parent.getKey()+":"+p)));
-            if(good.containsAll(window)&&!Set.of("SUCCEEDED","NO_FACTS","REVIEW_REQUIRED","RECOVERED").contains(text(parent.getValue(),"status")))
+            if(good.containsAll(window)&&!cn.bidcheck.compat.Java8Api.setOf("SUCCEEDED", "NO_FACTS", "REVIEW_REQUIRED", "RECOVERED").contains(text(parent.getValue(),"status")))
                 saveRecoveredWindow(parent.getKey(),window,parent.getValue(),document);
         }
         completeProcessing();
@@ -212,14 +212,14 @@ final class DocumentProcessingSession implements OcrUnitObserver {
         });
     }
     private void saveRecoveredWindow(String id,List<Integer> window,Map<String,Object> previous,Document doc){
-        saveWindow(id,window,"RECOVERED",previous==null?Map.of():map(previous.get("response")),doc);
+        saveWindow(id,window,"RECOVERED",previous==null?cn.bidcheck.compat.Java8Api.mapOf():map(previous.get("response")),doc);
     }
     /** Deferral is scheduling metadata, never a new fact receipt or an overwrite of partial success. */
     private void deferWindowForOcr(String id,List<Integer> window,Document doc){
         tx.executeWithoutResult(s->{fence.run();store.lock("project",metadata.projectId());
             Map<String,Object> prior=windows.get(id);
             Map<String,Object> row=prior==null?fields("scope",scope,"windowKey",id,"documentId",metadata.id(),"documentVersion",metadata.version(),
-                "pages",window,"reviewRequired",false,"noFactPages",List.of(),"noFactPageCount",0,"relations",VisualPageWindows.relations(doc,window),"response",Map.of(),"factResult",Map.of()):new LinkedHashMap<>(prior);
+                "pages",window,"reviewRequired",false,"noFactPages",cn.bidcheck.compat.Java8Api.listOf(),"noFactPageCount",0,"relations",VisualPageWindows.relations(doc,window),"response",cn.bidcheck.compat.Java8Api.mapOf(),"factResult",cn.bidcheck.compat.Java8Api.mapOf()):new LinkedHashMap<>(prior);
             row.put("status","WAITING_OCR");row.put("deferralReason","DOCUMENT_OCR_INCOMPLETE");row.put("updatedAt",now());
             visualDeferredForOcr=true;windows.put(id,row);
             store.save("processing_window",hash("processing-window:"+id),metadata.projectId(),metadata.id(),row);saveSummary();
@@ -227,7 +227,7 @@ final class DocumentProcessingSession implements OcrUnitObserver {
     }
     private void saveWindow(String id,List<Integer> window,String status,Map<String,Object> response,Document doc) {
         tx.executeWithoutResult(s->{fence.run();store.lock("project",metadata.projectId());
-            List<Page> members=doc.pages().stream().filter(p->window.contains(p.number())).toList();
+            List<Page> members=cn.bidcheck.compat.Java8Api.toList(doc.pages().stream().filter(p->window.contains(p.number())));
             Map<String,Object> previous=windows.get(id);
             boolean independent=independentWindow(doc,window);
             Map<String,Object> receiptResponse=new LinkedHashMap<>(response);receiptResponse.put("independentPages",independent);
@@ -240,18 +240,18 @@ final class DocumentProcessingSession implements OcrUnitObserver {
                 for(int page:window){Map<String,Object> child=windows.get(id+":"+page);if(child!=null)receipts.add(map(child.get("factResult")));}
                 indexed=mergeReceipts(receipts);
             }else{
-                Map<String,Object> retained=previous==null?Map.of():map(previous.get("factResult"));
-                Map<String,Object> fresh=maps(batch.get("facts")).isEmpty()?Map.of():persistContextBatch(doc,members,batch,independent);
-                indexed=retained.isEmpty()?fresh:fresh.isEmpty()?retained:mergeReceipts(List.of(retained,fresh));
+                Map<String,Object> retained=previous==null?cn.bidcheck.compat.Java8Api.mapOf():map(previous.get("factResult"));
+                Map<String,Object> fresh=maps(batch.get("facts")).isEmpty()?cn.bidcheck.compat.Java8Api.mapOf():persistContextBatch(doc,members,batch,independent);
+                indexed=retained.isEmpty()?fresh:fresh.isEmpty()?retained:mergeReceipts(cn.bidcheck.compat.Java8Api.listOf(retained, fresh));
                 // A retry failure cannot erase already validated per-page completion evidence.
                 if(previous!=null){
                     Map<Integer,Map<String,Object>> completed=new LinkedHashMap<>();
                     for(Map<String,Object> page:maps(map(previous.get("response")).get("pageResults")))if("COMPLETED".equals(page.get("status")))completed.put(number(page.get("page")),page);
                     for(Map<String,Object> page:maps(response.get("pageResults")))if(!completed.containsKey(number(page.get("page")))||"COMPLETED".equals(page.get("status")))completed.put(number(page.get("page")),page);
-                    receiptResponse.put("pageResults",List.copyOf(completed.values()));
+                    receiptResponse.put("pageResults",cn.bidcheck.compat.Java8Api.listCopyOf(completed.values()));
                 }
             }
-            List<Fact> accepted=indexed.containsKey("acceptedDomainFacts")?List.of(store.decode(store.encode(indexed.get("acceptedDomainFacts")),Fact[].class)):List.of();
+            List<Fact> accepted=indexed.containsKey("acceptedDomainFacts")?cn.bidcheck.compat.Java8Api.listOf(store.decode(store.encode(indexed.get("acceptedDomainFacts")),Fact[].class)):cn.bidcheck.compat.Java8Api.listOf();
             // A valid envelope is not evidence that every page yielded a usable fact.
             Set<Integer> noFactPages=new TreeSet<>();
             for(Map<String,Object> page:maps(receiptResponse.get("pageResults")))if("COMPLETED".equals(page.get("status"))&&window.contains(number(page.get("page"))))noFactPages.add(number(page.get("page")));
@@ -264,17 +264,17 @@ final class DocumentProcessingSession implements OcrUnitObserver {
             reviewRequired|=number(indexed.get("accepted"))>0&&maps(batch.get("facts")).isEmpty()&&VisualVerificationService.cacheable(response);
             if("RECOVERED".equals(status))for(int page:window){
                 Map<String,Object> child=windows.get(id+":"+page);if(child==null)continue;
-                reviewRequired|=Boolean.TRUE.equals(child.get("reviewRequired"))||Set.of("REVIEW_REQUIRED","NO_FACTS").contains(text(child,"status"));
+                reviewRequired|=Boolean.TRUE.equals(child.get("reviewRequired"))||cn.bidcheck.compat.Java8Api.setOf("REVIEW_REQUIRED", "NO_FACTS").contains(text(child,"status"));
                 noFactPages.removeAll(completedPages(child));noFactPages.addAll(integers(child.get("noFactPages")));
                 if("NO_FACTS".equals(text(child,"status")))noFactPages.addAll(integers(child.get("pages")));
             }
             // All-empty successful windows retain NO_FACTS; mixed windows must not certify all pages.
             reviewRequired|=!noFactPages.isEmpty()&&(number(indexed.get("accepted"))>0||"RECOVERED".equals(status));
             String resolvedStatus=windowStatus(status,response,reviewRequired);
-            List<Fact> before=contextFacts.getOrDefault(id,List.of());contextFacts.put(id,accepted);
+            List<Fact> before=contextFacts.getOrDefault(id,cn.bidcheck.compat.Java8Api.listOf());contextFacts.put(id,accepted);
             for(Checkpoint cp:checks)if(members.stream().anyMatch(p->engine.affected(cp,p,before,accepted)))saveResult(engine.evaluate(cp,current(),allFacts(),false));
             Map<String,Object> row=fields("scope",scope,"windowKey",id,"documentId",metadata.id(),"documentVersion",metadata.version(),
-                "pages",window,"status",resolvedStatus,"independentPages",independent,"reviewRequired",reviewRequired,"coverageLimitedPages",List.copyOf(limitedPages),"coverageLimitations",List.copyOf(coverageLimitations),"noFactPages",List.copyOf(noFactPages),"noFactPageCount",noFactPages.size(),"relations",VisualPageWindows.relations(doc,window),"response",receiptResponse,"factResult",indexed,"updatedAt",now());
+                "pages",window,"status",resolvedStatus,"independentPages",independent,"reviewRequired",reviewRequired,"coverageLimitedPages",cn.bidcheck.compat.Java8Api.listCopyOf(limitedPages),"coverageLimitations",cn.bidcheck.compat.Java8Api.listCopyOf(coverageLimitations),"noFactPages",cn.bidcheck.compat.Java8Api.listCopyOf(noFactPages),"noFactPageCount",noFactPages.size(),"relations",VisualPageWindows.relations(doc,window),"response",receiptResponse,"factResult",indexed,"updatedAt",now());
             windows.put(id,row);store.save("processing_window",hash("processing-window:"+id),metadata.projectId(),metadata.id(),row);saveSummary();
         });
     }
@@ -284,7 +284,7 @@ final class DocumentProcessingSession implements OcrUnitObserver {
         for(String code:strings(response.get("coverageLimitations")))if(code.matches("[A-Z0-9_]{1,80}"))codes.add(code);
         for(Map<String,Object> page:maps(response.get("pageResults"))){
             int number=number(page.get("page"));if(!window.contains(number))continue;
-            List<String> limitations=strings(page.get("coverageLimitations")).stream().filter(code->code.matches("[A-Z0-9_]{1,80}")).toList();
+            List<String> limitations=cn.bidcheck.compat.Java8Api.toList(strings(page.get("coverageLimitations")).stream().filter(code->code.matches("[A-Z0-9_]{1,80}")));
             if(!limitations.isEmpty()){pages.add(number);codes.addAll(limitations);}
         }
         if(!codes.isEmpty()&&pages.isEmpty())pages.addAll(window);
@@ -294,8 +294,8 @@ final class DocumentProcessingSession implements OcrUnitObserver {
     private static String windowStatus(String requested,Map<String,Object> response,boolean reviewRequired){
         if("RECOVERED".equals(requested))return reviewRequired?"REVIEW_REQUIRED":"RECOVERED";
         if(VisualVerificationService.cacheable(response))return reviewRequired?"REVIEW_REQUIRED":maps(map(response.get("factBatch")).get("facts")).isEmpty()?"NO_FACTS":"SUCCEEDED";
-        if(!requested.isBlank())return requested;
-        String code=text(response,"errorCode");return code.isBlank()?"REVIEW_REQUIRED":code;
+        if(!cn.bidcheck.compat.Java8Api.isBlank(requested))return requested;
+        String code=text(response,"errorCode");return cn.bidcheck.compat.Java8Api.isBlank(code)?"REVIEW_REQUIRED":code;
     }
     /** Independent pages share transport only; keep the ledger's contiguous/source-window contract intact. */
     private Map<String,Object> persistContextBatch(Document doc,List<Page> members,Map<String,Object> batch,boolean independent){
@@ -303,26 +303,26 @@ final class DocumentProcessingSession implements OcrUnitObserver {
         List<Map<String,Object>> sources=maps(batch.get("sources")),inputFacts=maps(batch.get("facts")),rejected=new ArrayList<>();
         Set<Map<String,Object>> assigned=new HashSet<>();Set<String> ids=new LinkedHashSet<>();Set<Integer> acceptedPages=new TreeSet<>();List<Object> acceptedDomain=new ArrayList<>();int reused=0;
         for(Page page:members){
-            List<Map<String,Object>> ownSources=sources.stream().filter(source->number(map(source.get("evidence")).get("page"))==page.number()).toList();
+            List<Map<String,Object>> ownSources=cn.bidcheck.compat.Java8Api.toList(sources.stream().filter(source->number(map(source.get("evidence")).get("page"))==page.number()));
             Set<String> ownIds=new HashSet<>();ownSources.forEach(source->ownIds.add(text(source,"id")));
-            List<Map<String,Object>> ownFacts=inputFacts.stream().filter(fact->{Set<String> refs=strings(fact.get("sourceIds"));return !refs.isEmpty()&&ownIds.containsAll(refs);}).toList();assigned.addAll(ownFacts);
+            List<Map<String,Object>> ownFacts=cn.bidcheck.compat.Java8Api.toList(inputFacts.stream().filter(fact->{Set<String> refs=strings(fact.get("sourceIds"));return !refs.isEmpty()&&ownIds.containsAll(refs);}));assigned.addAll(ownFacts);
             // Legal empty observations and failed pages must not clear a previously saved page index.
             if(ownFacts.isEmpty())continue;
-            Map<String,Object> own=new LinkedHashMap<>(batch);own.put("sources",ownSources);own.put("facts",ownFacts);own.put("inputPages",List.of(page.number()));own.put("contextRelations",List.of());
-            Map<String,Object> receipt=ledger.persistContextFacts(doc,List.of(page),identity,own);
+            Map<String,Object> own=new LinkedHashMap<>(batch);own.put("sources",ownSources);own.put("facts",ownFacts);own.put("inputPages",cn.bidcheck.compat.Java8Api.listOf(page.number()));own.put("contextRelations",cn.bidcheck.compat.Java8Api.listOf());
+            Map<String,Object> receipt=ledger.persistContextFacts(doc,cn.bidcheck.compat.Java8Api.listOf(page),identity,own);
             ids.addAll(strings(receipt.get("occurrenceIds")));acceptedPages.addAll(integers(receipt.get("acceptedSourcePages")));rejected.addAll(maps(receipt.get("rejected")));reused+=number(receipt.get("reused"));
-            if(receipt.get("acceptedDomainFacts") instanceof List<?> values)acceptedDomain.addAll(values);
+            if(receipt.get("acceptedDomainFacts") instanceof List<?>)acceptedDomain.addAll(((List<?>) (receipt.get("acceptedDomainFacts"))));
         }
         for(Map<String,Object> fact:inputFacts)if(!assigned.contains(fact))rejected.add(fields("factId",text(fact,"id"),"code","INDEPENDENT_FACT_SOURCE_NOT_SINGLE_PAGE"));
-        return fields("accepted",ids.size(),"reused",reused,"rejected",rejected,"occurrenceIds",List.copyOf(ids),"acceptedDomainFacts",acceptedDomain,"acceptedSourcePages",List.copyOf(acceptedPages),"provisional",true);
+        return fields("accepted",ids.size(),"reused",reused,"rejected",rejected,"occurrenceIds",cn.bidcheck.compat.Java8Api.listCopyOf(ids),"acceptedDomainFacts",acceptedDomain,"acceptedSourcePages",cn.bidcheck.compat.Java8Api.listCopyOf(acceptedPages),"provisional",true);
     }
     private static Map<String,Object> mergeReceipts(List<Map<String,Object>> receipts){
         Set<String> ids=new LinkedHashSet<>();Set<Integer> pages=new TreeSet<>();Set<Object> domainFacts=new LinkedHashSet<>();List<Map<String,Object>> rejected=new ArrayList<>();int reused=0;
         for(Map<String,Object> receipt:receipts){
             ids.addAll(strings(receipt.get("occurrenceIds")));pages.addAll(integers(receipt.get("acceptedSourcePages")));rejected.addAll(maps(receipt.get("rejected")));reused+=number(receipt.get("reused"));
-            if(receipt.get("acceptedDomainFacts") instanceof List<?> values)domainFacts.addAll(values);
+            if(receipt.get("acceptedDomainFacts") instanceof List<?>)domainFacts.addAll(((List<?>) (receipt.get("acceptedDomainFacts"))));
         }
-        return fields("accepted",ids.size(),"reused",reused,"rejected",rejected,"occurrenceIds",List.copyOf(ids),"acceptedDomainFacts",List.copyOf(domainFacts),"acceptedSourcePages",List.copyOf(pages),"provisional",true);
+        return fields("accepted",ids.size(),"reused",reused,"rejected",rejected,"occurrenceIds",cn.bidcheck.compat.Java8Api.listCopyOf(ids),"acceptedDomainFacts",cn.bidcheck.compat.Java8Api.listCopyOf(domainFacts),"acceptedSourcePages",cn.bidcheck.compat.Java8Api.listCopyOf(pages),"provisional",true);
     }
     private boolean structured(Page page){
         if(pdfTextRecoveryRequiresVisual(page))return true;
@@ -331,7 +331,7 @@ final class DocumentProcessingSession implements OcrUnitObserver {
         // Vector handwriting/seals need a visual observation even when a PDF has a good text layer.
         if("SIGNATURE_SEAL".equals(route.pageType())&&metadata.name().toLowerCase(Locale.ROOT).endsWith(".pdf"))return true;
         if("NATIVE_PARSE".equals(route.parserStrategy()))return false;
-        return Set.of("TABLE_PAGE","VEHICLE_LICENSE","DRIVING_LICENSE","PASSPORT","ID_CARD","CERTIFICATE","CONTRACT","SIGNATURE_SEAL").contains(route.pageType());
+        return cn.bidcheck.compat.Java8Api.setOf("TABLE_PAGE", "VEHICLE_LICENSE", "DRIVING_LICENSE", "PASSPORT", "ID_CARD", "CERTIFICATE", "CONTRACT", "SIGNATURE_SEAL").contains(route.pageType());
     }
     private boolean pdfTextRecoveryRequiresVisual(Page page){
         // Plain recovery completes transcription only. Preserve its explicit layout gap in the
@@ -340,14 +340,14 @@ final class DocumentProcessingSession implements OcrUnitObserver {
             &&Objects.toString(page.warning(),"").contains("[LAYOUT_PDF_TEXT_RECOVERY]");
     }
     private List<Fact> pageFacts(Page page,StructuredHtmlTableFacts.Result table){
-        List<Fact> combined=new ArrayList<>(extractor.extract(document(List.of(page))));
+        List<Fact> combined=new ArrayList<>(extractor.extract(document(cn.bidcheck.compat.Java8Api.listOf(page))));
         if(!incomplete(page)&&table.complete()&&!table.facts().isEmpty())combined.addAll(table.facts());
         PersonCredentialFacts.Result person=personPages.get(key(page));
         if(person!=null)combined.addAll(person.facts());
-        return List.copyOf(combined);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(combined);
     }
     private static PageClassifier.Decision tableRoute(Page page,PageClassifier.Decision source,String schema){
-        Set<String> additional=Set.of("VEHICLE_LICENSE","DRIVING_LICENSE","PASSPORT","ID_CARD","CERTIFICATE","CONTRACT","SIGNATURE_SEAL");
+        Set<String> additional=cn.bidcheck.compat.Java8Api.setOf("VEHICLE_LICENSE", "DRIVING_LICENSE", "PASSPORT", "ID_CARD", "CERTIFICATE", "CONTRACT", "SIGNATURE_SEAL");
         if(additional.contains(source.pageType()))return source;
         // The helper covers the table cells only. Explicit material outside the table retains its own visual task.
         String outside=Objects.toString(page.text(),"").replaceFirst("(?is)<table\\b[^<>]*>.*?</table\\s*>","");
@@ -358,7 +358,7 @@ final class DocumentProcessingSession implements OcrUnitObserver {
     }
     /** Completed independent tables need no second model pass, even beside a visual candidate. */
     private String windowKey(Document document,VisualVerificationService visual,List<Integer> window){
-        List<Page> members=document.pages().stream().filter(p->window.contains(p.number())).toList();
+        List<Page> members=cn.bidcheck.compat.Java8Api.toList(document.pages().stream().filter(p->window.contains(p.number())));
         return hash(scope+"|"+(visual==null?"DISABLED":visual.identity())+"|"+window+"|"+store.encode(members)+"|"+store.encode(VisualPageWindows.relations(document,window)));
     }
     private List<List<Integer>> visualWindows(Document document,VisualVerificationService visual,boolean independentBatches){
@@ -367,17 +367,17 @@ final class DocumentProcessingSession implements OcrUnitObserver {
         }
         Set<List<Integer>> result=new LinkedHashSet<>();for(List<Integer> planned:VisualPageWindows.plan(document)){
             List<Integer> group=new ArrayList<>();for(int page:planned){
-                if(parsed.contains(page)){if(!group.isEmpty()){result.add(List.copyOf(group));group.clear();}}
+                if(parsed.contains(page)){if(!group.isEmpty()){result.add(cn.bidcheck.compat.Java8Api.listCopyOf(group));group.clear();}}
                 else group.add(page);
-            }if(!group.isEmpty())result.add(List.copyOf(group));
+            }if(!group.isEmpty())result.add(cn.bidcheck.compat.Java8Api.listCopyOf(group));
         }
-        if(!independentBatches)return List.copyOf(result);
+        if(!independentBatches)return cn.bidcheck.compat.Java8Api.listCopyOf(result);
         Map<Integer,Page> byPage=new HashMap<>();document.pages().forEach(p->byPage.put(p.number(),p));
         List<List<Integer>> batched=new ArrayList<>();Map<String,List<Integer>> buckets=new LinkedHashMap<>();
         for(List<Integer> window:result){
             Page page=byPage.get(window.get(0));PageClassifier.Decision route=routes.get(key(page));
             Map<String,Object> prior=windows.get(windowKey(document,visual,window));
-            boolean retained=prior!=null&&Set.of("SUCCEEDED","NO_FACTS","RECOVERED","REVIEW_REQUIRED").contains(text(prior,"status"));
+            boolean retained=prior!=null&&cn.bidcheck.compat.Java8Api.setOf("SUCCEEDED", "NO_FACTS", "RECOVERED", "REVIEW_REQUIRED").contains(text(prior,"status"));
             // Dense tables keep their full page payload but do not share one response budget.
             // Source-related multi-page windows never enter the independent singleton bucket.
             boolean denseCompactPage=visual!=null&&(visual.compactStructuredOutputEnabled()||visual.sourceSpanOutputEnabled())
@@ -387,52 +387,42 @@ final class DocumentProcessingSession implements OcrUnitObserver {
                 &&!denseCompactPage&&Objects.toString(page.text(),"").length()<=6000;
             if(!eligible){batched.add(window);continue;}
             List<Integer> bucket=buckets.computeIfAbsent(route.pageType(),ignored->new ArrayList<>());bucket.add(page.number());
-            if(bucket.size()==3){batched.add(List.copyOf(bucket));bucket.clear();}
+            if(bucket.size()==3){batched.add(cn.bidcheck.compat.Java8Api.listCopyOf(bucket));bucket.clear();}
         }
-        buckets.values().stream().filter(b->!b.isEmpty()).forEach(b->batched.add(List.copyOf(b)));
-        return List.copyOf(batched);
+        buckets.values().stream().filter(b->!b.isEmpty()).forEach(b->batched.add(cn.bidcheck.compat.Java8Api.listCopyOf(b)));
+        return cn.bidcheck.compat.Java8Api.listCopyOf(batched);
     }
     private static boolean hasHtmlTable(Page page){return java.util.regex.Pattern.compile("(?is)<table\\b").matcher(Objects.toString(page.text(),"")).find();}
     private static List<String> reviewIssues(Page page,StructuredHtmlTableFacts.Result table,Map<String,Object> indexed){
         Set<String> issues=new LinkedHashSet<>();if(hasHtmlTable(page))for(String issue:table.issues()){
             if("HTML_TABLE_NOT_PRESENT".equals(issue))continue;
-            issues.add(switch(issue){
-            case "存在身份信息为空的缴费记录，未关联到任何人员，需人工核对。" -> issue;
-            case "HTML_TABLE_INCOMPLETE" -> "表格结构不完整，需核对原页。";
-            case "HTML_TABLE_UNSUPPORTED_SCHEMA" -> "表头无法完整确认，需人工核对。";
-            case "HTML_TABLE_IDENTITY_SPAN_MISMATCH","HTML_TABLE_DATA_SPAN_UNSUPPORTED","HTML_TABLE_SPAN_INVALID","HTML_TABLE_SPAN_OUTSIDE","HTML_TABLE_SPAN_COLLISION","HTML_TABLE_COLUMN_COUNT" -> "合并单元格或列的归属不明确，需人工核对。";
-            case "HTML_TABLE_SOURCE_INCOMPLETE" -> "表格所在页面尚未识别完成，需补充核对。";
-            case "HTML_TABLE_SOURCE_INVALID" -> "表格来源无法确认，需核对原页。";
-            case "HTML_TABLE_LIMIT","HTML_TABLE_VALUE_LIMIT" -> "表格超出直接解析范围，需进一步核对。";
-            case "HTML_TABLE_PARTIAL_IDENTITY" -> "部分身份字段为空，未补齐人员信息，需人工核对。";
-            default -> "表格存在无法确定的字段，需核对原页。";
-        });}
+            issues.add((java.util.Objects.equals((issue), "存在身份信息为空的缴费记录，未关联到任何人员，需人工核对。") ? issue : (java.util.Objects.equals((issue), "HTML_TABLE_INCOMPLETE") ? "表格结构不完整，需核对原页。" : (java.util.Objects.equals((issue), "HTML_TABLE_UNSUPPORTED_SCHEMA") ? "表头无法完整确认，需人工核对。" : (java.util.Objects.equals((issue), "HTML_TABLE_IDENTITY_SPAN_MISMATCH") || java.util.Objects.equals((issue), "HTML_TABLE_DATA_SPAN_UNSUPPORTED") || java.util.Objects.equals((issue), "HTML_TABLE_SPAN_INVALID") || java.util.Objects.equals((issue), "HTML_TABLE_SPAN_OUTSIDE") || java.util.Objects.equals((issue), "HTML_TABLE_SPAN_COLLISION") || java.util.Objects.equals((issue), "HTML_TABLE_COLUMN_COUNT") ? "合并单元格或列的归属不明确，需人工核对。" : (java.util.Objects.equals((issue), "HTML_TABLE_SOURCE_INCOMPLETE") ? "表格所在页面尚未识别完成，需补充核对。" : (java.util.Objects.equals((issue), "HTML_TABLE_SOURCE_INVALID") ? "表格来源无法确认，需核对原页。" : (java.util.Objects.equals((issue), "HTML_TABLE_LIMIT") || java.util.Objects.equals((issue), "HTML_TABLE_VALUE_LIMIT") ? "表格超出直接解析范围，需进一步核对。" : (java.util.Objects.equals((issue), "HTML_TABLE_PARTIAL_IDENTITY") ? "部分身份字段为空，未补齐人员信息，需人工核对。" : "表格存在无法确定的字段，需核对原页。")))))))));}
         if(!maps(indexed.get("rejected")).isEmpty())issues.add("部分字段未通过来源核验，需核对原页。");
-        return List.copyOf(issues);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(issues);
     }
     private VisualWorkCoordinator.Job visualJob(String id,VisualVerificationService visual,Document doc,Path original,List<Integer> window){
         boolean signing=window.size()==1&&doc.pages().stream().filter(p->p.number()==window.get(0)).map(p->routes.get(key(p)))
             .anyMatch(r->r!=null&&"SIGNATURE_SEAL".equals(r.pageType()));
         boolean independent=independentWindow(doc,window);
-        return new VisualWorkCoordinator.Job(id,permit->signing?visual.verifyWindow(doc,original,window,Map.of("task","LAYOUT"),permit,scope):independent?visual.extractIndependentPages(doc,original,window,permit,scope):visual.extractContext(doc,original,window,permit,scope));
+        return new VisualWorkCoordinator.Job(id,permit->signing?visual.verifyWindow(doc,original,window,cn.bidcheck.compat.Java8Api.mapOf("task", "LAYOUT"),permit,scope):independent?visual.extractIndependentPages(doc,original,window,permit,scope):visual.extractContext(doc,original,window,permit,scope));
     }
     private static boolean independentWindow(Document doc,List<Integer> window){return window.size()>1&&VisualPageWindows.relations(doc,window).isEmpty();}
     static boolean incomplete(Page page){return Objects.toString(page.warning(),"").contains("[OCR未完成]")||Objects.toString(page.warning(),"").contains("[OCR_DEFERRED]");}
     private void saveResult(Map<String,Object> value){
         value.put("scope",scope);value.put("checkScope",checkScope);value.put("documentId",metadata.id());value.put("documentVersion",metadata.version());
         results.put(text(value,"checkpointId"),value);store.save("incremental_check",hash("incremental:"+checkScope+":"+text(value,"checkpointId")),metadata.projectId(),metadata.id(),value);
-        if(firstResultAt==0&&Set.of("EVIDENCE_FOUND","REVIEW_REQUIRED").contains(text(value,"state")))firstResultAt=System.currentTimeMillis();
+        if(firstResultAt==0&&cn.bidcheck.compat.Java8Api.setOf("EVIDENCE_FOUND", "REVIEW_REQUIRED").contains(text(value,"state")))firstResultAt=System.currentTimeMillis();
     }
     private void saveSummary(){
         Map<String,Long> types=new TreeMap<>(),states=new TreeMap<>();routes.values().forEach(r->types.merge(r.pageType(),1L,Long::sum));results.values().forEach(r->states.merge(text(r,"state"),1L,Long::sum));
         long unfinished=pages.values().stream().filter(DocumentProcessingSession::incomplete).count();
-        List<Map<String,Object>> currentWindows=windows.entrySet().stream().filter(e->activeWindows==null||activeWindows.contains(e.getKey())).map(Map.Entry::getValue).toList();
-        long pending=currentWindows.stream().filter(w->!Set.of("SUCCEEDED","NO_FACTS","RECOVERED","REVIEW_REQUIRED").contains(text(w,"status"))).count();
+        List<Map<String,Object>> currentWindows=cn.bidcheck.compat.Java8Api.toList(windows.entrySet().stream().filter(e->activeWindows==null||activeWindows.contains(e.getKey())).map(Map.Entry::getValue));
+        long pending=currentWindows.stream().filter(w->!cn.bidcheck.compat.Java8Api.setOf("SUCCEEDED", "NO_FACTS", "RECOVERED", "REVIEW_REQUIRED").contains(text(w,"status"))).count();
         long review=currentWindows.stream().filter(w->Boolean.TRUE.equals(w.get("reviewRequired"))||"REVIEW_REQUIRED".equals(text(w,"status"))).count();
         long noFacts=currentWindows.stream().filter(w->"NO_FACTS".equals(text(w,"status"))||!integers(w.get("noFactPages")).isEmpty()).count();
-        List<Integer> noFactPages=currentWindows.stream().flatMap(w->integers(w.get("noFactPages")).stream()).distinct().sorted().toList();
-        List<Integer> limitedPages=currentWindows.stream().flatMap(w->integers(w.get("coverageLimitedPages")).stream()).distinct().sorted().toList();
-        List<String> coverageLimitations=currentWindows.stream().flatMap(w->strings(w.get("coverageLimitations")).stream()).distinct().sorted().toList();
+        List<Integer> noFactPages=cn.bidcheck.compat.Java8Api.toList(currentWindows.stream().flatMap(w->integers(w.get("noFactPages")).stream()).distinct().sorted());
+        List<Integer> limitedPages=cn.bidcheck.compat.Java8Api.toList(currentWindows.stream().flatMap(w->integers(w.get("coverageLimitedPages")).stream()).distinct().sorted());
+        List<String> coverageLimitations=cn.bidcheck.compat.Java8Api.toList(currentWindows.stream().flatMap(w->strings(w.get("coverageLimitations")).stream()).distinct().sorted());
         long pageReview=pageIssues.values().stream().filter(issues->!issues.isEmpty()).count();
         Map<String,Object> personCoverage=map(personComparison.get("coverage"));
         List<Map<String,Object>> personGroups=maps(personComparison.get("groups"));
@@ -442,22 +432,22 @@ final class DocumentProcessingSession implements OcrUnitObserver {
             "processingMode",automaticVisualRequested?"STRUCTURED_VISUAL":"TEXT_ONLY","visualAnalysisStatus",automaticVisualRequested?"REQUESTED":"NOT_REQUESTED","automaticVisualRequested",automaticVisualRequested,
             "status",complete?(unfinished>0||pending>0?"PARTIAL_FAILED":review>0||noFacts>0||pageReview>0||personReview?"REVIEW_REQUIRED":"COMPLETED"):"PROCESSING","parsingComplete",complete,"processedPages",pages.size(),"incompletePages",unfinished,
             "pageTypes",types,"factCount",occurrenceIds.size(),"checkCount",checks.size(),"checkStates",states,"visualCalls",calls,"contextWindows",currentWindows.size(),"contextPending",pending,"contextReviewRequired",review,
-            "pageReviewRequired",pageReview,"pageReviewIssues",pages.values().stream().filter(p->!pageIssues.getOrDefault(key(p),List.of()).isEmpty()).sorted(Comparator.comparingInt(Page::number)).limit(5)
-                .map(p->fields("page",p.number(),"issues",pageIssues.get(key(p)).stream().limit(3).toList())).toList(),
-            "contextCompleted",currentWindows.stream().filter(w->Set.of("SUCCEEDED","RECOVERED").contains(text(w,"status"))).count(),"contextNoFacts",noFacts,"contextNoFactPageCount",noFactPages.size(),"contextNoFactPages",noFactPages,
+            "pageReviewRequired",pageReview,"pageReviewIssues",cn.bidcheck.compat.Java8Api.toList(pages.values().stream().filter(p->!pageIssues.getOrDefault(key(p),cn.bidcheck.compat.Java8Api.listOf()).isEmpty()).sorted(Comparator.comparingInt(Page::number)).limit(5)
+                .map(p->fields("page",p.number(),"issues",cn.bidcheck.compat.Java8Api.toList(pageIssues.get(key(p)).stream().limit(3))))),
+            "contextCompleted",currentWindows.stream().filter(w->cn.bidcheck.compat.Java8Api.setOf("SUCCEEDED", "RECOVERED").contains(text(w,"status"))).count(),"contextNoFacts",noFacts,"contextNoFactPageCount",noFactPages.size(),"contextNoFactPages",noFactPages,
             "contextLimitedPages",limitedPages,"contextLimitedPageCount",limitedPages.size(),"contextCoverageLimitations",coverageLimitations,
             "visualDeferredForOcr",visualDeferredForOcr,"visualDeferralReason",visualDeferredForOcr?"DOCUMENT_OCR_INCOMPLETE":"",
             "visualBudget",fields("fullPlan",fullVisualPlan,"plannedJobs",visualPlannedJobs,"requiredCalls",visualRequiredCalls,"callLimit",visualCallLimit,"hardLimit",visualHardLimit,"limited",fullVisualPlan&&visualRequiredCalls>visualCallLimit),
             "personCredentialCoverage",personCoverage,"personCredentialGroupCount",personGroups.size(),
-            "personCredentialGroups",personGroups.stream().limit(5).map(g->fields("id",g.get("id"),"status",g.get("status"),"fieldLabel",g.get("fieldLabel"),"reason",g.get("reason"),"sourcePages",integers(g.get("sourcePages")).stream().limit(20).toList())).toList(),
+            "personCredentialGroups",cn.bidcheck.compat.Java8Api.toList(personGroups.stream().limit(5).map(g->fields("id",g.get("id"),"status",g.get("status"),"fieldLabel",g.get("fieldLabel"),"reason",g.get("reason"),"sourcePages",cn.bidcheck.compat.Java8Api.toList(integers(g.get("sourcePages")).stream().limit(20))))),
             "startedAtEpochMillis",started,"firstResultAtEpochMillis",firstResultAt,"firstResultMillis",firstResultAt==0?0:Math.max(0,firstResultAt-started),"updatedAt",now(),
-            "preview",results.values().stream().sorted(Comparator.comparingInt(r->"REVIEW_REQUIRED".equals(r.get("state"))?0:1)).limit(5)
-                .map(r->fields("checkpointId",r.get("checkpointId"),"title",r.get("title"),"severity",r.get("severity"),"state",r.get("state"),"reason",r.get("reason"),"sourcePages",integers(r.get("sourcePages")).stream().limit(20).toList())).toList(),
+            "preview",cn.bidcheck.compat.Java8Api.toList(results.values().stream().sorted(Comparator.comparingInt(r->"REVIEW_REQUIRED".equals(r.get("state"))?0:1)).limit(5)
+                .map(r->fields("checkpointId",r.get("checkpointId"),"title",r.get("title"),"severity",r.get("severity"),"state",r.get("state"),"reason",r.get("reason"),"sourcePages",cn.bidcheck.compat.Java8Api.toList(integers(r.get("sourcePages")).stream().limit(20))))),
             "boundary","解析中的增量预检；未读范围不判缺失或全文通过，完整业务结论以正式检查为准。");
         store.save("processing_summary",summaryId(metadata.id()),metadata.projectId(),metadata.id(),summary);
         store.save("processing_task_summary","processing-task:"+taskId,metadata.projectId(),taskId,summary);
     }
-    Document current(){return document(pages.values().stream().sorted(Comparator.comparingInt(Page::number)).toList());}
+    Document current(){return document(cn.bidcheck.compat.Java8Api.toList(pages.values().stream().sorted(Comparator.comparingInt(Page::number))));}
     /** Reuses validated page parses; no database-wide scan on each incremental callback. */
     private void refreshPersonComparison(){
         personComparison=new PersonCredentialConsistency().scan(current(),new ArrayList<>(personPages.values()));
@@ -465,32 +455,32 @@ final class DocumentProcessingSession implements OcrUnitObserver {
     }
     private PersonCredentialFacts.Result personLedgerCoverage(PersonCredentialFacts.Result result,Map<String,Object> indexed){
         if(result==null||!result.candidate())return result;
-        List<Fact> accepted=indexed.containsKey("acceptedDomainFacts")?List.of(store.decode(store.encode(indexed.get("acceptedDomainFacts")),Fact[].class)):List.of();
+        List<Fact> accepted=indexed.containsKey("acceptedDomainFacts")?cn.bidcheck.compat.Java8Api.listOf(store.decode(store.encode(indexed.get("acceptedDomainFacts")),Fact[].class)):cn.bidcheck.compat.Java8Api.listOf();
         Set<String> keys=new HashSet<>();for(Fact fact:accepted)if("PERSON_CREDENTIAL".equals(fact.entityType()))keys.add(personFactKey(fact.entityKey(),fact.field(),fact.rawValue(),fact.normalizedValue(),fact.evidence()));
-        List<PersonCredentialFacts.Occurrence> occurrences=result.occurrences().stream().filter(o->keys.contains(personFactKey(o.recordKey(),o.field(),o.rawValue(),o.value(),o.evidence()))).toList();
-        List<Fact> facts=result.facts().stream().filter(f->keys.contains(personFactKey(f.entityKey(),f.field(),f.rawValue(),f.normalizedValue(),f.evidence()))).toList();
+        List<PersonCredentialFacts.Occurrence> occurrences=cn.bidcheck.compat.Java8Api.toList(result.occurrences().stream().filter(o->keys.contains(personFactKey(o.recordKey(),o.field(),o.rawValue(),o.value(),o.evidence()))));
+        List<Fact> facts=cn.bidcheck.compat.Java8Api.toList(result.facts().stream().filter(f->keys.contains(personFactKey(f.entityKey(),f.field(),f.rawValue(),f.normalizedValue(),f.evidence()))));
         boolean rejected=occurrences.size()!=result.occurrences().size()||facts.size()!=result.facts().size()||!maps(indexed.get("rejected")).isEmpty();
         List<Map<String,Object>> issues=new ArrayList<>(result.issues());if(rejected)issues.add(fields("code","PAGE_FACT_SOURCE_REJECTED","page",result.page(),"reason","本页部分字段未通过事实库来源核验，未参与人员证件比较，需核对原页。"));
         return new PersonCredentialFacts.Result(result.page(),result.locationType(),true,result.complete()&&!rejected,occurrences,issues,facts);
     }
     private void retainAcceptedPersonFacts(String key){
         PersonCredentialFacts.Result accepted=personPages.get(key);if(accepted==null)return;
-        List<Fact> safe=new ArrayList<>(facts.getOrDefault(key,List.of()).stream().filter(f->!"PERSON_CREDENTIAL".equals(f.entityType())).toList());safe.addAll(accepted.facts());facts.put(key,List.copyOf(safe));
+        List<Fact> safe=new ArrayList<>(cn.bidcheck.compat.Java8Api.toList(facts.getOrDefault(key,cn.bidcheck.compat.Java8Api.listOf()).stream().filter(f->!"PERSON_CREDENTIAL".equals(f.entityType()))));safe.addAll(accepted.facts());facts.put(key,cn.bidcheck.compat.Java8Api.listCopyOf(safe));
     }
     private static String personFactKey(String record,String field,String raw,String value,Evidence evidence){
         return record+"\u0000"+field+"\u0000"+raw+"\u0000"+value+"\u0000"+evidence.documentId()+"\u0000"+evidence.documentName()+"\u0000"+evidence.locationType()+":"+evidence.page()+"\u0000"+evidence.anchor()+"\u0000"+evidence.quote();
     }
     private Document document(List<Page> list){return new Document(metadata.id(),metadata.projectId(),metadata.role(),metadata.name(),metadata.version(),metadata.sha256(),metadata.createdAt(),list,
-        complete?List.of():List.of("[OCR未完成] 文件仍在处理，未读取范围不能判定缺失或全部通过。"));}
-    private List<Fact> allFacts(){return IncrementalCheckEngine.distinctEvidence(java.util.stream.Stream.concat(contextFacts.values().stream(),facts.values().stream()).flatMap(Collection::stream).toList());}
+        complete?cn.bidcheck.compat.Java8Api.listOf():cn.bidcheck.compat.Java8Api.listOf("[OCR未完成] 文件仍在处理，未读取范围不能判定缺失或全部通过。"));}
+    private List<Fact> allFacts(){return IncrementalCheckEngine.distinctEvidence(cn.bidcheck.compat.Java8Api.toList(java.util.stream.Stream.concat(contextFacts.values().stream(),facts.values().stream()).flatMap(Collection::stream)));}
     private static Set<Integer> completedPages(Map<String,Object> row){Set<Integer> result=new HashSet<>();if(row!=null)for(Map<String,Object> p:maps(map(row.get("response")).get("pageResults")))if("COMPLETED".equals(p.get("status")))result.add(number(p.get("page")));return result;}
-    private static List<Integer> integers(Object o){return o instanceof List<?> l?l.stream().filter(v->v instanceof Number).map(DocumentProcessingSession::number).toList():List.of();}
-    private static Set<String> strings(Object o){return o instanceof List<?> l?new LinkedHashSet<>(l.stream().filter(v->v instanceof String).map(Object::toString).toList()):Set.of();}
+    private static List<Integer> integers(Object o){return o instanceof List<?>?cn.bidcheck.compat.Java8Api.toList(((List<?>) (o)).stream().filter(v->v instanceof Number).map(DocumentProcessingSession::number)):cn.bidcheck.compat.Java8Api.listOf();}
+    private static Set<String> strings(Object o){return o instanceof List<?>?new LinkedHashSet<>(cn.bidcheck.compat.Java8Api.toList(((List<?>) (o)).stream().filter(v->v instanceof String).map(Object::toString))):cn.bidcheck.compat.Java8Api.setOf();}
     static String summaryId(String doc){return "processing:"+doc;}
     static String key(Page p){return p.locationType()+":"+p.number();}
     private static String pageId(String scope,Page p){return hash("processing-page:"+scope+":"+key(p));}
-    private static int number(Object o){return o instanceof Number n?n.intValue():0;}
-    private static long longNumber(Object o){return o instanceof Number n?n.longValue():0;}
-    @SuppressWarnings("unchecked") private static Map<String,Object> map(Object o){return o instanceof Map<?,?> m?(Map<String,Object>)m:Map.of();}
-    private static List<Map<String,Object>> maps(Object o){return o instanceof List<?> l?l.stream().filter(v->v instanceof Map).map(DocumentProcessingSession::map).toList():List.of();}
+    private static int number(Object o){return o instanceof Number?((Number) (o)).intValue():0;}
+    private static long longNumber(Object o){return o instanceof Number?((Number) (o)).longValue():0;}
+    @SuppressWarnings("unchecked") private static Map<String,Object> map(Object o){return o instanceof Map<?,?>?(Map<String,Object>)((Map<?,?>) (o)):cn.bidcheck.compat.Java8Api.mapOf();}
+    private static List<Map<String,Object>> maps(Object o){return o instanceof List<?>?cn.bidcheck.compat.Java8Api.toList(((List<?>) (o)).stream().filter(v->v instanceof Map).map(DocumentProcessingSession::map)):cn.bidcheck.compat.Java8Api.listOf();}
 }

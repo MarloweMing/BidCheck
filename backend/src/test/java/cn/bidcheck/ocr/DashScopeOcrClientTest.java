@@ -1,4 +1,5 @@
 package cn.bidcheck.ocr;
+import cn.bidcheck.compat.HexFormat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -33,7 +34,7 @@ class DashScopeOcrClientTest {
     private volatile int status = 200;
     private volatile boolean partial, slowBody;
     private volatile long delay;
-    private volatile Map<String, Long> modelDelays = Map.of();
+    private volatile Map<String, Long> modelDelays = cn.bidcheck.compat.Java8Api.mapOf();
     private volatile CountDownLatch entered, release;
 
     @BeforeEach void setup() throws Exception {
@@ -67,8 +68,8 @@ class DashScopeOcrClientTest {
     private DashScopeOcrClient client(String model, Duration timeout) { return new DashScopeOcrClient(true, url, "mock-secret", model, data.resolve("cache"), timeout, true); }
     private String envelope(String text, String finish) throws IOException {
         Map<String, Object> choice = new LinkedHashMap<>();choice.put("finish_reason", finish);
-        choice.put("message", Map.of("role", "assistant", "content", List.of(Map.of("text", text))));
-        return json.writeValueAsString(Map.of("request_id", "mock-request", "output", Map.of("choices", List.of(choice))));
+        choice.put("message", cn.bidcheck.compat.Java8Api.mapOf("role", "assistant", "content", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("text", text))));
+        return json.writeValueAsString(cn.bidcheck.compat.Java8Api.mapOf("request_id", "mock-request", "output", cn.bidcheck.compat.Java8Api.mapOf("choices", cn.bidcheck.compat.Java8Api.listOf(choice))));
     }
     private byte[] image(int color) throws IOException {
         BufferedImage bitmap = new BufferedImage(24, 24, BufferedImage.TYPE_INT_RGB);
@@ -77,7 +78,7 @@ class DashScopeOcrClientTest {
     }
     private long cachedFiles() throws IOException {
         if (!Files.exists(data.resolve("cache"))) return 0;
-        try (var files = Files.list(data.resolve("cache"))) { return files.filter(p -> p.toString().endsWith(".json")).count(); }
+        try (java.util.stream.Stream<java.nio.file.Path> files = Files.list(data.resolve("cache"))) { return files.filter(p -> p.toString().endsWith(".json")).count(); }
     }
 
     @Test void nativeProtocolAndPersistentCachePreserveTextWithoutStoringSecrets() throws Exception {
@@ -92,8 +93,8 @@ class DashScopeOcrClientTest {
         assertEquals("text_recognition", request.get().path("parameters").path("ocr_options").path("task").asText());
         OcrResult cached = client().recognize(image, "image/png");
         assertTrue(cached.cached());assertEquals(first.text(), cached.text());assertEquals(1, calls.get());assertEquals(1, cachedFiles());
-        try (var files = Files.list(data.resolve("cache"))) {
-            String stored = Files.readString(files.findFirst().orElseThrow());assertFalse(stored.contains("mock-secret"));assertFalse(stored.contains("base64"));
+        try (java.util.stream.Stream<java.nio.file.Path> files = Files.list(data.resolve("cache"))) {
+            String stored = cn.bidcheck.compat.Java8Api.readString(files.findFirst().orElseThrow(java.util.NoSuchElementException::new));assertFalse(stored.contains("mock-secret"));assertFalse(stored.contains("base64"));
         }
     }
 
@@ -113,8 +114,7 @@ class DashScopeOcrClientTest {
         String oldCacheKey = sha256((oldIdentity + "\nimage/png\n" + imageHash).getBytes(StandardCharsets.UTF_8));
         Files.createDirectories(data.resolve("cache"));
         Path oldCache = data.resolve("cache").resolve(oldCacheKey + ".json");
-        byte[] oldBytes = json.writeValueAsBytes(Map.of("identity", oldIdentity, "imageHash", imageHash,
-            "provider", "DASHSCOPE", "model", model, "text", oldText, "textHash", sha256(oldText.getBytes(StandardCharsets.UTF_8))));
+        byte[] oldBytes = json.writeValueAsBytes(cn.bidcheck.compat.Java8Api.mapOf("identity", oldIdentity, "imageHash", imageHash, "provider", "DASHSCOPE", "model", model, "text", oldText, "textHash", sha256(oldText.getBytes(StandardCharsets.UTF_8))));
         Files.write(oldCache, oldBytes);
         DashScopeOcrClient client = client();assertNotEquals(oldIdentity, client.identity());
         OcrResult fresh = client.recognize(image, "image/png");
@@ -146,26 +146,11 @@ class DashScopeOcrClientTest {
     }
 
     // Synthetic coordinates preserve the observed provider structure without copying document content.
-    private static final String COORDINATES_ONLY = """
-        ```json
-        [{"pos_list":[{"rotate_rect":[120,240,18,320,90]}]},
-         {"pos_list":[{"rotate_rect":[160,280,22,360,90]}]}]
-        ```
-        """.strip();
+    private static final String COORDINATES_ONLY = cn.bidcheck.compat.Java8Api.strip("```json\n[{\"pos_list\":[{\"rotate_rect\":[120,240,18,320,90]}]},\n {\"pos_list\":[{\"rotate_rect\":[160,280,22,360,90]}]}]\n```\n");
 
     @Test void coordinateMetadataAndEmptyStructuresAreRejectedWithoutCaching() throws Exception {
-        var client = client();
-        List<String> invalid = List.of(COORDINATES_ONLY,
-            "[{\"pos_list\":[{\"rotate_rect\":[12,24,18,32,90]}],\"text\":\"\"}]",
-            "{\"data\":{\"boxes\":[[1,2,3,4]],\"confidence\":0.98},\"text\":null}",
-            "{\"pos_list\":[1,2],\"confidence\":\"0.98\"}",
-            "{\"pos_list\":[1,2],\"page\":\"1\"}",
-            "{\"pos_list\":[\"1\",\"-2.5\",\"3e2\"],\"confidence\":\"high\"}",
-            "{\"pos_list\":[1,2],\"text\":false}",
-            "{\"pos_list\":[1,2],\"text\":true}",
-            "{\"pos_list\":[1,2],\"texts\":[false,null,{}]}",
-            "{\"pos_list\":[1,2],\"text\":{\"bbox\":[1,2,3,4]}}",
-            "[]", "{}", "{\"text\":\"\",\"results\":[{},null]}", "```json\n{\"text\":[]}\n```");
+        cn.bidcheck.ocr.DashScopeOcrClient client = client();
+        List<String> invalid = cn.bidcheck.compat.Java8Api.listOf(COORDINATES_ONLY, "[{\"pos_list\":[{\"rotate_rect\":[12,24,18,32,90]}],\"text\":\"\"}]", "{\"data\":{\"boxes\":[[1,2,3,4]],\"confidence\":0.98},\"text\":null}", "{\"pos_list\":[1,2],\"confidence\":\"0.98\"}", "{\"pos_list\":[1,2],\"page\":\"1\"}", "{\"pos_list\":[\"1\",\"-2.5\",\"3e2\"],\"confidence\":\"high\"}", "{\"pos_list\":[1,2],\"text\":false}", "{\"pos_list\":[1,2],\"text\":true}", "{\"pos_list\":[1,2],\"texts\":[false,null,{}]}", "{\"pos_list\":[1,2],\"text\":{\"bbox\":[1,2,3,4]}}", "[]", "{}", "{\"text\":\"\",\"results\":[{},null]}", "```json\n{\"text\":[]}\n```");
         for (String value : invalid) {
             reply = envelope(value, "stop");
             IOException failure = assertThrows(IOException.class, () -> client.recognize(image, "image/png"));
@@ -175,13 +160,7 @@ class DashScopeOcrClientTest {
     }
 
     @Test void transcriptionValidationPreservesProseNumbersAndSourceJsonVerbatim() throws Exception {
-        List<String> valid = List.of("283", "字段 pos_list 和 rotate_rect 为接口说明中的原文。",
-            "{\"text\":\"合成转录正文\",\"pos_list\":[{\"rotate_rect\":[1,2,3,4,90]}]}",
-            "{\"pos_list\":[1,2],\"text\":\"283\"}", "{\"pos_list\":[1,2],\"text\":283}",
-            "{\"pos_list\":[1,2],\"text\":\"false\"}",
-            "{\"pos_list\":[1,2],\"texts\":[\"真实转录\",false],\"confidence\":\"0.98\"}",
-            "```json\n{\"项目名称\":\"合成项目\",\"金额\":120}\n```",
-            "{\"amount\":120,\"active\":true}", "{\"pos_list\":\"原件中的普通字段值\"}");
+        List<String> valid = cn.bidcheck.compat.Java8Api.listOf("283", "字段 pos_list 和 rotate_rect 为接口说明中的原文。", "{\"text\":\"合成转录正文\",\"pos_list\":[{\"rotate_rect\":[1,2,3,4,90]}]}", "{\"pos_list\":[1,2],\"text\":\"283\"}", "{\"pos_list\":[1,2],\"text\":283}", "{\"pos_list\":[1,2],\"text\":\"false\"}", "{\"pos_list\":[1,2],\"texts\":[\"真实转录\",false],\"confidence\":\"0.98\"}", "```json\n{\"项目名称\":\"合成项目\",\"金额\":120}\n```", "{\"amount\":120,\"active\":true}", "{\"pos_list\":\"原件中的普通字段值\"}");
         for (int i = 0; i < valid.size(); i++) {
             reply = envelope(valid.get(i), "stop");byte[] picture = image(0x334450 + i);
             assertEquals(valid.get(i), client().recognize(picture, "image/png").text());
@@ -192,9 +171,9 @@ class DashScopeOcrClientTest {
 
     @Test void oldCoordinateCacheWithValidHashIsRejectedAndReplaced() throws Exception {
         client().recognize(image, "image/png");
-        try (var files = Files.list(data.resolve("cache"))) {
-            Path path = files.findFirst().orElseThrow();
-            var value = (com.fasterxml.jackson.databind.node.ObjectNode) json.readTree(Files.readAllBytes(path));
+        try (java.util.stream.Stream<java.nio.file.Path> files = Files.list(data.resolve("cache"))) {
+            Path path = files.findFirst().orElseThrow(java.util.NoSuchElementException::new);
+            com.fasterxml.jackson.databind.node.ObjectNode value = (com.fasterxml.jackson.databind.node.ObjectNode) json.readTree(Files.readAllBytes(path));
             value.put("text", COORDINATES_ONLY);
             value.put("textHash", HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(COORDINATES_ONLY.getBytes(StandardCharsets.UTF_8))));
             Files.write(path, json.writeValueAsBytes(value));
@@ -208,11 +187,10 @@ class DashScopeOcrClientTest {
     @Test void cachedMetadataStringsAndBooleanFlagsAreRevalidatedBeforeReuse() throws Exception {
         client().recognize(image, "image/png");
         Path cache;
-        try (var files = Files.list(data.resolve("cache"))) { cache = files.findFirst().orElseThrow(); }
+        try (java.util.stream.Stream<java.nio.file.Path> files = Files.list(data.resolve("cache"))) { cache = files.findFirst().orElseThrow(java.util.NoSuchElementException::new); }
         int expectedCalls = 1;
-        for (String invalid : List.of("{\"pos_list\":[1,2],\"confidence\":\"0.98\"}",
-                "{\"pos_list\":[1,2],\"page\":\"1\"}", "{\"pos_list\":[1,2],\"text\":false}")) {
-            var value = (com.fasterxml.jackson.databind.node.ObjectNode) json.readTree(Files.readAllBytes(cache));
+        for (String invalid : cn.bidcheck.compat.Java8Api.listOf("{\"pos_list\":[1,2],\"confidence\":\"0.98\"}", "{\"pos_list\":[1,2],\"page\":\"1\"}", "{\"pos_list\":[1,2],\"text\":false}")) {
+            com.fasterxml.jackson.databind.node.ObjectNode value = (com.fasterxml.jackson.databind.node.ObjectNode) json.readTree(Files.readAllBytes(cache));
             value.put("text", invalid);value.put("textHash", sha256(invalid.getBytes(StandardCharsets.UTF_8)));
             Files.write(cache, json.writeValueAsBytes(value));
             reply = envelope("重新获取的合成正文", "stop");
@@ -225,9 +203,7 @@ class DashScopeOcrClientTest {
 
     @Test void malformedOrOversizedResponseFailsClosedAndDoesNotLeakProviderText() throws Exception {
         DashScopeOcrClient client = client();
-        List<String> invalid = List.of("secret-in-invalid-response", "{} {}", "{\"output\":{},\"output\":{}}",
-            "{\"output\":{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"wrong protocol\"}}]}}",
-            envelope("x".repeat(50001), "stop"), "x".repeat(256 * 1024 + 1));
+        List<String> invalid = cn.bidcheck.compat.Java8Api.listOf("secret-in-invalid-response", "{} {}", "{\"output\":{},\"output\":{}}", "{\"output\":{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"wrong protocol\"}}]}}", envelope(cn.bidcheck.compat.Java8Api.repeat("x", 50001), "stop"), cn.bidcheck.compat.Java8Api.repeat("x", 256 * 1024 + 1));
         for (String value : invalid) {
             reply = value;IOException failure = assertThrows(IOException.class, () -> client.recognize(image, "image/png"));
             assertFalse(failure.getMessage().contains("secret"));assertNull(failure.getCause());
@@ -257,8 +233,8 @@ class DashScopeOcrClientTest {
 
     @Test void corruptCachedTextIsReplacedByNewSuccessfulRecognition() throws Exception {
         client().recognize(image, "image/png");
-        try (var files = Files.list(data.resolve("cache"))) {
-            Path path = files.findFirst().orElseThrow();var value = (com.fasterxml.jackson.databind.node.ObjectNode)json.readTree(Files.readAllBytes(path));
+        try (java.util.stream.Stream<java.nio.file.Path> files = Files.list(data.resolve("cache"))) {
+            Path path = files.findFirst().orElseThrow(java.util.NoSuchElementException::new);com.fasterxml.jackson.databind.node.ObjectNode value = (com.fasterxml.jackson.databind.node.ObjectNode)json.readTree(Files.readAllBytes(path));
             value.put("text", "被损坏的缓存");Files.write(path, json.writeValueAsBytes(value));
         }
         OcrResult result = client().recognize(image, "image/png");assertFalse(result.cached());assertFalse(result.text().contains("损坏"));assertEquals(2, calls.get());
@@ -316,10 +292,10 @@ class DashScopeOcrClientTest {
         entered = new CountDownLatch(2);release = new CountDownLatch(1);
         ExecutorService callers = Executors.newFixedThreadPool(3);
         try {
-            var first=callers.submit(() -> client("queue-shared",Duration.ofSeconds(5)).recognize(image,"image/png"));
-            var second=callers.submit(() -> client("queue-shared",Duration.ofSeconds(5)).recognize(image(0x123456),"image/png"));
+            java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> first=callers.submit(() -> client("queue-shared",Duration.ofSeconds(5)).recognize(image,"image/png"));
+            java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> second=callers.submit(() -> client("queue-shared",Duration.ofSeconds(5)).recognize(image(0x123456),"image/png"));
             assertTrue(entered.await(3,TimeUnit.SECONDS));
-            var third=callers.submit(() -> client("queue-shared",Duration.ofSeconds(5)).recognize(image(0x456789),"image/png"));
+            java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> third=callers.submit(() -> client("queue-shared",Duration.ofSeconds(5)).recognize(image(0x456789),"image/png"));
             Thread.sleep(80);assertFalse(third.isDone());assertEquals(2,calls.get());
             release.countDown();
             assertNotNull(first.get(3,TimeUnit.SECONDS));assertNotNull(second.get(3,TimeUnit.SECONDS));assertNotNull(third.get(3,TimeUnit.SECONDS));
@@ -331,25 +307,25 @@ class DashScopeOcrClientTest {
         for(int invalid:new int[]{0,9}) assertThrows(IllegalArgumentException.class,()->new DashScopeOcrClient(true,url,"mock-secret","limits",data,Duration.ofSeconds(5),true,invalid));
         entered=new CountDownLatch(8);release=new CountDownLatch(1);ExecutorService callers=Executors.newFixedThreadPool(8);
         try {
-            var client=new DashScopeOcrClient(true,url,"mock-secret","eight",data,Duration.ofSeconds(5),true,8);
+            cn.bidcheck.ocr.DashScopeOcrClient client=new DashScopeOcrClient(true,url,"mock-secret","eight",data,Duration.ofSeconds(5),true,8);
             List<Future<OcrResult>> results=new ArrayList<>();
             for(int i=0;i<8;i++) { byte[] picture=image(0x112230+i);results.add(callers.submit(()->client.recognize(picture,"image/png"))); }
             assertTrue(entered.await(3,TimeUnit.SECONDS));assertEquals(8,calls.get());release.countDown();
-            for(var result:results) assertNotNull(result.get(3,TimeUnit.SECONDS));
+            for(java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> result:results) assertNotNull(result.get(3,TimeUnit.SECONDS));
         } finally { release.countDown();callers.shutdownNow(); }
     }
 
     @Test void queuedRequestReceivesItsFullNetworkBudgetAfterCapacityBecomesAvailable() throws Exception {
         entered = new CountDownLatch(1);release = new CountDownLatch(1);
-        modelDelays = Map.of("after-queue", 600L);
+        modelDelays = cn.bidcheck.compat.Java8Api.mapOf("after-queue", 600L);
         ExecutorService callers = Executors.newFixedThreadPool(2);
-        var blocker = new DashScopeOcrClient(true, url, "mock-secret", "after-queue", data.resolve("cache"), Duration.ofSeconds(5), true, 1);
-        var queued = new DashScopeOcrClient(true, url, "mock-secret", "after-queue", data.resolve("cache"), Duration.ofSeconds(1), true, 1);
+        cn.bidcheck.ocr.DashScopeOcrClient blocker = new DashScopeOcrClient(true, url, "mock-secret", "after-queue", data.resolve("cache"), Duration.ofSeconds(5), true, 1);
+        cn.bidcheck.ocr.DashScopeOcrClient queued = new DashScopeOcrClient(true, url, "mock-secret", "after-queue", data.resolve("cache"), Duration.ofSeconds(1), true, 1);
         CountDownLatch waiting = new CountDownLatch(1);
         try {
-            var first = callers.submit(() -> blocker.recognize(image, "image/png"));
+            java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> first = callers.submit(() -> blocker.recognize(image, "image/png"));
             assertTrue(entered.await(3, TimeUnit.SECONDS));
-            var second = callers.submit(() -> { waiting.countDown();return queued.recognize(image(0x112233), "image/png"); });
+            java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> second = callers.submit(() -> { waiting.countDown();return queued.recognize(image(0x112233), "image/png"); });
             assertTrue(waiting.await(1, TimeUnit.SECONDS));
             Thread.sleep(700);
             assertFalse(second.isDone());assertEquals(1, calls.get());
@@ -364,10 +340,10 @@ class DashScopeOcrClientTest {
     @Test void capacityWaitHasItsOwnBoundAndNeverConnectsAfterQueueTimeout() throws Exception {
         entered = new CountDownLatch(1);release = new CountDownLatch(1);
         ExecutorService callers = Executors.newSingleThreadExecutor();
-        var blocker = new DashScopeOcrClient(true, url, "mock-secret", "bounded-waiter", data.resolve("cache"), Duration.ofSeconds(5), true, 1);
-        var queued = new DashScopeOcrClient(true, url, "mock-secret", "bounded-waiter", data.resolve("cache"), Duration.ofMillis(150), true, 1);
+        cn.bidcheck.ocr.DashScopeOcrClient blocker = new DashScopeOcrClient(true, url, "mock-secret", "bounded-waiter", data.resolve("cache"), Duration.ofSeconds(5), true, 1);
+        cn.bidcheck.ocr.DashScopeOcrClient queued = new DashScopeOcrClient(true, url, "mock-secret", "bounded-waiter", data.resolve("cache"), Duration.ofMillis(150), true, 1);
         try {
-            var first = callers.submit(() -> blocker.recognize(image, "image/png"));
+            java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> first = callers.submit(() -> blocker.recognize(image, "image/png"));
             assertTrue(entered.await(3, TimeUnit.SECONDS));
             long started = System.nanoTime();
             assertThrows(IOException.class, () -> queued.recognize(image(0x334455), "image/png"));
@@ -380,8 +356,8 @@ class DashScopeOcrClientTest {
     @Test void interruptDuringCapacityWaitPreservesSignalAndDoesNotSendARequest() throws Exception {
         entered = new CountDownLatch(1);release = new CountDownLatch(1);
         ExecutorService callers = Executors.newSingleThreadExecutor();
-        var blocker = new DashScopeOcrClient(true, url, "mock-secret", "interrupt-waiter", data.resolve("cache"), Duration.ofSeconds(5), true, 1);
-        var queued = new DashScopeOcrClient(true, url, "mock-secret", "interrupt-waiter", data.resolve("cache"), Duration.ofSeconds(3), true, 1);
+        cn.bidcheck.ocr.DashScopeOcrClient blocker = new DashScopeOcrClient(true, url, "mock-secret", "interrupt-waiter", data.resolve("cache"), Duration.ofSeconds(5), true, 1);
+        cn.bidcheck.ocr.DashScopeOcrClient queued = new DashScopeOcrClient(true, url, "mock-secret", "interrupt-waiter", data.resolve("cache"), Duration.ofSeconds(3), true, 1);
         AtomicReference<IOException> failure = new AtomicReference<>();
         AtomicBoolean preserved = new AtomicBoolean();
         CountDownLatch started = new CountDownLatch(1), finished = new CountDownLatch(1);
@@ -392,7 +368,7 @@ class DashScopeOcrClientTest {
             finally { finished.countDown(); }
         }, "ocr-queue-interrupt-test");
         try {
-            var first = callers.submit(() -> blocker.recognize(image, "image/png"));
+            java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> first = callers.submit(() -> blocker.recognize(image, "image/png"));
             assertTrue(entered.await(3, TimeUnit.SECONDS));
             waiter.start();assertTrue(started.await(1, TimeUnit.SECONDS));Thread.sleep(80);waiter.interrupt();
             assertTrue(finished.await(2, TimeUnit.SECONDS));

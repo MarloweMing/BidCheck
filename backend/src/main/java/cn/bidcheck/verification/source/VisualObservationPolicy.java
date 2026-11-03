@@ -10,11 +10,39 @@ public final class VisualObservationPolicy {
     public static final String VERSION="visual-field-admission-1";
     public enum Kind { PAGE_SCOPE, AUTHENTICITY_SCOPE, RELATION_UNPROVEN, LABEL_UNPROVEN,
         VALUE_UNREADABLE, NOT_OBSERVED, OTHER_OBSERVATION, INFORMATION, UNCLASSIFIED_RESTRICTION }
-    public record Constraint(Kind kind,boolean blocksValue,boolean blocksRelation,String message) {
-        Map<String,Object> audit(){return Map.of("kind",kind.name(),"blocksValue",blocksValue,"blocksRelation",blocksRelation,"message",message);}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public static final class Constraint {
+        private final Kind kind;
+        private final boolean blocksValue;
+        private final boolean blocksRelation;
+        private final String message;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public Constraint(@com.fasterxml.jackson.annotation.JsonProperty("kind") Kind kind, @com.fasterxml.jackson.annotation.JsonProperty("blocksValue") boolean blocksValue, @com.fasterxml.jackson.annotation.JsonProperty("blocksRelation") boolean blocksRelation, @com.fasterxml.jackson.annotation.JsonProperty("message") String message) { this.kind = kind; this.blocksValue = blocksValue; this.blocksRelation = blocksRelation; this.message = message; }
+        public Kind kind() { return kind; }
+        public boolean blocksValue() { return blocksValue; }
+        public boolean blocksRelation() { return blocksRelation; }
+        public String message() { return message; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Constraint that = (Constraint) other; return java.util.Objects.equals(this.kind, that.kind) && java.util.Objects.equals(this.blocksValue, that.blocksValue) && java.util.Objects.equals(this.blocksRelation, that.blocksRelation) && java.util.Objects.equals(this.message, that.message); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.kind); hash = 31 * hash + java.util.Objects.hashCode(this.blocksValue); hash = 31 * hash + java.util.Objects.hashCode(this.blocksRelation); hash = 31 * hash + java.util.Objects.hashCode(this.message); return hash; }
+        @Override public String toString() { return "Constraint[" + "kind=" + kind + ", blocksValue=" + blocksValue + ", blocksRelation=" + blocksRelation + ", message=" + message + "]"; }
+
+        Map<String,Object> audit(){return cn.bidcheck.compat.Java8Api.mapOf("kind", kind.name(), "blocksValue", blocksValue, "blocksRelation", blocksRelation, "message", message);}
     }
-    public record Assessment(boolean valueUsable,boolean relationUsable,List<Constraint> constraints) {
-        public Map<String,Object> audit(){return Map.of("version",VERSION,"valueUsable",valueUsable,"relationUsable",relationUsable,"constraints",constraints.stream().map(Constraint::audit).toList());}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public static final class Assessment {
+        private final boolean valueUsable;
+        private final boolean relationUsable;
+        private final List<Constraint> constraints;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public Assessment(@com.fasterxml.jackson.annotation.JsonProperty("valueUsable") boolean valueUsable, @com.fasterxml.jackson.annotation.JsonProperty("relationUsable") boolean relationUsable, @com.fasterxml.jackson.annotation.JsonProperty("constraints") List<Constraint> constraints) { this.valueUsable = valueUsable; this.relationUsable = relationUsable; this.constraints = constraints; }
+        public boolean valueUsable() { return valueUsable; }
+        public boolean relationUsable() { return relationUsable; }
+        public List<Constraint> constraints() { return constraints; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Assessment that = (Assessment) other; return java.util.Objects.equals(this.valueUsable, that.valueUsable) && java.util.Objects.equals(this.relationUsable, that.relationUsable) && java.util.Objects.equals(this.constraints, that.constraints); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.valueUsable); hash = 31 * hash + java.util.Objects.hashCode(this.relationUsable); hash = 31 * hash + java.util.Objects.hashCode(this.constraints); return hash; }
+        @Override public String toString() { return "Assessment[" + "valueUsable=" + valueUsable + ", relationUsable=" + relationUsable + ", constraints=" + constraints + "]"; }
+
+        public Map<String,Object> audit(){return cn.bidcheck.compat.Java8Api.mapOf("version", VERSION, "valueUsable", valueUsable, "relationUsable", relationUsable, "constraints", cn.bidcheck.compat.Java8Api.toList(constraints.stream().map(Constraint::audit)));}
     }
     private VisualObservationPolicy(){}
     private static final Pattern UNCERTAINTY=Pattern.compile("无法|不能|未能|不清|模糊|遮挡|裁切|缺失|未见|未观察|不详|推断|不确定|尚未|未确认|未核|未验证|未解码|非结构化|占位符|空白");
@@ -27,19 +55,19 @@ public final class VisualObservationPolicy {
 
     public static Assessment assess(Map<String,?> observation){
         List<Constraint> constraints=new ArrayList<>();String type=text(observation,"type"),label=text(observation,"label"),value=text(observation,"value");
-        if(value.isBlank())value=text(observation,"observedValue");
+        if(cn.bidcheck.compat.Java8Api.isBlank(value))value=text(observation,"observedValue");
         String readability=text(observation,"readability");
-        if(!"CLEAR".equals(readability)||value.isBlank())constraints.add(new Constraint("NOT_OBSERVED".equals(readability)?Kind.NOT_OBSERVED:Kind.VALUE_UNREADABLE,true,true,"观察不是非空CLEAR字段"));
+        if(!"CLEAR".equals(readability)||cn.bidcheck.compat.Java8Api.isBlank(value))constraints.add(new Constraint("NOT_OBSERVED".equals(readability)?Kind.NOT_OBSERVED:Kind.VALUE_UNREADABLE,true,true,"观察不是非空CLEAR字段"));
         Object raw=observation.get("modelLimitations");
-        if(raw instanceof List<?> notes)for(Object entry:notes){
-            if(!(entry instanceof String note)){constraints.add(new Constraint(Kind.UNCLASSIFIED_RESTRICTION,true,true,"限制说明格式无效"));continue;}
-            for(String part:note.split("[。；;\\n]+"))if(!part.isBlank())constraints.add(classify(part.strip(),type,label,value));
+        if(raw instanceof List<?>)for(Object entry:((List<?>) (raw))){
+            if(!(entry instanceof String)){constraints.add(new Constraint(Kind.UNCLASSIFIED_RESTRICTION,true,true,"限制说明格式无效"));continue;}
+            for(String part:((String) (entry)).split("[。；;\\n]+"))if(!cn.bidcheck.compat.Java8Api.isBlank(part))constraints.add(classify(cn.bidcheck.compat.Java8Api.strip(part),type,label,value));
         }else if(raw!=null)constraints.add(new Constraint(Kind.UNCLASSIFIED_RESTRICTION,true,true,"限制说明格式无效"));
         boolean valueUsable=constraints.stream().noneMatch(Constraint::blocksValue);
-        return new Assessment(valueUsable,valueUsable&&constraints.stream().noneMatch(Constraint::blocksRelation),List.copyOf(constraints));
+        return new Assessment(valueUsable,valueUsable&&constraints.stream().noneMatch(Constraint::blocksRelation),cn.bidcheck.compat.Java8Api.listCopyOf(constraints));
     }
     private static Constraint classify(String note,String type,String label,String value){
-        boolean mark=Set.of("SEAL","SIGNATURE").contains(type), relevant=mentions(note,label,value),uncertain=UNCERTAINTY.matcher(note).find();
+        boolean mark=cn.bidcheck.compat.Java8Api.setOf("SEAL", "SIGNATURE").contains(type), relevant=mentions(note,label,value),uncertain=UNCERTAINTY.matcher(note).find();
         if(!uncertain)return c(Kind.INFORMATION,false,false,note);
         // Physical readability remains a blocker for the affected field, never explained away as scope.
         if(BLUR.matcher(note).find()){
@@ -68,21 +96,18 @@ public final class VisualObservationPolicy {
         for(String alias:aliases(label))if(note.contains(alias))return true;
         return false;
     }
-    private static List<String> aliases(String label){return switch(label){
-        case "name"->List.of("姓名");case "certificateNumber","number"->List.of("证书编号","证号");
-        case "validUntil","end","validity"->List.of("有效期");case "companyName","employer"->List.of("企业名称","单位名称");
-        case "category"->List.of("类别","分类","资质","category");default->List.of();};}
+    private static List<String> aliases(String label){switch (label) {case "name":return cn.bidcheck.compat.Java8Api.listOf("姓名");case "certificateNumber":case "number":return cn.bidcheck.compat.Java8Api.listOf("证书编号", "证号");case "validUntil":case "end":case "validity":return cn.bidcheck.compat.Java8Api.listOf("有效期");case "companyName":case "employer":return cn.bidcheck.compat.Java8Api.listOf("企业名称", "单位名称");case "category":return cn.bidcheck.compat.Java8Api.listOf("类别", "分类", "资质", "category");default:return cn.bidcheck.compat.Java8Api.listOf();}}
     private static Constraint c(Kind kind,boolean value,boolean relation,String note){return new Constraint(kind,value,relation,note);}
     private static String text(Map<String,?> map,String key){return Objects.toString(map.get(key),"");}
 
     /** Recheck persisted bounds: a four-item array alone is not a valid source location. */
     public static boolean validSourceBounds(Map<String,?> observation){
-        if(!(observation.get("sourceBbox") instanceof List<?> box)||box.size()!=4)return false;
-        double[] bounds=new double[4];for(int i=0;i<4;i++){if(!(box.get(i) instanceof Number n)||!Double.isFinite(n.doubleValue()))return false;bounds[i]=n.doubleValue();}
+        if(!(observation.get("sourceBbox") instanceof List<?>)||((List<?>) (observation.get("sourceBbox"))).size()!=4)return false;
+        double[] bounds=new double[4];for(int i=0;i<4;i++){if(!(((List<?>) (observation.get("sourceBbox"))).get(i) instanceof Number)||!Double.isFinite(((Number) (((List<?>) (observation.get("sourceBbox"))).get(i))).doubleValue()))return false;bounds[i]=((Number) (((List<?>) (observation.get("sourceBbox"))).get(i))).doubleValue();}
         if(bounds[0]<0||bounds[1]<0||bounds[2]<=bounds[0]||bounds[3]<=bounds[1])return false;
-        if(observation.get("source") instanceof Map<?,?> origin){
-            if(origin.get("renderedWidth") instanceof Number n&&bounds[2]>n.doubleValue())return false;
-            if(origin.get("renderedHeight") instanceof Number n&&bounds[3]>n.doubleValue())return false;
+        if(observation.get("source") instanceof Map<?,?>){
+            if(((Map<?,?>) (observation.get("source"))).get("renderedWidth") instanceof Number&&bounds[2]>((Number) (((Map<?,?>) (observation.get("source"))).get("renderedWidth"))).doubleValue())return false;
+            if(((Map<?,?>) (observation.get("source"))).get("renderedHeight") instanceof Number&&bounds[3]>((Number) (((Map<?,?>) (observation.get("source"))).get("renderedHeight"))).doubleValue())return false;
         }return true;
     }
 }

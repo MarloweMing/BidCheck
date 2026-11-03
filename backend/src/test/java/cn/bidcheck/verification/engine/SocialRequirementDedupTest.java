@@ -12,12 +12,12 @@ class SocialRequirementDedupTest {
     private List<Rule> flatten(List<Rule> rules){List<Rule> out=new ArrayList<>();for(Rule r:rules){out.add(r);out.addAll(flatten(r.children()));}return out;}
     @Test void theFrozenSocialProofPhraseCompilesToOneMonthsObligation(){
         assertTrue(DeterministicRequirementCompiler.socialMonthProofOnly(FROZEN));
-        var checkpoint=new Checkpoint("social-frozen","人员要求","资格","HIGH","SEMANTIC_RESPONSE","","",FROZEN,"",true,true,true,null);
-        var compiled=new DeterministicRequirementCompiler(new ObjectMapper()).compile(checkpoint,FROZEN,null,Map.of());
-        var rules=flatten(compiled.rules());var months=rules.stream().filter(r->r.predicate().equals("MONTHS")).toList();assertEquals(1,months.size(),compiled.audit().toString());assertEquals(3,months.get(0).parameters().get("count"));assertEquals("2024-12",months.get(0).parameters().get("earliestMonth"));assertEquals("本单位",months.get(0).parameters().get("employer"));assertTrue(rules.stream().noneMatch(r->r.predicate().equals("MATERIAL")),compiled.audit().toString());
+        cn.bidcheck.domain.Domain.Checkpoint checkpoint=new Checkpoint("social-frozen","人员要求","资格","HIGH","SEMANTIC_RESPONSE","","",FROZEN,"",true,true,true,null);
+        cn.bidcheck.verification.engine.DeterministicRequirementCompiler.Result compiled=new DeterministicRequirementCompiler(new ObjectMapper()).compile(checkpoint,FROZEN,null,cn.bidcheck.compat.Java8Api.mapOf());
+        java.util.List<cn.bidcheck.verification.engine.VerificationTypes.Rule> rules=flatten(compiled.rules());java.util.List<cn.bidcheck.verification.engine.VerificationTypes.Rule> months=cn.bidcheck.compat.Java8Api.toList(rules.stream().filter(r->r.predicate().equals("MONTHS")));assertEquals(1,months.size(),compiled.audit().toString());assertEquals(3,months.get(0).parameters().get("count"));assertEquals("2024-12",months.get(0).parameters().get("earliestMonth"));assertEquals("本单位",months.get(0).parameters().get("employer"));assertTrue(rules.stream().noneMatch(r->r.predicate().equals("MATERIAL")),compiled.audit().toString());
     }
     @Test void additionalLaborContractSignatureOrUnknownExceptionCannotBeDiscarded(){
-        for(String extra:List.of("另须提交劳动合同。","并由法定代表人签字。","，特殊情况须提交主管部门审批意见。"))assertFalse(DeterministicRequirementCompiler.socialMonthProofOnly(FROZEN+extra));
+        for(String extra:cn.bidcheck.compat.Java8Api.listOf("另须提交劳动合同。", "并由法定代表人签字。", "，特殊情况须提交主管部门审批意见。"))assertFalse(DeterministicRequirementCompiler.socialMonthProofOnly(FROZEN+extra));
         assertFalse(DeterministicRequirementCompiler.socialMonthProofOnly(FROZEN.replace("社保证明材料","社保证明材料及劳动合同")));
     }
     @Test void anotherTenderCanUseOtherWindowAndCountsWithoutSpecificProjectNames(){

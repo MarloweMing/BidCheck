@@ -6,9 +6,7 @@ import java.util.*;
 /** Read-only clarification of document coverage; never changes frozen decisions or raw evidence. */
 public final class OcrPresentation {
     private OcrPresentation() {}
-    private static final List<String> OLD_PREFIXES = List.of(
-        "部分图像OCR未完成，现有文字不能证明全部内容已经核验。",
-        "本次检查使用了OCR识别文字，需对照原图复核。");
+    private static final List<String> OLD_PREFIXES = cn.bidcheck.compat.Java8Api.listOf("部分图像OCR未完成，现有文字不能证明全部内容已经核验。", "本次检查使用了OCR识别文字，需对照原图复核。");
     private static final String OLD_SUGGESTION = "请核对原图中的名称、数字、日期及标识；OCR文字不能证明签字盖章有效。";
     private static final java.util.regex.Pattern WARNING_LOCATION = java.util.regex.Pattern.compile("^第\\s*([0-9]{1,9})\\s*(页|个内容块|块|段|张图像)");
 
@@ -49,19 +47,19 @@ public final class OcrPresentation {
             if (!incomplete.isEmpty()) note += "本项引用位置有未完成的图像识别：" + String.join("、", incomplete) + "。请查看这些位置的原件或补识别；不能由现有文字判断全部内容。";
             else if (deferred.isEmpty() && !recognized.isEmpty()) note = "本项引用包含 OCR 文字：" + String.join("、", recognized) + "。这些引用位置没有 OCR 未完成标记，文字准确性仍需对照原图；签字盖章未核验。";
             else if (deferred.isEmpty() && guarded) note = "当前引用未定位到 OCR 未完成的位置。该结果保留文档级 OCR 复核策略的保守状态，不代表本条图像识别失败，也不代表全文或语义核验通过。";
-            if (finding.assessment()!=null && finding.assessment().get("ocrReview") instanceof Map<?,?> review)
-                note = review.get("reason") instanceof String value ? value : "";
+            if (finding.assessment()!=null && finding.assessment().get("ocrReview") instanceof Map<?,?>)
+                note = ((Map<?,?>) (finding.assessment().get("ocrReview"))).get("reason") instanceof String ? ((String) (((Map<?,?>) (finding.assessment().get("ocrReview"))).get("reason"))) : "";
             Map<String,Object> display = new LinkedHashMap<>();
             display.put("reason",reason); display.put("suggestion",suggestion); display.put("note",note);
             display.put("legacyClarified",clarified); display.put("originalReason",original);
             display.put("originalSuggestion",safe(evaluation.suggestion()));
             displays.put(finding.id(),display);
         }
-        return Map.of("documents",List.copyOf(coverage),"findings",displays);
+        return cn.bidcheck.compat.Java8Api.mapOf("documents", cn.bidcheck.compat.Java8Api.listCopyOf(coverage), "findings", displays);
     }
 
     public static Map<String,Object> coverage(Document document) {
-        List<Page> pages = document.pages() == null ? List.of() : document.pages();
+        List<Page> pages = document.pages() == null ? cn.bidcheck.compat.Java8Api.listOf() : document.pages();
         List<Map<String,Object>> incomplete = new ArrayList<>();
         List<Map<String,Object>> deferred = new ArrayList<>(), failed = new ArrayList<>();
         Map<String,Map<String,Object>> layoutLocations = new LinkedHashMap<>();
@@ -75,8 +73,7 @@ public final class OcrPresentation {
                 attachedLayoutWarnings.add(page.warning());
             }
             if (EngineText.ocrIncomplete(page.warning())) {
-                Map<String,Object> location = Map.of("documentId",document.id(),"page",page.number(),"locationType",safe(page.locationType()),
-                    "label",label(document,page),"warning",page.warning());
+                Map<String,Object> location = cn.bidcheck.compat.Java8Api.mapOf("documentId", document.id(), "page", page.number(), "locationType", safe(page.locationType()), "label", label(document,page), "warning", page.warning());
                 incomplete.add(location);
                 if (EngineText.ocrDeferred(page.warning())) deferred.add(location);
                 if (EngineText.ocrFailed(page.warning())) failed.add(location);
@@ -84,23 +81,18 @@ public final class OcrPresentation {
             }
         }
         Set<String> unlocatedLayout = new LinkedHashSet<>();
-        for (String warning : document.warnings() == null ? List.<String>of() : document.warnings()) {
+        for (String warning : document.warnings() == null ? cn.bidcheck.compat.Java8Api.<String>listOf() : document.warnings()) {
             if (!layoutIncomplete(warning) || attachedLayoutWarnings.contains(warning)) continue;
-            var match = WARNING_LOCATION.matcher(warning);
-            List<Page> matching = match.find() ? pages.stream().filter(p -> p.number() == Integer.parseInt(match.group(1))
-                && switch(match.group(2)) {
-                    case "页" -> "PAGE".equals(p.locationType());
-                    case "段" -> "PARAGRAPH".equals(p.locationType());
-                    case "张图像" -> "IMAGE".equals(p.locationType());
-                    default -> Set.of("BLOCK","PARAGRAPH").contains(safe(p.locationType()));
-                }).toList() : List.of();
+            java.util.regex.Matcher match = WARNING_LOCATION.matcher(warning);
+            List<Page> matching = match.find() ? cn.bidcheck.compat.Java8Api.toList(pages.stream().filter(p -> p.number() == Integer.parseInt(match.group(1))
+                && (java.util.Objects.equals((match.group(2)), "页") ? "PAGE".equals(p.locationType()) : (java.util.Objects.equals((match.group(2)), "段") ? "PARAGRAPH".equals(p.locationType()) : (java.util.Objects.equals((match.group(2)), "张图像") ? "IMAGE".equals(p.locationType()) : cn.bidcheck.compat.Java8Api.setOf("BLOCK", "PARAGRAPH").contains(safe(p.locationType()))))))) : cn.bidcheck.compat.Java8Api.listOf();
             if (matching.size() == 1) {
                 Page page = matching.get(0);
                 layoutLocations.putIfAbsent(page.locationType()+":"+page.number(),location(document,page,warning));
             } else unlocatedLayout.add(warning);
         }
         long layoutIncompleteCount = layoutLocations.size() + unlocatedLayout.size();
-        List<String> unlocatedWarnings = document.warnings() == null ? List.of() : document.warnings().stream().filter(w -> EngineText.ocrIncomplete(w) && !attachedWarnings.contains(w)).distinct().toList();
+        List<String> unlocatedWarnings = document.warnings() == null ? cn.bidcheck.compat.Java8Api.listOf() : cn.bidcheck.compat.Java8Api.toList(document.warnings().stream().filter(w -> EngineText.ocrIncomplete(w) && !attachedWarnings.contains(w)).distinct());
         long unlocated = unlocatedWarnings.size();
         long deferredCount = deferred.size() + unlocatedWarnings.stream().filter(EngineText::ocrDeferred).count();
         long failedCount = failed.size() + unlocatedWarnings.stream().filter(EngineText::ocrFailed).count();
@@ -121,22 +113,17 @@ public final class OcrPresentation {
         value.put("deferredLocations",deferred); value.put("failedLocations",failed);
         value.put("unlocatedIncompleteCount",unlocated); value.put("ocrCoverageComplete",totalIncomplete == 0);
         value.put("structureIncompleteCount",layoutIncompleteCount);
-        value.put("structureIncompleteLocations",List.copyOf(layoutLocations.values()));
-        value.put("unlocatedStructureWarnings",List.copyOf(unlocatedLayout));
+        value.put("structureIncompleteLocations",cn.bidcheck.compat.Java8Api.listCopyOf(layoutLocations.values()));
+        value.put("unlocatedStructureWarnings",cn.bidcheck.compat.Java8Api.listCopyOf(unlocatedLayout));
         value.put("unlocatedStructureCount",(long)unlocatedLayout.size());
         value.put("structureCoverageComplete",layoutIncompleteCount == 0);
         return value;
     }
     private static boolean layoutIncomplete(String warning) { return safe(warning).contains("[OCR结构未完成]"); }
     private static Map<String,Object> location(Document document,Page page,String warning) {
-        return Map.of("documentId",document.id(),"page",page.number(),"locationType",safe(page.locationType()),"label",label(document,page),"warning",warning);
+        return cn.bidcheck.compat.Java8Api.mapOf("documentId", document.id(), "page", page.number(), "locationType", safe(page.locationType()), "label", label(document,page), "warning", warning);
     }
     private static String role(Document document) { return "TENDER".equals(document.role()) ? "招标文件" : "BID".equals(document.role()) ? "投标文件" : "文件"; }
-    private static String label(Document document,Page page) { return role(document) + "第 " + page.number() + switch(safe(page.locationType())) {
-        case "PAGE" -> " 页";
-        case "PARAGRAPH" -> " 段";
-        case "IMAGE" -> " 张图像";
-        default -> " 个内容块";
-    }; }
+    private static String label(Document document,Page page) { return role(document) + "第 " + page.number() + (java.util.Objects.equals((safe(page.locationType())), "PAGE") ? " 页" : (java.util.Objects.equals((safe(page.locationType())), "PARAGRAPH") ? " 段" : (java.util.Objects.equals((safe(page.locationType())), "IMAGE") ? " 张图像" : " 个内容块"))); }
     private static String safe(String value) { return value == null ? "" : value; }
 }

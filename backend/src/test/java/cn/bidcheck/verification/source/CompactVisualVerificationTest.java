@@ -24,9 +24,8 @@ class CompactVisualVerificationTest {
     HttpServer server;Path pdf;Document doc;String mode="";Object usage=123;
     @BeforeEach void setup()throws Exception{
         pdf=temp.resolve("compact.pdf");try(PDDocument file=new PDDocument()){for(int i=0;i<3;i++)file.addPage(new PDPage(new PDRectangle(400,300)));file.save(pdf.toFile());}
-        List<Page> pages=List.of(VisualContinuationTest.markdown(1,"拟投入车辆一览表","车牌号","渝A12341"),
-            VisualContinuationTest.markdown(2,"续表","车牌号","渝A12342"),VisualContinuationTest.markdown(3,"续表","车牌号","渝A12343"));
-        doc=new Document("compact-doc","project","BID","compact.pdf",1,SourceSafety.digest(Files.readAllBytes(pdf)),"",pages,List.of());
+        List<Page> pages=cn.bidcheck.compat.Java8Api.listOf(VisualContinuationTest.markdown(1,"拟投入车辆一览表","车牌号","渝A12341"), VisualContinuationTest.markdown(2,"续表","车牌号","渝A12342"), VisualContinuationTest.markdown(3,"续表","车牌号","渝A12343"));
+        doc=new Document("compact-doc","project","BID","compact.pdf",1,SourceSafety.digest(Files.readAllBytes(pdf)),"",pages,cn.bidcheck.compat.Java8Api.listOf());
         server=HttpServer.create(new java.net.InetSocketAddress("127.0.0.1",0),0);
         server.createContext("/vision",exchange->{try{
             calls.incrementAndGet();JsonNode request=json.readTree(exchange.getRequestBody());payload.set(request);
@@ -63,7 +62,7 @@ class CompactVisualVerificationTest {
     String endpoint(){return "http://127.0.0.1:"+server.getAddress().getPort()+"/vision";}
     VisualVerificationService client(boolean compact){return client(compact,Duration.ofSeconds(3));}
     VisualVerificationService client(boolean compact,Duration timeout){return new VisualVerificationService(true,endpoint(),"fixture-secret","test-model",timeout,timeout,true,6,4,16,8_000_000,8*1024*1024,compact);}
-    String quote(int page){return doc.pages().get(page-1).text().lines().filter(l->l.startsWith("| "+page+" |")).findFirst().orElseThrow();}
+    String quote(int page){return cn.bidcheck.compat.Java8Extras.lines(doc.pages().get(page-1).text()).filter(l->l.startsWith("| "+page+" |")).findFirst().orElseThrow(java.util.NoSuchElementException::new);}
     ObjectNode compactPage(int page){
         ObjectNode result=json.createObjectNode().put("page",page);result.putArray("q").add(quote(page));
         result.putArray("r").addArray().add("LSVAB12345678901"+page).add("VEHICLE").add("LSVAB12345678901"+page);
@@ -76,16 +75,16 @@ class CompactVisualVerificationTest {
     Set<Integer> factPages(Map<String,Object> out){Set<Integer> pages=new HashSet<>();for(Map<String,Object> fact:list(map(out.get("factBatch")).get("facts")))pages.add((Integer)map(fact.get("attributes")).get("sourcePage"));return pages;}
 
     @Test void compactPayloadExpandsToEquivalentGroundedPageFactsAndKeepsExistingTokenAndSourceLimits()throws Exception{
-        Map<String,Object> out=extract(client(true),List.of(1,2,3));assertEquals("OBSERVED",out.get("status"));assertEquals(Set.of(1,2,3),factPages(out));
-        assertEquals(List.of(),map(out.get("factBatch")).get("contextRelations"));assertEquals(8192,payload.get().path("max_tokens").asInt());
+        Map<String,Object> out=extract(client(true),cn.bidcheck.compat.Java8Api.listOf(1, 2, 3));assertEquals("OBSERVED",out.get("status"));assertEquals(cn.bidcheck.compat.Java8Api.setOf(1, 2, 3),factPages(out));
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf(),map(out.get("factBatch")).get("contextRelations"));assertEquals(8192,payload.get().path("max_tokens").asInt());
         JsonNode instruction=instruction(payload.get());assertEquals(StructuredCompactResponse.VERSION,instruction.path("wire").asText());assertEquals(StructuredCompactResponse.VERSION,instruction.path("schema").asText());
         assertEquals(VisualVerificationService.FACT_SCHEMA,map(out.get("factBatch")).get("schemaVersion"));
         for(Map<String,Object> observed:list(out.get("observations"))){assertNull(observed.get("bbox"));assertEquals("FIELD",observed.get("type"));assertEquals(quote((Integer)observed.get("page")),observed.get("sourceQuote"));}
-        Map<String,Object> legacy=extract(client(false),List.of(1,2,3));assertEquals(map(legacy.get("factBatch")).get("sources"),map(out.get("factBatch")).get("sources"));
-        assertEquals(list(map(legacy.get("factBatch")).get("facts")).stream().map(f->f.get("id")).toList(),list(map(out.get("factBatch")).get("facts")).stream().map(f->f.get("id")).toList());
-        Page original=doc.pages().get(0);List<Page> longPages=new ArrayList<>(doc.pages());longPages.set(0,new Page(1,original.text()+"字".repeat(17000),"PAGE","PDF_OCR",""));
-        Document longer=new Document(doc.id(),doc.projectId(),doc.role(),doc.name(),doc.version(),doc.sha256(),"",longPages,List.of());
-        client(true).extractIndependentPages(longer,pdf,List.of(1),()->true,"long");assertEquals(16000,instruction(payload.get()).path("pages").get(0).path("sourceText").asText().length());assertEquals(6144,payload.get().path("max_tokens").asInt());
+        Map<String,Object> legacy=extract(client(false),cn.bidcheck.compat.Java8Api.listOf(1, 2, 3));assertEquals(map(legacy.get("factBatch")).get("sources"),map(out.get("factBatch")).get("sources"));
+        assertEquals(cn.bidcheck.compat.Java8Api.toList(list(map(legacy.get("factBatch")).get("facts")).stream().map(f->f.get("id"))),cn.bidcheck.compat.Java8Api.toList(list(map(out.get("factBatch")).get("facts")).stream().map(f->f.get("id"))));
+        Page original=doc.pages().get(0);List<Page> longPages=new ArrayList<>(doc.pages());longPages.set(0,new Page(1,original.text()+cn.bidcheck.compat.Java8Api.repeat("字", 17000),"PAGE","PDF_OCR",""));
+        Document longer=new Document(doc.id(),doc.projectId(),doc.role(),doc.name(),doc.version(),doc.sha256(),"",longPages,cn.bidcheck.compat.Java8Api.listOf());
+        client(true).extractIndependentPages(longer,pdf,cn.bidcheck.compat.Java8Api.listOf(1),()->true,"long");assertEquals(16000,instruction(payload.get()).path("pages").get(0).path("sourceText").asText().length());assertEquals(6144,payload.get().path("max_tokens").asInt());
     }
     @Test void flagOffPreservesStructuredProtocolButAdmissionPolicyInvalidatesOldIdentity()throws Exception{
         VisualVerificationService legacy=new VisualVerificationService(true,endpoint(),"fixture-secret","test-model",Duration.ofSeconds(3),Duration.ofSeconds(3),true,6,4,16,8_000_000,8*1024*1024);
@@ -94,13 +93,13 @@ class CompactVisualVerificationTest {
         assertNotEquals(original,legacy.identity());assertEquals(revised,legacy.identity());assertEquals(revised,client(false).identity());assertNotEquals(revised,client(true).identity());
         assertFalse(legacy.compactStructuredOutputEnabled());assertEquals(VisualVerificationService.FACT_SCHEMA,legacy.structuredWireVersion());assertEquals(StructuredCompactResponse.VERSION,client(true).structuredWireVersion());
         assertEquals("CANONICAL_ONLY",legacy.structuredRoutingPolicy());assertEquals("COMPACT_INDEPENDENT_BATCHES_ONLY_V1",client(true).structuredRoutingPolicy());
-        Map<String,Object> request=Map.of("task","STRUCTURED_FIELDS","schema",VisualVerificationService.FACT_SCHEMA);
-        assertEquals(legacy.requestIdentity(doc,List.of(1),request),client(false).requestIdentity(doc,List.of(1),request));assertNotEquals(legacy.requestIdentity(doc,List.of(1),request),client(true).requestIdentity(doc,List.of(1),request));
-        assertEquals("OBSERVED",extract(legacy,List.of(1)).get("status"));assertFalse(instruction(payload.get()).has("wire"));assertFalse(payload.get().path("messages").get(0).path("content").asText().contains(StructuredCompactResponse.VERSION));
+        Map<String,Object> request=cn.bidcheck.compat.Java8Api.mapOf("task", "STRUCTURED_FIELDS", "schema", VisualVerificationService.FACT_SCHEMA);
+        assertEquals(legacy.requestIdentity(doc,cn.bidcheck.compat.Java8Api.listOf(1),request),client(false).requestIdentity(doc,cn.bidcheck.compat.Java8Api.listOf(1),request));assertNotEquals(legacy.requestIdentity(doc,cn.bidcheck.compat.Java8Api.listOf(1),request),client(true).requestIdentity(doc,cn.bidcheck.compat.Java8Api.listOf(1),request));
+        assertEquals("OBSERVED",extract(legacy,cn.bidcheck.compat.Java8Api.listOf(1)).get("status"));assertFalse(instruction(payload.get()).has("wire"));assertFalse(payload.get().path("messages").get(0).path("content").asText().contains(StructuredCompactResponse.VERSION));
         assertEquals(VisualVerificationService.FACT_SCHEMA,instruction(payload.get()).path("schema").asText());
     }
     @Test void revisedCompactPromptHasOneWireContractAndItsOwnCacheIdentity()throws Exception{
-        VisualVerificationService compact=client(true);Map<String,Object> out=extract(compact,List.of(1,2));
+        VisualVerificationService compact=client(true);Map<String,Object> out=extract(compact,cn.bidcheck.compat.Java8Api.listOf(1, 2));
         String prompt=payload.get().path("messages").get(0).path("content").asText();
         assertFalse(prompt.contains("bbox"));assertFalse(prompt.contains("coordinateSpace"));assertFalse(prompt.contains("observations"));
         assertTrue(prompt.contains("先选择本页最多40个字段"));assertTrue(prompt.contains("q[q索引]必须包含该条完整value"));
@@ -114,18 +113,18 @@ class CompactVisualVerificationTest {
         assertEquals(StructuredCompactResponse.VERSION,instruction(payload.get()).path("schema").asText());
         assertEquals(StructuredCompactResponse.VERSION,instruction(payload.get()).path("wire").asText());
         assertEquals(VisualVerificationService.FACT_SCHEMA,map(out.get("factBatch")).get("schemaVersion"));
-        assertEquals(Set.of(1,2),factPages(out));
+        assertEquals(cn.bidcheck.compat.Java8Api.setOf(1, 2),factPages(out));
     }
     @Test void singleAndRelatedWindowsUseCanonicalWhileIndependentBatchesUseCompactWithoutCacheMixing()throws Exception{
         VisualVerificationService service=client(true);
-        Map<String,Object> single=extract(service,List.of(1));assertCanonical(single);assertEquals(Set.of(1),factPages(single));
-        assertFalse(VisualPageWindows.relations(doc,List.of(1,2,3)).isEmpty());
-        Map<String,Object> related=service.extractContext(doc,pdf,List.of(1,2,3),()->true,"related");assertCanonical(related);
-        assertEquals(Set.of(1,2,3),factPages(related));assertFalse(list(map(related.get("factBatch")).get("contextRelations")).isEmpty());
-        Map<String,Object> independent=extract(service,List.of(1,2,3));assertEquals(StructuredCompactResponse.VERSION,independent.get("wireVersion"));
+        Map<String,Object> single=extract(service,cn.bidcheck.compat.Java8Api.listOf(1));assertCanonical(single);assertEquals(cn.bidcheck.compat.Java8Api.setOf(1),factPages(single));
+        assertFalse(VisualPageWindows.relations(doc,cn.bidcheck.compat.Java8Api.listOf(1, 2, 3)).isEmpty());
+        Map<String,Object> related=service.extractContext(doc,pdf,cn.bidcheck.compat.Java8Api.listOf(1, 2, 3),()->true,"related");assertCanonical(related);
+        assertEquals(cn.bidcheck.compat.Java8Api.setOf(1, 2, 3),factPages(related));assertFalse(list(map(related.get("factBatch")).get("contextRelations")).isEmpty());
+        Map<String,Object> independent=extract(service,cn.bidcheck.compat.Java8Api.listOf(1, 2, 3));assertEquals(StructuredCompactResponse.VERSION,independent.get("wireVersion"));
         assertEquals(StructuredCompactResponse.VERSION,instruction(payload.get()).path("schema").asText());assertTrue(instruction(payload.get()).path("independentPages").asBoolean());
-        assertEquals(List.of(),map(independent.get("factBatch")).get("contextRelations"));assertEquals(3,calls.get());
-        Map<String,Object> cached=service.extractContext(doc,pdf,List.of(1,2,3),()->fail("canonical cache must remain distinct from independent mode"),"related-again");
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf(),map(independent.get("factBatch")).get("contextRelations"));assertEquals(3,calls.get());
+        Map<String,Object> cached=service.extractContext(doc,pdf,cn.bidcheck.compat.Java8Api.listOf(1, 2, 3),()->fail("canonical cache must remain distinct from independent mode"),"related-again");
         assertEquals(true,cached.get("cacheHit"));assertEquals(VisualVerificationService.FACT_SCHEMA,cached.get("wireVersion"));assertEquals(false,cached.get("requestAttempted"));assertEquals(3,calls.get());
     }
     void assertCanonical(Map<String,Object> out)throws Exception{
@@ -134,32 +133,32 @@ class CompactVisualVerificationTest {
         String system=payload.get().path("messages").get(0).path("content").asText();assertTrue(system.contains("observations"));assertFalse(system.contains(StructuredCompactResponse.VERSION));
     }
     @Test void ordinaryFieldProtocolDoesNotChangeWhenCompactFeatureIsEnabled()throws Exception{
-        Map<String,Object> out=client(true).verify(doc,pdf,1,Map.of("task","FIELD","fields",List.of("车牌号")));assertEquals("OBSERVED",out.get("status"));
+        Map<String,Object> out=client(true).verify(doc,pdf,1,cn.bidcheck.compat.Java8Api.mapOf("task", "FIELD", "fields", cn.bidcheck.compat.Java8Api.listOf("车牌号")));assertEquals("OBSERVED",out.get("status"));
         assertEquals("VISUAL_OBSERVATION_V1",out.get("wireVersion"));assertFalse(instruction(payload.get()).has("wire"));assertEquals(4096,payload.get().path("max_tokens").asInt());
         assertTrue(payload.get().path("messages").get(0).path("content").asText().contains("coordinateSpace"));assertFalse(payload.get().path("messages").get(0).path("content").asText().contains(StructuredCompactResponse.VERSION));
     }
     @Test void aMalformedPageIsIsolatedAndUnknownOrDuplicatePageRecordsNeverProduceFacts(){
-        for(String value:List.of("bad-index","missing","duplicate-extra")){mode=value;Map<String,Object> out=extract(client(true),List.of(1,2,3));assertEquals("PARTIAL",out.get("status"),value);assertEquals(List.of(2),out.get("failedPages"));assertEquals(Set.of(1,3),factPages(out));assertEquals(2,((Number)out.get("fieldCount")).intValue());}
-        mode="extra";Map<String,Object> out=extract(client(true),List.of(1,2,3));assertEquals(Set.of(1,2,3),factPages(out));assertEquals(1,out.get("rejectedPageRecords"));
-        assertEquals("VISUAL_PAGE_MAPPING_INVALID",extract(client(true),List.of(1)).get("errorCode"));
+        for(String value:cn.bidcheck.compat.Java8Api.listOf("bad-index", "missing", "duplicate-extra")){mode=value;Map<String,Object> out=extract(client(true),cn.bidcheck.compat.Java8Api.listOf(1, 2, 3));assertEquals("PARTIAL",out.get("status"),value);assertEquals(cn.bidcheck.compat.Java8Api.listOf(2),out.get("failedPages"));assertEquals(cn.bidcheck.compat.Java8Api.setOf(1, 3),factPages(out));assertEquals(2,((Number)out.get("fieldCount")).intValue());}
+        mode="extra";Map<String,Object> out=extract(client(true),cn.bidcheck.compat.Java8Api.listOf(1, 2, 3));assertEquals(cn.bidcheck.compat.Java8Api.setOf(1, 2, 3),factPages(out));assertEquals(1,out.get("rejectedPageRecords"));
+        assertEquals("VISUAL_PAGE_MAPPING_INVALID",extract(client(true),cn.bidcheck.compat.Java8Api.listOf(1)).get("errorCode"));
     }
     @Test void compactReferencesStillRejectWrongPageQuotesAndCannotEstablishUnrelatedOwners(){
-        mode="moved";Map<String,Object> out=extract(client(true),List.of(1,2,3));assertEquals(Set.of(1,3),factPages(out));assertEquals(3,list(out.get("observations")).size());
+        mode="moved";Map<String,Object> out=extract(client(true),cn.bidcheck.compat.Java8Api.listOf(1, 2, 3));assertEquals(cn.bidcheck.compat.Java8Api.setOf(1, 3),factPages(out));assertEquals(3,list(out.get("observations")).size());
         assertEquals("CONTEXT_QUOTE_NOT_ON_SOURCE_PAGE",list(map(out.get("factBatch")).get("rejected")).get(0).get("code"));
-        mode="owner";out=extract(client(true),List.of(1,2,3));Map<String,Object> fact=list(map(out.get("factBatch")).get("facts")).get(1);
+        mode="owner";out=extract(client(true),cn.bidcheck.compat.Java8Api.listOf(1, 2, 3));Map<String,Object> fact=list(map(out.get("factBatch")).get("facts")).get(1);
         assertEquals("",fact.get("subject"));assertEquals("UNRESOLVED",map(fact.get("attributes")).get("subjectBinding"));
     }
     @Test void onlyValidExplicitEmptyPagesCanReachNoFactsAndInvalidResponsesRemainRetryableFailures(){
-        mode="empty";Map<String,Object> empty=extract(client(true),List.of(1,2));assertEquals("VISUAL_NO_GROUNDED_OBSERVATIONS",empty.get("errorCode"));assertEquals("COMPLETED",list(empty.get("pageResults")).get(0).get("status"));
-        mode="mixed-empty";Map<String,Object> mixed=extract(client(true),List.of(1,2,3));assertEquals(Set.of(1,3),factPages(mixed));assertTrue(list(list(mixed.get("pageResults")).get(1).get("observations")).isEmpty());
-        mode="bad-index";Map<String,Object> bad=extract(client(true),List.of(1,2));assertEquals("VISUAL_WINDOW_PARTIAL",bad.get("errorCode"));assertEquals("VISUAL_COMPACT_SCHEMA_INVALID",list(bad.get("pageResults")).get(1).get("errorCode"));assertTrue(VisualVerificationService.splitRetryable(bad));assertFalse(VisualVerificationService.cacheable(bad));assertEquals(Set.of(1),factPages(bad));
-        mode="unreadable";assertEquals("VISUAL_SCHEMA_INVALID",extract(client(true),List.of(2)).get("errorCode"));
+        mode="empty";Map<String,Object> empty=extract(client(true),cn.bidcheck.compat.Java8Api.listOf(1, 2));assertEquals("VISUAL_NO_GROUNDED_OBSERVATIONS",empty.get("errorCode"));assertEquals("COMPLETED",list(empty.get("pageResults")).get(0).get("status"));
+        mode="mixed-empty";Map<String,Object> mixed=extract(client(true),cn.bidcheck.compat.Java8Api.listOf(1, 2, 3));assertEquals(cn.bidcheck.compat.Java8Api.setOf(1, 3),factPages(mixed));assertTrue(list(list(mixed.get("pageResults")).get(1).get("observations")).isEmpty());
+        mode="bad-index";Map<String,Object> bad=extract(client(true),cn.bidcheck.compat.Java8Api.listOf(1, 2));assertEquals("VISUAL_WINDOW_PARTIAL",bad.get("errorCode"));assertEquals("VISUAL_COMPACT_SCHEMA_INVALID",list(bad.get("pageResults")).get(1).get("errorCode"));assertTrue(VisualVerificationService.splitRetryable(bad));assertFalse(VisualVerificationService.cacheable(bad));assertEquals(cn.bidcheck.compat.Java8Api.setOf(1),factPages(bad));
+        mode="unreadable";assertEquals("VISUAL_SCHEMA_INVALID",extract(client(true),cn.bidcheck.compat.Java8Api.listOf(2)).get("errorCode"));
     }
     @Test void safeAttemptTelemetryIncludesFailuresAndSeparatesCacheReuseFromAnActualCall()throws Exception{
-        VisualVerificationService service=client(true);Map<String,Object> success=extract(service,List.of(1,2));assertTelemetry(success,true);assertEquals(123L,((Number)map(success.get("usage")).get("completion_tokens")).longValue());assertEquals(2,((Number)success.get("fieldCount")).intValue());
-        Map<String,Object> cached=service.extractIndependentPages(doc,pdf,List.of(1,2),()->fail("cache hit must not reserve another attempt"),"next");assertEquals(1,calls.get());assertEquals(true,cached.get("cacheHit"));assertEquals(false,cached.get("requestAttempted"));assertEquals(true,cached.get("requestTelemetryReused"));assertEquals(success.get("requestStartedAt"),cached.get("requestStartedAt"));
-        for(String value:List.of("malformed","truncated","http-error")){mode=value;Map<String,Object> failure=extract(client(true),List.of(1,2));assertTelemetry(failure,true);assertEquals("UNDETERMINED",failure.get("status"));assertTrue(factPages(failure).isEmpty());assertNull(failure.get("fieldCount"));}
-        mode="timeout";Map<String,Object> timeout=extract(client(true,Duration.ofMillis(50)),List.of(1,2));assertEquals("VISUAL_TIMEOUT",timeout.get("errorCode"));assertTelemetry(timeout,false);
+        VisualVerificationService service=client(true);Map<String,Object> success=extract(service,cn.bidcheck.compat.Java8Api.listOf(1, 2));assertTelemetry(success,true);assertEquals(123L,((Number)map(success.get("usage")).get("completion_tokens")).longValue());assertEquals(2,((Number)success.get("fieldCount")).intValue());
+        Map<String,Object> cached=service.extractIndependentPages(doc,pdf,cn.bidcheck.compat.Java8Api.listOf(1, 2),()->fail("cache hit must not reserve another attempt"),"next");assertEquals(1,calls.get());assertEquals(true,cached.get("cacheHit"));assertEquals(false,cached.get("requestAttempted"));assertEquals(true,cached.get("requestTelemetryReused"));assertEquals(success.get("requestStartedAt"),cached.get("requestStartedAt"));
+        for(String value:cn.bidcheck.compat.Java8Api.listOf("malformed", "truncated", "http-error")){mode=value;Map<String,Object> failure=extract(client(true),cn.bidcheck.compat.Java8Api.listOf(1, 2));assertTelemetry(failure,true);assertEquals("UNDETERMINED",failure.get("status"));assertTrue(factPages(failure).isEmpty());assertNull(failure.get("fieldCount"));}
+        mode="timeout";Map<String,Object> timeout=extract(client(true,Duration.ofMillis(50)),cn.bidcheck.compat.Java8Api.listOf(1, 2));assertEquals("VISUAL_TIMEOUT",timeout.get("errorCode"));assertTelemetry(timeout,false);
     }
     void assertTelemetry(Map<String,Object> out,boolean hasBody)throws Exception{
         assertEquals(true,out.get("requestAttempted"));assertEquals(false,out.get("requestTelemetryReused"));assertEquals(StructuredCompactResponse.VERSION,out.get("wireVersion"));
@@ -168,9 +167,9 @@ class CompactVisualVerificationTest {
         assertFalse(json.writeValueAsString(out).contains("fixture-secret"));assertFalse(json.writeValueAsString(out).contains("DO_NOT_COPY_RESPONSE_BODY"));
     }
     @Test void invalidUsageIsNotCoercedAndDeniedBudgetDoesNotInventHttpTiming(){
-        for(Object invalid:List.of(-1,1.5,"123",true)){usage=invalid;Map<String,Object> out=extract(client(true),List.of(1,2));assertEquals(Map.of(),out.get("usage"));}
-        usage=null;assertEquals(Map.of(),extract(client(true),List.of(1,2)).get("usage"));int before=calls.get();
-        Map<String,Object> denied=client(true).extractIndependentPages(doc,pdf,List.of(1,2),()->false,"denied");assertEquals(before,calls.get());assertEquals("VISUAL_BUDGET_EXHAUSTED",denied.get("errorCode"));
+        for(Object invalid:cn.bidcheck.compat.Java8Api.listOf(-1, 1.5, "123", true)){usage=invalid;Map<String,Object> out=extract(client(true),cn.bidcheck.compat.Java8Api.listOf(1, 2));assertEquals(cn.bidcheck.compat.Java8Api.mapOf(),out.get("usage"));}
+        usage=null;assertEquals(cn.bidcheck.compat.Java8Api.mapOf(),extract(client(true),cn.bidcheck.compat.Java8Api.listOf(1, 2)).get("usage"));int before=calls.get();
+        Map<String,Object> denied=client(true).extractIndependentPages(doc,pdf,cn.bidcheck.compat.Java8Api.listOf(1, 2),()->false,"denied");assertEquals(before,calls.get());assertEquals("VISUAL_BUDGET_EXHAUSTED",denied.get("errorCode"));
         assertEquals(false,denied.get("requestAttempted"));assertNull(denied.get("requestStartedAt"));assertNull(denied.get("requestFinishedAt"));assertNull(denied.get("responseBytes"));assertNull(denied.get("fieldCount"));
     }
 }

@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class CheckReviewModeTest {
     private Checkpoint cp(String type,String title,String field){return new Checkpoint("c",title,"形式检查","HIGH",type,field,"EXISTS","营业执照","",true,true,true,null);}
     @Test void absentModeKeepsHistoricalStandardAndRejectsUnknownValues(){
-        assertEquals("FIXED_WORKFLOW",CheckReviewMode.of(Map.of()));assertEquals("FIXED_WORKFLOW",CheckReviewMode.normalize(""));
+        assertEquals("FIXED_WORKFLOW",CheckReviewMode.of(cn.bidcheck.compat.Java8Api.mapOf()));assertEquals("FIXED_WORKFLOW",CheckReviewMode.normalize(""));
         assertEquals("AGENT_LED",CheckReviewMode.normalize("AGENT_LED"));assertThrows(Exception.class,()->CheckReviewMode.normalize("MODEL_ALL"));
     }
     @Test void agentAcceptsAllConfirmedTenderTypesButDoesNotClaimFullTextEngine(){
@@ -19,9 +19,9 @@ class CheckReviewModeTest {
         assertFalse(CheckReviewMode.eligible(new Checkpoint("c","未确认","形式检查","HIGH","MATERIAL_EXISTENCE","material","EXISTS","材料","",true,false,true,null)));
     }
     @Test void noChangeAndGenericGlobalRevisionCannotRestartOwnedInvestigation(){
-        assertFalse(CheckReviewMode.changedEvidence(Map.of("strategy","TARGETED_EVIDENCE")));
-        assertFalse(CheckReviewMode.changedEvidence(Map.of("strategy","RECOMPUTE_SHARED_EVIDENCE","dependencyTrigger",Map.of("revision",99),"dependencyTargetObligationIds",List.of("r"))));
-        assertFalse(CheckReviewMode.changedEvidence(Map.of("strategy","RECOMPUTE_SHARED_EVIDENCE","dependencyTrigger",Map.of("semanticEvidenceKeys",List.of("fact")))));
-        assertTrue(CheckReviewMode.changedEvidence(Map.of("strategy","RECOMPUTE_SHARED_EVIDENCE","dependencyTrigger",Map.of("semanticEvidenceKeys",List.of("fact")),"dependencyTargetObligationIds",List.of("r"))));
+        assertFalse(CheckReviewMode.changedEvidence(cn.bidcheck.compat.Java8Api.mapOf("strategy", "TARGETED_EVIDENCE")));
+        assertFalse(CheckReviewMode.changedEvidence(cn.bidcheck.compat.Java8Api.mapOf("strategy", "RECOMPUTE_SHARED_EVIDENCE", "dependencyTrigger", cn.bidcheck.compat.Java8Api.mapOf("revision", 99), "dependencyTargetObligationIds", cn.bidcheck.compat.Java8Api.listOf("r"))));
+        assertFalse(CheckReviewMode.changedEvidence(cn.bidcheck.compat.Java8Api.mapOf("strategy", "RECOMPUTE_SHARED_EVIDENCE", "dependencyTrigger", cn.bidcheck.compat.Java8Api.mapOf("semanticEvidenceKeys", cn.bidcheck.compat.Java8Api.listOf("fact")))));
+        assertTrue(CheckReviewMode.changedEvidence(cn.bidcheck.compat.Java8Api.mapOf("strategy", "RECOMPUTE_SHARED_EVIDENCE", "dependencyTrigger", cn.bidcheck.compat.Java8Api.mapOf("semanticEvidenceKeys", cn.bidcheck.compat.Java8Api.listOf("fact")), "dependencyTargetObligationIds", cn.bidcheck.compat.Java8Api.listOf("r"))));
     }
 }

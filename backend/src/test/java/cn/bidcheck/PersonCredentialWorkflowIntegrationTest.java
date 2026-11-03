@@ -32,7 +32,7 @@ class PersonCredentialWorkflowIntegrationTest {
         bids.execute(task);return store.map(task.inputJson).get("documentId").toString();
     }
     String[] setup()throws Exception {
-        String project=bids.createProject(Map.of("name","人员证件合成回归")).get("id").toString();
+        String project=bids.createProject(cn.bidcheck.compat.Java8Api.mapOf("name", "人员证件合成回归")).get("id").toString();
         String tender=upload(project,"TENDER","项目名称：人员证件合成回归\n投标有效期不得少于90天。");
         bids.execute(bids.extract(project,tender));
         for(Checkpoint cp:store.list("checkpoint",project,tender,Checkpoint.class))
@@ -49,7 +49,7 @@ class PersonCredentialWorkflowIntegrationTest {
         if(incomplete)pages.add(new Page(51,"","PAGE","PDFBOX","[OCR未完成] 合成扫描页未识别"));
         // Controlled source fixture: record exact page text as a document snapshot, separate from all user documents.
         store.save("document",id,project,"",new Document(id,project,"BID",original.name(),original.version(),original.sha256(),original.createdAt(),pages,
-            incomplete?List.of("[OCR未完成] 合成扫描页未识别"):List.of()));
+            incomplete?cn.bidcheck.compat.Java8Api.listOf("[OCR未完成] 合成扫描页未识别"):cn.bidcheck.compat.Java8Api.listOf()));
         return id;
     }
     @Test void baselineCheckWithoutFullTextCheckpointPublishesBothDistantSourcesAndExport()throws Exception {
@@ -57,16 +57,16 @@ class PersonCredentialWorkflowIntegrationTest {
         Map<String,Object> run=bids.startRun(p[0],bid);bids.execute(bids.task(run.get("taskId").toString()));
         Map<String,Object> payload=bids.run(run.get("id").toString(),false);
         Map<String,Object> report=ConsistencyRunSupport.map(payload.get("consistency"));
-        Map<String,Object> group=ConsistencyRunSupport.maps(report.get("groups")).stream().filter(g->"drivingLicenseNumber".equals(g.get("field"))).findFirst().orElseThrow();
+        Map<String,Object> group=ConsistencyRunSupport.maps(report.get("groups")).stream().filter(g->"drivingLicenseNumber".equals(g.get("field"))).findFirst().orElseThrow(java.util.NoSuchElementException::new);
         assertThat(ConsistencyRunSupport.evidences(store,group.get("evidences"))).extracting(Evidence::page).contains(1,50);
-        assertThat(ConsistencyRunSupport.evidences(store,group.get("evidences"))).allSatisfy(e->assertThat(bids.document(bid).pages().stream().filter(page->page.number()==e.page()).findFirst().orElseThrow().text()).contains(e.quote()));
+        assertThat(ConsistencyRunSupport.evidences(store,group.get("evidences"))).allSatisfy(e->assertThat(bids.document(bid).pages().stream().filter(page->page.number()==e.page()).findFirst().orElseThrow(java.util.NoSuchElementException::new).text()).contains(e.quote()));
         assertThat(report.get("ledgerSummary")).isNotNull();
         assertThat(new String(reports.generate(run.get("id").toString(),"html").bytes(),StandardCharsets.UTF_8)).contains("驾驶证","110101199001010011","110101199001010029");
         assertThat((List<Finding>)payload.get("results")).anyMatch(f->f.id().equals(group.get("findingId"))&&!"PASS".equals(f.evaluation().status()));
     }
     @Test void automaticVerificationAlsoPublishesCredentialFactsAndSourceLinks()throws Exception {
         String[] p=setup();String bid=distantCredentials(p[0],false);
-        Map<String,Object> created=verification.start(p[0],Map.of("tenderDocumentId",p[1],"documentIds",List.of(bid),"evaluationStage","PRE_SUBMISSION"));
+        Map<String,Object> created=verification.start(p[0],cn.bidcheck.compat.Java8Api.mapOf("tenderDocumentId", p[1], "documentIds", cn.bidcheck.compat.Java8Api.listOf(bid), "evaluationStage", "PRE_SUBMISSION"));
         assertThat(store.mapper().claimTask(created.get("taskId").toString(),BidService.now(),"person-credential-test",System.currentTimeMillis()+120000)).isEqualTo(1);
         bids.execute(bids.task(created.get("taskId").toString()));
         String runId=created.get("id").toString();Map<String,Object> detail=verification.detail(runId);
@@ -95,14 +95,10 @@ class PersonCredentialWorkflowIntegrationTest {
         assertThat(new String(reports.generate(run.get("id").toString(),"html").bytes(),StandardCharsets.UTF_8)).contains("尚未读取");
     }
     String extractionInformationOnly(String project)throws Exception {
-        List<String> texts=List.of("投标有效期：90天",
-            "居民身份证\n姓名：测试甲\n身份证号：110101199001010011\n性别：",
-            "居民身份证\n姓名：张三 李四\n身份证号：110101199001010029",
-            "居民身份证\n姓名：测试乙\n身份证号：110101********1234",
-            "姓名：测试丙\n编号：ABC123");
+        List<String> texts=cn.bidcheck.compat.Java8Api.listOf("投标有效期：90天", "居民身份证\n姓名：测试甲\n身份证号：110101199001010011\n性别：", "居民身份证\n姓名：张三 李四\n身份证号：110101199001010029", "居民身份证\n姓名：测试乙\n身份证号：110101********1234", "姓名：测试丙\n编号：ABC123");
         String id=upload(project,"BID",String.join("\n",texts));Document original=bids.document(id);
         List<Page> pages=new ArrayList<>();for(int i=0;i<texts.size();i++)pages.add(new Page(i+1,texts.get(i),"PAGE","PDFBOX",null));
-        store.save("document",id,project,"",new Document(id,project,"BID",original.name(),original.version(),original.sha256(),original.createdAt(),pages,List.of()));
+        store.save("document",id,project,"",new Document(id,project,"BID",original.name(),original.version(),original.sha256(),original.createdAt(),pages,cn.bidcheck.compat.Java8Api.listOf()));
         return id;
     }
     @Test void extractionUncertaintyRemainsAvailableWithoutCreatingBaselineReviewFindings()throws Exception {
@@ -123,7 +119,7 @@ class PersonCredentialWorkflowIntegrationTest {
     }
     @Test void extractionUncertaintyDoesNotCreateAutomaticVerificationSystemChecks()throws Exception {
         String[] p=setup();String bid=extractionInformationOnly(p[0]);
-        Map<String,Object> created=verification.start(p[0],Map.of("tenderDocumentId",p[1],"documentIds",List.of(bid),"evaluationStage","PRE_SUBMISSION"));
+        Map<String,Object> created=verification.start(p[0],cn.bidcheck.compat.Java8Api.mapOf("tenderDocumentId", p[1], "documentIds", cn.bidcheck.compat.Java8Api.listOf(bid), "evaluationStage", "PRE_SUBMISSION"));
         assertThat(store.mapper().claimTask(created.get("taskId").toString(),BidService.now(),"person-info-test",System.currentTimeMillis()+120000)).isEqualTo(1);
         bids.execute(bids.task(created.get("taskId").toString()));
         String runId=created.get("id").toString();Map<String,Object> detail=verification.detail(runId);

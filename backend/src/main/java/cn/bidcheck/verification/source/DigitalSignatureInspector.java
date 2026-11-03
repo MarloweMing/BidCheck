@@ -28,42 +28,42 @@ public class DigitalSignatureInspector {
     public Map<String,Object> inspect(Document doc,Path original){
         try{
             String hash=SourceSafety.verify(doc,original);List<Map<String,Object>> signatures=new ArrayList<>();
-            if(!"pdf".equals(SourceSafety.extension(doc)))return map("status","UNSUPPORTED","documentHash",hash,"signatures",signatures,"authenticityVerified",false,"limitations",List.of("当前仅验证PDF分离式CMS签名；Word签名包未验证。"));
+            if(!"pdf".equals(SourceSafety.extension(doc)))return map("status","UNSUPPORTED","documentHash",hash,"signatures",signatures,"authenticityVerified",false,"limitations",cn.bidcheck.compat.Java8Api.listOf("当前仅验证PDF分离式CMS签名；Word签名包未验证。"));
             long length=Files.size(original);Budget budget=new Budget();
-            try(var pdf=Loader.loadPDF(original.toFile(),IOUtils.createTempFileOnlyStreamCache())){
+            try(org.apache.pdfbox.pdmodel.PDDocument pdf=Loader.loadPDF(original.toFile(),IOUtils.createTempFileOnlyStreamCache())){
                 if(pdf.isEncrypted())throw new IOException("SIGNATURE_SOURCE_ENCRYPTED");
-                var source=pdf.getSignatureDictionaries();if(source.size()>100)throw new IOException("SIGNATURE_COUNT_LIMIT");int i=0;
-                for(var signature:source){SourceSafety.interrupted();int[] range=signature.getByteRange();boolean valid=range!=null&&range.length==4&&range[0]==0&&range[1]>=0&&range[2]>range[1]&&range[3]>=0&&(long)range[2]+range[3]<=length;
-                    COSBase value=signature.getCOSObject().getDictionaryObject(COSName.CONTENTS);byte[] contents=value instanceof COSString s?s.getBytes():null;boolean present=contents!=null&&contents.length>0;
+                java.util.List<org.apache.pdfbox.pdmodel.interactive.digitalsignature.PDSignature> source=pdf.getSignatureDictionaries();if(source.size()>100)throw new IOException("SIGNATURE_COUNT_LIMIT");int i=0;
+                for(org.apache.pdfbox.pdmodel.interactive.digitalsignature.PDSignature signature:source){SourceSafety.interrupted();int[] range=signature.getByteRange();boolean valid=range!=null&&range.length==4&&range[0]==0&&range[1]>=0&&range[2]>range[1]&&range[3]>=0&&(long)range[2]+range[3]<=length;
+                    COSBase value=signature.getCOSObject().getDictionaryObject(COSName.CONTENTS);byte[] contents=value instanceof COSString?((COSString) (value)).getBytes():null;boolean present=contents!=null&&contents.length>0;
                     Map<String,Object> crypto=verify(original,range,valid,contents,signature.getSubFilter(),budget);
                     signatures.add(map("index",++i,"byteRange",range,"byteRangeStructurallyValid",valid,"coversCurrentRevisionBytes",valid&&(long)range[2]+range[3]==length,"signatureContainerPresent",present,
                         "subFilter",signature.getSubFilter(),"claimedSigningTime",signature.getSignDate()==null?null:signature.getSignDate().toInstant().toString(),"cryptographicIntegrity",crypto.get("status"),"integrityDetail",crypto,
                         "trustChain","NOT_VERIFIED","revocation","NOT_CHECKED","trustedTimestamp","NOT_VERIFIED","certificateTimeValidity","NOT_VERIFIED"));
                 }
             }
-            return map("status",signatures.isEmpty()?"NO_SIGNATURE_CONTAINER":"SIGNATURES_INSPECTED","documentHash",hash,"signatures",signatures,"authenticityVerified",false,"limitations",List.of("VALID仅表示所列ByteRange覆盖字节与嵌入证书公钥的CMS签名一致；未覆盖当前版本时不证明后续变更完整性。","未配置可信根、吊销与可信时间戳验证；嵌入证书或自签证书不能据此获得可信身份，签署时点及证书期限未确认。","未发现数字签名字典不代表未手写签字或未盖实体章；扫描件签章另走图像核验。"));
+            return map("status",signatures.isEmpty()?"NO_SIGNATURE_CONTAINER":"SIGNATURES_INSPECTED","documentHash",hash,"signatures",signatures,"authenticityVerified",false,"limitations",cn.bidcheck.compat.Java8Api.listOf("VALID仅表示所列ByteRange覆盖字节与嵌入证书公钥的CMS签名一致；未覆盖当前版本时不证明后续变更完整性。", "未配置可信根、吊销与可信时间戳验证；嵌入证书或自签证书不能据此获得可信身份，签署时点及证书期限未确认。", "未发现数字签名字典不代表未手写签字或未盖实体章；扫描件签章另走图像核验。"));
         }catch(CancellationException e){throw e;}
-        catch(Exception e){return map("status","ERROR","errorCode","SIGNATURE_INSPECTION_FAILED","signatures",List.of(),"authenticityVerified",false,"limitations",List.of("数字签名读取未完成，不能认定真实性通过。"));}
+        catch(Exception e){return map("status","ERROR","errorCode","SIGNATURE_INSPECTION_FAILED","signatures",cn.bidcheck.compat.Java8Api.listOf(),"authenticityVerified",false,"limitations",cn.bidcheck.compat.Java8Api.listOf("数字签名读取未完成，不能认定真实性通过。"));}
     }
     private static Map<String,Object> verify(Path file,int[] range,boolean rangeValid,byte[] contents,String subFilter,Budget budget){
-        if(!rangeValid)return outcome("INVALID","BYTE_RANGE_INVALID",List.of());
-        if(contents==null||contents.length==0)return outcome("NOT_VERIFIED","SIGNATURE_CONTAINER_MISSING",List.of());
-        if(contents.length>MAX_CONTAINER)return outcome("NOT_VERIFIED","SIGNATURE_CONTAINER_LIMIT",List.of());
-        if(!Set.of("adbe.pkcs7.detached","ETSI.CAdES.detached").contains(Objects.toString(subFilter,"")))return outcome("NOT_VERIFIED","SIGNATURE_SUBFILTER_UNSUPPORTED",List.of());
+        if(!rangeValid)return outcome("INVALID","BYTE_RANGE_INVALID",cn.bidcheck.compat.Java8Api.listOf());
+        if(contents==null||contents.length==0)return outcome("NOT_VERIFIED","SIGNATURE_CONTAINER_MISSING",cn.bidcheck.compat.Java8Api.listOf());
+        if(contents.length>MAX_CONTAINER)return outcome("NOT_VERIFIED","SIGNATURE_CONTAINER_LIMIT",cn.bidcheck.compat.Java8Api.listOf());
+        if(!cn.bidcheck.compat.Java8Api.setOf("adbe.pkcs7.detached", "ETSI.CAdES.detached").contains(Objects.toString(subFilter,"")))return outcome("NOT_VERIFIED","SIGNATURE_SUBFILTER_UNSUPPORTED",cn.bidcheck.compat.Java8Api.listOf());
         CMSSignedDataParser parser=null;
         try{
-            budget.check(0);if(!contentsGapMatches(file,range,contents,budget))return outcome("INVALID","BYTE_RANGE_CONTENTS_MISMATCH",List.of());
+            budget.check(0);if(!contentsGapMatches(file,range,contents,budget))return outcome("INVALID","BYTE_RANGE_CONTENTS_MISMATCH",cn.bidcheck.compat.Java8Api.listOf());
             byte[] cmsBytes=unpaddedContainer(contents);CMSSignedData structure=new CMSSignedData(cmsBytes);
-            if(!structure.isDetachedSignature())return outcome("INVALID","DETACHED_SIGNATURE_REQUIRED",List.of());
-            if(structure.getSignerInfos().size()<1||structure.getSignerInfos().size()>8||structure.getCertificates().getMatches(null).size()>32)return outcome("NOT_VERIFIED","SIGNER_OR_CERTIFICATE_LIMIT",List.of());
+            if(!structure.isDetachedSignature())return outcome("INVALID","DETACHED_SIGNATURE_REQUIRED",cn.bidcheck.compat.Java8Api.listOf());
+            if(structure.getSignerInfos().size()<1||structure.getSignerInfos().size()>8||structure.getCertificates().getMatches(null).size()>32)return outcome("NOT_VERIFIED","SIGNER_OR_CERTIFICATE_LIMIT",cn.bidcheck.compat.Java8Api.listOf());
             try(InputStream signed=new BufferedInputStream(new ByteRanges(file,range,budget),64*1024)){
                 parser=new CMSSignedDataParser(new JcaDigestCalculatorProviderBuilder().setProvider(BC).build(),new CMSTypedStream(signed),cmsBytes);
                 parser.getSignedContent().drain();Store<X509CertificateHolder> certificates=parser.getCertificates();List<Map<String,Object>> signers=new ArrayList<>();boolean all=true;
                 for(SignerInformation signer:parser.getSignerInfos().getSigners()){
                     budget.check(0);Collection<X509CertificateHolder> matches=certificates.getMatches(signer.getSID());
                     if(matches.size()!=1)return outcome("NOT_VERIFIED","SIGNER_CERTIFICATE_NOT_UNIQUE",signers);
-                    X509CertificateHolder cert=matches.iterator().next();var publicKey=new JcaX509CertificateConverter().setProvider(BC).getCertificate(cert).getPublicKey();
-                    if(publicKey instanceof java.security.interfaces.RSAPublicKey rsa&&rsa.getModulus().bitLength()>8192||publicKey instanceof java.security.interfaces.ECPublicKey ec&&ec.getParams().getCurve().getField().getFieldSize()>600)return outcome("NOT_VERIFIED","SIGNATURE_KEY_LIMIT",signers);
+                    X509CertificateHolder cert=matches.iterator().next();java.security.PublicKey publicKey=new JcaX509CertificateConverter().setProvider(BC).getCertificate(cert).getPublicKey();
+                    if(publicKey instanceof java.security.interfaces.RSAPublicKey&&((java.security.interfaces.RSAPublicKey) (publicKey)).getModulus().bitLength()>8192||publicKey instanceof java.security.interfaces.ECPublicKey&&((java.security.interfaces.ECPublicKey) (publicKey)).getParams().getCurve().getField().getFieldSize()>600)return outcome("NOT_VERIFIED","SIGNATURE_KEY_LIMIT",signers);
                     // Public-key overload avoids treating an untrusted claimed signingTime as a trusted certificate time.
                     boolean valid=signer.verify(new JcaSimpleSignerInfoVerifierBuilder().setProvider(BC).build(publicKey));all&=valid;
                     signers.add(map("certificateSha256",SourceSafety.digest(cert.getEncoded()),"digestAlgorithm",signer.getDigestAlgOID(),"signatureAlgorithm",signer.getEncryptionAlgOID(),"integrity",valid?"VALID":"INVALID","certificateTrust","NOT_VERIFIED"));
@@ -71,8 +71,8 @@ public class DigitalSignatureInspector {
                 return outcome(all?"VALID":"INVALID",all?"CMS_DIGEST_AND_SIGNATURE_MATCH":"CMS_SIGNATURE_MISMATCH",signers);
             }
         }catch(CancellationException e){throw e;}
-        catch(CMSSignerDigestMismatchException e){return outcome("INVALID","CMS_SIGNED_BYTES_MISMATCH",List.of());}
-        catch(Exception e){return outcome("NOT_VERIFIED",e instanceof IOException&&"SIGNATURE_BUDGET_EXCEEDED".equals(e.getMessage())?e.getMessage():"CMS_INVALID_OR_UNSUPPORTED",List.of());}
+        catch(CMSSignerDigestMismatchException e){return outcome("INVALID","CMS_SIGNED_BYTES_MISMATCH",cn.bidcheck.compat.Java8Api.listOf());}
+        catch(Exception e){return outcome("NOT_VERIFIED",e instanceof IOException&&"SIGNATURE_BUDGET_EXCEEDED".equals(e.getMessage())?e.getMessage():"CMS_INVALID_OR_UNSUPPORTED",cn.bidcheck.compat.Java8Api.listOf());}
         finally{if(parser!=null)try{parser.close();}catch(IOException ignored){}}
     }
     private static Map<String,Object> outcome(String status,String code,List<?> signers){return map("status",status,"code",code,"signers",signers);}

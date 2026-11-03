@@ -25,6 +25,7 @@ import java.io.InterruptedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.zip.ZipEntry;
@@ -44,7 +45,7 @@ class FileParserTest {
             addTextPage(pdf, "Second evidence: B-002");
             pdf.save(path.toFile());
         }
-        var parsed = parser.parse(path, "evidence.PDF");
+        cn.bidcheck.domain.Domain.ParsedDocument parsed = parser.parse(path, "evidence.PDF");
         assertEquals(2, parsed.pages().size());
         assertEquals(1, parsed.pages().get(0).number());
         assertEquals(2, parsed.pages().get(1).number());
@@ -65,15 +66,15 @@ class FileParserTest {
         try (PDDocument pdf = new PDDocument()) {
             PDPage scanned = new PDPage();
             pdf.addPage(scanned);
-            var image = LosslessFactory.createFromImage(pdf, new BufferedImage(30, 30, BufferedImage.TYPE_INT_RGB));
+            org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject image = LosslessFactory.createFromImage(pdf, new BufferedImage(30, 30, BufferedImage.TYPE_INT_RGB));
             try (PDPageContentStream content = new PDPageContentStream(pdf, scanned)) { content.drawImage(image, 30, 50); }
             addTextPage(pdf, "Native text beside an image");
             try (PDPageContentStream content = new PDPageContentStream(pdf, pdf.getPage(1),
                     PDPageContentStream.AppendMode.APPEND, true)) { content.drawImage(image, 30, 50); }
             pdf.save(path.toFile());
         }
-        var parsed = parser.parse(path, "scanned.pdf");
-        assertTrue(parsed.pages().get(0).text().isBlank());
+        cn.bidcheck.domain.Domain.ParsedDocument parsed = parser.parse(path, "scanned.pdf");
+        assertTrue(cn.bidcheck.compat.Java8Api.isBlank(parsed.pages().get(0).text()));
         assertTrue(parsed.pages().get(0).warning().contains("OCR"));
         assertTrue(parsed.pages().get(1).warning().contains("图像"));
         assertEquals(2, parsed.warnings().size());
@@ -93,12 +94,12 @@ class FileParserTest {
             table.getRow(2).getCell(0).setText("粤B67890");
             table.getRow(2).getCell(1).setText("LSGJA52U2BS000002");
             table.getRow(2).getCell(2).setText("乙公司");
-            try (var stream = Files.newOutputStream(path)) { word.write(stream); }
+            try (java.io.OutputStream stream = Files.newOutputStream(path)) { word.write(stream); }
         }
-        var parsed = parser.parse(path, "vehicles.docx");
+        cn.bidcheck.domain.Domain.ParsedDocument parsed = parser.parse(path, "vehicles.docx");
         assertEquals(4, parsed.pages().size());
         assertEquals("PARAGRAPH", parsed.pages().get(0).locationType());
-        var row = parsed.pages().get(2);
+        cn.bidcheck.domain.Domain.Page row = parsed.pages().get(2);
         assertEquals("BLOCK", row.locationType());
         assertEquals(3, row.number());
         assertTrue(row.text().contains("粤A12345\tLSGJA52U2BS000001\t甲公司"));
@@ -110,13 +111,13 @@ class FileParserTest {
 
     @Test void preservesUtf8FormFeedPagesAndRejectsMalformedEncoding() throws Exception {
         Path path = temporary.resolve("bid.txt");
-        Files.writeString(path, "\uFEFF投标有效期：90天\r\n证据一\f车牌号：粤A12345\f", StandardCharsets.UTF_8);
-        var parsed = parser.parse(path, "bid.txt");
+        cn.bidcheck.compat.Java8Api.writeString(path, "\uFEFF投标有效期：90天\r\n证据一\f车牌号：粤A12345\f", StandardCharsets.UTF_8);
+        cn.bidcheck.domain.Domain.ParsedDocument parsed = parser.parse(path, "bid.txt");
         assertEquals(3, parsed.pages().size());
         assertEquals("投标有效期：90天\n证据一", parsed.pages().get(0).text());
         assertEquals("车牌号：粤A12345", parsed.pages().get(1).text());
         assertEquals(3, parsed.pages().get(2).number());
-        assertFalse(parsed.pages().get(2).warning().isBlank());
+        assertFalse(cn.bidcheck.compat.Java8Api.isBlank(parsed.pages().get(2).warning()));
         Files.write(path, new byte[]{(byte) 0xc3, 0x28});
         assertTrue(assertThrows(IOException.class, () -> parser.parse(path, "bid.txt")).getMessage().contains("UTF-8"));
     }
@@ -132,17 +133,17 @@ class FileParserTest {
             table.getRow(1).getCell(0).setText("成员甲");
             table.getRow(1).getCell(1).setText("技术负责人");
             table.getRow(1).getCell(2).setText("DEMO-CERT-01");
-            try (var stream = Files.newOutputStream(path)) { word.write(stream); }
+            try (java.io.OutputStream stream = Files.newOutputStream(path)) { word.write(stream); }
         }
-        var parsed = parser.parse(path, "people.docx");
+        cn.bidcheck.domain.Domain.ParsedDocument parsed = parser.parse(path, "people.docx");
         assertTrue(parsed.pages().get(2).text().contains("姓名：成员甲"));
         assertTrue(parsed.pages().get(2).text().contains("职务：技术负责人"));
-        var document = new cn.bidcheck.domain.Domain.Document("id", "project", "BID", "people.docx", 1,
+        cn.bidcheck.domain.Domain.Document document = new cn.bidcheck.domain.Domain.Document("id", "project", "BID", "people.docx", 1,
                 "hash", "now", parsed.pages(), parsed.warnings());
-        var result = new ProfileExtractor().extract(document);
+        java.util.Map<java.lang.String, java.lang.Object> result = new ProfileExtractor().extract(document);
         @SuppressWarnings("unchecked")
-        var groups = (java.util.List<java.util.Map<String, Object>>) result.get("groups");
-        var people = groups.stream().filter(group -> group.get("title").equals("人员信息")).findFirst().orElseThrow();
+        java.util.List<java.util.Map<java.lang.String, java.lang.Object>> groups = (java.util.List<java.util.Map<String, Object>>) result.get("groups");
+        java.util.Map<java.lang.String, java.lang.Object> people = groups.stream().filter(group -> group.get("title").equals("人员信息")).findFirst().orElseThrow(java.util.NoSuchElementException::new);
         assertEquals(3, ((java.util.List<?>) people.get("items")).size());
     }
 
@@ -155,13 +156,13 @@ class FileParserTest {
         }
         assertTrue(assertThrows(IOException.class, () -> parser.parse(encrypted, "protected.pdf")).getMessage().contains("加密"));
         Path bad = temporary.resolve("broken.pdf");
-        Files.writeString(bad, "This is not a PDF");
+        cn.bidcheck.compat.Java8Api.writeString(bad, "This is not a PDF");
         assertTrue(assertThrows(IOException.class, () -> parser.parse(bad, "broken.pdf")).getMessage().contains("损坏"));
         assertTrue(assertThrows(IOException.class, () -> parser.parse(bad, "file.exe")).getMessage().contains("格式"));
         Path pages = temporary.resolve("many.txt");
-        Files.writeString(pages, "x\f".repeat(500) + "x");
+        cn.bidcheck.compat.Java8Api.writeString(pages, cn.bidcheck.compat.Java8Api.repeat("x\f", 500) + "x");
         assertTrue(assertThrows(IOException.class, () -> parser.parse(pages, "many.txt")).getMessage().contains("500"));
-        Files.writeString(pages, "x".repeat(FileParser.MAX_CHARACTERS + 1));
+        cn.bidcheck.compat.Java8Api.writeString(pages, cn.bidcheck.compat.Java8Api.repeat("x", FileParser.MAX_CHARACTERS + 1));
         assertTrue(assertThrows(IOException.class, () -> parser.parse(pages, "many.txt")).getMessage().contains("200 万"));
     }
 
@@ -172,7 +173,7 @@ class FileParserTest {
             zip.write("<Types/>".getBytes(StandardCharsets.UTF_8));
             zip.closeEntry();
             zip.putNextEntry(new ZipEntry("word/document.xml"));
-            zip.write("a".repeat(2 * 1024 * 1024).getBytes(StandardCharsets.UTF_8));
+            zip.write(cn.bidcheck.compat.Java8Api.repeat("a", 2 * 1024 * 1024).getBytes(StandardCharsets.UTF_8));
             zip.closeEntry();
         }
         assertTrue(assertThrows(IOException.class, () -> parser.parse(path, "bomb.docx")).getMessage().contains("压缩"));
@@ -181,7 +182,7 @@ class FileParserTest {
     @Test void limitsPdfGlyphAccumulationBeforePdfBoxBuildsAnUnboundedPage() throws Exception {
         Path path = temporary.resolve("glyph-limit.pdf");
         try (PDDocument pdf = new PDDocument()) {
-            addTextPage(pdf, "A".repeat(50_001));
+            addTextPage(pdf, cn.bidcheck.compat.Java8Api.repeat("A", 50_001));
             pdf.save(path.toFile());
         }
         assertTrue(assertThrows(IOException.class, () -> parser.parse(path, "glyph-limit.pdf")).getMessage().contains("单页"));
@@ -193,7 +194,7 @@ class FileParserTest {
             PDPage page = new PDPage();
             pdf.addPage(page);
             page.setContents(new org.apache.pdfbox.pdmodel.common.PDStream(pdf,
-                    new ByteArrayInputStream(" ".repeat(8 * 1024 * 1024 + 1).getBytes(StandardCharsets.US_ASCII)),
+                    new ByteArrayInputStream(cn.bidcheck.compat.Java8Api.repeat(" ", 8 * 1024 * 1024 + 1).getBytes(StandardCharsets.US_ASCII)),
                     org.apache.pdfbox.cos.COSName.FLATE_DECODE));
             pdf.save(path.toFile());
         }
@@ -205,7 +206,7 @@ class FileParserTest {
         try (PDDocument pdf = new PDDocument()) {
             PDPage page = new PDPage();
             pdf.addPage(page);
-            var image = LosslessFactory.createFromImage(pdf, new BufferedImage(8, 8, BufferedImage.TYPE_INT_RGB));
+            org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject image = LosslessFactory.createFromImage(pdf, new BufferedImage(8, 8, BufferedImage.TYPE_INT_RGB));
             image.getCOSObject().setInt(org.apache.pdfbox.cos.COSName.WIDTH, 5000);
             image.getCOSObject().setInt(org.apache.pdfbox.cos.COSName.HEIGHT, 5000);
             try (PDPageContentStream stream = new PDPageContentStream(pdf, page)) { stream.drawImage(image, 20, 20, 200, 200); }
@@ -235,7 +236,7 @@ class FileParserTest {
         try (PDDocument pdf = new PDDocument()) {
             PDPage scanned = new PDPage();
             pdf.addPage(scanned);
-            var image = LosslessFactory.createFromImage(pdf, new BufferedImage(20, 20, BufferedImage.TYPE_INT_RGB));
+            org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject image = LosslessFactory.createFromImage(pdf, new BufferedImage(20, 20, BufferedImage.TYPE_INT_RGB));
             try (PDPageContentStream content = new PDPageContentStream(pdf, scanned)) { content.drawImage(image, 30, 50); }
             addTextPage(pdf, "Native project name");
             try (PDPageContentStream content = new PDPageContentStream(pdf, pdf.getPage(1), PDPageContentStream.AppendMode.APPEND, true)) {
@@ -246,16 +247,16 @@ class FileParserTest {
         }
         FakeOcr ocr = new FakeOcr((bytes, mime) -> "车牌号：测试A12345\n车辆识别代号：DEMO-VIN-0001");
         List<Integer> progress = new ArrayList<>();
-        var parsed = new FileParser(ocr).parse(path, "ocr.pdf", (percent, stage) -> progress.add(percent));
+        cn.bidcheck.domain.Domain.ParsedDocument parsed = new FileParser(ocr).parse(path, "ocr.pdf", (percent, stage) -> progress.add(percent));
         assertEquals(2, ocr.calls);
-        assertEquals(List.of("PDFBOX_OCR", "PDFBOX_NATIVE_WITH_OCR", "PDFBOX_NATIVE"), parsed.pages().stream().map(p -> p.parser()).toList());
-        assertEquals(List.of(1, 2, 3), parsed.pages().stream().map(p -> p.number()).toList());
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf("PDFBOX_OCR", "PDFBOX_NATIVE_WITH_OCR", "PDFBOX_NATIVE"), cn.bidcheck.compat.Java8Api.toList(parsed.pages().stream().map(p -> p.parser())));
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf(1, 2, 3), cn.bidcheck.compat.Java8Api.toList(parsed.pages().stream().map(p -> p.number())));
         assertTrue(parsed.pages().get(1).text().contains("【原生文字】\nNative project name"));
         assertTrue(parsed.pages().get(1).text().contains("【OCR识别文字】"));
         assertTrue(parsed.pages().get(0).warning().contains("[OCR已识别]"));
         assertTrue(parsed.pages().get(0).warning().contains("qwen-vl-ocr-test"));
         assertTrue(parsed.pages().get(0).warning().contains("识别文字可能有误，请对照原图核实；签字盖章未核验"));
-        assertTrue(parsed.pages().get(2).warning().isBlank());
+        assertTrue(cn.bidcheck.compat.Java8Api.isBlank(parsed.pages().get(2).warning()));
         assertEquals(0, progress.get(0));
         assertEquals(100, progress.get(progress.size() - 1));
         for (int i = 1; i < progress.size(); i++) assertTrue(progress.get(i) >= progress.get(i - 1));
@@ -266,20 +267,20 @@ class FileParserTest {
         byte[] first = imageBytes("png", 0x224488), second = imageBytes("png", 0xcc6633);
         try (XWPFDocument word = new XWPFDocument()) {
             word.createParagraph().createRun().setText("原生项目概况");
-            var paragraph = word.createParagraph();
+            org.apache.poi.xwpf.usermodel.XWPFParagraph paragraph = word.createParagraph();
             paragraph.createRun().setText("证照原件");
             addPicture(paragraph, first);
             addPicture(paragraph, second);
-            var table = word.createTable(2, 2);
+            org.apache.poi.xwpf.usermodel.XWPFTable table = word.createTable(2, 2);
             table.getRow(0).getCell(0).setText("名称");
             table.getRow(0).getCell(1).setText("材料");
             table.getRow(1).getCell(0).setText("附件");
             addPicture(table.getRow(1).getCell(1).getParagraphs().get(0), first);
-            try (var out = Files.newOutputStream(path)) { word.write(out); }
+            try (java.io.OutputStream out = Files.newOutputStream(path)) { word.write(out); }
         }
         FakeOcr ocr = new FakeOcr((bytes, mime) -> "证书编号：DEMO-CERT-001");
         FileParser enabled = new FileParser(ocr);
-        var parsed = enabled.parse(path, "images.docx");
+        cn.bidcheck.domain.Domain.ParsedDocument parsed = enabled.parse(path, "images.docx");
         assertEquals(4, parsed.pages().size());
         assertEquals(2, ocr.calls, "Duplicate embedded image should reuse recognition within this parse");
         assertEquals("BLOCK", parsed.pages().get(1).locationType());
@@ -287,7 +288,7 @@ class FileParserTest {
         assertTrue(parsed.pages().get(1).text().contains("【图片 1 OCR识别文字】"));
         assertTrue(parsed.pages().get(1).text().contains("【图片 2 OCR识别文字】"));
         assertTrue(parsed.pages().get(3).text().contains("证书编号：DEMO-CERT-001"));
-        assertEquals(parser.parse(path, "images.docx").pages().stream().map(p -> p.number()).toList(), parsed.pages().stream().map(p -> p.number()).toList());
+        assertEquals(cn.bidcheck.compat.Java8Api.toList(parser.parse(path, "images.docx").pages().stream().map(p -> p.number())), cn.bidcheck.compat.Java8Api.toList(parsed.pages().stream().map(p -> p.number())));
         BufferedImage contact = ImageIO.read(new ByteArrayInputStream(enabled.renderWordImage(path, 2)));
         assertNotNull(contact);
         assertTrue((long) contact.getWidth() * contact.getHeight() <= 4_000_000);
@@ -302,17 +303,17 @@ class FileParserTest {
     @Test void mixedWordOcrFailuresKeepSuccessfulTextAndIncompleteMarkerWithoutProviderSecrets() throws Exception {
         Path path = temporary.resolve("partial.docx");
         try (XWPFDocument word = new XWPFDocument()) {
-            var paragraph = word.createParagraph();
+            org.apache.poi.xwpf.usermodel.XWPFParagraph paragraph = word.createParagraph();
             addPicture(paragraph, imageBytes("png", 0x123456));
             addPicture(paragraph, imageBytes("png", 0x987654));
-            try (var out = Files.newOutputStream(path)) { word.write(out); }
+            try (java.io.OutputStream out = Files.newOutputStream(path)) { word.write(out); }
         }
         int[] requests = {0};
         FakeOcr ocr = new FakeOcr((bytes, mime) -> {
             if (++requests[0] == 2) throw new IOException("secret-token and private provider response");
             return "企业名称：样例企业";
         });
-        var page = new FileParser(ocr).parse(path, "partial.docx").pages().get(0);
+        cn.bidcheck.domain.Domain.Page page = new FileParser(ocr).parse(path, "partial.docx").pages().get(0);
         assertEquals("WORD_NATIVE_WITH_OCR", page.parser());
         assertTrue(page.text().contains("企业名称：样例企业"));
         assertTrue(page.warning().contains("[OCR已识别]"));
@@ -325,15 +326,15 @@ class FileParserTest {
         Path path = temporary.resolve("image-budget.docx");
         try (XWPFDocument word = new XWPFDocument()) {
             for (int i = 0; i < 102; i++) addPicture(word.createParagraph(), imageBytes("png", 0x335500 + i));
-            try (var out = Files.newOutputStream(path)) { word.write(out); }
+            try (java.io.OutputStream out = Files.newOutputStream(path)) { word.write(out); }
         }
         FakeOcr ocr = new FakeOcr((image, mime) -> "证件原文");
-        var result = new FileParser(ocr).parse(path, "image-budget.docx");
+        cn.bidcheck.domain.Domain.ParsedDocument result = new FileParser(ocr).parse(path, "image-budget.docx");
         assertEquals(102, result.pages().size());
         assertEquals(100, ocr.calls);
         assertEquals(100, result.pages().stream().filter(page -> page.parser().contains("OCR")).count());
-        for (var page : result.pages().subList(100, 102)) {
-            assertTrue(page.text().isBlank());
+        for (cn.bidcheck.domain.Domain.Page page : result.pages().subList(100, 102)) {
+            assertTrue(cn.bidcheck.compat.Java8Api.isBlank(page.text()));
             assertTrue(page.warning().contains("[OCR未完成]"));
             assertTrue(page.warning().contains("超限"));
             assertTrue(page.warning().contains("100"));
@@ -342,17 +343,17 @@ class FileParserTest {
 
     @Test void parsesPngAndJpegWithImageLocationAndSafePreview() throws Exception {
         FakeOcr ocr = new FakeOcr((bytes, mime) -> "统一社会信用代码：DEMO-ONLY");
-        for (String extension : List.of("png", "jpg", "jpeg")) {
+        for (String extension : cn.bidcheck.compat.Java8Api.listOf("png", "jpg", "jpeg")) {
             Path path = temporary.resolve("source." + extension);
             Files.write(path, imageBytes(extension.equals("png") ? "png" : "jpeg", 0x223344));
-            var result = new FileParser(ocr).parse(path, path.getFileName().toString());
+            cn.bidcheck.domain.Domain.ParsedDocument result = new FileParser(ocr).parse(path, path.getFileName().toString());
             assertEquals(1, result.pages().size());
             assertEquals("IMAGE", result.pages().get(0).locationType());
             assertEquals("IMAGE_OCR", result.pages().get(0).parser());
             assertTrue(result.pages().get(0).text().contains("DEMO-ONLY"));
             assertNotNull(ImageIO.read(new ByteArrayInputStream(parser.renderImage(path))));
-            var disabled = parser.parse(path, path.getFileName().toString());
-            assertTrue(disabled.pages().get(0).text().isBlank());
+            cn.bidcheck.domain.Domain.ParsedDocument disabled = parser.parse(path, path.getFileName().toString());
+            assertTrue(cn.bidcheck.compat.Java8Api.isBlank(disabled.pages().get(0).text()));
             assertTrue(disabled.pages().get(0).warning().contains("[OCR未完成]"));
             assertTrue(disabled.pages().get(0).warning().contains("未启用"));
         }
@@ -361,10 +362,10 @@ class FileParserTest {
     @Test void rejectsImageDimensionsBeforeDecodingOrCallingOcr() throws Exception {
         Path path = temporary.resolve("oversized.png");
         byte[] bytes = imageBytes("png", 0x102030);
-        var header = java.nio.ByteBuffer.wrap(bytes);
+        java.nio.ByteBuffer header = java.nio.ByteBuffer.wrap(bytes);
         header.putInt(16, 5000);
         header.putInt(20, 5000);
-        var crc = new java.util.zip.CRC32();
+        java.util.zip.CRC32 crc = new java.util.zip.CRC32();
         crc.update(bytes, 12, 17);
         header.putInt(29, (int) crc.getValue());
         Files.write(path, bytes);
@@ -377,11 +378,11 @@ class FileParserTest {
     @Test void incompleteOcrAndCancellationAreNeverReportedAsSuccessfulRecognition() throws Exception {
         Path path = temporary.resolve("source.png");
         Files.write(path, imageBytes("png", 0xabcdef));
-        for (String output : List.of("", " ", "x".repeat(50_001))) {
-            var result = new FileParser(new FakeOcr((bytes, mime) -> output)).parse(path, "source.png");
+        for (String output : cn.bidcheck.compat.Java8Api.listOf("", " ", cn.bidcheck.compat.Java8Api.repeat("x", 50_001))) {
+            cn.bidcheck.domain.Domain.ParsedDocument result = new FileParser(new FakeOcr((bytes, mime) -> output)).parse(path, "source.png");
             assertEquals("IMAGE", result.pages().get(0).parser());
             assertTrue(result.pages().get(0).warning().contains("[OCR未完成]"));
-            assertTrue(result.pages().get(0).text().isBlank());
+            assertTrue(cn.bidcheck.compat.Java8Api.isBlank(result.pages().get(0).text()));
         }
         InterruptedIOException interruption = new InterruptedIOException("test cancellation");
         FileParser interrupted = new FileParser(new FakeOcr((bytes, mime) -> { throw interruption; }));
@@ -422,7 +423,12 @@ class FileParserTest {
         assertTrue(assertThrows(IOException.class, () -> parser.parse(path, "large-document.pdf")).getMessage().contains("1000"));
         assertEquals(DocumentLimits.MAX_FILE_BYTES, FileParser.MAX_INPUT_BYTES);
         Path oversized = temporary.resolve("oversized.pdf");
-        try (var file = new java.io.RandomAccessFile(oversized.toFile(), "rw")) { file.setLength(DocumentLimits.MAX_FILE_BYTES + 1); }
+        try (java.nio.channels.SeekableByteChannel file = Files.newByteChannel(oversized,
+                java.util.EnumSet.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, StandardOpenOption.SPARSE))) {
+            file.position(DocumentLimits.MAX_FILE_BYTES);
+            file.write(java.nio.ByteBuffer.wrap(new byte[]{0}));
+        }
+        assertEquals(DocumentLimits.MAX_FILE_BYTES + 1, Files.size(oversized));
         assertTrue(assertThrows(IOException.class, () -> parser.parse(oversized, "oversized.pdf")).getMessage().contains(Integer.toString(DocumentLimits.MAX_FILE_MB)));
     }
 
@@ -430,10 +436,10 @@ class FileParserTest {
         Path path = temporary.resolve("configured-budget.docx");
         try (XWPFDocument word = new XWPFDocument()) {
             for (int i = 0; i < 102; i++) addPicture(word.createParagraph(), imageBytes("png", 0x123600 + i));
-            try (var out = Files.newOutputStream(path)) { word.write(out); }
+            try (java.io.OutputStream out = Files.newOutputStream(path)) { word.write(out); }
         }
         FakeOcr ocr = new FakeOcr((bytes, mime) -> "证书原文");
-        var result = new FileParser(ocr, 600).parse(path, "configured-budget.docx");
+        cn.bidcheck.domain.Domain.ParsedDocument result = new FileParser(ocr, 600).parse(path, "configured-budget.docx");
         assertEquals(102, ocr.calls);
         assertEquals(102, result.pages().stream().filter(p -> p.parser().contains("OCR")).count());
         assertTrue(result.warnings().stream().noneMatch(w -> w.contains("超限")));
@@ -447,7 +453,7 @@ class FileParserTest {
             PDPage page = new PDPage();
             pdf.addPage(page);
             BufferedImage scan = new BufferedImage(4200, 4200, BufferedImage.TYPE_INT_RGB);
-            var image = JPEGFactory.createFromImage(pdf, scan);
+            org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject image = JPEGFactory.createFromImage(pdf, scan);
             scan.flush();
             try (PDPageContentStream stream = new PDPageContentStream(pdf, page)) { stream.drawImage(image, 20, 20, 500, 700); }
             pdf.save(path.toFile());
@@ -465,7 +471,7 @@ class FileParserTest {
         String duplicate = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><b:Sources xmlns:b=\"" + ns + "\" xmlns:b=\"" + ns + "\" Version=\"6\"/>";
         Path original = wordWithXmlPart("bibliography.docx", "customXml/item2.xml", duplicate);
         byte[] before = Files.readAllBytes(original);
-        var parsed = parser.parse(original, "bibliography.docx");
+        cn.bidcheck.domain.Domain.ParsedDocument parsed = parser.parse(original, "bibliography.docx");
         assertTrue(parsed.pages().get(0).text().contains("项目名称：元数据兼容测试"));
         assertArrayEquals(before, Files.readAllBytes(original));
         Path conflicting = wordWithXmlPart("conflicting.docx", "customXml/item2.xml", duplicate.replace(" Version=", " xmlns:b=\"urn:conflicting\" Version="));
@@ -479,10 +485,10 @@ class FileParserTest {
 
     @Test void pdfOcrRunsTwoRequestsInParallelButKeepsPageOrderAndCallbacksOnCaller() throws Exception {
         Path path = coloredPdf("parallel.pdf", 0xcc0000, 0x00cc00, 0x0000cc);
-        var started = new java.util.concurrent.CountDownLatch(2);
-        var active = new java.util.concurrent.atomic.AtomicInteger();
-        var maximum = new java.util.concurrent.atomic.AtomicInteger();
-        var completions = new java.util.concurrent.ConcurrentLinkedQueue<String>();
+        java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(2);
+        java.util.concurrent.atomic.AtomicInteger active = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger maximum = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.ConcurrentLinkedQueue<java.lang.String> completions = new java.util.concurrent.ConcurrentLinkedQueue<String>();
         FakeOcr ocr = new FakeOcr((bytes, mime) -> {
             int running = active.incrementAndGet();
             maximum.accumulateAndGet(running, Math::max);
@@ -499,20 +505,20 @@ class FileParserTest {
             } finally { active.decrementAndGet(); }
         });
         Thread caller = Thread.currentThread();
-        var result = new FileParser(ocr).parse(path, "parallel.pdf", (percent, stage) -> assertSame(caller, Thread.currentThread()));
+        cn.bidcheck.domain.Domain.ParsedDocument result = new FileParser(ocr).parse(path, "parallel.pdf", (percent, stage) -> assertSame(caller, Thread.currentThread()));
         assertEquals(2, maximum.get());
         assertEquals(3, ocr.calls);
         assertEquals("cc00", completions.peek(), "Second-page recognition should be able to finish first");
         assertEquals("【OCR识别文字】\n图像编号：cc0000", result.pages().get(0).text());
         assertEquals("【OCR识别文字】\n图像编号：cc00", result.pages().get(1).text());
         assertEquals("【OCR识别文字】\n图像编号：cc", result.pages().get(2).text());
-        assertEquals(List.of(1, 2, 3), result.pages().stream().map(p -> p.number()).toList());
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf(1, 2, 3), cn.bidcheck.compat.Java8Api.toList(result.pages().stream().map(p -> p.number())));
     }
 
     @Test void losingPdfLeaseCancelsBothRequestsAndDoesNotInvokeCallbacksFromWorkers() throws Exception {
         Path path = coloredPdf("lease.pdf", 0xaa1100, 0x11aa00, 0x0011aa);
-        var started = new java.util.concurrent.CountDownLatch(2);
-        var cancelled = new java.util.concurrent.CountDownLatch(2);
+        java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(2);
+        java.util.concurrent.CountDownLatch cancelled = new java.util.concurrent.CountDownLatch(2);
         FakeOcr ocr = new FakeOcr((bytes, mime) -> {
             started.countDown();
             try {
@@ -541,8 +547,8 @@ class FileParserTest {
 
     @Test void pdfWorkerInterruptionIsPropagatedAndCancelsOtherPendingWork() throws Exception {
         Path path = coloredPdf("interrupted.pdf", 0xaa0000, 0x00aa00);
-        var started = new java.util.concurrent.CountDownLatch(2);
-        var secondCancelled = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(2);
+        java.util.concurrent.CountDownLatch secondCancelled = new java.util.concurrent.CountDownLatch(1);
         InterruptedIOException cancellation = new InterruptedIOException("provider interrupted");
         FakeOcr ocr = new FakeOcr((bytes, mime) -> {
             int color = ImageIO.read(new ByteArrayInputStream(bytes)).getRGB(1, 1) & 0xffffff;
@@ -565,10 +571,10 @@ class FileParserTest {
     @Test void configurablePdfConcurrencyReachesEightButNeverExceedsTheBoundary() throws Exception {
         int[] colors = java.util.stream.IntStream.rangeClosed(1, 17).map(i -> i * 0x070707).toArray();
         Path path = coloredPdf("eight-workers.pdf", colors);
-        var firstBatch = new java.util.concurrent.CountDownLatch(8);
-        var calls = new java.util.concurrent.atomic.AtomicInteger();
-        var active = new java.util.concurrent.atomic.AtomicInteger();
-        var maximum = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.CountDownLatch firstBatch = new java.util.concurrent.CountDownLatch(8);
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger active = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger maximum = new java.util.concurrent.atomic.AtomicInteger();
         FakeOcr ocr = new FakeOcr((bytes, mime) -> {
             int call = calls.incrementAndGet();
             maximum.accumulateAndGet(active.incrementAndGet(), Math::max);
@@ -585,7 +591,7 @@ class FileParserTest {
             } finally { active.decrementAndGet(); }
         });
         Thread caller = Thread.currentThread();
-        var result = new FileParser(ocr, 600, 8).parse(path, "eight-workers.pdf", (percent, stage) -> assertSame(caller, Thread.currentThread()));
+        cn.bidcheck.domain.Domain.ParsedDocument result = new FileParser(ocr, 600, 8).parse(path, "eight-workers.pdf", (percent, stage) -> assertSame(caller, Thread.currentThread()));
         assertEquals(8, maximum.get());
         assertEquals(17, ocr.calls);
         assertEquals(17, result.pages().size());
@@ -597,8 +603,8 @@ class FileParserTest {
 
     @Test void singlePdfWorkerRemainsSerialAndIllegalConcurrencyIsRejected() throws Exception {
         Path path = coloredPdf("one-worker.pdf", 0xdd0000, 0x00dd00, 0x0000dd);
-        var active = new java.util.concurrent.atomic.AtomicInteger();
-        var maximum = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger active = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger maximum = new java.util.concurrent.atomic.AtomicInteger();
         FakeOcr ocr = new FakeOcr((bytes, mime) -> {
             maximum.accumulateAndGet(active.incrementAndGet(), Math::max);
             try { return "已识别"; }
@@ -614,13 +620,13 @@ class FileParserTest {
     @Test void pageNumberOnlyTriggersTwoBoundedCropsWithSourceLabels() throws Exception {
         Path path = temporary.resolve("sparse.png");
         Files.write(path, imageBytes("png", 0xffffff));
-        var number = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger number = new java.util.concurrent.atomic.AtomicInteger();
         FakeOcr client = new FakeOcr((bytes, mime) -> {
             int call = number.incrementAndGet();
             if (call > 1) assertTrue(ImageIO.read(new ByteArrayInputStream(bytes)).getHeight() < 24);
-            return switch (call) { case 1 -> "158"; case 2 -> "合同联系人：测试甲方"; case 3 -> "签署日期：2025年1月1日"; default -> throw new AssertionError("unbounded retry"); };
+            switch (call) {case 1:return "158";case 2:return "合同联系人：测试甲方";case 3:return "签署日期：2025年1月1日";default:throw new AssertionError("unbounded retry");}
         });
-        var parsed = new FileParser(client, 1).parse(path, "sparse.png");
+        cn.bidcheck.domain.Domain.ParsedDocument parsed = new FileParser(client, 1).parse(path, "sparse.png");
         assertEquals(3, client.calls, "One image position permits at most two crop requests after a page-number-only result");
         assertTrue(parsed.pages().get(0).text().contains("【上半幅 OCR，边界有重叠】"));
         assertTrue(parsed.pages().get(0).text().contains("【下半幅 OCR，边界有重叠】"));
@@ -633,7 +639,7 @@ class FileParserTest {
         Path path = temporary.resolve("page-number.png");
         Files.write(path, imageBytes("png", 0xffffff));
         FakeOcr client = new FakeOcr((bytes, mime) -> "第 ４０４ 页 / 共 ５８１ 页");
-        var parsed = new FileParser(client, 1).parse(path, "page-number.png");
+        cn.bidcheck.domain.Domain.ParsedDocument parsed = new FileParser(client, 1).parse(path, "page-number.png");
         assertEquals(3, client.calls);
         assertTrue(parsed.pages().get(0).warning().contains("[OCR未完成]"));
         assertFalse(parsed.pages().get(0).warning().contains("[OCR已识别]"));
@@ -642,13 +648,9 @@ class FileParserTest {
     @Test void recoveredCropIsRetainedButFailedOtherCropRemainsIncomplete() throws Exception {
         Path path = temporary.resolve("partial-crop.png");
         Files.write(path, imageBytes("png", 0xffffff));
-        var number = new java.util.concurrent.atomic.AtomicInteger();
-        FakeOcr client = new FakeOcr((bytes, mime) -> switch (number.incrementAndGet()) {
-            case 1 -> "404"; case 2 -> "采购订单：测试项目";
-            case 3 -> throw new IOException("private provider failure");
-            default -> throw new AssertionError("unbounded retry");
-        });
-        var parsed = new FileParser(client).parse(path, "partial-crop.png");
+        java.util.concurrent.atomic.AtomicInteger number = new java.util.concurrent.atomic.AtomicInteger();
+        FakeOcr client = new FakeOcr((bytes, mime) -> { switch (number.incrementAndGet()) {case 1:return "404";case 2:return "采购订单：测试项目";case 3:throw new IOException("private provider failure");default:throw new AssertionError("unbounded retry");} });
+        cn.bidcheck.domain.Domain.ParsedDocument parsed = new FileParser(client).parse(path, "partial-crop.png");
         assertEquals(3, client.calls);
         assertTrue(parsed.pages().get(0).text().contains("采购订单：测试项目"));
         assertTrue(parsed.pages().get(0).warning().contains("[OCR未完成]"));
@@ -658,8 +660,8 @@ class FileParserTest {
     @Test void sparseCropCancellationPropagatesWithoutTryingSecondCrop() throws Exception {
         Path path = temporary.resolve("cancel-crop.png");
         Files.write(path, imageBytes("png", 0xffffff));
-        var number = new java.util.concurrent.atomic.AtomicInteger();
-        var cancelled = new InterruptedIOException("cancel");
+        java.util.concurrent.atomic.AtomicInteger number = new java.util.concurrent.atomic.AtomicInteger();
+        java.io.InterruptedIOException cancelled = new InterruptedIOException("cancel");
         FakeOcr client = new FakeOcr((bytes, mime) -> {
             if (number.incrementAndGet() == 1) return "12";
             throw cancelled;
@@ -684,7 +686,7 @@ class FileParserTest {
                 pdf.addPage(page);
                 BufferedImage image = new BufferedImage(8, 8, BufferedImage.TYPE_INT_RGB);
                 for (int y = 0; y < 8; y++) for (int x = 0; x < 8; x++) image.setRGB(x, y, color);
-                var embedded = LosslessFactory.createFromImage(pdf, image);
+                org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject embedded = LosslessFactory.createFromImage(pdf, image);
                 image.flush();
                 try (PDPageContentStream stream = new PDPageContentStream(pdf, page)) { stream.drawImage(embedded, 0, 0, 100, 100); }
             }
@@ -701,9 +703,9 @@ class FileParserTest {
                 +"</mc:AlternateContent></w:r><w:r><w:t>原生说明后半段</w:t></w:r></w:p>";
         Path path=wordWithXmlPart("textbox-choice.docx","word/document.xml",wordMarkup(body));
         FakeOcr client=new FakeOcr((bytes,mime)->{throw new AssertionError("Native textbox must not invoke OCR");});
-        var parsed=new FileParser(client).parse(path,"textbox-choice.docx");
+        cn.bidcheck.domain.Domain.ParsedDocument parsed=new FileParser(client).parse(path,"textbox-choice.docx");
         assertEquals(1,parsed.pages().size());assertEquals(0,client.calls);assertTrue(parsed.warnings().isEmpty());
-        var page=parsed.pages().get(0);assertEquals("POI_NATIVE",page.parser());assertEquals("PARAGRAPH",page.locationType());
+        cn.bidcheck.domain.Domain.Page page=parsed.pages().get(0);assertEquals("POI_NATIVE",page.parser());assertEquals("PARAGRAPH",page.locationType());
         assertTrue(page.text().contains("原生说明前半段原生说明后半段"));assertTrue(page.text().contains("【文本框原文】"));
         assertEquals(1,page.text().split("合成人员身份证复印件贴于此处",-1).length-1);
     }
@@ -713,7 +715,7 @@ class FileParserTest {
                 +"<v:textbox><w:txbxContent><w:p><w:r><w:t>注册资格需要核对主体</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p></w:tc></w:tr></w:tbl>"
                 +"<w:p><w:r><w:pict><v:shape><v:imagedata o:title=\"\"/><v:textpath string=\"合成下载水印 2024-01-01\"/></v:shape></w:pict></w:r></w:p>";
         Path path=wordWithXmlPart("native-shapes.docx","word/document.xml",wordMarkup(body));
-        var parsed=parser.parse(path,"native-shapes.docx");
+        cn.bidcheck.domain.Domain.ParsedDocument parsed=parser.parse(path,"native-shapes.docx");
         assertEquals(2,parsed.pages().size());assertTrue(parsed.warnings().isEmpty());
         assertEquals("BLOCK",parsed.pages().get(0).locationType());assertTrue(parsed.pages().get(0).text().contains("资格核对说明"));
         assertTrue(parsed.pages().get(0).text().contains("注册资格需要核对主体"));
@@ -729,8 +731,8 @@ class FileParserTest {
                 +"<w:p><w:r><w:pict><v:shape><v:imagedata o:relid=\"legacyImage\"/></v:shape></w:pict></w:r></w:p>";
         Path path=wordWithXmlPart("real-vml-reference.docx","word/document.xml",wordMarkup(empty+references));
         FakeOcr client=new FakeOcr((bytes,mime)->{throw new AssertionError("Unresolved links must never be fetched");});
-        var parsed=new FileParser(client).parse(path,"real-vml-reference.docx");
-        assertEquals(4,parsed.pages().size());assertTrue(parsed.pages().get(0).text().startsWith("正常正文"));assertTrue(parsed.pages().get(0).warning().isBlank());
+        cn.bidcheck.domain.Domain.ParsedDocument parsed=new FileParser(client).parse(path,"real-vml-reference.docx");
+        assertEquals(4,parsed.pages().size());assertTrue(parsed.pages().get(0).text().startsWith("正常正文"));assertTrue(cn.bidcheck.compat.Java8Api.isBlank(parsed.pages().get(0).warning()));
         assertEquals(3,parsed.warnings().size());assertEquals(0,client.calls);
         assertTrue(parsed.pages().subList(1,4).stream().allMatch(page->page.warning().contains("[OCR未完成]")));
     }
@@ -742,7 +744,7 @@ class FileParserTest {
                 +"<w:r><w:drawing><a:blip r:embed=\"missingBoxImage\"/></w:drawing></w:r>"
                 +"</w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>";
         Path path=wordWithXmlPart("revised-box.docx","word/document.xml",wordMarkup(body));
-        var page=parser.parse(path,"revised-box.docx").pages().get(0);
+        cn.bidcheck.domain.Domain.Page page=parser.parse(path,"revised-box.docx").pages().get(0);
         assertTrue(page.text().contains("原生框内说明"));assertTrue(page.text().contains("待接受新增条款"));
         assertFalse(page.text().contains("被删除的旧条款"));assertTrue(page.warning().contains("修订"));assertTrue(page.warning().contains("[OCR未完成]"));
     }
@@ -752,15 +754,15 @@ class FileParserTest {
                 +"<mc:Fallback><w:pict><v:shape><v:textpath string=\"兼容形式原文\"/></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p>"
                 +"<w:p><w:r><mc:AlternateContent><mc:Choice Requires=\"unknown\"><w:pict><v:shape><v:textpath string=\"不能确认的内容\"/></v:shape></w:pict></mc:Choice></mc:AlternateContent></w:r></w:p>";
         Path path=wordWithXmlPart("fallback-shape.docx","word/document.xml",wordMarkup(body));
-        var parsed=parser.parse(path,"fallback-shape.docx");
+        cn.bidcheck.domain.Domain.ParsedDocument parsed=parser.parse(path,"fallback-shape.docx");
         assertEquals(2,parsed.pages().size());assertTrue(parsed.pages().get(0).text().contains("兼容形式原文"));
-        assertFalse(parsed.pages().get(0).text().contains("不支持的新形式"));assertTrue(parsed.pages().get(0).warning().isBlank());
-        assertFalse(parsed.pages().get(1).warning().isBlank());
+        assertFalse(parsed.pages().get(0).text().contains("不支持的新形式"));assertTrue(cn.bidcheck.compat.Java8Api.isBlank(parsed.pages().get(0).warning()));
+        assertFalse(cn.bidcheck.compat.Java8Api.isBlank(parsed.pages().get(1).warning()));
     }
 
     @Test void emptyLegacyShapeSlotsPreserveHistoricalImageTargetsWithoutFalseOcrWarnings() throws Exception {
         Path path=temporary.resolve("stable-shape-image-slots.docx");
-        try (XWPFDocument word=new XWPFDocument(); var output=Files.newOutputStream(path)) {
+        try (XWPFDocument word=new XWPFDocument(); java.io.OutputStream output=Files.newOutputStream(path)) {
             word.createParagraph(); // Ordinary blank paragraphs were never locations and remain omitted.
             word.createParagraph().getCTP().addNewR().addNewPict().set(org.apache.xmlbeans.XmlObject.Factory.parse(
                     "<xml-fragment xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\">"
@@ -775,10 +777,10 @@ class FileParserTest {
         }
         FakeOcr client=new FakeOcr((image,mime)->"合成图片正文");
         FileParser enabled=new FileParser(client);
-        var parsed=enabled.parse(path,"stable-shape-image-slots.docx");
+        cn.bidcheck.domain.Domain.ParsedDocument parsed=enabled.parse(path,"stable-shape-image-slots.docx");
         assertEquals(4,parsed.pages().size());assertEquals(2,client.calls);
-        for (int index : List.of(0,2)) {
-            assertTrue(parsed.pages().get(index).text().isBlank());assertTrue(parsed.pages().get(index).warning().isBlank());
+        for (int index : cn.bidcheck.compat.Java8Api.listOf(0, 2)) {
+            assertTrue(cn.bidcheck.compat.Java8Api.isBlank(parsed.pages().get(index).text()));assertTrue(cn.bidcheck.compat.Java8Api.isBlank(parsed.pages().get(index).warning()));
             assertEquals("POI_NATIVE",parsed.pages().get(index).parser());
         }
         assertEquals("PARAGRAPH",parsed.pages().get(0).locationType());assertEquals("BLOCK",parsed.pages().get(2).locationType());
@@ -801,17 +803,17 @@ class FileParserTest {
 
     private Path wordWithXmlPart(String name, String part, String xml) throws Exception {
         Path base = temporary.resolve("base-" + name), result = temporary.resolve(name);
-        try (XWPFDocument word = new XWPFDocument(); var out = Files.newOutputStream(base)) {
+        try (XWPFDocument word = new XWPFDocument(); java.io.OutputStream out = Files.newOutputStream(base)) {
             word.createParagraph().createRun().setText("项目名称：元数据兼容测试");
             word.write(out);
         }
         try (ZipFile original = new ZipFile(base.toFile()); ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(result))) {
-            var entries = original.entries();
+            java.util.Enumeration<? extends java.util.zip.ZipEntry> entries = original.entries();
             while (entries.hasMoreElements()) {
-                var entry = entries.nextElement();
+                java.util.zip.ZipEntry entry = entries.nextElement();
                 if (entry.getName().equals(part)) continue;
                 output.putNextEntry(new ZipEntry(entry.getName()));
-                try (var input = original.getInputStream(entry)) { input.transferTo(output); }
+                try (java.io.InputStream input = original.getInputStream(entry)) { cn.bidcheck.compat.Java8Api.transferTo(input, output); }
                 output.closeEntry();
             }
             output.putNextEntry(new ZipEntry(part));

@@ -48,7 +48,7 @@ class MinioLiveStorageTest {
 
             upload.discardStaging(id);
             assertTrue(Files.exists(staged), "Discard must preserve an already committed original");
-            try (var input = download.open(id)) { assertArrayEquals(original, input.readAllBytes()); }
+            try (java.io.InputStream input = download.open(id)) { assertArrayEquals(original, cn.bidcheck.compat.Java8Api.readAllBytes(input)); }
         } finally {
             upload.close();
             if (download != null) download.close();
@@ -57,7 +57,7 @@ class MinioLiveStorageTest {
 
     private static String required(String name) {
         String value = System.getenv(name);
-        if (value == null || value.isBlank()) throw new IllegalStateException("Live MinIO test requires environment variable " + name);
+        if (value == null || cn.bidcheck.compat.Java8Api.isBlank(value)) throw new IllegalStateException("Live MinIO test requires environment variable " + name);
         return value;
     }
 }

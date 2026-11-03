@@ -1,8 +1,9 @@
 package cn.bidcheck.ocr;
+import cn.bidcheck.compat.HexFormat;
 
 import java.io.*;
 import java.net.URI;
-import java.net.http.*;
+import cn.bidcheck.compat.http.*;
 import java.nio.charset.StandardCharsets;
 import java.security.*;
 import java.time.*;
@@ -46,7 +47,18 @@ public final class OcrRequestGovernor {
     }
 
     @FunctionalInterface interface Work<T> { T run() throws IOException; }
-    record Shared<T>(T value, boolean reused) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    static final class Shared<T> {
+        private final T value;
+        private final boolean reused;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        Shared(@com.fasterxml.jackson.annotation.JsonProperty("value") T value, @com.fasterxml.jackson.annotation.JsonProperty("reused") boolean reused) { this.value = value; this.reused = reused; }
+        public T value() { return value; }
+        public boolean reused() { return reused; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Shared that = (Shared) other; return java.util.Objects.equals(this.value, that.value) && java.util.Objects.equals(this.reused, that.reused); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.value); hash = 31 * hash + java.util.Objects.hashCode(this.reused); return hash; }
+        @Override public String toString() { return "Shared[" + "value=" + value + ", reused=" + reused + "]"; }
+ }
 
     /** Duplicate waiters wait on the result, never on a network permit. Failed results are not cached. */
     <T> Shared<T> singleFlight(String key, Duration timeout, Work<T> work) throws IOException {
@@ -71,7 +83,7 @@ public final class OcrRequestGovernor {
             catch (TimeoutException expired) { timeouts.increment(); throw OcrFailure.of("QUEUE_TIMEOUT", true); }
             catch (ExecutionException failed) {
                 if (failed.getCause() instanceof InterruptedIOException) throw OcrFailure.of("SHARED_REQUEST_CANCELLED", true);
-                if (failed.getCause() instanceof IOException safe) throw safe;
+                if (failed.getCause() instanceof IOException) throw ((IOException) (failed.getCause()));
                 throw OcrFailure.of("INVALID_RESPONSE", false);
             } finally { synchronized (this) { followers--; } }
         }
@@ -148,7 +160,13 @@ public final class OcrRequestGovernor {
             if (batchBudget != null) batchBudget.check();
             long admissionStarted=System.nanoTime();Admission admission;
             try{admission=acquire(networkDeadline == 0 ? queueDeadline : networkDeadline);}
-            catch(OcrFailure failed){observeFailure(failures,attempt,"ADMISSION",failed,admissionStarted);throw failed;}
+            catch(OcrFailure failed){
+                observeFailure(failures,attempt,"ADMISSION",failed,admissionStarted);
+                // A retry that exhausts its existing network budget retains the transport failure.
+                // Initial admission failures still report queue capacity independently.
+                if(last!=null&&networkDeadline!=0&&"QUEUE_TIMEOUT".equals(failed.code())&&System.nanoTime()>=networkDeadline)throw last;
+                throw failed;
+            }
             if (networkDeadline == 0) networkDeadline = Math.min(outerDeadline, System.nanoTime() + timeout.multipliedBy(3).toNanos());
             HttpResponse<byte[]> response = null;
             long delay = 0;
@@ -172,7 +190,7 @@ public final class OcrRequestGovernor {
                     notifyAll();
                 }
                 if (response.statusCode() == 429) rateLimited.increment();
-            } catch (OcrFailure failed) { observeFailure(failures,attempt,sent?"TRANSPORT":"BEFORE_SEND",failed,started);last = failed;delay=retryDelay(null,attempt,settings);if(sent)recordHealth(admission,false,Set.of("TIMEOUT","TRANSPORT_ERROR").contains(failed.code()));if ("TIMEOUT".equals(failed.code())) timeouts.increment(); }
+            } catch (OcrFailure failed) { observeFailure(failures,attempt,sent?"TRANSPORT":"BEFORE_SEND",failed,started);last = failed;delay=retryDelay(null,attempt,settings);if(sent)recordHealth(admission,false,cn.bidcheck.compat.Java8Api.setOf("TIMEOUT", "TRANSPORT_ERROR").contains(failed.code()));if ("TIMEOUT".equals(failed.code())) timeouts.increment(); }
             finally { networkNanos.add(System.nanoTime() - started); release(admission); }
             if (!last.temporary() || "BATCH_BUDGET_EXHAUSTED".equals(last.code()) || attempt == settings.retryAttempts()) throw last;
             // Retry-After is never shortened to fit the budget; refuse this retry instead.
@@ -188,7 +206,18 @@ public final class OcrRequestGovernor {
         catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(OcrRequestGovernor.class).warn("bidcheck.page_layout_failure_audit status=OBSERVER_FAILED attempt={}",attempt);}
     }
 
-    private record Admission(long epoch,boolean probe) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Admission {
+        private final long epoch;
+        private final boolean probe;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Admission(@com.fasterxml.jackson.annotation.JsonProperty("epoch") long epoch, @com.fasterxml.jackson.annotation.JsonProperty("probe") boolean probe) { this.epoch = epoch; this.probe = probe; }
+        public long epoch() { return epoch; }
+        public boolean probe() { return probe; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Admission that = (Admission) other; return java.util.Objects.equals(this.epoch, that.epoch) && java.util.Objects.equals(this.probe, that.probe); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.epoch); hash = 31 * hash + java.util.Objects.hashCode(this.probe); return hash; }
+        @Override public String toString() { return "Admission[" + "epoch=" + epoch + ", probe=" + probe + "]"; }
+ }
     private synchronized Admission acquire(long deadline) throws IOException {
         interrupted();
         checkCircuit();
@@ -234,7 +263,7 @@ public final class OcrRequestGovernor {
     }
 
     private static HttpResponse<byte[]> exchange(HttpClient client, URI endpoint, String key, byte[] payload, int limit, Duration timeout) throws IOException {
-        var body = new DashScopeOcrClient.LimitedBodySubscriber(limit);
+        cn.bidcheck.ocr.DashScopeOcrClient.LimitedBodySubscriber body = new DashScopeOcrClient.LimitedBodySubscriber(limit);
         CompletableFuture<HttpResponse<byte[]>> pending = null;
         try {
             HttpRequest request = HttpRequest.newBuilder(endpoint).timeout(timeout).header("Authorization", "Bearer " + key)
@@ -256,7 +285,7 @@ public final class OcrRequestGovernor {
         long base = Math.min(settings.retryMaxDelayMs(), (long) settings.retryBaseMs() << (attempt - 1));
         long delay = Math.min(settings.retryMaxDelayMs(), base + ThreadLocalRandom.current().nextLong(Math.max(1, base / 4)));
         if (response != null) {
-            String value = response.headers().firstValue("Retry-After").orElse("").strip();
+            String value = cn.bidcheck.compat.Java8Api.strip(response.headers().firstValue("Retry-After").orElse(""));
             try { if (value.matches("[0-9]+")) delay = Math.max(delay, value.length() > 9 ? Long.MAX_VALUE : Long.parseLong(value) * 1000);
                 else if (!value.isEmpty()) delay = Math.max(delay, Math.max(0, Duration.between(Instant.now(), ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant()).toMillis()));
             } catch (RuntimeException malformed) { /* Ignore malformed hints, retaining bounded backoff. */ }

@@ -9,29 +9,42 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 
 /** Recognition of a submitted official query screenshot, not authentication of its contents. */
 final class PersonnelQueryScreenshot {
-    private static final Set<String> OFFICIAL_HOSTS=Set.of("cx.mem.gov.cn","cert.mohrss.gov.cn","zscx.osta.org.cn","jzsc.mohurd.gov.cn","zjt.hainan.gov.cn");
+    private static final Set<String> OFFICIAL_HOSTS=cn.bidcheck.compat.Java8Api.setOf("cx.mem.gov.cn", "cert.mohrss.gov.cn", "zscx.osta.org.cn", "jzsc.mohurd.gov.cn", "zjt.hainan.gov.cn");
     private static final Pattern URL=Pattern.compile("(?i)https?://[^\\s<>|，。；、）)]+");
-    record Proof(List<Source> sources,List<Evidence> evidence,List<Map<String,Object>> observations){}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    static final class Proof{
+        private final List<Source> sources;
+        private final List<Evidence> evidence;
+        private final List<Map<String,Object>> observations;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        Proof(@com.fasterxml.jackson.annotation.JsonProperty("sources") List<Source> sources, @com.fasterxml.jackson.annotation.JsonProperty("evidence") List<Evidence> evidence, @com.fasterxml.jackson.annotation.JsonProperty("observations") List<Map<String,Object>> observations) { this.sources = sources; this.evidence = evidence; this.observations = observations; }
+        public List<Source> sources() { return sources; }
+        public List<Evidence> evidence() { return evidence; }
+        public List<Map<String,Object>> observations() { return observations; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Proof that = (Proof) other; return java.util.Objects.equals(this.sources, that.sources) && java.util.Objects.equals(this.evidence, that.evidence) && java.util.Objects.equals(this.observations, that.observations); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.sources); hash = 31 * hash + java.util.Objects.hashCode(this.evidence); hash = 31 * hash + java.util.Objects.hashCode(this.observations); return hash; }
+        @Override public String toString() { return "Proof[" + "sources=" + sources + ", evidence=" + evidence + ", observations=" + observations + "]"; }
+}
     static Proof find(Rule parent,Fact certificate,RuleEvaluator evaluator){
         String name=certificate.subject(),number=str(certificate.attributes(),"number"),category=str(certificate.attributes(),"category");List<Source> sources=new ArrayList<>();List<Evidence> evidence=new ArrayList<>();List<Map<String,Object>> receipts=new ArrayList<>();Map<String,CertificateEvidenceRecords.ScopeResolver> scopes=new HashMap<>();
         for(Source source:evaluator.corpus.all){if(!CertificateEvidenceRecords.usable(source,evaluator.corpus,scopes))continue;String text=source.evidence().quote();
             if(!fields(text,name,number,category)||!officialUrl(text))continue;
-            if(revoked(text))return new Proof(List.of(),List.of(),List.of());
+            if(revoked(text))return new Proof(cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf());
             String obligation=parent.id()+"-QUERY-"+identity(name+"|"+number).substring(0,12);boolean accepted=false;
             for(Map<String,Object> observation:RuleEvaluator.maps(evaluator.context.get("visualObservations"))){
-                if(str(observation,"id").isBlank()||!"FIELD".equals(str(observation,"type"))||!str(observation,"label").startsWith("查询截图")||!VisualObservationPolicy.assess(observation).valueUsable()||!VisualObservationPolicy.validSourceBounds(observation))continue;
+                if(cn.bidcheck.compat.Java8Api.isBlank(str(observation,"id"))||!"FIELD".equals(str(observation,"type"))||!str(observation,"label").startsWith("查询截图")||!VisualObservationPolicy.assess(observation).valueUsable()||!VisualObservationPolicy.validSourceBounds(observation))continue;
                 if(!source.evidence().documentId().equals(str(observation,"documentId"))||RunSession.number(observation.get("location"),RunSession.number(observation.get("page"),-1))!=source.evidence().page())continue;
-                if(!(observation.get("source") instanceof Map<?,?> origin)||!source.documentHash().equals(origin.get("documentHash"))||!Objects.equals(source.documentVersion(),origin.get("documentVersion"))||!source.evidence().documentId().equals(origin.get("documentId"))||RunSession.number(origin.get("page"),-1)!=source.evidence().page())continue;
-                String image=str(observation,"imageHash");if(image.isBlank()||!image.equals(origin.get("renderedSha256")))continue;
-                String observed=str(observation,"value");if(observed.isBlank())observed=str(observation,"observedValue");if(!fields(observed,name,number,category)||!officialUrl(observed))continue;if(revoked(observed))return new Proof(List.of(),List.of(),List.of());
+                if(!(observation.get("source") instanceof Map<?,?>)||!source.documentHash().equals(((Map<?,?>) (observation.get("source"))).get("documentHash"))||!Objects.equals(source.documentVersion(),((Map<?,?>) (observation.get("source"))).get("documentVersion"))||!source.evidence().documentId().equals(((Map<?,?>) (observation.get("source"))).get("documentId"))||RunSession.number(((Map<?,?>) (observation.get("source"))).get("page"),-1)!=source.evidence().page())continue;
+                String image=str(observation,"imageHash");if(cn.bidcheck.compat.Java8Api.isBlank(image)||!image.equals(((Map<?,?>) (observation.get("source"))).get("renderedSha256")))continue;
+                String observed=str(observation,"value");if(cn.bidcheck.compat.Java8Api.isBlank(observed))observed=str(observation,"observedValue");if(!fields(observed,name,number,category)||!officialUrl(observed))continue;if(revoked(observed))return new Proof(cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf());
                 accepted=true;receipts.add(linked("observationId",str(observation,"id"),"sourceId",source.id(),"imageHash",image,"documentHash",source.documentHash(),"documentVersion",source.documentVersion(),"page",source.evidence().page(),"proofScope","SOURCE_BOUND_OFFICIAL_QUERY_SCREENSHOT_SUBMISSION","authenticityAssessed",false));
                 Evidence original=source.evidence();evidence.add(new Evidence(original.documentId(),original.documentName(),original.page(),original.locationType(),observed,"image:"+image,0));
             }
-            if(accepted)sources.add(source);else if(evaluator.visualRequests.stream().noneMatch(r->obligation.equals(str(r,"obligationId"))&&Objects.equals(r.get("location"),source.evidence().page())))evaluator.visualRequests.add(linked("obligationId",obligation,"documentId",source.evidence().documentId(),"locationType",source.evidence().locationType(),"location",source.evidence().page(),"task","FIELD","fields",List.of("查询截图原文（须包含页面为查询截图的可见特征、姓名、证书类别、证书编号及官方查询网址；自述文字不算截图）"),"expectedSubjects",List.of(name),"sourceIds",List.of(source.id()),"question","读取同一证书官方查询截图，核实它是截图页面并原样读取字段，不判断真伪或打分"));
-        }return new Proof(List.copyOf(sources),List.copyOf(evidence),List.copyOf(receipts));
+            if(accepted)sources.add(source);else if(evaluator.visualRequests.stream().noneMatch(r->obligation.equals(str(r,"obligationId"))&&Objects.equals(r.get("location"),source.evidence().page())))evaluator.visualRequests.add(linked("obligationId",obligation,"documentId",source.evidence().documentId(),"locationType",source.evidence().locationType(),"location",source.evidence().page(),"task","FIELD","fields",cn.bidcheck.compat.Java8Api.listOf("查询截图原文（须包含页面为查询截图的可见特征、姓名、证书类别、证书编号及官方查询网址；自述文字不算截图）"),"expectedSubjects",cn.bidcheck.compat.Java8Api.listOf(name),"sourceIds",cn.bidcheck.compat.Java8Api.listOf(source.id()),"question","读取同一证书官方查询截图，核实它是截图页面并原样读取字段，不判断真伪或打分"));
+        }return new Proof(cn.bidcheck.compat.Java8Api.listCopyOf(sources),cn.bidcheck.compat.Java8Api.listCopyOf(evidence),cn.bidcheck.compat.Java8Api.listCopyOf(receipts));
     }
     private static boolean fields(String text,String name,String number,String category){if(!text.matches("(?s).*(?:查询截图|查询结果|查询详情|证书查询).*" )||!text.contains(category))return false;
-        Matcher owner=Pattern.compile("(?:姓名|持证人)[:：\\s|]*([^\\s|，,。；;:：]{2,12})").matcher(text),serial=Pattern.compile("证书(?:编号|号码|号)[:：\\s|]*([A-Za-z0-9][A-Za-z0-9()（）/-]{3,79})").matcher(text);Set<String> names=new HashSet<>(),numbers=new HashSet<>();while(owner.find())names.add(owner.group(1));while(serial.find())numbers.add(serial.group(1));return names.equals(Set.of(name))&&numbers.equals(Set.of(number));}
+        Matcher owner=Pattern.compile("(?:姓名|持证人)[:：\\s|]*([^\\s|，,。；;:：]{2,12})").matcher(text),serial=Pattern.compile("证书(?:编号|号码|号)[:：\\s|]*([A-Za-z0-9][A-Za-z0-9()（）/-]{3,79})").matcher(text);Set<String> names=new HashSet<>(),numbers=new HashSet<>();while(owner.find())names.add(owner.group(1));while(serial.find())numbers.add(serial.group(1));return names.equals(cn.bidcheck.compat.Java8Api.setOf(name))&&numbers.equals(cn.bidcheck.compat.Java8Api.setOf(number));}
     private static boolean revoked(String text){return text.matches("(?s).*(?:状态|有效性)[:：\\s]*(?:已撤销|已注销|失效|过期|无效).*");}
-    static boolean officialUrl(String text){Matcher url=URL.matcher(text);boolean found=false;while(url.find())try{URI uri=URI.create(url.group());if(uri.getUserInfo()!=null||!Set.of("https","http").contains(uri.getScheme().toLowerCase(Locale.ROOT))||!OFFICIAL_HOSTS.contains(Objects.toString(uri.getHost(),"").toLowerCase(Locale.ROOT)))return false;found=true;}catch(IllegalArgumentException invalid){return false;}return found;}
+    static boolean officialUrl(String text){Matcher url=URL.matcher(text);boolean found=false;while(url.find())try{URI uri=URI.create(url.group());if(uri.getUserInfo()!=null||!cn.bidcheck.compat.Java8Api.setOf("https", "http").contains(uri.getScheme().toLowerCase(Locale.ROOT))||!OFFICIAL_HOSTS.contains(Objects.toString(uri.getHost(),"").toLowerCase(Locale.ROOT)))return false;found=true;}catch(IllegalArgumentException invalid){return false;}return found;}
 }

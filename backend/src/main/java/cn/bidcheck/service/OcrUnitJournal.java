@@ -10,7 +10,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 /** Durable parsing work, scoped to an immutable document revision; never a business verdict. */
 final class OcrUnitJournal implements OcrUnitObserver {
     static final String VERSION="ocr-unit-journal-1";
-    private static final Set<String> STATUSES=Set.of("RUNNING","SUCCEEDED","PARTIAL_SUCCEEDED","FAILED","DEFERRED");
+    private static final Set<String> STATUSES=cn.bidcheck.compat.Java8Api.setOf("RUNNING", "SUCCEEDED", "PARTIAL_SUCCEEDED", "FAILED", "DEFERRED");
     private final Store store;
     private final TransactionTemplate tx;
     private final Runnable fence;
@@ -26,8 +26,8 @@ final class OcrUnitJournal implements OcrUnitObserver {
     OcrUnitJournal(Store store,TransactionTemplate tx,Runnable fence,String project,String document,int version,
                    String sourceHash,String planHash,String identity,String taskId,String baseDocument) {
         this.store=store;this.tx=tx;this.fence=fence;this.project=project;this.document=document;this.version=version;
-        this.sourceHash=sourceHash;this.planHash=planHash;this.identity=identity;this.taskId=taskId;this.baseDocument=Objects.requireNonNullElse(baseDocument,"");
-        if(project==null||project.isBlank()||document==null||document.isBlank()||version<1||sourceHash==null||!sourceHash.matches("[a-f0-9]{64}"))
+        this.sourceHash=sourceHash;this.planHash=planHash;this.identity=identity;this.taskId=taskId;this.baseDocument=cn.bidcheck.compat.Java8Api.requireNonNullElse(baseDocument, "");
+        if(project==null||cn.bidcheck.compat.Java8Api.isBlank(project)||document==null||cn.bidcheck.compat.Java8Api.isBlank(document)||version<1||sourceHash==null||!sourceHash.matches("[a-f0-9]{64}"))
             throw new IllegalArgumentException("识别工作记录缺少文档版本或原件指纹。");
         this.scope=BidService.hash(VERSION+"|"+project+"|"+document+"|"+version+"|"+sourceHash+"|"+planHash+"|"+identity);
         for(Map<String,Object> row:store.maps("ocr_unit_status",project,document))if(scope.equals(row.get("scope")))states.put(location(row),row);
@@ -38,7 +38,7 @@ final class OcrUnitJournal implements OcrUnitObserver {
         validateLocation(type,position,index);
         String location=key(type,position,index);
         Optional<Result> result=readResult(resultId(location),document,scope,imageHash);
-        if(result.isEmpty()&&!baseDocument.isBlank()) {
+        if((!result.isPresent())&&!cn.bidcheck.compat.Java8Api.isBlank(baseDocument)) {
             Stored summary=store.mapper().get("ocr-progress:"+baseDocument);
             if(summary!=null&&"ocr_progress".equals(summary.kind)&&project.equals(summary.projectId)&&baseDocument.equals(summary.parentId)) {
                 String priorScope=BidService.text(store.map(summary.body),"scope");
@@ -77,7 +77,7 @@ final class OcrUnitJournal implements OcrUnitObserver {
             "locationType",event.locationType(),"position",event.position(),"imageIndex",event.imageIndex(),"imageHash",event.imageHash(),
             "status",event.status(),"attempts",attempts,"elapsedMillis",Math.max(0,event.elapsedMillis()),"cached",event.cached(),
             "width",event.width(),"height",event.height(),"imageBytes",event.imageBytes(),"updatedAt",BidService.now(),
-            "errorCode",switch(event.status()){case "FAILED"->"OCR_UNIT_FAILED";case "PARTIAL_SUCCEEDED"->"OCR_UNIT_PARTIAL";case "DEFERRED"->"PLAN_DEFERRED";default->"";});
+            "errorCode",(java.util.Objects.equals((event.status()), "FAILED") ? "OCR_UNIT_FAILED" : (java.util.Objects.equals((event.status()), "PARTIAL_SUCCEEDED") ? "OCR_UNIT_PARTIAL" : (java.util.Objects.equals((event.status()), "DEFERRED") ? "PLAN_DEFERRED" : ""))));
         Result result=new Result(event.text(),event.warning(),event.layout());
         if("SUCCEEDED".equals(event.status())&&(!validResult(result)||event.imageHash()==null||!event.imageHash().matches("[a-f0-9]{64}")
             ||event.width()<1||event.height()<1))throw new IOException("识别工作结果未通过持久化校验。");
@@ -97,7 +97,7 @@ final class OcrUnitJournal implements OcrUnitObserver {
     }
 
     private Map<String,Object> summary(Map<String,Map<String,Object>> values) {
-        Map<String,Long> counts=new LinkedHashMap<>();for(String status:List.of("RUNNING","SUCCEEDED","PARTIAL_SUCCEEDED","FAILED","DEFERRED"))counts.put(status,0L);
+        Map<String,Long> counts=new LinkedHashMap<>();for(String status:cn.bidcheck.compat.Java8Api.listOf("RUNNING", "SUCCEEDED", "PARTIAL_SUCCEEDED", "FAILED", "DEFERRED"))counts.put(status,0L);
         long elapsed=0,cached=0;for(Map<String,Object> row:values.values()) {
             counts.computeIfPresent(BidService.text(row,"status"),(k,v)->v+1);
             elapsed+=((Number)row.getOrDefault("elapsedMillis",0)).longValue();if(Boolean.TRUE.equals(row.get("cached")))cached++;
@@ -111,7 +111,7 @@ final class OcrUnitJournal implements OcrUnitObserver {
 
     @Override public void onBatch(cn.bidcheck.ocr.OcrBatch.Event event)throws IOException {
         if(event.id()==null||!event.id().matches("[A-Za-z0-9_:.-]{1,100}")||event.inputIds().isEmpty()||event.inputIds().size()>16
-                ||!Set.of("CREATED","BATCHING","RUNNING","SPLITTING","SPLIT_COMPLETED","RECOVERED","ITEM_REJECTED","SUCCEEDED","PARTIAL_FAILED","FAILED","CANCELLED","CACHED").contains(event.status())
+                ||!cn.bidcheck.compat.Java8Api.setOf("CREATED", "BATCHING", "RUNNING", "SPLITTING", "SPLIT_COMPLETED", "RECOVERED", "ITEM_REJECTED", "SUCCEEDED", "PARTIAL_FAILED", "FAILED", "CANCELLED", "CACHED").contains(event.status())
                 ||event.inputIds().stream().anyMatch(id->id==null||!id.matches("[A-Za-z0-9_:.-]{1,100}"))
                 ||event.inputHash()==null||!event.inputHash().matches("[a-f0-9]{64}"))throw new IOException("OCR 批次工作记录无效。");
         Map<String,Object> row=BidService.fields("batchId",event.id(),"parentBatchId",event.parentId(),"scope",scope,"projectId",project,
@@ -134,7 +134,7 @@ final class OcrUnitJournal implements OcrUnitObserver {
     }
     private static String safeMetadata(String value){return value!=null&&value.matches("[A-Za-z0-9_:./-]{0,200}")?value:"";}
     private static boolean validResult(Result result) {
-        if(result==null||result.text()==null||result.text().isBlank()||result.text().length()>50_000||result.text().indexOf('\0')>=0
+        if(result==null||result.text()==null||cn.bidcheck.compat.Java8Api.isBlank(result.text())||result.text().length()>50_000||result.text().indexOf('\0')>=0
             ||result.warning()==null||result.warning().contains("[OCR未完成]"))return false;
         try { if(result.layout()!=null)result.layout().validated(result.text());return true; }
         catch(RuntimeException invalid){return false;}
@@ -146,7 +146,7 @@ final class OcrUnitJournal implements OcrUnitObserver {
     private static String location(Map<String,Object> row){return key(BidService.text(row,"locationType"),((Number)row.get("position")).intValue(),((Number)row.get("imageIndex")).intValue());}
     private static String key(String type,int position,int index){return type+":"+position+":"+index;}
     private static void validateLocation(String type,int position,int index)throws IOException {
-        if(!Set.of("PAGE","PARAGRAPH","BLOCK","IMAGE").contains(type)||position<1||position>20_000||index<1||index>1000)
+        if(!cn.bidcheck.compat.Java8Api.setOf("PAGE", "PARAGRAPH", "BLOCK", "IMAGE").contains(type)||position<1||position>20_000||index<1||index>1000)
             throw new IOException("识别工作来源位置无效。");
     }
 }

@@ -26,21 +26,21 @@ class EvidenceNeedCoordinatorTest {
     @Test void stableKeyNormalizesDocumentAndDimensionOrderAndInvalidatesChangedInputs() {
         EvidenceNeedKey.DocumentVersion bid = document("bid", 3, "bid-hash", "parser-v2");
         EvidenceNeedKey.DocumentVersion tender = document("tender", 1, "tender-hash", "parser-v1");
-        EvidenceNeedKey first = new EvidenceNeedKey(List.of(bid, tender), "PERSON:ZHANG_SAN",
-                "CERTIFICATE", "validUntil", Map.of("major", "建筑工程", "lot", "A"),
+        EvidenceNeedKey first = new EvidenceNeedKey(cn.bidcheck.compat.Java8Api.listOf(bid, tender), "PERSON:ZHANG_SAN",
+                "CERTIFICATE", "validUntil", cn.bidcheck.compat.Java8Api.mapOf("major", "建筑工程", "lot", "A"),
                 "certificate-local", "2");
-        EvidenceNeedKey reordered = new EvidenceNeedKey(List.of(tender, bid), "PERSON:ZHANG_SAN",
-                "CERTIFICATE", "validUntil", Map.of("lot", "A", "major", "建筑工程"),
+        EvidenceNeedKey reordered = new EvidenceNeedKey(cn.bidcheck.compat.Java8Api.listOf(tender, bid), "PERSON:ZHANG_SAN",
+                "CERTIFICATE", "validUntil", cn.bidcheck.compat.Java8Api.mapOf("lot", "A", "major", "建筑工程"),
                 "certificate-local", "2");
         EvidenceNeedKey changedParser = new EvidenceNeedKey(
-                List.of(document("bid", 3, "bid-hash", "parser-v3"), tender), "PERSON:ZHANG_SAN",
-                "CERTIFICATE", "validUntil", Map.of("lot", "A", "major", "建筑工程"),
+                cn.bidcheck.compat.Java8Api.listOf(document("bid", 3, "bid-hash", "parser-v3"), tender), "PERSON:ZHANG_SAN",
+                "CERTIFICATE", "validUntil", cn.bidcheck.compat.Java8Api.mapOf("lot", "A", "major", "建筑工程"),
                 "certificate-local", "2");
 
         assertEquals(first, reordered);
         assertEquals(first.id(), reordered.id());
         assertNotEquals(first.id(), changedParser.id());
-        assertNotEquals(first.id(), new EvidenceNeedKey(List.of(bid, tender), "PERSON:ZHANG_SAN",
+        assertNotEquals(first.id(), new EvidenceNeedKey(cn.bidcheck.compat.Java8Api.listOf(bid, tender), "PERSON:ZHANG_SAN",
                 "CERTIFICATE", "validUntil", first.dimensions(), "certificate-local", "3").id());
     }
 
@@ -65,14 +65,14 @@ class EvidenceNeedCoordinatorTest {
             }
             release.countDown();
 
-            List<EvidenceReadReceipt> receipts = requests.stream().map(CompletableFuture::join).toList();
+            List<EvidenceReadReceipt> receipts = cn.bidcheck.compat.Java8Api.toList(requests.stream().map(CompletableFuture::join));
             assertEquals(1, calls.get());
             assertEquals(1, receipts.stream().map(EvidenceReadReceipt::taskId).distinct().count());
             assertEquals(24, receipts.stream().map(EvidenceReadReceipt::receiptId).distinct().count());
-            assertEquals(Set.of(EvidenceTaskStatus.SUCCEEDED),
+            assertEquals(cn.bidcheck.compat.Java8Api.setOf(EvidenceTaskStatus.SUCCEEDED),
                     receipts.stream().map(EvidenceReadReceipt::status).collect(java.util.stream.Collectors.toSet()));
             assertTrue(receipts.stream().allMatch(EvidenceReadReceipt::sharedTask));
-            assertEquals(24, repository.find(key().id()).orElseThrow().subscriberIds().size());
+            assertEquals(24, repository.find(key().id()).orElseThrow(java.util.NoSuchElementException::new).subscriberIds().size());
         }
     }
 
@@ -97,7 +97,7 @@ class EvidenceNeedCoordinatorTest {
                 "validUntil", key().dimensions(), "local-test", "1");
         try (EvidenceNeedCoordinator coordinator = new EvidenceNeedCoordinator(repository, FAST_POLICY)) {
             LocalEvidenceExtractor partial = extractor(context -> EvidenceExtractionResult.partial(
-                    List.of(), EvidenceScope.partial(8, 10, Set.of("page:9", "page:10"), "OCR未完成"),
+                    cn.bidcheck.compat.Java8Api.listOf(), EvidenceScope.partial(8, 10, cn.bidcheck.compat.Java8Api.setOf("page:9", "page:10"), "OCR未完成"),
                     "只能证明当前已扫描范围"));
             EvidenceReadReceipt receipt = coordinator.request(partialKey, "check-c", partial)
                     .get(2, TimeUnit.SECONDS);
@@ -170,19 +170,19 @@ class EvidenceNeedCoordinatorTest {
     }
 
     @Test void resultSemanticsRejectFalseNegativesAndUnboundPositives() {
-        EvidenceScope partial = EvidenceScope.partial(2, 3, Set.of("page:3"), "一页未解析");
+        EvidenceScope partial = EvidenceScope.partial(2, 3, cn.bidcheck.compat.Java8Api.setOf("page:3"), "一页未解析");
         assertThrows(IllegalArgumentException.class,
                 () -> new EvidenceExtractionResult(EvidenceExtractionResult.Disposition.NOT_FOUND,
-                        List.of(), partial, "", Map.of()));
+                        cn.bidcheck.compat.Java8Api.listOf(), partial, "", cn.bidcheck.compat.Java8Api.mapOf()));
         assertThrows(IllegalArgumentException.class,
                 () -> new EvidenceExtractionResult(EvidenceExtractionResult.Disposition.POSITIVE,
-                        List.of(), EvidenceScope.closed(3, "完整"), "", Map.of()));
+                        cn.bidcheck.compat.Java8Api.listOf(), EvidenceScope.closed(3, "完整"), "", cn.bidcheck.compat.Java8Api.mapOf()));
     }
 
     private static EvidenceNeedKey key() {
-        return new EvidenceNeedKey(List.of(document("bid", 3, "bid-hash", "parser-v2")),
+        return new EvidenceNeedKey(cn.bidcheck.compat.Java8Api.listOf(document("bid", 3, "bid-hash", "parser-v2")),
                 "PERSON:ZHANG_SAN", "CERTIFICATE", "validUntil",
-                Map.of("certificateType", "建造师注册证", "scope", "CURRENT_PROJECT"),
+                cn.bidcheck.compat.Java8Api.mapOf("certificateType", "建造师注册证", "scope", "CURRENT_PROJECT"),
                 "local-test", "1");
     }
 
@@ -194,9 +194,9 @@ class EvidenceNeedCoordinatorTest {
         SourceRef source = new SourceRef("bid", 3, "bid-hash", "parser-v2", "source-hash",
                 "PAGE", 6, "有效期至2027年12月31日", null, null);
         Observation.MaterialObservation observation = new Observation.MaterialObservation(
-                "obs-1", "建造师注册证", Set.of(), "PERSON:ZHANG_SAN", true,
-                true, false, Set.of(), TemplateTypes.ObservationState.SUPPORTED, List.of(source), 1.0);
-        return EvidenceExtractionResult.positive(List.of(observation), EvidenceScope.closed(10, "完整文档范围"));
+                "obs-1", "建造师注册证", cn.bidcheck.compat.Java8Api.setOf(), "PERSON:ZHANG_SAN", true,
+                true, false, cn.bidcheck.compat.Java8Api.setOf(), TemplateTypes.ObservationState.SUPPORTED, cn.bidcheck.compat.Java8Api.listOf(source), 1.0);
+        return EvidenceExtractionResult.positive(cn.bidcheck.compat.Java8Api.listOf(observation), EvidenceScope.closed(10, "完整文档范围"));
     }
 
     private static LocalEvidenceExtractor extractor(Extraction action) {

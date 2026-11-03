@@ -1,4 +1,5 @@
 package cn.bidcheck.persistence;
+import cn.bidcheck.compat.HexFormat;
 
 import java.io.*;
 import java.nio.ByteBuffer;
@@ -15,7 +16,7 @@ final class StoredBodyCodec {
     static final int COMPRESSION_THRESHOLD=1024*1024;
     static final int MAX_UNCOMPRESSED_BYTES=128*1024*1024;
     private static final int MAX_COMPRESSED_BYTES=MAX_UNCOMPRESSED_BYTES+1024*1024;
-    private static final Set<String> KINDS=Set.of("fact_snapshot","consistency_report","evidence_graph_snapshot");
+    private static final Set<String> KINDS=cn.bidcheck.compat.Java8Api.setOf("fact_snapshot", "consistency_report", "evidence_graph_snapshot");
     private StoredBodyCodec() {}
 
     static String encode(String kind,String json) {

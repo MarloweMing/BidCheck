@@ -28,7 +28,7 @@ class RulesRetrievalIntegrationTest {
     @Autowired BidService service;@Autowired Store store;@Autowired ReportService reports;@Autowired PlatformTransactionManager manager;
     String parsed(String project,String role,String text)throws Exception {TaskRow task=service.upload(project,role,new MockMultipartFile("file","rules.txt","text/plain",text.getBytes(StandardCharsets.UTF_8)));service.execute(task);return store.map(task.inputJson).get("documentId").toString();}
     Map<String,Object> prepared()throws Exception {
-        String project=service.createProject(Map.of("name","规则优先回归")).get("id").toString();
+        String project=service.createProject(cn.bidcheck.compat.Java8Api.mapOf("name", "规则优先回归")).get("id").toString();
         String tender=parsed(project,"TENDER","本项目投标文件企业名称、金额及人员应全文一致。");service.execute(service.extract(project,tender));
         for(Checkpoint cp:(List<Checkpoint>)service.detail(project).get("checkpoints")) service.updateCheckpoint(cp.id(),new Checkpoint(cp.id(),cp.title(),cp.category(),cp.severity(),cp.type(),cp.field(),cp.operator(),cp.expected(),cp.unit(),cp.required(),true,"fullTextConsistency".equals(cp.field()),cp.source()));
         String bid=parsed(project,"BID","本项目投标函\n投标人名称：北京甲科技有限公司\n投标总报价：100万元\n本项目报价表\n投标人名称：北京乙科技有限公司\n投标总报价：120万元");
@@ -77,7 +77,7 @@ class RulesRetrievalIntegrationTest {
         Map<String,Object> initial=prepared();String project=initial.get("projectId").toString();
         for(Checkpoint cp:(List<Checkpoint>)service.detail(project).get("checkpoints"))service.updateCheckpoint(cp.id(),new Checkpoint(cp.id(),cp.title(),cp.category(),cp.severity(),cp.type(),cp.field(),cp.operator(),cp.expected(),cp.unit(),cp.required(),true,false,cp.source()));
         service.createCheckpoint(project,BidService.fields("title","投标有效期","category","响应检查","type","VALUE_COMPARE","field","bidValidity","operator",">=","expected","90","unit","DAY","confirmed",true));
-        String bid=parsed(project,"BID","投标有效期：90天\n"+"A".repeat(10001));
+        String bid=parsed(project,"BID","投标有效期：90天\n"+cn.bidcheck.compat.Java8Api.repeat("A", 10001));
         Map<String,Object> created=service.startRun(project,bid);service.execute(service.task(created.get("taskId").toString()));
         Map<String,Object> payload=service.run(created.get("id").toString(),false);
         List<Finding> findings=(List<Finding>)payload.get("results");

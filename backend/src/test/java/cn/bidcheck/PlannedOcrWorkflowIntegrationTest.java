@@ -20,7 +20,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -31,19 +31,19 @@ class PlannedOcrWorkflowIntegrationTest {
     static {try{DATA=Files.createTempDirectory("bidcheck-planned-workflow-");}catch(IOException ex){throw new IllegalStateException(ex);}}
     @DynamicPropertySource static void config(DynamicPropertyRegistry r){r.add("bidcheck.data",()->DATA.toString());}
     @Autowired BidService service;@Autowired Store store;@Autowired JdbcTemplate jdbc;
-    @MockitoBean OcrClient ocr;
+    @MockBean OcrClient ocr;
     @BeforeEach void setup()throws Exception {
         when(ocr.enabled()).thenReturn(true);when(ocr.identity()).thenReturn("planned-ocr-test");when(ocr.modelName()).thenReturn("offline-test");
         when(ocr.recognize(any(byte[].class),anyString())).thenReturn(new OcrResult("SocialSecurity evidence\n项目编号：PLAN001\n投标有效期：90天","TEST","offline-test",false));
     }
-    String project(){return (String)service.createProject(Map.of("name","计划识别回归")).get("id");}
+    String project(){return (String)service.createProject(cn.bidcheck.compat.Java8Api.mapOf("name", "计划识别回归")).get("id");}
     byte[] pdf()throws Exception {
         try(PDDocument pdf=new PDDocument();ByteArrayOutputStream out=new ByteArrayOutputStream()) {
             String[] titles={"1 Finance","Finance continuation","2 OtherMaterial","3 SocialSecurity","Continuation","4 TechnicalPlan"};
             for(String title:titles){PDPage p=new PDPage();pdf.addPage(p);
                 try(PDPageContentStream c=new PDPageContentStream(pdf,p)){
                     c.beginText();c.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA),16);c.newLineAtOffset(40,700);c.showText(title);c.endText();
-                    BufferedImage image=new BufferedImage(40,30,BufferedImage.TYPE_INT_RGB);var g=image.createGraphics();g.setColor(java.awt.Color.WHITE);g.fillRect(0,0,40,30);g.setColor(java.awt.Color.BLACK);g.drawString("IMG",3,17);g.dispose();
+                    BufferedImage image=new BufferedImage(40,30,BufferedImage.TYPE_INT_RGB);java.awt.Graphics2D g=image.createGraphics();g.setColor(java.awt.Color.WHITE);g.fillRect(0,0,40,30);g.setColor(java.awt.Color.BLACK);g.drawString("IMG",3,17);g.dispose();
                     c.drawImage(LosslessFactory.createFromImage(pdf,image),40,350,300,220);image.flush();
                 }
             }pdf.save(out);return out.toByteArray();
@@ -77,10 +77,10 @@ class PlannedOcrWorkflowIntegrationTest {
     }
     @Test void laterConfirmedPlanCreatesNewImmutableEvidenceVersionBeforeCheck()throws Exception {
         String p=project();Document parsed=upload(p,pdf());
-        List<Page> deferred=parsed.pages().stream().map(page->new Page(page.number(),"",page.locationType(),"PDFBOX","[OCR_DEFERRED] [OCR未完成] 历史版本未识别")).toList();
-        Document original=new Document(parsed.id(),p,parsed.role(),parsed.name(),parsed.version(),parsed.sha256(),parsed.createdAt(),deferred,List.of("[OCR_DEFERRED] 历史版本"));
+        List<Page> deferred=cn.bidcheck.compat.Java8Api.toList(parsed.pages().stream().map(page->new Page(page.number(),"",page.locationType(),"PDFBOX","[OCR_DEFERRED] [OCR未完成] 历史版本未识别")));
+        Document original=new Document(parsed.id(),p,parsed.role(),parsed.name(),parsed.version(),parsed.sha256(),parsed.createdAt(),deferred,cn.bidcheck.compat.Java8Api.listOf("[OCR_DEFERRED] 历史版本"));
         store.save("document",original.id(),p,"",original);
-        store.save("ocr_plan","ocr-plan:"+original.id(),p,original.id(),Map.of("mode","NATIVE_ONLY","requestedPlanHash","historical-native-plan","preparationIdentity","historical"));
+        store.save("ocr_plan","ocr-plan:"+original.id(),p,original.id(),cn.bidcheck.compat.Java8Api.mapOf("mode", "NATIVE_ONLY", "requestedPlanHash", "historical-native-plan", "preparationIdentity", "historical"));
         clearInvocations(ocr);confirm(p);
         Map<String,Object> run=service.startRun(p,original.id());service.execute(service.task((String)run.get("taskId")));
         Map<String,Object> finished=store.getMap("run",(String)run.get("id"));Document prepared=service.document((String)finished.get("documentId"));
@@ -102,7 +102,7 @@ class PlannedOcrWorkflowIntegrationTest {
         assertThat(fresh.id()).isNotEqualTo(old.id());assertThat(fresh.version()).isGreaterThan(old.version());
     }
     @Test void uploadsRespectPendingPreparationVersionReservations()throws Exception {
-        String p=project();store.save("ocr_preparation","reserved-test:"+p,p,"",Map.of("role","BID","version",10));
+        String p=project();store.save("ocr_preparation","reserved-test:"+p,p,"",cn.bidcheck.compat.Java8Api.mapOf("role", "BID", "version", 10));
         assertThat(upload(p,pdf()).version()).isEqualTo(11);
     }
     @Test void queuedCheckRejectsChangedOcrConfigurationBeforeCallingOcr()throws Exception {

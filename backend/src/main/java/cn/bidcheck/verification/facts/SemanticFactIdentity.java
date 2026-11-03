@@ -12,10 +12,10 @@ public final class SemanticFactIdentity {
         // MATERIAL/DECLARATION basis is an extraction explanation, not the declaration's actual text.
         // Keep rawValue/value, subject, scope, source and all business attributes. In
         // particular NUMBER/FIELD/CONTRACT basis may contain tax or pricing scope.
-        if(Set.of("MATERIAL","DECLARATION").contains(Objects.toString(fact.get("kind"),"")))result.remove("basis");
+        if(cn.bidcheck.compat.Java8Api.setOf("MATERIAL", "DECLARATION").contains(Objects.toString(fact.get("kind"),"")))result.remove("basis");
         // References form a set. This is deliberately shallow: table cells, coordinates
         // and arrays inside business attributes remain ordered evidence.
-        if(fact.get("sourceIds") instanceof Collection<?> refs)result.put("sourceIds",refs.stream().map(v->Objects.toString(v,"")).distinct().sorted().toList());
+        if(fact.get("sourceIds") instanceof Collection<?>)result.put("sourceIds",cn.bidcheck.compat.Java8Api.toList(((Collection<?>) (fact.get("sourceIds"))).stream().map(v->Objects.toString(v,"")).distinct().sorted()));
         return result;
     }
 }

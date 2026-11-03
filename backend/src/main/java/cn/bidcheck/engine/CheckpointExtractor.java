@@ -11,7 +11,7 @@ public final class CheckpointExtractor {
         Objects.requireNonNull(document,"document");
         Map<String,Checkpoint> rules=new LinkedHashMap<>();
         List<Fact> facts=new FactExtractor().extract(document);
-        for(String field:List.of("projectName","projectNumber")) {
+        for(String field:cn.bidcheck.compat.Java8Api.listOf("projectName", "projectNumber")) {
             facts.stream().filter(f->field.equals(f.field())).findFirst().ifPresent(f -> put(rules,document,field.equals("projectName")?"项目名称一致性":"项目编号一致性","商务响应","HIGH","ENTITY_FIELD_CONSISTENCY",field,"=",f.normalizedValue(),"",true,f.evidence()));
         }
         String deadline="";
@@ -23,18 +23,18 @@ public final class CheckpointExtractor {
         boolean inContents=false;
         boolean inReviewProcedure=false;
         List<LocatedLine> located=new ArrayList<>();
-        for(Page page:document.pages()==null?List.<Page>of():document.pages()) {
+        for(Page page:document.pages()==null?cn.bidcheck.compat.Java8Api.<Page>listOf():document.pages()) {
             List<String> lines=physicalLines(page);
-            for(int i=0;i<lines.size();i++) if(!lines.get(i).isBlank()) located.add(new LocatedLine(page,i+1,lines.get(i)));
+            for(int i=0;i<lines.size();i++) if(!cn.bidcheck.compat.Java8Api.isBlank(lines.get(i))) located.add(new LocatedLine(page,i+1,lines.get(i)));
         }
         Set<String> consumedStructured=new HashSet<>();
         Set<String> chapterReferences=chapterReferences(located);
         FormatHierarchy formatHierarchy=new FormatHierarchy();
-        for(Page page:document.pages()==null?List.<Page>of():document.pages()) {
+        for(Page page:document.pages()==null?cn.bidcheck.compat.Java8Api.<Page>listOf():document.pages()) {
             List<String> lines=physicalLines(page);
             for(int index=0; index<lines.size();index++) {
                 String line=lines.get(index); Evidence source=EngineText.evidence(document,page,index+1,line);
-                if(line.isBlank()) continue;
+                if(cn.bidcheck.compat.Java8Api.isBlank(line)) continue;
                 if(chapterReferences.contains(source.anchor())) continue;
                 if(line.matches("目\\s*录")) { inContents=true; continue; }
                 boolean chapter=line.matches("^第[一二三四五六七八九十百0-9]+[章篇]\\s*.{1,50}$") && !line.matches(".*\\s[0-9]+$");
@@ -43,20 +43,20 @@ public final class CheckpointExtractor {
                 if(line.matches("^第[一二三四五六七八九十百0-9]+[章篇].*\\t[0-9]+$")) continue;
                 String nextSection=section(line);
                 if(scopeExit(line)) {
-                    if(stripNumber(line).strip().equals("评审程序")) inReviewProcedure=true;
+                    if(cn.bidcheck.compat.Java8Api.strip(stripNumber(line)).equals("评审程序")) inReviewProcedure=true;
                     section=""; continue;
                 }
                 if(inReviewProcedure) nextSection="";
-                if(!nextSection.isBlank()) {
+                if(!cn.bidcheck.compat.Java8Api.isBlank(nextSection)) {
                     if(!nextSection.equals(section)) formatHierarchy=new FormatHierarchy();
                     section=nextSection;
                 }
                 else if(chapter) section="";
                 if("MATERIAL".equals(section)) {
                     String name=materialHeading(line,formatHierarchy);
-                    if(nextSection.isBlank() && !name.isBlank()) {
-                        String following=lines.subList(index+1,lines.size()).stream().filter(s->!s.isBlank()).findFirst().orElse("");
-                        if(following.isBlank() && document.pages()!=null) {
+                    if(cn.bidcheck.compat.Java8Api.isBlank(nextSection) && !cn.bidcheck.compat.Java8Api.isBlank(name)) {
+                        String following=lines.subList(index+1,lines.size()).stream().filter(s->!cn.bidcheck.compat.Java8Api.isBlank(s)).findFirst().orElse("");
+                        if(cn.bidcheck.compat.Java8Api.isBlank(following) && document.pages()!=null) {
                             int at=document.pages().indexOf(page);
                             if(at>=0 && at+1<document.pages().size()) following=EngineText.lines(document.pages().get(at+1)).stream().findFirst().orElse("");
                         }
@@ -72,7 +72,7 @@ public final class CheckpointExtractor {
                             if(explicitCondition){
                                 String pageText=Objects.toString(page.text(),"");int begin=pageText.indexOf(line),end=begin<0?-1:pageText.indexOf(following,begin+line.length());
                                 if(usesReference){conditionSource=referencedCondition.source();expected=conditionSource.quote();}
-                                else if(begin>=0&&end>=0&&pageText.substring(begin+line.length(),end).isBlank()){
+                                else if(begin>=0&&end>=0&&cn.bidcheck.compat.Java8Api.isBlank(pageText.substring(begin+line.length(),end))){
                                     String quote=pageText.substring(begin,end+following.length());expected=quote;
                                     conditionSource=new Evidence(source.documentId(),source.documentName(),source.page(),source.locationType(),quote,source.anchor(),source.confidence());
                                 }else expected=name+"。"+following; // Unbound cross-block condition remains visible for source repair.
@@ -83,7 +83,7 @@ public final class CheckpointExtractor {
                         else put(rules,document,"投标文件组成："+name,"组成检查","HIGH","MATERIAL_EXISTENCE","material","EXISTS",name,"",true,source);
                     }
                 }
-                if(!consumedStructured.contains(source.anchor()) && Set.of("QUALIFICATION","SCORING","COMPLIANCE").contains(section) && (nextSection.isBlank() || line.contains("\t")) && line.length()>1) {
+                if(!consumedStructured.contains(source.anchor()) && cn.bidcheck.compat.Java8Api.setOf("QUALIFICATION", "SCORING", "COMPLIANCE").contains(section) && (cn.bidcheck.compat.Java8Api.isBlank(nextSection) || line.contains("\t")) && line.length()>1) {
                     int start=position(located,source);
                     Clause clause=clause(document,located,start);
                     consumedStructured.addAll(clause.anchors());
@@ -104,13 +104,13 @@ public final class CheckpointExtractor {
                     put(rules,document,taxLabel+"投标报价不超过最高限价","报价检查","HIGH","VALUE_COMPARE","totalPrice","<=",EngineText.amount(amount.group(1),amount.group(2)),taxUnit,true,source);
                 }
                 if(line.matches(".*(?:车牌|行驶证|VIN|车架号).*")) put(rules,document,"车辆表与行驶证信息一致性","一致性检查","HIGH","ENTITY_FIELD_CONSISTENCY","plateNumber","=","","",true,source);
-                if(!Set.of("SCORING","QUALIFICATION").contains(section) && line.matches(".*(?:技术方案|技术参数|售后服务|实施方案|培训方案).*")) put(rules,document,"技术响应："+line.substring(0,Math.min(30,line.length())),"技术响应","MEDIUM","SEMANTIC_RESPONSE","technicalResponse","RESPONDS",line,"",true,source);
+                if(!cn.bidcheck.compat.Java8Api.setOf("SCORING", "QUALIFICATION").contains(section) && line.matches(".*(?:技术方案|技术参数|售后服务|实施方案|培训方案).*")) put(rules,document,"技术响应："+line.substring(0,Math.min(30,line.length())),"技术响应","MEDIUM","SEMANTIC_RESPONSE","technicalResponse","RESPONDS",line,"",true,source);
                 if(line.matches(".*(?:投标截止|递交截止|开标时间|开标日期).*")) {
                     Matcher deadlineMatch=Pattern.compile("(?:投标(?:文件)?(?:递交)?截止(?:时间|日期)?|递交截止(?:时间|日期)?|开标时间|开标日期)\\s*(?:为|是)?\\s*[:：]?\\s*"+EngineText.DATE.pattern()).matcher(line);
                     while(deadlineMatch.find()) {
                         int priority=deadlineMatch.group().startsWith("开标")?1:2;
-                        var dates=EngineText.dates(deadlineMatch.group());
-                        if(!dates.isEmpty() && priority==1 && openingDate.isBlank()) { openingDate=dates.get(0).toString(); openingSource=source; }
+                        java.util.List<java.time.LocalDate> dates=EngineText.dates(deadlineMatch.group());
+                        if(!dates.isEmpty() && priority==1 && cn.bidcheck.compat.Java8Api.isBlank(openingDate)) { openingDate=dates.get(0).toString(); openingSource=source; }
                         if(!dates.isEmpty() && priority>deadlinePriority) { deadline=dates.get(0).toString(); deadlineSource=source; deadlinePriority=priority; }
                     }
                 }
@@ -128,7 +128,7 @@ public final class CheckpointExtractor {
         put(rules,document,"落款时间不得晚于开标时间","全文信息检查","HIGH","FULL_TEXT_REVIEW","signingAfterOpening","REVIEW",openingDate,"DATE",true,openingSource);
         put(rules,document,"错别字检查","全文信息检查","MEDIUM","FULL_TEXT_REVIEW","typos","REVIEW","检查文字中的疑似错别字；专有名称和图像文字需人工复核","",true,null);
         put(rules,document,"全文证件有效期覆盖检查","效期检查","HIGH","FULL_TEXT_REVIEW","certificateCoverage","REVIEW",deadline,"DATE",true,deadlineSource);
-        return List.copyOf(rules.values());
+        return cn.bidcheck.compat.Java8Api.listCopyOf(rules.values());
     }
     private void qualification(Map<String,Checkpoint> rules,Document doc,String line,Evidence source) {
         // Remove explanatory notes, but retain explicit instructions in notes (for example stamping copies).
@@ -137,15 +137,15 @@ public final class CheckpointExtractor {
         if(notes.length>1 && notes[1].matches(".*(?:须|需|应|必须).{0,16}(?:提供|提交|加盖|盖章|签字|签署).*")) requirements+="；"+notes[1];
         List<String> clauses=new ArrayList<>();
         for(String part:splitRequirements(requirements)) {
-            String item=stripNumber(part.strip());
+            String item=stripNumber(cn.bidcheck.compat.Java8Api.strip(part));
             if(item.matches("^(?:并|且|还|同时|以及).*" ) && !clauses.isEmpty()) {
                 int last=clauses.size()-1;
                 clauses.set(last,clauses.get(last)+"；"+item);
-            } else if(!item.isBlank()) clauses.add(item);
+            } else if(!cn.bidcheck.compat.Java8Api.isBlank(item)) clauses.add(item);
         }
         for(String item:clauses) {
             if(item.matches("^[^，,。；;:：]{1,30}[:：]$")) continue;
-            if(!actionable(item) && !(item.contains("\t") && !item.substring(item.lastIndexOf('\t')+1).isBlank())) continue;
+            if(!actionable(item) && !(item.contains("\t") && !cn.bidcheck.compat.Java8Api.isBlank(item.substring(item.lastIndexOf('\t')+1)))) continue;
             boolean conditional=conditional(item);
             Matcher provision=Pattern.compile("(?:提供|提交|出具)").matcher(item);
             if(provision.find() && !conditional) {
@@ -160,11 +160,11 @@ public final class CheckpointExtractor {
     }
     private void scoring(Map<String,Checkpoint> rules,Document doc,Clause clause,List<LocatedLine> located,Set<String> consumed) {
         String line=scoringBody(clause.text()); Evidence source=clause.source();
-        if(located.get(clause.start()).page().text().stripLeading().startsWith("注：")) return;
+        if(cn.bidcheck.compat.Java8Api.stripLeading(located.get(clause.start()).page().text()).startsWith("注：")) return;
         // Each independently scored certificate becomes one candidate; alternatives within a certificate stay together.
         if(!line.contains("方案") && line.matches(".*(?:证书|认证).*" ) && line.matches(".*(?:具备|具有|提供|获得|取得).*")) {
             List<ScoringSourceSegments.Certificate> certificates=ScoringSourceSegments.certificates(source.quote());
-            for(var certificate:certificates)put(rules,doc,"认证评分核查："+shorten(certificate.clause().quote()),"响应检查","MEDIUM","SEMANTIC_RESPONSE","scoring","RESPONDS",certificate.expected(),"",true,source);
+            for(cn.bidcheck.engine.ScoringSourceSegments.Certificate certificate:certificates)put(rules,doc,"认证评分核查："+shorten(certificate.clause().quote()),"响应检查","MEDIUM","SEMANTIC_RESPONSE","scoring","RESPONDS",certificate.expected(),"",true,source);
             if(!certificates.isEmpty())return;
         }
         if(line.matches(".*(?:方案|施工组织设计).*" ) && line.matches(".*(?:提供|提交|编制|制定|包括|包含|完整性|建设目标|人员构成).*")) {
@@ -205,8 +205,8 @@ public final class CheckpointExtractor {
     }
     private boolean band(String text) { return score(text)>=0 && text.matches("^[（(]?(?:[A-ZＡ-Ｚ]|[0-9一二三四五六七八九十]+)[）)、.．:：].*"); }
     private List<String> scoringParts(String text) {
-        return Arrays.stream(text.split("(?=[A-ZＡ-Ｚ][、．:：]|(?<![A-Za-z0-9])[A-Z]\\.\\s)|(?=[（(][0-9一二三四五六七八九十]+[）)])"))
-            .map(s->s.replaceFirst("^[\\s/]+","").replaceFirst("[\\s/]+$","")).filter(s->!s.isBlank()).toList();
+        return cn.bidcheck.compat.Java8Api.toList(Arrays.stream(text.split("(?=[A-ZＡ-Ｚ][、．:：]|(?<![A-Za-z0-9])[A-Z]\\.\\s)|(?=[（(][0-9一二三四五六七八九十]+[）)])"))
+            .map(s->s.replaceFirst("^[\\s/]+","").replaceFirst("[\\s/]+$","")).filter(s->!cn.bidcheck.compat.Java8Api.isBlank(s)));
     }
     private String scoringBody(String text) { return text.replaceFirst("\\t\\s*-?[0-9]+(?:\\.[0-9]+)?\\s*$","").replaceAll("\\s+/\\s+"," "); }
     private boolean rubricIntro(String text) { return text.matches("^(?:以上|根据|按|分为|评分档次|评分标准).*(?:档次|评分|档).*" ); }
@@ -225,21 +225,21 @@ public final class CheckpointExtractor {
         List<String> result=new ArrayList<>(); int start=0,depth=0;
         if(text.contains(" / ")) {
             for(String paragraph:text.split("\\s+/\\s+")) {
-                if(!result.isEmpty() && paragraph.strip().matches("^(?:须|需|应)?(?:提供|提交|出具).*(?:证明|证书|截图|扫描).*")) {
-                    int last=result.size()-1; result.set(last,result.get(last)+" "+paragraph.strip());
+                if(!result.isEmpty() && cn.bidcheck.compat.Java8Api.strip(paragraph).matches("^(?:须|需|应)?(?:提供|提交|出具).*(?:证明|证书|截图|扫描).*")) {
+                    int last=result.size()-1; result.set(last,result.get(last)+" "+cn.bidcheck.compat.Java8Api.strip(paragraph));
                 } else result.addAll(splitRequirements(paragraph));
             }
             return result;
         }
         // A prohibition may name several service-provider roles before its shared negative condition.
-        if(text.matches(".*(?:为本项目|为招标人).*(?:提供).*(?:不得参与|不得参加|禁止).*" ) && !text.contains(" / ")) return List.of(text);
+        if(text.matches(".*(?:为本项目|为招标人).*(?:提供).*(?:不得参与|不得参加|禁止).*" ) && !text.contains(" / ")) return cn.bidcheck.compat.Java8Api.listOf(text);
         for(int i=0;i<text.length();i++) {
             char c=text.charAt(i);
             if(c=='（' || c=='(' || c=='《') depth++;
             else if(c=='）' || c==')' || c=='》') depth=Math.max(0,depth-1);
             boolean branch=i>start && (c=='若' || c=='如') && text.substring(i).matches("^(?:若|如果|如为|如系)(?:应答人|投标人|供应商|申请人).*" );
             boolean paragraph=c=='/' && i>0 && i+1<text.length() && Character.isWhitespace(text.charAt(i-1)) && Character.isWhitespace(text.charAt(i+1));
-            if(paragraph && text.substring(i+1).stripLeading().matches("^[（(][0-9]+[）)].*")) depth=0;
+            if(paragraph && cn.bidcheck.compat.Java8Api.stripLeading(text.substring(i+1)).matches("^[（(][0-9]+[）)].*")) depth=0;
             if(depth==0 && (c=='；' || c==';' || branch || paragraph)) {
                 result.add(text.substring(start,i)); start=branch?i:i+1;
             }
@@ -250,9 +250,9 @@ public final class CheckpointExtractor {
         return text.replaceFirst("^[0-9]+(?:\\.[0-9]+)+(?![0-9.])[\\s、.．]*","")
             .replaceFirst("^(?:[（(]?[0-9一二三四五六七八九十]+[）)、.．]\\s*|[A-ZＡ-Ｚ][、.．:：]\\s*)","");
     }
-    private boolean boundary(String text) { return scopeExit(text) || !section(text).isBlank() || text.matches("^第[一二三四五六七八九十百0-9]+[章篇].*"); }
+    private boolean boundary(String text) { return scopeExit(text) || !cn.bidcheck.compat.Java8Api.isBlank(section(text)) || text.matches("^第[一二三四五六七八九十百0-9]+[章篇].*"); }
     private boolean scopeExit(String text) {
-        String heading=stripNumber(text).strip();
+        String heading=cn.bidcheck.compat.Java8Api.strip(stripNumber(text));
         return heading.matches("(?:招标文件(?:的)?获取|获取招标文件|投标文件(?:的)?递交|招标组织形式|资格审查方法|资格审查|评审程序|评标方法|初步评审|评标报告|踏勘现场|投标预备会|招标文件(?:的)?组成|分值汇总表)[:：]?");
     }
     private Set<String> chapterReferences(List<LocatedLine> lines) {
@@ -266,7 +266,18 @@ public final class CheckpointExtractor {
         }
         return references;
     }
-    private record MaterialCondition(String condition,Evidence source) {}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class MaterialCondition {
+        private final String condition;
+        private final Evidence source;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private MaterialCondition(@com.fasterxml.jackson.annotation.JsonProperty("condition") String condition, @com.fasterxml.jackson.annotation.JsonProperty("source") Evidence source) { this.condition = condition; this.source = source; }
+        public String condition() { return condition; }
+        public Evidence source() { return source; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; MaterialCondition that = (MaterialCondition) other; return java.util.Objects.equals(this.condition, that.condition) && java.util.Objects.equals(this.source, that.source); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.condition); hash = 31 * hash + java.util.Objects.hashCode(this.source); return hash; }
+        @Override public String toString() { return "MaterialCondition[" + "condition=" + condition + ", source=" + source + "]"; }
+}
     private MaterialCondition materialCondition(String material,List<LocatedLine> lines,Document doc) {
         String name=material.replaceAll("[（(]负责人[）)]","").replaceAll("\\s+","");
         Pattern associated=Pattern.compile("《([^》]+)》\\s*[（(]([^）)]*(?:无需|无须|不需|免于)[^）)]*)[）)]");
@@ -307,7 +318,7 @@ public final class CheckpointExtractor {
             if(previousChar<128 && nextChar<128 && Character.isLetterOrDigit(previousChar) && Character.isLetterOrDigit(nextChar)) text.append(' ');
             text.append(next); end++; anchors.add(lines.get(end).anchor());
         }
-        return new Clause(start,end,text.toString(),spanEvidence(doc,lines,start,end),List.copyOf(anchors));
+        return new Clause(start,end,text.toString(),spanEvidence(doc,lines,start,end),cn.bidcheck.compat.Java8Api.listCopyOf(anchors));
     }
     private int bracketDepth(String text) {
         int depth=0;
@@ -330,10 +341,40 @@ public final class CheckpointExtractor {
     private String sourceTexts(Document doc,List<LocatedLine> lines,int start,int end){
         List<String> sources=new ArrayList<>();for(int at=start;at<=end;){int last=at;while(last<end&&lines.get(last+1).page()==lines.get(at).page())last++;sources.add(spanEvidence(doc,lines,at,last).quote());at=last+1;}return String.join("\n",sources);
     }
-    private List<String> physicalLines(Page page) { return Arrays.stream((page.text()==null?"":page.text()).split("\\R",-1)).map(String::trim).toList(); }
+    private List<String> physicalLines(Page page) { return cn.bidcheck.compat.Java8Api.toList(Arrays.stream((page.text()==null?"":page.text()).split("\\R",-1)).map(String::trim)); }
     private String shorten(String text) { return text.substring(0,Math.min(text.length(),45)); }
-    private record LocatedLine(Page page,int line,String text) { String anchor() { return "p"+page.number()+"-l"+line; } }
-    private record Clause(int start,int end,String text,Evidence source,List<String> anchors) {}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class LocatedLine {
+        private final Page page;
+        private final int line;
+        private final String text;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private LocatedLine(@com.fasterxml.jackson.annotation.JsonProperty("page") Page page, @com.fasterxml.jackson.annotation.JsonProperty("line") int line, @com.fasterxml.jackson.annotation.JsonProperty("text") String text) { this.page = page; this.line = line; this.text = text; }
+        public Page page() { return page; }
+        public int line() { return line; }
+        public String text() { return text; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; LocatedLine that = (LocatedLine) other; return java.util.Objects.equals(this.page, that.page) && java.util.Objects.equals(this.line, that.line) && java.util.Objects.equals(this.text, that.text); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.page); hash = 31 * hash + java.util.Objects.hashCode(this.line); hash = 31 * hash + java.util.Objects.hashCode(this.text); return hash; }
+        @Override public String toString() { return "LocatedLine[" + "page=" + page + ", line=" + line + ", text=" + text + "]"; }
+ String anchor() { return "p"+page.number()+"-l"+line; } }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Clause {
+        private final int start;
+        private final int end;
+        private final String text;
+        private final Evidence source;
+        private final List<String> anchors;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Clause(@com.fasterxml.jackson.annotation.JsonProperty("start") int start, @com.fasterxml.jackson.annotation.JsonProperty("end") int end, @com.fasterxml.jackson.annotation.JsonProperty("text") String text, @com.fasterxml.jackson.annotation.JsonProperty("source") Evidence source, @com.fasterxml.jackson.annotation.JsonProperty("anchors") List<String> anchors) { this.start = start; this.end = end; this.text = text; this.source = source; this.anchors = anchors; }
+        public int start() { return start; }
+        public int end() { return end; }
+        public String text() { return text; }
+        public Evidence source() { return source; }
+        public List<String> anchors() { return anchors; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Clause that = (Clause) other; return java.util.Objects.equals(this.start, that.start) && java.util.Objects.equals(this.end, that.end) && java.util.Objects.equals(this.text, that.text) && java.util.Objects.equals(this.source, that.source) && java.util.Objects.equals(this.anchors, that.anchors); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.start); hash = 31 * hash + java.util.Objects.hashCode(this.end); hash = 31 * hash + java.util.Objects.hashCode(this.text); hash = 31 * hash + java.util.Objects.hashCode(this.source); hash = 31 * hash + java.util.Objects.hashCode(this.anchors); return hash; }
+        @Override public String toString() { return "Clause[" + "start=" + start + ", end=" + end + ", text=" + text + ", source=" + source + ", anchors=" + anchors + "]"; }
+}
     private void numeric(Map<String,Checkpoint> rules,Document doc,String line,Evidence source,String field,String title,String label,String fallback,String unit) {
         Matcher m=Pattern.compile(label+"\\s*(?:[:：=为约是]|要求|不少于|不低于|不得低于|不超过|不高于|不得少于|不得超过|至少|至多|最长|最短|自投标截止之日起|合同签订后|合同签订之日起|\\s)*"+EngineText.NUMBER+"\\s*"+EngineText.TIME_UNIT+"\\s*(?:以内|以下|以上)?").matcher(line);
         while(m.find()) {
@@ -361,7 +402,7 @@ public final class CheckpointExtractor {
     }
     private String materialHeading(String line,FormatHierarchy hierarchy) {
         if(hierarchy.catalogClosed) return "";
-        String catalogName=line.replaceFirst("^[★☆]","").strip();
+        String catalogName=cn.bidcheck.compat.Java8Api.strip(line.replaceFirst("^[★☆]",""));
         if(catalogName.matches("^第[一二三四五六七八九十0-9]+分册\\s*.+")) hierarchy.catalog=true;
         if(hierarchy.catalog) {
             if(!hierarchy.catalogHeadings.add(catalogName)) { hierarchy.catalogClosed=true; return ""; }
@@ -380,7 +421,7 @@ public final class CheckpointExtractor {
         else if(clean.matches("^[（(][0-9]+[）)].*") && hierarchy.chineseTop || clean.matches("^[0-9]+[、．.].*") && hierarchy.chineseSub) return "";
         String name=clean.replaceFirst("^(?:(?:附件|附表|格式)\\s*)?[（(]?[一二三四五六七八九十0-9]+(?:[.-][0-9]+)*[）)、.．\\s:：]+","").replaceAll("[（(](?:格式|样本|范本)[）)]","").replaceFirst("[:：]$","").trim();
         if(name.matches(".*(?:编制要求|注意事项|目录|密封|装订|须知|无要求|应当|必须|遵守法律|请填写|须提供|应提供|不得|无需).*" ) || name.matches(".*[:：].*")) return "";
-        if(numbered && !name.isBlank() && !name.matches(".*[，,].*")) return name;
+        if(numbered && !cn.bidcheck.compat.Java8Api.isBlank(name) && !name.matches(".*[，,].*")) return name;
         return name.matches(".*(?:投标函|应答函|响应函|封面|索引表|偏离表|证明等文件|情况表|信息表|信息一览表|证明文件|资格证明|身份证明|授权委托书|协议书|承诺书|合规承诺|技术建议书|报价文件|商务文件|技术文件|商务部分|技术部分|资格部分|报价部分|报价表|明细表|清单|方案|计划|企业简介|组织机构|营业执照|资质证书|财务报表|审计报告|投标报价)(?:[（(]如有[）)])?")?name:"";
     }
     private static final class FormatHierarchy { boolean chineseTop; boolean chineseSub; boolean catalog; boolean catalogClosed; Set<String> catalogHeadings=new HashSet<>(); }
@@ -391,16 +432,10 @@ public final class CheckpointExtractor {
             int start=years.iterator().next(),end=((TreeSet<Integer>)years).last();
             if(end-start<=10) for(int year=start;year<=end;year++) years.add(year);
         }
-        return years.isEmpty()?"":"YEAR:"+String.join(",",years.stream().map(Object::toString).toList());
+        return years.isEmpty()?"":"YEAR:"+String.join(",",cn.bidcheck.compat.Java8Api.toList(years.stream().map(Object::toString)));
     }
     private void put(Map<String,Checkpoint> rules,Document doc,String title,String category,String severity,String type,String field,String op,String expected,String unit,boolean required,Evidence source) {
-        category=switch(category) {
-            case "组成检查","签章检查" -> "形式检查";
-            case "资格审查","资格评审" -> "DATE_VALIDITY".equals(type)?"效期检查":"资格检查";
-            case "商务响应","报价检查","评分检查","符合性检查","技术响应" -> "ENTITY_FIELD_CONSISTENCY".equals(type)?"全文信息检查":"响应检查";
-            case "一致性检查" -> "全文信息检查";
-            default -> category;
-        };
+        switch (category) {case "组成检查":case "签章检查":category = "形式检查"; break;case "资格审查":case "资格评审":category = "DATE_VALIDITY".equals(type)?"效期检查":"资格检查"; break;case "商务响应":case "报价检查":case "评分检查":case "符合性检查":case "技术响应":category = "ENTITY_FIELD_CONSISTENCY".equals(type)?"全文信息检查":"响应检查"; break;case "一致性检查":category = "全文信息检查"; break;default:category = category; break;}
         String key=category+"|"+type+"|"+field+"|"+op+"|"+expected+"|"+unit;
         rules.putIfAbsent(key,new Checkpoint(EngineText.id(doc.id()+"|"+doc.version()+"|"+key),title,category,severity,type,field,op,expected,unit,required,false,true,source));
     }

@@ -20,11 +20,11 @@ class FileParserRoutingTest {
 
     @Test void nativeTextAndNativeTablesNotifyWithoutCallingOcr() throws Exception {
         Path source = temporary.resolve("native.txt");
-        Files.writeString(source, "施工方案正文\f车辆信息表\n车牌\t车辆识别代号\t数量\n琼A12345\tLSVA12345678901234\t1");
-        var single = new FileParserPdfOcrTest.SingleClient();
-        var pages = new ArrayList<Page>(); var routes = new ArrayList<PageClassifier.Decision>();
+        cn.bidcheck.compat.Java8Api.writeString(source, "施工方案正文\f车辆信息表\n车牌\t车辆识别代号\t数量\n琼A12345\tLSVA12345678901234\t1");
+        cn.bidcheck.document.FileParserPdfOcrTest.SingleClient single = new FileParserPdfOcrTest.SingleClient();
+        java.util.ArrayList<cn.bidcheck.domain.Domain.Page> pages = new ArrayList<Page>(); java.util.ArrayList<cn.bidcheck.document.PageClassifier.Decision> routes = new ArrayList<PageClassifier.Decision>();
         Thread caller = Thread.currentThread();
-        var result = new FileParser(single).parsePlanned(source, "native.txt", null, ExtractionPlan.full(), new OcrUnitObserver() {
+        cn.bidcheck.document.ExtractionResult result = new FileParser(single).parsePlanned(source, "native.txt", null, ExtractionPlan.full(), new OcrUnitObserver() {
             public void onPage(Page page, PageClassifier.Decision decision) {
                 assertSame(caller, Thread.currentThread()); pages.add(page); routes.add(decision);
             }
@@ -38,20 +38,20 @@ class FileParserRoutingTest {
     }
 
     @Test void pdfPagesAreDeliveredWhileLaterBatchIsStillRunningAndOcrRefinesUnknownTypes() throws Exception {
-        Path source = pdf("incremental.pdf", 21, Set.of(1));
-        var nativeDelivered = new AtomicBoolean(); var firstBatchDelivered = new CountDownLatch(1);
-        var pages = new TreeMap<Integer, Page>(); var routes = new TreeMap<Integer, PageClassifier.Decision>();
-        var initiallyUnknown = new HashSet<Integer>(); Thread caller = Thread.currentThread();
-        var client = new FileParserPdfOcrTest.PdfClient((bytes, numbers) -> {
+        Path source = pdf("incremental.pdf", 21, cn.bidcheck.compat.Java8Api.setOf(1));
+        java.util.concurrent.atomic.AtomicBoolean nativeDelivered = new AtomicBoolean(); java.util.concurrent.CountDownLatch firstBatchDelivered = new CountDownLatch(1);
+        java.util.TreeMap<java.lang.Integer, cn.bidcheck.domain.Domain.Page> pages = new TreeMap<Integer, Page>(); java.util.TreeMap<java.lang.Integer, cn.bidcheck.document.PageClassifier.Decision> routes = new TreeMap<Integer, PageClassifier.Decision>();
+        java.util.HashSet<java.lang.Integer> initiallyUnknown = new HashSet<Integer>(); Thread caller = Thread.currentThread();
+        cn.bidcheck.document.FileParserPdfOcrTest.PdfClient client = new FileParserPdfOcrTest.PdfClient((bytes, numbers) -> {
             assertTrue(nativeDelivered.get(), "Native pages must be usable before cloud recognition finishes");
             if (numbers.get(0) == 12) FileParserPdfOcrTest.await(firstBatchDelivered);
             Map<Integer, OcrResult> recognized = new LinkedHashMap<>();
             for (int page : numbers) recognized.put(page, FileParserPdfOcrTest.text(page == 2 ? "注册资格证书 编号：AB12345"
                     : page == 3 ? "<table><tr><td>姓名</td><td>身份证号</td></tr><tr><td>张三</td><td>123456</td></tr></table>"
                     : "Source transcription for page " + page));
-            return new PdfOcrClient.BatchResult(recognized, Map.of(), Map.of());
+            return new PdfOcrClient.BatchResult(recognized, cn.bidcheck.compat.Java8Api.mapOf(), cn.bidcheck.compat.Java8Api.mapOf());
         });
-        var result = new FileParser(new FileParserPdfOcrTest.SingleClient(), client, 100, 4)
+        cn.bidcheck.document.ExtractionResult result = new FileParser(new FileParserPdfOcrTest.SingleClient(), client, 100, 4)
                 .parsePlanned(source, "incremental.pdf", null, ExtractionPlan.full(), new OcrUnitObserver() {
                     public void onClassified(String type, int position, PageClassifier.Decision decision) {
                         assertSame(caller, Thread.currentThread());
@@ -66,7 +66,7 @@ class FileParserRoutingTest {
                     }
                 });
         assertEquals(result.document().pages(), new ArrayList<>(pages.values()));
-        assertTrue(initiallyUnknown.containsAll(List.of(2, 3)));
+        assertTrue(initiallyUnknown.containsAll(cn.bidcheck.compat.Java8Api.listOf(2, 3)));
         assertEquals("CERTIFICATE", routes.get(2).pageType());
         assertEquals("INDEPENDENT_VISUAL", routes.get(2).parserStrategy());
         assertEquals("PERSON_TABLE_V1", routes.get(3).schema());
@@ -74,17 +74,17 @@ class FileParserRoutingTest {
         assertEquals("OCR_MICROBATCH", routes.get(4).parserStrategy());
         assertTrue(pages.get(2).layout().frames().isEmpty(), "PDF OCR must not invent pixel boxes");
         assertEquals(21, result.report().get("completedPageNotifications"));
-        var map = (List<?>) result.report().get("nativeMap");
+        java.util.List<?> map = (List<?>) result.report().get("nativeMap");
         assertEquals("CERTIFICATE", ((Map<?, ?>) map.get(1)).get("pageType"));
     }
 
     @Test void deferredPagesAlsoNotifyAndSuccessfulFallbackHasOriginalImageSource() throws Exception {
-        Path source = pdf("selected.pdf", 3, Set.of(1));
-        var plan = ExtractionPlan.selected(FileParserPdfOcrTest.hash(Files.readAllBytes(source)),
-                List.of(OcrSelection.position("PAGE", 2, "test")), 1, "selected");
-        var client = new FileParserPdfOcrTest.PdfClient((bytes, numbers) -> new PdfOcrClient.BatchResult(Map.of(), Map.of(2, "FAILED"), Map.of()));
-        var pages = new TreeMap<Integer, Page>();
-        var result = new FileParser(new FileParserPdfOcrTest.SingleClient("居民身份证 公民身份号码：123456"), client, 10, 4)
+        Path source = pdf("selected.pdf", 3, cn.bidcheck.compat.Java8Api.setOf(1));
+        cn.bidcheck.document.ExtractionPlan plan = ExtractionPlan.selected(FileParserPdfOcrTest.hash(Files.readAllBytes(source)),
+                cn.bidcheck.compat.Java8Api.listOf(OcrSelection.position("PAGE", 2, "test")), 1, "selected");
+        cn.bidcheck.document.FileParserPdfOcrTest.PdfClient client = new FileParserPdfOcrTest.PdfClient((bytes, numbers) -> new PdfOcrClient.BatchResult(cn.bidcheck.compat.Java8Api.mapOf(), cn.bidcheck.compat.Java8Api.mapOf(2, "FAILED"), cn.bidcheck.compat.Java8Api.mapOf()));
+        java.util.TreeMap<java.lang.Integer, cn.bidcheck.domain.Domain.Page> pages = new TreeMap<Integer, Page>();
+        cn.bidcheck.document.ExtractionResult result = new FileParser(new FileParserPdfOcrTest.SingleClient("居民身份证 公民身份号码：123456"), client, 10, 4)
                 .parsePlanned(source, "selected.pdf", null, plan, new OcrUnitObserver() {
                     public void onPage(Page page, PageClassifier.Decision decision) {
                         pages.put(page.number(), page);
@@ -93,14 +93,14 @@ class FileParserRoutingTest {
                 });
         assertEquals(result.document().pages(), new ArrayList<>(pages.values()));
         assertTrue(pages.get(3).warning().contains("OCR_DEFERRED"));
-        var frame = pages.get(2).layout().frames().get(0);
+        cn.bidcheck.ocr.OcrLayout.Frame frame = pages.get(2).layout().frames().get(0);
         assertEquals("PDF_RENDER", frame.sourceKind()); assertEquals(2, frame.sourceIndex());
     }
 
     @Test void nativePagePersistenceFailureStopsBeforeAnyPdfModelRequest() throws Exception {
-        Path source = pdf("fenced.pdf", 3, Set.of(1));
+        Path source = pdf("fenced.pdf", 3, cn.bidcheck.compat.Java8Api.setOf(1));
         IOException fence = new IOException("source page lease no longer valid");
-        var client = new FileParserPdfOcrTest.PdfClient((bytes, numbers) -> FileParserPdfOcrTest.success(numbers));
+        cn.bidcheck.document.FileParserPdfOcrTest.PdfClient client = new FileParserPdfOcrTest.PdfClient((bytes, numbers) -> FileParserPdfOcrTest.success(numbers));
         assertSame(fence, assertThrows(IOException.class, () -> new FileParser(new FileParserPdfOcrTest.SingleClient(), client, 10, 4)
                 .parsePlanned(source, "fenced.pdf", null, ExtractionPlan.full(), new OcrUnitObserver() {
                     public void onPage(Page page, PageClassifier.Decision decision) throws IOException { throw fence; }
@@ -109,21 +109,21 @@ class FileParserRoutingTest {
     }
 
     @Test void imageOcrPdfPathNotifiesLaterPageBeforeSlowFirstPageFinishes() throws Exception {
-        Path source = pdf("out-of-order.pdf", 2, Set.of());
-        var laterDelivered = new CountDownLatch(1); var pages = new TreeMap<Integer, Page>();
-        var single = new FileParserPdfOcrTest.SingleClient();
+        Path source = pdf("out-of-order.pdf", 2, cn.bidcheck.compat.Java8Api.setOf());
+        java.util.concurrent.CountDownLatch laterDelivered = new CountDownLatch(1); java.util.TreeMap<java.lang.Integer, cn.bidcheck.domain.Domain.Page> pages = new TreeMap<Integer, Page>();
+        cn.bidcheck.document.FileParserPdfOcrTest.SingleClient single = new FileParserPdfOcrTest.SingleClient();
         OcrClient client = new OcrClient() {
             public boolean enabled() { return true; }
             public String modelName() { return "out-of-order"; }
             public String identity() { return "out-of-order-1"; }
             public OcrResult recognize(byte[] bytes, String mime) throws IOException {
-                var rendered = ImageIO.read(new ByteArrayInputStream(bytes));
+                java.awt.image.BufferedImage rendered = ImageIO.read(new ByteArrayInputStream(bytes));
                 int width = rendered.getWidth(); rendered.flush();
                 if (width == 303) FileParserPdfOcrTest.await(laterDelivered);
                 return single.recognize(bytes, mime);
             }
         };
-        var result = new FileParser(client, 10, 2).parsePlanned(source, "out-of-order.pdf", null, ExtractionPlan.full(), new OcrUnitObserver() {
+        cn.bidcheck.document.ExtractionResult result = new FileParser(client, 10, 2).parsePlanned(source, "out-of-order.pdf", null, ExtractionPlan.full(), new OcrUnitObserver() {
             public void onPage(Page page, PageClassifier.Decision decision) {
                 assertNull(pages.put(page.number(), page));
                 if (page.number() == 2) laterDelivered.countDown();
@@ -135,23 +135,23 @@ class FileParserRoutingTest {
 
     @Test void wordPlanningDoesNotPublishPreviewAndFinalBlockContainsEveryImageSource() throws Exception {
         Path source = temporary.resolve("images.docx"); byte[] image = image();
-        try (var word = new XWPFDocument()) {
+        try (org.apache.poi.xwpf.usermodel.XWPFDocument word = new XWPFDocument()) {
             word.createParagraph().createRun().setText("原生说明");
-            var paragraph = word.createParagraph();
+            org.apache.poi.xwpf.usermodel.XWPFParagraph paragraph = word.createParagraph();
             for (int i = 0; i < 2; i++) paragraph.createRun().addPicture(new ByteArrayInputStream(image), XWPFDocument.PICTURE_TYPE_PNG,
                     "image" + i + ".png", Units.toEMU(32), Units.toEMU(32));
-            try (var output = Files.newOutputStream(source)) { word.write(output); }
+            try (java.io.OutputStream output = Files.newOutputStream(source)) { word.write(output); }
         }
-        var plan = ExtractionPlan.selected(FileParserPdfOcrTest.hash(Files.readAllBytes(source)),
-                List.of(OcrSelection.position("BLOCK", 2, "images")), 2, "test");
-        var pages = new ArrayList<Page>();
-        var result = new FileParser(new FileParserPdfOcrTest.SingleClient("资格证书 编号：TEST123"))
+        cn.bidcheck.document.ExtractionPlan plan = ExtractionPlan.selected(FileParserPdfOcrTest.hash(Files.readAllBytes(source)),
+                cn.bidcheck.compat.Java8Api.listOf(OcrSelection.position("BLOCK", 2, "images")), 2, "test");
+        java.util.ArrayList<cn.bidcheck.domain.Domain.Page> pages = new ArrayList<Page>();
+        cn.bidcheck.document.ExtractionResult result = new FileParser(new FileParserPdfOcrTest.SingleClient("资格证书 编号：TEST123"))
                 .parsePlanned(source, "images.docx", null, plan, new OcrUnitObserver() {
                     public void onPage(Page page, PageClassifier.Decision decision) { pages.add(page); }
                 });
         assertEquals(result.document().pages(), pages);
         assertEquals(2, pages.size());
-        assertEquals(List.of(1, 2), pages.get(1).layout().frames().stream().map(OcrLayout.Frame::sourceIndex).toList());
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf(1, 2), cn.bidcheck.compat.Java8Api.toList(pages.get(1).layout().frames().stream().map(OcrLayout.Frame::sourceIndex)));
         assertTrue(pages.get(1).layout().frames().stream().allMatch(f -> f.sourceKind().equals("WORD_EMBEDDED")));
     }
 
@@ -163,8 +163,8 @@ class FileParserRoutingTest {
             public String identity() { return "offline-failed-image"; }
             public OcrResult recognize(byte[] bytes, String mime) throws IOException { throw new IOException("recognition failed"); }
         };
-        var pages = new ArrayList<Page>();
-        var result = new FileParser(failed).parsePlanned(source, "failed.png", null, ExtractionPlan.full(), new OcrUnitObserver() {
+        java.util.ArrayList<cn.bidcheck.domain.Domain.Page> pages = new ArrayList<Page>();
+        cn.bidcheck.document.ExtractionResult result = new FileParser(failed).parsePlanned(source, "failed.png", null, ExtractionPlan.full(), new OcrUnitObserver() {
             public void onPage(Page page, PageClassifier.Decision decision) { pages.add(page); }
         });
         assertEquals(result.document().pages(), pages);
@@ -172,7 +172,7 @@ class FileParserRoutingTest {
     }
 
     @Test void classificationKeepsGeometryAndDoesNotTreatOneTabAsAComplexTable() {
-        var table = new PageClassifier.Decision("TABLE_PAGE", "INDEPENDENT_VISUAL", "TABLE_V1", "HIGH", true, "MEDIUM", true);
+        cn.bidcheck.document.PageClassifier.Decision table = new PageClassifier.Decision("TABLE_PAGE", "INDEPENDENT_VISUAL", "TABLE_V1", "HIGH", true, "MEDIUM", true);
         assertEquals(table, PageClassifier.afterRecognition(table, "表格中未能恢复的普通文字", 1));
         assertEquals("SCAN_TEXT_PAGE", PageClassifier.nativeOnly("姓名\t张三", 1).pageType());
         assertEquals("UNKNOWN", PageClassifier.nativeOnly("", 1).pageType());
@@ -183,12 +183,12 @@ class FileParserRoutingTest {
     }
 
     private Path pdf(String name, int count, Set<Integer> nativePages) throws IOException {
-        var helper = new FileParserPdfOcrTest(); helper.temporary = temporary; return helper.pdf(name, count, nativePages);
+        cn.bidcheck.document.FileParserPdfOcrTest helper = new FileParserPdfOcrTest(); helper.temporary = temporary; return helper.pdf(name, count, nativePages);
     }
     private static byte[] image() throws IOException {
-        var image = new BufferedImage(32, 32, BufferedImage.TYPE_INT_RGB);
-        var graphics = image.createGraphics(); graphics.setColor(java.awt.Color.WHITE); graphics.fillRect(0, 0, 32, 32); graphics.dispose();
-        try (var bytes = new ByteArrayOutputStream()) { ImageIO.write(image, "png", bytes); return bytes.toByteArray(); }
+        java.awt.image.BufferedImage image = new BufferedImage(32, 32, BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D graphics = image.createGraphics(); graphics.setColor(java.awt.Color.WHITE); graphics.fillRect(0, 0, 32, 32); graphics.dispose();
+        try (java.io.ByteArrayOutputStream bytes = new ByteArrayOutputStream()) { ImageIO.write(image, "png", bytes); return bytes.toByteArray(); }
         finally { image.flush(); }
     }
 }

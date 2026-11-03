@@ -18,22 +18,22 @@ public final class VisualPageWindows {
 
     /** A document plan contains independent materials and overlapping, source-related windows. */
     public static List<List<Integer>> plan(Document doc){
-        if(doc==null||doc.pages()==null)return List.of();
-        List<Page> ordered=doc.pages().stream().sorted(Comparator.comparingInt(Page::number)).toList();
-        if(!SourceSafety.extension(doc).equals("pdf"))return ordered.stream().map(p->List.of(p.number())).toList();
+        if(doc==null||doc.pages()==null)return cn.bidcheck.compat.Java8Api.listOf();
+        List<Page> ordered=cn.bidcheck.compat.Java8Api.toList(doc.pages().stream().sorted(Comparator.comparingInt(Page::number)));
+        if(!SourceSafety.extension(doc).equals("pdf"))return cn.bidcheck.compat.Java8Api.toList(ordered.stream().map(p->cn.bidcheck.compat.Java8Api.listOf(p.number())));
         Map<Integer,Page> byNumber=new TreeMap<>();ordered.forEach(p->byNumber.put(p.number(),p));Set<Integer> linked=linkedPages(byNumber);
         List<List<Integer>> windows=new ArrayList<>();
         for(int first=0;first<ordered.size();){
             int last=first;while(last+1<ordered.size()&&ordered.get(last+1).number()==ordered.get(last).number()+1&&linked.contains(ordered.get(last+1).number()))last++;
-            for(int start=first;start<=last;start+=2){int end=Math.min(last,start+2);windows.add(ordered.subList(start,end+1).stream().map(Page::number).toList());if(end==last)break;}
+            for(int start=first;start<=last;start+=2){int end=Math.min(last,start+2);windows.add(cn.bidcheck.compat.Java8Api.toList(ordered.subList(start,end+1).stream().map(Page::number)));if(end==last)break;}
             first=last+1;
         }
-        return List.copyOf(windows);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(windows);
     }
 
     /** Reading relationships do not establish that two records belong to the same person or vehicle. */
     public static List<Map<String,Object>> relations(Document doc,List<Integer> input){
-        if(doc==null||doc.pages()==null||input==null||input.size()<2||!valid(doc,input))return List.of();
+        if(doc==null||doc.pages()==null||input==null||input.size()<2||!valid(doc,input))return cn.bidcheck.compat.Java8Api.listOf();
         Map<Integer,Page> pages=new TreeMap<>();doc.pages().forEach(p->pages.put(p.number(),p));
         Map<Integer,Map<String,Object>> links=links(pages);List<Map<String,Object>> result=new ArrayList<>();
         for(int i=1;i<input.size();i++){
@@ -41,14 +41,14 @@ public final class VisualPageWindows {
             relation.put("documentId",doc.id());relation.put("documentHash",doc.sha256());relation.put("documentVersion",doc.version());
             relation.put("contextVersion",VERSION);relation.put("identityEstablished",false);
             relation.put("relationId",SourceSafety.digest((doc.projectId()+"\n"+doc.id()+"\n"+doc.sha256()+"\n"+doc.version()+"\n"+VERSION+"\n"+relation.get("type")+"\n"+relation.get("basis")
-                +"\n"+input.get(i-1)+"\n"+opening(pages.get(input.get(i-1)))+"\n"+input.get(i)+"\n"+opening(pages.get(input.get(i)))+"\n"+relation.getOrDefault("tableHeaders",List.of())).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                +"\n"+input.get(i-1)+"\n"+opening(pages.get(input.get(i-1)))+"\n"+input.get(i)+"\n"+opening(pages.get(input.get(i)))+"\n"+relation.getOrDefault("tableHeaders",cn.bidcheck.compat.Java8Api.listOf())).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
             result.add(Collections.unmodifiableMap(relation));
-        }return List.copyOf(result);
+        }return cn.bidcheck.compat.Java8Api.listCopyOf(result);
     }
 
     /** Use existing source-validated full-page geometry before paying to submit the whole page again. */
     public static Map<String,Object> withRegion(Document doc,int page,Map<String,Object> request){
-        if(request.containsKey("region")||!"FIELD".equals(request.get("task"))||!SourceSafety.extension(doc).equals("pdf")||!(request.get("fields") instanceof List<?> fields)||fields.isEmpty())return request;
+        if(request.containsKey("region")||!"FIELD".equals(request.get("task"))||!SourceSafety.extension(doc).equals("pdf")||!(request.get("fields") instanceof List<?>)||((List<?>) (request.get("fields"))).isEmpty())return request;
         Page location=doc.pages().stream().filter(p->p.number()==page).findFirst().orElse(null);if(location==null||location.layout()==null)return request;
         try {
             OcrLayout layout=location.layout().validated(location.text());
@@ -56,34 +56,34 @@ public final class VisualPageWindows {
             if(layout.frames().size()!=1)return request;OcrLayout.Frame frame=layout.frames().get(0);
             if(!"PDF_RENDER".equals(frame.sourceKind())||frame.sourceIndex()!=page||frame.crop()!=null)return request;
             Set<String> matched=new HashSet<>();List<OcrLayout.TextBox> boxes=new ArrayList<>();
-            for(OcrLayout.TextBox box:layout.textBoxes())for(Object field:fields)if(field instanceof String s&&!s.isBlank()&&box.text().contains(s)){matched.add(s);boxes.add(box);}
-            if(matched.size()!=fields.size()||boxes.isEmpty())return request;
+            for(OcrLayout.TextBox box:layout.textBoxes())for(Object field:((List<?>) (request.get("fields"))))if(field instanceof String&&!cn.bidcheck.compat.Java8Api.isBlank(((String) (field)))&&box.text().contains(((String) (field)))){matched.add(((String) (field)));boxes.add(box);}
+            if(matched.size()!=((List<?>) (request.get("fields"))).size()||boxes.isEmpty())return request;
             double x=boxes.stream().mapToDouble(b->b.bbox().x()).min().orElse(0),y=boxes.stream().mapToDouble(b->b.bbox().y()).min().orElse(0);
             double right=boxes.stream().mapToDouble(b->b.bbox().x()+b.bbox().width()).max().orElse(frame.width()),bottom=boxes.stream().mapToDouble(b->b.bbox().y()+b.bbox().height()).max().orElse(frame.height());
             double margin=Math.max(12,Math.max(frame.width(),frame.height())*.03);x=Math.max(0,x-margin);y=Math.max(0,y-margin);right=Math.min(frame.width(),right+margin);bottom=Math.min(frame.height(),bottom+margin);
             if((right-x)*(bottom-y)>.8*frame.width()*frame.height())return request;
-            Map<String,Object> cropped=new LinkedHashMap<>(request);cropped.put("region",List.of(x/frame.width(),y/frame.height(),right/frame.width(),bottom/frame.height()));
-            cropped.put("roiBasis","VALIDATED_FULL_PAGE_LAYOUT");cropped.put("roiFrame",Map.of("width",frame.width(),"height",frame.height(),"imageHash",frame.imageHash()));return cropped;
+            Map<String,Object> cropped=new LinkedHashMap<>(request);cropped.put("region",cn.bidcheck.compat.Java8Api.listOf(x/frame.width(), y/frame.height(), right/frame.width(), bottom/frame.height()));
+            cropped.put("roiBasis","VALIDATED_FULL_PAGE_LAYOUT");cropped.put("roiFrame",cn.bidcheck.compat.Java8Api.mapOf("width", frame.width(), "height", frame.height(), "imageHash", frame.imageHash()));return cropped;
         }catch(IllegalArgumentException ignored){return request;}
     }
 
     /** Three pages per window, one shared page. A page may occur in two windows, retaining both inputs. */
     public static List<List<Integer>> forPage(Document doc,int page,Map<String,Object> request) {
-        if(doc==null||doc.pages()==null||doc.pages().stream().noneMatch(p->p.number()==page))return List.of();
-        if(!SourceSafety.extension(doc).equals("pdf")||request.containsKey("region")||request.containsKey("imageIndex"))return List.of(List.of(page));
+        if(doc==null||doc.pages()==null||doc.pages().stream().noneMatch(p->p.number()==page))return cn.bidcheck.compat.Java8Api.listOf();
+        if(!SourceSafety.extension(doc).equals("pdf")||request.containsKey("region")||request.containsKey("imageIndex"))return cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.listOf(page));
         Map<Integer,Page> pages=new TreeMap<>();for(Page p:doc.pages())if("PAGE".equals(p.locationType()))pages.put(p.number(),p);
-        if(!pages.containsKey(page))return List.of(List.of(page));
+        if(!pages.containsKey(page))return cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.listOf(page));
         Set<Integer> linked=linkedPages(pages);
         int first=page,last=page;
         while(first>1&&linked.contains(first))first--;
         while(linked.contains(last+1))last++;
-        if(first==last)return List.of(List.of(page));
+        if(first==last)return cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.listOf(page));
         List<List<Integer>> out=new ArrayList<>();
         for(int start=first;start<=last;start+=2){
-            int end=Math.min(last,start+2);if(start<=page&&page<=end){List<Integer> window=new ArrayList<>();for(int p=start;p<=end;p++)window.add(p);out.add(List.copyOf(window));}
+            int end=Math.min(last,start+2);if(start<=page&&page<=end){List<Integer> window=new ArrayList<>();for(int p=start;p<=end;p++)window.add(p);out.add(cn.bidcheck.compat.Java8Api.listCopyOf(window));}
             if(end==last)break;
         }
-        return List.copyOf(out);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(out);
     }
 
     /** Reject arbitrary caller-supplied adjacent pages too; all adjacent pairs need source-grounded linkage. */
@@ -107,7 +107,7 @@ public final class VisualPageWindows {
         return links(pages).keySet();
     }
     private static Map<Integer,Map<String,Object>> links(Map<Integer,Page> pages){
-        Map<Integer,Map<String,Object>> linked=new LinkedHashMap<>();Page previous=null;String contractId=null,contractTitle=null,tableTitle=null;Set<String> tableHeaders=Set.of();
+        Map<Integer,Map<String,Object>> linked=new LinkedHashMap<>();Page previous=null;String contractId=null,contractTitle=null,tableTitle=null;Set<String> tableHeaders=cn.bidcheck.compat.Java8Api.setOf();
         for(Page page:pages.values()){
             Set<String> ids=matches(CONTRACT,page.text());
             boolean adjacent=previous!=null&&page.number()==previous.number()+1&&"PAGE".equals(previous.locationType())&&"PAGE".equals(page.locationType());
@@ -118,13 +118,13 @@ public final class VisualPageWindows {
             if(!kind.isEmpty()){
                 Map<String,Object> link=new LinkedHashMap<>();link.put("type",kind);link.put("fromPage",previous.number());link.put("toPage",page.number());
                 link.put("basis",table?(headers(page).isEmpty()?"EXPLICIT_CONTINUATION_INHERITED_HEADERS":"EXPLICIT_CONTINUATION_MATCHING_HEADERS"):continuation?"ANCHORED_CONTRACT_CONTINUATION":kind.equals("CARD_FACES")?"MATCHED_NAMED_FRONT_BACK":kind.equals("CONTRACT_CONTINUATION")?"MATCHING_CONTRACT_NUMBER":"MATCHING_RECORD_AND_HEADERS");
-                if(table)link.put("tableHeaders",headers(previous).isEmpty()?List.copyOf(tableHeaders):List.copyOf(headers(previous)));
-                link.put("sourceQuotes",List.of(Map.of("page",previous.number(),"quote",opening(previous)),Map.of("page",page.number(),"quote",opening(page))));linked.put(page.number(),link);
+                if(table)link.put("tableHeaders",headers(previous).isEmpty()?cn.bidcheck.compat.Java8Api.listCopyOf(tableHeaders):cn.bidcheck.compat.Java8Api.listCopyOf(headers(previous)));
+                link.put("sourceQuotes",cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("page", previous.number(), "quote", opening(previous)), cn.bidcheck.compat.Java8Api.mapOf("page", page.number(), "quote", opening(page))));linked.put(page.number(),link);
             }
             if(ids.size()==1){String title=namedTitle(page,false);contractId=ids.iterator().next();contractTitle=title;}
             else if(!continuation){contractId=null;contractTitle=null;}
             String nextTitle=namedTitle(page,true);if(nextTitle!=null)tableTitle=nextTitle;else if(!table)tableTitle=null;
-            Set<String> currentHeaders=headers(page);if(!currentHeaders.isEmpty())tableHeaders=currentHeaders;else if(!table)tableHeaders=Set.of();
+            Set<String> currentHeaders=headers(page);if(!currentHeaders.isEmpty())tableHeaders=currentHeaders;else if(!table)tableHeaders=cn.bidcheck.compat.Java8Api.setOf();
             previous=page;
         }
         return linked;
@@ -148,7 +148,7 @@ public final class VisualPageWindows {
         boolean clauseAtStart=head(b).stream().filter(s->!s.matches("(?:接上页|续页|第[0-9一二三四五六七八九十]+页(?:共[0-9一二三四五六七八九十]+页)?)")).findFirst().map(s->CLAUSE.matcher(s).matches()).orElse(false);
         return clauseAtStart&&after.get(0)==before.get(before.size()-1)+1;
     }
-    private static List<String> head(Page page){return Objects.toString(page.text(),"").lines().map(String::strip).map(s->s.replaceFirst("^#{1,6}\\s+","").replaceAll("^\\*\\*|\\*\\*$","").replaceAll("(?is)<[^>]{1,300}>","")).filter(s->!s.isEmpty()).limit(6).toList();}
+    private static List<String> head(Page page){return cn.bidcheck.compat.Java8Api.toList(cn.bidcheck.compat.Java8Extras.lines(Objects.toString(page.text(),"")).map(cn.bidcheck.compat.Java8Api::strip).map(s->s.replaceFirst("^#{1,6}\\s+","").replaceAll("^\\*\\*|\\*\\*$","").replaceAll("(?is)<[^>]{1,300}>","")).filter(s->!s.isEmpty()).limit(6));}
     private static boolean newMaterialBoundary(Page page){return head(page).stream().anyMatch(s->MATERIAL_BOUNDARY.matcher(s).matches());}
     private static boolean hasContinuation(Page page){return head(page).stream().anyMatch(s->s.matches("(?:续表|接上表)")||s.matches(".*[（(](?:续表|续)[)）]")||s.matches("(?:续表|续)[：:].*"));}
     private static String namedTitle(Page page,boolean table){
@@ -159,8 +159,8 @@ public final class VisualPageWindows {
         }return titles.size()==1?titles.iterator().next():null;
     }
     private static List<Integer> clauseNumbers(Page page){
-        List<Integer> numbers=new ArrayList<>();for(String line:Objects.toString(page.text(),"").lines().map(String::strip).toList()){
-            Matcher m=CLAUSE.matcher(line);if(m.matches()){int n=clauseNumber(m.group(1));if(n>0){if(!numbers.isEmpty()&&n<=numbers.get(numbers.size()-1))return List.of();numbers.add(n);}}
+        List<Integer> numbers=new ArrayList<>();for(String line:cn.bidcheck.compat.Java8Api.toList(cn.bidcheck.compat.Java8Extras.lines(Objects.toString(page.text(),"")).map(cn.bidcheck.compat.Java8Api::strip))){
+            Matcher m=CLAUSE.matcher(line);if(m.matches()){int n=clauseNumber(m.group(1));if(n>0){if(!numbers.isEmpty()&&n<=numbers.get(numbers.size()-1))return cn.bidcheck.compat.Java8Api.listOf();numbers.add(n);}}
         }return numbers;
     }
     private static int clauseNumber(String text){
@@ -192,11 +192,11 @@ public final class VisualPageWindows {
         Set<String> out=new HashSet<>();if(page.layout()!=null)try {
             OcrLayout layout=page.layout().validated(page.text());
             for(OcrLayout.Table table:layout.tables()) {
-                List<OcrLayout.Cell> cells=table.cells().stream().filter(OcrLayout.Cell::header).sorted(Comparator.comparingInt(OcrLayout.Cell::row).thenComparingInt(OcrLayout.Cell::column)).toList();
+                List<OcrLayout.Cell> cells=cn.bidcheck.compat.Java8Api.toList(table.cells().stream().filter(OcrLayout.Cell::header).sorted(Comparator.comparingInt(OcrLayout.Cell::row).thenComparingInt(OcrLayout.Cell::column)));
                 if(cells.size()<2)continue;
                 out.add(cells.stream().map(c->c.row()+":"+c.column()+":"+c.columnSpan()+":"+c.text().replaceAll("\\s+","")).reduce((a,b)->a+"|"+b).orElse(""));
             }
-        }catch(IllegalArgumentException ignored){return Set.of();/* Invalid layout cannot establish a context relationship. */}
+        }catch(IllegalArgumentException ignored){return cn.bidcheck.compat.Java8Api.setOf();/* Invalid layout cannot establish a context relationship. */}
         // PDF-mode OCR has no geometry. Only explicit delimited source headers may bridge its pages.
         if(out.isEmpty())out.addAll(textHeaders(page));
         return out;
@@ -204,14 +204,14 @@ public final class VisualPageWindows {
     static Set<String> textHeaders(Page page){
         Set<String> out=new LinkedHashSet<>();List<String> lines=tableLines(page);
         for(int i=0;i<Math.min(12,lines.size());i++){
-            String row=lines.get(i).strip();if(!(row.contains("|")||row.contains("｜")||row.contains("\t")))continue;
+            String row=cn.bidcheck.compat.Java8Api.strip(lines.get(i));if(!(row.contains("|")||row.contains("｜")||row.contains("\t")))continue;
             List<String> cells=tableCells(row);
             if(cells.size()<3||cells.size()>20||cells.stream().anyMatch(s->s.length()>40))continue;
             long labels=cells.stream().filter(s->s.matches("(?:序号|编号|姓名|人员姓名|身份证号(?:码)?|公民身份号码|车牌号(?:码)?|号牌号码|车辆识别代号|车架号|VIN|车型|车辆类型|车辆型号|所有人|持有人|证书名称|证书编号|资格名称|资格等级|有效期|合同编号|合同名称|合同金额|项目名称|项目编号|数量|单位|规格|型号|单价|金额|备注|岗位|职务|专业|注册编号|注册号|服务内容|签订日期)" )).count();
             if(labels<3)continue;
             boolean hasRow=false;for(int j=i+1;j<Math.min(lines.size(),i+8);j++){
-                String candidate=lines.get(j).strip();if(candidate.matches("[|｜:：\\-—\\s]+"))continue;
-                if((candidate.contains("|")||candidate.contains("｜")||candidate.contains("\t"))&&!candidate.isBlank()){hasRow=true;break;}
+                String candidate=cn.bidcheck.compat.Java8Api.strip(lines.get(j));if(candidate.matches("[|｜:：\\-—\\s]+"))continue;
+                if((candidate.contains("|")||candidate.contains("｜")||candidate.contains("\t"))&&!cn.bidcheck.compat.Java8Api.isBlank(candidate)){hasRow=true;break;}
             }
             if(hasRow)out.add(String.join("|",cells).replaceAll("\\s+",""));
         }return out;
@@ -221,12 +221,12 @@ public final class VisualPageWindows {
         return tableLines(page).stream().filter(line->line.contains("|")||line.contains("｜")||line.contains("\t")).map(VisualPageWindows::tableCells)
             .anyMatch(cells->cells.size()==columns&&cells.stream().anyMatch(cell->cell.matches("[0-9]{1,5}|[A-HJ-NPR-Z0-9]{17}|[0-9]{17}[0-9Xx]")));
     }
-    private static List<String> tableCells(String row){return Arrays.stream(row.replace('｜','|').split("[|\\t]",-1)).map(String::strip).filter(s->!s.isBlank()).toList();}
+    private static List<String> tableCells(String row){return cn.bidcheck.compat.Java8Api.toList(Arrays.stream(row.replace('｜','|').split("[|\\t]",-1)).map(cn.bidcheck.compat.Java8Api::strip).filter(s->!cn.bidcheck.compat.Java8Api.isBlank(s)));}
     private static List<String> tableLines(Page page){
         String original=Objects.toString(page.text(),"");
         // This is only classification, never a geometry parser. Original HTML is retained as evidence.
         String content=original.substring(0,Math.min(original.length(),16000)).replaceAll("(?is)<(?:tr|/tr)\\b[^>]*>","\n")
             .replaceAll("(?is)<(?:th|td)\\b[^>]*>","|").replaceAll("(?is)</(?:th|td)\\s*>","").replaceAll("(?is)<[^>]{1,300}>","").replace("&nbsp;"," ");
-        return content.lines().limit(40).toList();
+        return cn.bidcheck.compat.Java8Api.toList(cn.bidcheck.compat.Java8Extras.lines(content).limit(40));
     }
 }

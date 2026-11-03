@@ -46,13 +46,13 @@ class TemplateIncrementalRecalculationIntegrationTest {
         String changedNeed=needFor(graph,fixture.firstCheckpoint());String retainedNeed=needFor(graph,fixture.secondCheckpoint());
         Map<String,String> originalBodies=findingBodies(fixture);
 
-        Map<String,Object> plan=recalculations.plan(fixture.runId(),revision,List.of(changedNeed));
+        Map<String,Object> plan=recalculations.plan(fixture.runId(),revision,cn.bidcheck.compat.Java8Api.listOf(changedNeed));
         assertThat(plan.get("affectedCheckpointIds")).asList().containsExactly(fixture.firstCheckpoint());
         assertThat(plan.get("retainedCheckpointIds")).asList().contains(fixture.secondCheckpoint());
         assertThat(plan).containsEntry("historicalRunUnchanged",true);
 
         backfillBid(fixture);
-        Map<String,Object> receipt=recalculations.recalculate(fixture.runId(),revision,List.of(changedNeed),plan.get("sourceResultDigest").toString());
+        Map<String,Object> receipt=recalculations.recalculate(fixture.runId(),revision,cn.bidcheck.compat.Java8Api.listOf(changedNeed),plan.get("sourceResultDigest").toString());
         assertThat(receipt).containsEntry("status","COMPLETED").containsEntry("historicalRunUnchanged",true)
             .containsEntry("publicationState","CANDIDATE_ONLY").containsEntry("recalculatedCheckpointCount",1).containsEntry("retainedCheckpointCount",1);
         assertThat(receipt.get("recalculatedCheckpointIds")).asList().containsExactly(fixture.firstCheckpoint());
@@ -65,10 +65,10 @@ class TemplateIncrementalRecalculationIntegrationTest {
         assertThat(recalculations.get(fixture.runId(),receipt.get("id").toString())).containsEntry("historicalRunUnchanged",true);
 
         // Same revision and source snapshot are idempotent; the retained evidence key never ran.
-        assertThat(recalculations.recalculate(fixture.runId(),revision,List.of(changedNeed),plan.get("sourceResultDigest").toString()).get("id")).isEqualTo(receipt.get("id"));
+        assertThat(recalculations.recalculate(fixture.runId(),revision,cn.bidcheck.compat.Java8Api.listOf(changedNeed),plan.get("sourceResultDigest").toString()).get("id")).isEqualTo(receipt.get("id"));
         assertThat(retainedNeed).isNotBlank();
 
-        addNativeFact(fixture);Map<String,Object> refreshed=recalculations.recalculate(fixture.runId(),revision,List.of(changedNeed),plan.get("sourceResultDigest").toString());
+        addNativeFact(fixture);Map<String,Object> refreshed=recalculations.recalculate(fixture.runId(),revision,cn.bidcheck.compat.Java8Api.listOf(changedNeed),plan.get("sourceResultDigest").toString());
         assertThat(refreshed.get("id")).isNotEqualTo(receipt.get("id"));
         assertThat(refreshed.get("evidenceSnapshotDigest")).isNotEqualTo(receipt.get("evidenceSnapshotDigest"));
         assertThat(refreshed).containsEntry("recalculatedCheckpointCount",1).containsEntry("historicalRunUnchanged",true);
@@ -78,12 +78,12 @@ class TemplateIncrementalRecalculationIntegrationTest {
     @Test void rejectsRevisionAndSourceDigestConflictsAndPersistsUnknownNeedAsNoOp() throws Exception {
         Fixture fixture=fixture();Map<String,Object> graph=bids.templateDependencyGraph(fixture.runId());long revision=((Number)graph.get("revision")).longValue();String changedNeed=needFor(graph,fixture.firstCheckpoint());
 
-        assertThatThrownBy(()->recalculations.recalculate(fixture.runId(),revision+1,List.of(changedNeed),""))
+        assertThatThrownBy(()->recalculations.recalculate(fixture.runId(),revision+1,cn.bidcheck.compat.Java8Api.listOf(changedNeed),""))
             .isInstanceOfSatisfying(TemplateApiException.class,failure->assertThat(failure.code()).isEqualTo("DEPENDENCY_GRAPH_REVISION_CHANGED"));
-        assertThatThrownBy(()->recalculations.recalculate(fixture.runId(),revision,List.of(changedNeed),"not-the-source-digest"))
+        assertThatThrownBy(()->recalculations.recalculate(fixture.runId(),revision,cn.bidcheck.compat.Java8Api.listOf(changedNeed),"not-the-source-digest"))
             .isInstanceOfSatisfying(TemplateApiException.class,failure->assertThat(failure.code()).isEqualTo("SOURCE_FINDINGS_CHANGED"));
 
-        Map<String,Object> noOp=recalculations.recalculate(fixture.runId(),revision,List.of("evidence-key-with-no-subscribers"),graph.get("sourceResultDigest").toString());
+        Map<String,Object> noOp=recalculations.recalculate(fixture.runId(),revision,cn.bidcheck.compat.Java8Api.listOf("evidence-key-with-no-subscribers"),graph.get("sourceResultDigest").toString());
         assertThat(noOp).containsEntry("status","NO_OP").containsEntry("noOp",true).containsEntry("recalculatedCheckpointCount",0).containsEntry("changedCheckpointCount",0)
             .containsEntry("historicalRunUnchanged",true);
         assertThat(noOp.get("results")).asList().isEmpty();
@@ -91,7 +91,7 @@ class TemplateIncrementalRecalculationIntegrationTest {
     }
 
     private Fixture fixture() throws Exception {
-        String project=BidService.text(bids.createProject(Map.of("name","依赖级增量重算测试")),"id");
+        String project=BidService.text(bids.createProject(cn.bidcheck.compat.Java8Api.mapOf("name", "依赖级增量重算测试")),"id");
         String tender=parsed(project,"TENDER","投标文件应提供营业执照正文和法定代表人身份证明正文。");bids.execute(bids.extract(project,tender));
         for(Checkpoint checkpoint:checkpoints(project))bids.updateCheckpoint(checkpoint.id(),disabled(checkpoint));
         Document tenderDocument=bids.document(tender);Checkpoint first=material(tenderDocument,"营业执照"),second=material(tenderDocument,"法定代表人身份证明");
@@ -108,12 +108,29 @@ class TemplateIncrementalRecalculationIntegrationTest {
     @SuppressWarnings("unchecked") private List<Checkpoint> checkpoints(String project){return (List<Checkpoint>)bids.detail(project).get("checkpoints");}
     private String parsed(String project,String role,String text)throws Exception{TaskRow task=bids.upload(project,role,new MockMultipartFile("file",role.toLowerCase()+".txt","text/plain",text.getBytes(StandardCharsets.UTF_8)));bids.execute(task);return BidService.text(store.map(task.inputJson),"documentId");}
 
-    private static String needFor(Map<String,Object> graph,String checkpointId){Map<?,?> reverse=(Map<?,?>)graph.get("reverseNeedIndex");return reverse.entrySet().stream().filter(entry->entry.getValue() instanceof Collection<?> ids&&ids.contains(checkpointId)).map(entry->entry.getKey().toString()).findFirst().orElseThrow(()->new AssertionError("checkpoint="+checkpointId+", graph="+graph));}
-    private void backfillBid(Fixture fixture){Document document=bids.document(fixture.bidDocumentId());String text="营业执照正文\n名称：海南测试有限公司\n统一社会信用代码：91460000TEST000001\n类型：有限责任公司\n住所：海南省海口市测试大道1号\n法定代表人：张三\n注册资本：壹仟万元\n成立日期：2020年1月1日\n营业期限：长期\n经营范围：建筑工程施工。\n法定代表人身份证明正文\n法定代表人：张三\n职务：总经理\n特此证明。";var pages=document.pages().stream().map(page->new cn.bidcheck.domain.Domain.Page(page.number(),text,page.locationType(),page.parser(),page.warning(),page.layout())).toList();store.save("document",document.id(),document.projectId(),"",new Document(document.id(),document.projectId(),document.role(),document.name(),document.version(),document.sha256(),document.createdAt(),pages,document.warnings()));}
-    private Map<String,String> findingBodies(Fixture fixture){Map<String,String> bodies=new LinkedHashMap<>();for(String checkpointId:List.of(fixture.firstCheckpoint(),fixture.secondCheckpoint())){String id=BidService.stableId(fixture.runId()+":"+checkpointId);bodies.put(checkpointId,store.require("finding",id).body);}return bodies;}
-    private void addNativeFact(Fixture fixture){Map<String,Object> run=store.getMap("run",fixture.runId());Document document=bids.document(BidService.text(run,"documentId"));var page=document.pages().get(0);
+    private static String needFor(Map<String,Object> graph,String checkpointId){Map<?,?> reverse=(Map<?,?>)graph.get("reverseNeedIndex");return reverse.entrySet().stream().filter(entry->entry.getValue() instanceof Collection<?>&&((Collection<?>) (entry.getValue())).contains(checkpointId)).map(entry->entry.getKey().toString()).findFirst().orElseThrow(()->new AssertionError("checkpoint="+checkpointId+", graph="+graph));}
+    private void backfillBid(Fixture fixture){Document document=bids.document(fixture.bidDocumentId());String text="营业执照正文\n名称：海南测试有限公司\n统一社会信用代码：91460000TEST000001\n类型：有限责任公司\n住所：海南省海口市测试大道1号\n法定代表人：张三\n注册资本：壹仟万元\n成立日期：2020年1月1日\n营业期限：长期\n经营范围：建筑工程施工。\n法定代表人身份证明正文\n法定代表人：张三\n职务：总经理\n特此证明。";java.util.List<cn.bidcheck.domain.Domain.Page> pages=cn.bidcheck.compat.Java8Api.toList(document.pages().stream().map(page->new cn.bidcheck.domain.Domain.Page(page.number(),text,page.locationType(),page.parser(),page.warning(),page.layout())));store.save("document",document.id(),document.projectId(),"",new Document(document.id(),document.projectId(),document.role(),document.name(),document.version(),document.sha256(),document.createdAt(),pages,document.warnings()));}
+    private Map<String,String> findingBodies(Fixture fixture){Map<String,String> bodies=new LinkedHashMap<>();for(String checkpointId:cn.bidcheck.compat.Java8Api.listOf(fixture.firstCheckpoint(), fixture.secondCheckpoint())){String id=BidService.stableId(fixture.runId()+":"+checkpointId);bodies.put(checkpointId,store.require("finding",id).body);}return bodies;}
+    private void addNativeFact(Fixture fixture){Map<String,Object> run=store.getMap("run",fixture.runId());Document document=bids.document(BidService.text(run,"documentId"));cn.bidcheck.domain.Domain.Page page=document.pages().get(0);
         String quote=page.text().contains("营业执照正文")?"营业执照正文":page.text();Evidence evidence=new Evidence(document.id(),document.name(),page.number(),page.locationType(),quote,"incremental-fact",1d);
         Fact fact=new Fact("COMPANY","incremental-company","additionalMaterial",quote,quote,evidence);
-        new TransactionTemplate(transactionManager).executeWithoutResult(ignored->{store.lock("project",fixture.projectId());factLedger.persistNativeFacts(document,List.of(fact),BidService.RULE_VERSION);});}
-    private record Fixture(String projectId,String runId,String bidDocumentId,String firstCheckpoint,String secondCheckpoint){}
+        new TransactionTemplate(transactionManager).executeWithoutResult(ignored->{store.lock("project",fixture.projectId());factLedger.persistNativeFacts(document,cn.bidcheck.compat.Java8Api.listOf(fact),BidService.RULE_VERSION);});}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Fixture{
+        private final String projectId;
+        private final String runId;
+        private final String bidDocumentId;
+        private final String firstCheckpoint;
+        private final String secondCheckpoint;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Fixture(@com.fasterxml.jackson.annotation.JsonProperty("projectId") String projectId, @com.fasterxml.jackson.annotation.JsonProperty("runId") String runId, @com.fasterxml.jackson.annotation.JsonProperty("bidDocumentId") String bidDocumentId, @com.fasterxml.jackson.annotation.JsonProperty("firstCheckpoint") String firstCheckpoint, @com.fasterxml.jackson.annotation.JsonProperty("secondCheckpoint") String secondCheckpoint) { this.projectId = projectId; this.runId = runId; this.bidDocumentId = bidDocumentId; this.firstCheckpoint = firstCheckpoint; this.secondCheckpoint = secondCheckpoint; }
+        public String projectId() { return projectId; }
+        public String runId() { return runId; }
+        public String bidDocumentId() { return bidDocumentId; }
+        public String firstCheckpoint() { return firstCheckpoint; }
+        public String secondCheckpoint() { return secondCheckpoint; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Fixture that = (Fixture) other; return java.util.Objects.equals(this.projectId, that.projectId) && java.util.Objects.equals(this.runId, that.runId) && java.util.Objects.equals(this.bidDocumentId, that.bidDocumentId) && java.util.Objects.equals(this.firstCheckpoint, that.firstCheckpoint) && java.util.Objects.equals(this.secondCheckpoint, that.secondCheckpoint); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.projectId); hash = 31 * hash + java.util.Objects.hashCode(this.runId); hash = 31 * hash + java.util.Objects.hashCode(this.bidDocumentId); hash = 31 * hash + java.util.Objects.hashCode(this.firstCheckpoint); hash = 31 * hash + java.util.Objects.hashCode(this.secondCheckpoint); return hash; }
+        @Override public String toString() { return "Fixture[" + "projectId=" + projectId + ", runId=" + runId + ", bidDocumentId=" + bidDocumentId + ", firstCheckpoint=" + firstCheckpoint + ", secondCheckpoint=" + secondCheckpoint + "]"; }
+}
 }

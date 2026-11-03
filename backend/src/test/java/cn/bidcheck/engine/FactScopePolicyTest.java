@@ -9,7 +9,7 @@ class FactScopePolicyTest {
     private final CheckEngine engine=new CheckEngine();
     private Document doc(String... texts) {
         List<Page> pages=new ArrayList<>(); for(int i=0;i<texts.length;i++) pages.add(new Page(i+1,texts[i],"PAGE","PDFBOX",null));
-        return new Document("d","p","BID","投标文件",1,"same-fixture-hash","",List.copyOf(pages),List.of());
+        return new Document("d","p","BID","投标文件",1,"same-fixture-hash","",cn.bidcheck.compat.Java8Api.listCopyOf(pages),cn.bidcheck.compat.Java8Api.listOf());
     }
     private Checkpoint rule(String type,String field,String expected,String unit,String title) {
         return new Checkpoint("c",title,"核查","HIGH",type,field,"DATE_VALIDITY".equals(type)?">=":"VALUE_COMPARE".equals(type)?"<=":"FULL_TEXT_REVIEW".equals(type)?"REVIEW":"=",expected,unit,true,true,true,null);
@@ -40,11 +40,11 @@ class FactScopePolicyTest {
     @Test void missingOrForgedEvidenceCannotCreateAConflict() {
         Document d=doc("投标函\n项目名称：当前工程");
         Fact forged=new Fact("PROJECT","PROJECT","projectName","其他工程","其他工程",new Evidence("d","投标文件",1,"PAGE","项目名称：其他工程","p1-l2",1));
-        assertEquals("UNDETERMINED",engine.evaluate(identity("projectName","当前工程"),d,List.of(forged)).status());
+        assertEquals("UNDETERMINED",engine.evaluate(identity("projectName","当前工程"),d,cn.bidcheck.compat.Java8Api.listOf(forged)).status());
         Evidence real=new Evidence("d","投标文件",1,"PAGE","项目名称：当前工程","p1-l2",1);
-        assertEquals("UNDETERMINED",engine.evaluate(identity("projectName","当前工程"),d,List.of(new Fact("PROJECT","PROJECT","projectName","当前工程","其他工程",real))).status());
+        assertEquals("UNDETERMINED",engine.evaluate(identity("projectName","当前工程"),d,cn.bidcheck.compat.Java8Api.listOf(new Fact("PROJECT","PROJECT","projectName","当前工程","其他工程",real))).status());
         Evidence wrongLocation=new Evidence("d","投标文件",1,"PARAGRAPH",real.quote(),real.anchor(),1);
-        assertEquals("UNDETERMINED",engine.evaluate(identity("projectName","当前工程"),d,List.of(new Fact("PROJECT","PROJECT","projectName","当前工程","当前工程",wrongLocation))).status());
+        assertEquals("UNDETERMINED",engine.evaluate(identity("projectName","当前工程"),d,cn.bidcheck.compat.Java8Api.listOf(new Fact("PROJECT","PROJECT","projectName","当前工程","当前工程",wrongLocation))).status());
     }
     @Test void totalsFromHistoricalContractsCannotFailCurrentLimit() {
         Document d=doc("历史业绩合同\n不含税总价为12345678.90元。","合同协议书\n不含税总价为9876543.21元。");
@@ -61,14 +61,14 @@ class FactScopePolicyTest {
         assertEquals("FAIL",eval(price("CNY_EXCLUSIVE"),d).status());
     }
     @Test void itemPricesAndCeilingsDoNotBecomeBidTotalsEvenWhenTheySayBidPrice() {
-        for(String text:List.of("分项投标报价：3000000元","预算投标报价：3000000元","最高限价投标报价：3000000元","单价投标报价：3000000元"))
+        for(String text:cn.bidcheck.compat.Java8Api.listOf("分项投标报价：3000000元", "预算投标报价：3000000元", "最高限价投标报价：3000000元", "单价投标报价：3000000元"))
             assertEquals("UNDETERMINED",eval(price("CNY"),doc("投标报价表\n"+text)).status(),text);
     }
     @Test void taxBasisMustMatchAndDifferentLotsDoNotConflict() {
         assertEquals("UNDETERMINED",eval(price("CNY_EXCLUSIVE"),doc("投标函\n含税投标总价：3000000元")).status());
         Document d=doc("第一标段投标函\n项目编号：A-01\n投标总价：1000000元","第二标段投标函\n项目编号：B-01\n投标总价：3000000元");
         assertEquals("UNDETERMINED",eval(price("CNY"),d).status());
-        var lotRule=rule("VALUE_COMPARE","totalPrice","2000000","CNY","第一标段投标总报价");
+        cn.bidcheck.domain.Domain.Checkpoint lotRule=rule("VALUE_COMPARE","totalPrice","2000000","CNY","第一标段投标总报价");
         assertEquals("PASS",eval(lotRule,d).status());
     }
     @Test void dateEndpointCannotBeReplacedByRenewalApplicationDate() {
@@ -106,14 +106,14 @@ class FactScopePolicyTest {
         assertEquals("UNDETERMINED",eval(rule("FULL_TEXT_REVIEW","certificateCoverage","2025-08-05","","效期覆盖"),d).status());
     }
     @Test void trueCurrentExpiredOrFutureCredentialStillFails() {
-        for(String text:List.of("有效至：2025-08-04","有效期：2025-08-06至2035-08-05")) {
+        for(String text:cn.bidcheck.compat.Java8Api.listOf("有效至：2025-08-04", "有效期：2025-08-06至2035-08-05")) {
             Document d=doc("本项目证件\n"+text);
             assertEquals("FAIL",eval(expiry(),d).status());
             assertEquals("FAIL",eval(rule("FULL_TEXT_REVIEW","certificateCoverage","2025-08-05","","效期覆盖"),d).status());
         }
     }
     @Test void historicalAndUnattributedCredentialsCannotEstablishCurrentExpiry() {
-        for(Document d:List.of(doc("历史业绩证明\n资质证书\n有效至：2020-01-01"),doc("身份证\n有效至：2020-01-01"))) {
+        for(Document d:cn.bidcheck.compat.Java8Api.listOf(doc("历史业绩证明\n资质证书\n有效至：2020-01-01"), doc("身份证\n有效至：2020-01-01"))) {
             assertEquals("UNDETERMINED",eval(expiry(),d).status());
             assertEquals("UNDETERMINED",eval(rule("FULL_TEXT_REVIEW","certificateCoverage","2025-08-05","","效期覆盖"),d).status());
         }
@@ -129,7 +129,7 @@ class FactScopePolicyTest {
         String project="2026年合成中心综合楼二次装修工程";
         Document d=doc("（"+project+"）\n投标文件（商务部分）","历史项目\n项目名称：旧工程",
             "合同条款偏离表\n项目名称："+project,"技术偏离表\n项目名称："+project);
-        var facts=new FactExtractor().extract(d);var selection=FactScopePolicy.of(d).select(identity("projectName",project),facts);
+        java.util.List<cn.bidcheck.domain.Domain.Fact> facts=new FactExtractor().extract(d);cn.bidcheck.engine.FactScopePolicy.Selection selection=FactScopePolicy.of(d).select(identity("projectName",project),facts);
         assertTrue(selection.included().stream().anyMatch(f->f.evidence().page()==3));
         assertTrue(selection.included().stream().anyMatch(f->f.evidence().page()==4));
         assertFalse(selection.included().stream().anyMatch(f->f.rawValue().equals("旧工程")));
@@ -138,7 +138,7 @@ class FactScopePolicyTest {
     @Test void differentNamedCurrentFormMustNotDisappearAsAnUnrelatedHistoricalProject() {
         String project="2026年合成中心综合楼二次装修工程",other="2026年合成中心综合楼三次装修工程";
         Document d=doc("（"+project+"）\n投标文件（商务部分）\n项目名称："+project,"投标函\n项目名称："+other);
-        var facts=new FactExtractor().extract(d);var selection=FactScopePolicy.of(d).select(identity("projectName",project),facts);
+        java.util.List<cn.bidcheck.domain.Domain.Fact> facts=new FactExtractor().extract(d);cn.bidcheck.engine.FactScopePolicy.Selection selection=FactScopePolicy.of(d).select(identity("projectName",project),facts);
         assertTrue(selection.uncertain().stream().anyMatch(f->f.rawValue().equals(other)));
         assertNotEquals("PASS",engine.evaluate(identity("projectName",project),d,facts).status());
     }
@@ -148,8 +148,8 @@ class FactScopePolicyTest {
             "甲方：历史项目业主\n乙方：测试承包人\n合同总价：500000元",
             "二、报价明细表\n称：2023年其他城市营业厅装修改造项目\n项目编号：OLD-009",
             "技术条款偏离表\n项目名称："+project+"\n项目编号：NOW-001");
-        var facts=new FactExtractor().extract(d);
-        var selection=FactScopePolicy.of(d).select(identity("projectNumber","NOW-001"),facts);
+        java.util.List<cn.bidcheck.domain.Domain.Fact> facts=new FactExtractor().extract(d);
+        cn.bidcheck.engine.FactScopePolicy.Selection selection=FactScopePolicy.of(d).select(identity("projectNumber","NOW-001"),facts);
         assertEquals(1,selection.excluded().size());
         assertEquals("OLD-009",selection.excluded().get(0).rawValue());
         assertEquals(2,selection.included().size());

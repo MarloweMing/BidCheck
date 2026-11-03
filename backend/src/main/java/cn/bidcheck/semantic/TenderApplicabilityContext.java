@@ -16,9 +16,35 @@ final class TenderApplicabilityContext {
     static final String BOUNDARY = "这些原文只补充本项适用规则和格式上下文，不直接证明投标响应。牵头方可签章只涉及签章主体，"
         + "不证明其他成员的实质资格、承诺事实或声明覆盖范围。联合体协议及格式明示各方签章、分别提交的例外必须保留；"
         + "未定位到例外不等于例外不存在。不得仅因未见另一成员单独材料就新增提交义务；新增各方分别提交/共同签章义务须引用明确适用于本材料的招标或格式原句。";
-    record Reference(String id, String purpose, Evidence evidence) { }
-    record Context(List<Reference> references, Map<String,Object> audit, boolean overflow) {
-        static Context empty() { return new Context(List.of(), Map.of(), false); }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    static final class Reference {
+        private final String id;
+        private final String purpose;
+        private final Evidence evidence;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        Reference(@com.fasterxml.jackson.annotation.JsonProperty("id") String id, @com.fasterxml.jackson.annotation.JsonProperty("purpose") String purpose, @com.fasterxml.jackson.annotation.JsonProperty("evidence") Evidence evidence) { this.id = id; this.purpose = purpose; this.evidence = evidence; }
+        public String id() { return id; }
+        public String purpose() { return purpose; }
+        public Evidence evidence() { return evidence; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Reference that = (Reference) other; return java.util.Objects.equals(this.id, that.id) && java.util.Objects.equals(this.purpose, that.purpose) && java.util.Objects.equals(this.evidence, that.evidence); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.id); hash = 31 * hash + java.util.Objects.hashCode(this.purpose); hash = 31 * hash + java.util.Objects.hashCode(this.evidence); return hash; }
+        @Override public String toString() { return "Reference[" + "id=" + id + ", purpose=" + purpose + ", evidence=" + evidence + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    static final class Context {
+        private final List<Reference> references;
+        private final Map<String,Object> audit;
+        private final boolean overflow;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        Context(@com.fasterxml.jackson.annotation.JsonProperty("references") List<Reference> references, @com.fasterxml.jackson.annotation.JsonProperty("audit") Map<String,Object> audit, @com.fasterxml.jackson.annotation.JsonProperty("overflow") boolean overflow) { this.references = references; this.audit = audit; this.overflow = overflow; }
+        public List<Reference> references() { return references; }
+        public Map<String,Object> audit() { return audit; }
+        public boolean overflow() { return overflow; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Context that = (Context) other; return java.util.Objects.equals(this.references, that.references) && java.util.Objects.equals(this.audit, that.audit) && java.util.Objects.equals(this.overflow, that.overflow); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.references); hash = 31 * hash + java.util.Objects.hashCode(this.audit); hash = 31 * hash + java.util.Objects.hashCode(this.overflow); return hash; }
+        @Override public String toString() { return "Context[" + "references=" + references + ", audit=" + audit + ", overflow=" + overflow + "]"; }
+
+        static Context empty() { return new Context(cn.bidcheck.compat.Java8Api.listOf(), cn.bidcheck.compat.Java8Api.mapOf(), false); }
     }
 
     static Context collect(Checkpoint checkpoint, Document tender, boolean consortiumContext) {
@@ -40,7 +66,7 @@ final class TenderApplicabilityContext {
         }
         if (references.isEmpty() && limitations.isEmpty()) return Context.empty();
         Set<String> materials = new LinkedHashSet<>();
-        var matcher = NAMED_MATERIAL.matcher(obligation);
+        java.util.regex.Matcher matcher = NAMED_MATERIAL.matcher(obligation);
         while (matcher.find()) materials.add(matcher.group(1));
         for (String material : materials) {
             List<Integer> located = new ArrayList<>();
@@ -65,8 +91,7 @@ final class TenderApplicabilityContext {
                     if ("PAGE".equals(part.locationType())) { stop = "PAGE_BOUNDARY_UNRESOLVED"; break; }
                     if (offset == MAX_TEMPLATE_BLOCKS - 1) stop = "WINDOW_LIMIT";
                 }
-                templates.add(Map.of("material", material, "evidenceIds", ids, "stopReason", stop,
-                    "exceptionCoverageComplete", false, "scope", "LOCATED_FORMAT_CONTEXT_ONLY"));
+                templates.add(cn.bidcheck.compat.Java8Api.mapOf("material", material, "evidenceIds", ids, "stopReason", stop, "exceptionCoverageComplete", false, "scope", "LOCATED_FORMAT_CONTEXT_ONLY"));
             }
             if (located.isEmpty()) limitations.add("未定位对应格式正文：" + material);
         }
@@ -75,32 +100,31 @@ final class TenderApplicabilityContext {
         Map<String,Object> audit = new LinkedHashMap<>();
         audit.put("sourceRequirementVerified", true);
         audit.put("scope", "SIGNING_POLICY_AND_NAMED_FORMAT_CONTEXT_ONLY");
-        audit.put("references", references.stream().map(r -> Map.of("evidenceId", r.id(), "purpose", r.purpose(),
-            "source", r.evidence())).toList());
+        audit.put("references", cn.bidcheck.compat.Java8Api.toList(references.stream().map(r -> cn.bidcheck.compat.Java8Api.mapOf("evidenceId", r.id(), "purpose", r.purpose(), "source", r.evidence()))));
         audit.put("formats", templates); audit.put("limitations", limitations);
         audit.put("exceptionCoverageComplete", false); audit.put("substantiveMemberCoverageProven", false);
         audit.put("boundary", BOUNDARY);
-        return new Context(List.copyOf(references), Collections.unmodifiableMap(audit), overflow);
+        return new Context(cn.bidcheck.compat.Java8Api.listCopyOf(references), Collections.unmodifiableMap(audit), overflow);
     }
 
     private static Reference add(List<Reference> refs, Set<String> seen, Document tender, Page page, String purpose) {
         String key = page.locationType() + ":" + page.number() + ":" + page.text();
         if (!seen.add(key)) return refs.stream().filter(r -> r.evidence().page() == page.number()
-            && Objects.equals(r.evidence().locationType(), page.locationType()) && Objects.equals(r.evidence().quote(), page.text())).findFirst().orElseThrow();
-        var evidence = new Evidence(tender.id(), tender.name(), page.number(), page.locationType(), page.text(),
+            && Objects.equals(r.evidence().locationType(), page.locationType()) && Objects.equals(r.evidence().quote(), page.text())).findFirst().orElseThrow(java.util.NoSuchElementException::new);
+        cn.bidcheck.domain.Domain.Evidence evidence = new Evidence(tender.id(), tender.name(), page.number(), page.locationType(), page.text(),
             "p" + page.number() + "-l1", Objects.toString(page.parser(), "").contains("OCR") ? 0d : .75d);
-        var ref = new Reference("A" + (refs.size() + 1), purpose, evidence);
+        cn.bidcheck.semantic.TenderApplicabilityContext.Reference ref = new Reference("A" + (refs.size() + 1), purpose, evidence);
         refs.add(ref); return ref;
     }
 
     static boolean verified(Evidence evidence, Document tender) {
         return evidence != null && tender != null && "TENDER".equals(tender.role()) && tender.pages() != null
-            && Objects.equals(tender.id(), evidence.documentId()) && evidence.quote() != null && !evidence.quote().isBlank()
+            && Objects.equals(tender.id(), evidence.documentId()) && evidence.quote() != null && !cn.bidcheck.compat.Java8Api.isBlank(evidence.quote())
             && tender.pages().stream().anyMatch(p -> p.number() == evidence.page() && Objects.equals(p.locationType(), evidence.locationType())
                 && p.text() != null && p.text().contains(evidence.quote()));
     }
     private static String title(String text) {
-        return Objects.toString(text, "").strip().replaceFirst("^[（(]?[0-9一二三四五六七八九十]+[）).、\\s]+", "")
+        return cn.bidcheck.compat.Java8Api.strip(Objects.toString(text, "")).replaceFirst("^[（(]?[0-9一二三四五六七八九十]+[）).、\\s]+", "")
             .replaceAll("[\\s《》]", "");
     }
     private static boolean titleMatches(String text, String material) {
@@ -142,13 +166,13 @@ final class TenderApplicabilityContext {
     }
     private static boolean formatUnclosed(Context context) {
         Object formats = context.audit().get("formats"), limits = context.audit().get("limitations");
-        if (limits instanceof List<?> list && !list.isEmpty()) return true;
-        if (formats instanceof List<?> list) for (Object entry : list)
-            if (entry instanceof Map<?,?> map && !"NEXT_HEADING".equals(map.get("stopReason"))) return true;
+        if (limits instanceof List<?> && !((List<?>) (limits)).isEmpty()) return true;
+        if (formats instanceof List<?>) for (Object entry : ((List<?>) (formats)))
+            if (entry instanceof Map<?,?> && !"NEXT_HEADING".equals(((Map<?,?>) (entry)).get("stopReason"))) return true;
         return false;
     }
     private static boolean appliesToMaterial(String source, String requirement) {
-        var matcher = NAMED_MATERIAL.matcher(requirement);
+        java.util.regex.Matcher matcher = NAMED_MATERIAL.matcher(requirement);
         boolean named = false;
         while (matcher.find()) { named = true; if (source.contains(matcher.group(1))) return true; }
         return !named || source.matches("(?s).*所有.{0,8}(?:承诺|声明).*");

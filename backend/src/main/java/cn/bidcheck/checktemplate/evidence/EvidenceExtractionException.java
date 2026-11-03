@@ -7,7 +7,7 @@ public final class EvidenceExtractionException extends Exception {
 
     private EvidenceExtractionException(String code, String message, boolean retryable, Throwable cause) {
         super(message, cause);
-        if (code == null || code.isBlank()) throw new IllegalArgumentException("code is required");
+        if (code == null || cn.bidcheck.compat.Java8Api.isBlank(code)) throw new IllegalArgumentException("code is required");
         this.code = code.trim();
         this.retryable = retryable;
     }

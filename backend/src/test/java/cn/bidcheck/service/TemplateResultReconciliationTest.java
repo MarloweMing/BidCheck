@@ -11,22 +11,20 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class TemplateResultReconciliationTest {
     @Test void frozenEvidenceQueriesDeclareTheDocumentRolesForTheFinalGuard() {
-        Map<String,Object> tenderOnly=Map.of("templateEvidence",Map.of("evidenceQueries",List.of(
-            Map.of("documentRoles",List.of("TENDER")),Map.of("documentRoles",List.of("TENDER")))));
-        Map<String,Object> crossDocument=Map.of("templateEvidence",Map.of("evidenceQueries",List.of(
-            Map.of("documentRoles",List.of("BID")),Map.of("documentRoles",List.of("TENDER")))));
-        assertEquals(java.util.Set.of("TENDER"),TemplateResultFinalizer.requiredProofDocumentRoles(tenderOnly));
-        assertEquals(java.util.Set.of("BID","TENDER"),TemplateResultFinalizer.requiredProofDocumentRoles(crossDocument));
-        assertTrue(TemplateResultFinalizer.requiredProofDocumentRoles(Map.of()).isEmpty());
+        Map<String,Object> tenderOnly=cn.bidcheck.compat.Java8Api.mapOf("templateEvidence", cn.bidcheck.compat.Java8Api.mapOf("evidenceQueries", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("documentRoles", cn.bidcheck.compat.Java8Api.listOf("TENDER")), cn.bidcheck.compat.Java8Api.mapOf("documentRoles", cn.bidcheck.compat.Java8Api.listOf("TENDER")))));
+        Map<String,Object> crossDocument=cn.bidcheck.compat.Java8Api.mapOf("templateEvidence", cn.bidcheck.compat.Java8Api.mapOf("evidenceQueries", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("documentRoles", cn.bidcheck.compat.Java8Api.listOf("BID")), cn.bidcheck.compat.Java8Api.mapOf("documentRoles", cn.bidcheck.compat.Java8Api.listOf("TENDER")))));
+        assertEquals(cn.bidcheck.compat.Java8Api.setOf("TENDER"),TemplateResultFinalizer.requiredProofDocumentRoles(tenderOnly));
+        assertEquals(cn.bidcheck.compat.Java8Api.setOf("BID", "TENDER"),TemplateResultFinalizer.requiredProofDocumentRoles(crossDocument));
+        assertTrue(TemplateResultFinalizer.requiredProofDocumentRoles(cn.bidcheck.compat.Java8Api.mapOf()).isEmpty());
     }
 
     @Test void finalEvidenceGuardDowngradesTheTemplateProjectionToo() {
         ResultProjection preliminary=projection(TemplateTypes.ConclusionState.SATISFIED,
             TemplateTypes.EvidenceState.SUFFICIENT,TemplateTypes.ExecutionState.FINISHED,
             TemplateTypes.ActionOwner.NONE,"NONE",TemplateTypes.VerificationMode.DOCUMENT);
-        Evaluation guarded=new Evaluation("UNDETERMINED","原图覆盖不足，不能发布通过结论","核对指定原图",List.of(),0,"DETERMINISTIC/OCR_REVIEW");
+        Evaluation guarded=new Evaluation("UNDETERMINED","原图覆盖不足，不能发布通过结论","核对指定原图",cn.bidcheck.compat.Java8Api.listOf(),0,"DETERMINISTIC/OCR_REVIEW");
 
-        Map<String,Object> assessment=FocusedCheckEvaluator.reconcileAssessment(guarded,Map.of("templateResult",preliminary,"ocrReview",Map.of("required",true,"incomplete",true)));
+        Map<String,Object> assessment=FocusedCheckEvaluator.reconcileAssessment(guarded,cn.bidcheck.compat.Java8Api.mapOf("templateResult", preliminary, "ocrReview", cn.bidcheck.compat.Java8Api.mapOf("required", true, "incomplete", true)));
         ResultProjection result=(ResultProjection)assessment.get("resultProjection");
         assertTrue(result.finalReconciled());
         assertEquals(TemplateTypes.ConclusionState.UNDETERMINED,result.conclusion().state());
@@ -36,7 +34,7 @@ class TemplateResultReconciliationTest {
         assertTrue(result.execution().retryable());
         assertEquals(TemplateTypes.ActionOwner.SYSTEM,result.action().owner());
         assertEquals("RESOLVE_FINAL_GUARD",result.action().type());
-        assertFalse(result.action().actionId().isBlank());
+        assertFalse(cn.bidcheck.compat.Java8Api.isBlank(result.action().actionId()));
         assertTrue(result.missingInputs().stream().anyMatch(value->value.startsWith("system.finalGuard.FINAL_")));
         assertTrue(result.nextStep().contains("系统需处理最终保护项"));
         assertTrue(result.nextStep().contains("核对指定原图"));
@@ -50,12 +48,12 @@ class TemplateResultReconciliationTest {
             TemplateTypes.Category.QUALIFICATION,TemplateTypes.Purpose.MANDATORY,TemplateTypes.VerificationMode.DOCUMENT,
             new ResultProjection.Execution(TemplateTypes.ExecutionState.FINISHED,false,"job-7"),
             new ResultProjection.Conclusion(TemplateTypes.ConclusionState.SATISFIED,"模板通过",TemplateTypes.ProofStandard.FACTUAL_CONDITION,"PASS"),
-            new ResultProjection.Evidence(TemplateTypes.EvidenceState.SUFFICIENT,List.of("doc:1:PAGE:1")),
-            new ResultProjection.Action(TemplateTypes.ActionOwner.NONE,"NONE",null),List.of(),List.of("original.input"),List.of(),
+            new ResultProjection.Evidence(TemplateTypes.EvidenceState.SUFFICIENT,cn.bidcheck.compat.Java8Api.listOf("doc:1:PAGE:1")),
+            new ResultProjection.Action(TemplateTypes.ActionOwner.NONE,"NONE",null),cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf("original.input"),cn.bidcheck.compat.Java8Api.listOf(),
             new ResultProjection.Review(TemplateTypes.ConclusionState.SATISFIED,null),"test-evaluator","无需处理",false);
 
         ResultProjection result=TemplateResultFinalizer.reconcile(
-            new Evaluation("UNDETERMINED","保护条件未满足","",List.of(),0,"FINAL_GUARD"),preliminary);
+            new Evaluation("UNDETERMINED","保护条件未满足","",cn.bidcheck.compat.Java8Api.listOf(),0,"FINAL_GUARD"),preliminary);
 
         assertAll(
             ()->assertEquals(TemplateTypes.ConclusionState.UNDETERMINED,result.conclusion().state()),
@@ -72,13 +70,13 @@ class TemplateResultReconciliationTest {
     }
 
     @Test void templateFailureIsSystemWorkAndExternalModeIsAnExplicitUserAction() {
-        Evaluation unknown=new Evaluation("UNDETERMINED","尚未形成结论","",List.of(),0,"TEMPLATE");
-        var failed=FocusedCheckEvaluator.reconcileAssessment(unknown,Map.of("templateResult",projection(
+        Evaluation unknown=new Evaluation("UNDETERMINED","尚未形成结论","",cn.bidcheck.compat.Java8Api.listOf(),0,"TEMPLATE");
+        java.util.Map<java.lang.String, java.lang.Object> failed=FocusedCheckEvaluator.reconcileAssessment(unknown,cn.bidcheck.compat.Java8Api.mapOf("templateResult", projection(
             TemplateTypes.ConclusionState.UNDETERMINED,TemplateTypes.EvidenceState.SCOPE_UNRESOLVED,
             TemplateTypes.ExecutionState.FAILED,TemplateTypes.ActionOwner.SYSTEM,"RETRY_TEMPLATE",TemplateTypes.VerificationMode.DOCUMENT)));
         assertEquals("SYSTEM_INCOMPLETE",((Map<?,?>)failed.get("businessPresentation")).get("state"));
 
-        var external=FocusedCheckEvaluator.reconcileAssessment(unknown,Map.of("templateResult",projection(
+        java.util.Map<java.lang.String, java.lang.Object> external=FocusedCheckEvaluator.reconcileAssessment(unknown,cn.bidcheck.compat.Java8Api.mapOf("templateResult", projection(
             TemplateTypes.ConclusionState.UNDETERMINED,TemplateTypes.EvidenceState.NOT_LOCATED,
             TemplateTypes.ExecutionState.FINISHED,TemplateTypes.ActionOwner.EXTERNAL,"WAIT_EXTERNAL",TemplateTypes.VerificationMode.EXTERNAL)));
         Map<?,?> presentation=(Map<?,?>)external.get("businessPresentation");
@@ -93,8 +91,8 @@ class TemplateResultReconciliationTest {
             TemplateTypes.Category.QUALIFICATION,TemplateTypes.Purpose.MANDATORY,mode,
             new ResultProjection.Execution(execution,false,null),
             new ResultProjection.Conclusion(conclusion,"模板初步结论",TemplateTypes.ProofStandard.FACTUAL_CONDITION,"TEST"),
-            new ResultProjection.Evidence(evidence,List.of("doc:1:PAGE:1")),
-            new ResultProjection.Action(owner,action,null),List.<ConditionResult>of(),List.of(),List.of(),
+            new ResultProjection.Evidence(evidence,cn.bidcheck.compat.Java8Api.listOf("doc:1:PAGE:1")),
+            new ResultProjection.Action(owner,action,null),cn.bidcheck.compat.Java8Api.<ConditionResult>listOf(),cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(),
             new ResultProjection.Review(conclusion,null),"test-evaluator","按状态继续处理",false);
     }
 }

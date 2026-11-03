@@ -23,27 +23,27 @@ final class RequirementGrounding {
         }
         if(rule.predicate().equals("MONTHS")){
             int count=RunSession.number(p.get("count"),0);boolean supported=false;Matcher m=Pattern.compile("连续\\s*"+NUMBER+"\\s*个?月").matcher(quote);while(m.find())if(number(m.group(1))!=null&&number(m.group(1)).compareTo(BigDecimal.valueOf(count))==0)supported=true;
-            if(!supported)return "连续月份数量未对应原条款";String earliest=str(p,"earliestMonth");if(!earliest.isBlank()&&!monthPresent(quote,earliest))return "社保窗口起点未对应原条款";
-            if(quote.matches("(?s).*(?:起|以来|之后).*" )&&earliest.isBlank())return "社保窗口起点未保留";
+            if(!supported)return "连续月份数量未对应原条款";String earliest=str(p,"earliestMonth");if(!cn.bidcheck.compat.Java8Api.isBlank(earliest)&&!monthPresent(quote,earliest))return "社保窗口起点未对应原条款";
+            if(quote.matches("(?s).*(?:起|以来|之后).*" )&&cn.bidcheck.compat.Java8Api.isBlank(earliest))return "社保窗口起点未保留";
             if(quote.matches("(?s).*(?:投标截止|递交截止|截至).*" )&&!Boolean.TRUE.equals(p.get("requiresReferenceDate")))return "社保窗口截止基准未保留";
         }
-        for(String key:List.of("category","grade","profession","personRole","amountBasis","taxBasis")){String value=str(p,key);if(!value.isBlank()&&!contains(quote,value)&&RequirementContextBindings.validatedReference(rule,key,value,original)==null)return "条件参数未对应原条款："+key;}
-        if(!str(p,"sinceDate").isBlank()&&!datePresent(quote,str(p,"sinceDate")))return "合同日期下限未对应原条款";
+        for(String key:cn.bidcheck.compat.Java8Api.listOf("category", "grade", "profession", "personRole", "amountBasis", "taxBasis")){String value=str(p,key);if(!cn.bidcheck.compat.Java8Api.isBlank(value)&&!contains(quote,value)&&RequirementContextBindings.validatedReference(rule,key,value,original)==null)return "条件参数未对应原条款："+key;}
+        if(!cn.bidcheck.compat.Java8Api.isBlank(str(p,"sinceDate"))&&!datePresent(quote,str(p,"sinceDate")))return "合同日期下限未对应原条款";
         if(rule.predicate().equals("CERTIFICATE")){
             if(PersonnelCredentialProof.applies(rule)&&!PersonnelCredentialProof.sourceGradeBound(rule))return "人员证照类别或等级字段未对应原条款";
-            Matcher grade=Pattern.compile("(?:[一二三四五六七八九十甲乙丙丁]+级)").matcher(quote);if(grade.find()&&str(p,"grade").isBlank()&&!PersonnelCredentialProof.sourceGradeBound(rule))return "证照等级义务未保留";
+            Matcher grade=Pattern.compile("(?:[一二三四五六七八九十甲乙丙丁]+级)").matcher(quote);if(grade.find()&&cn.bidcheck.compat.Java8Api.isBlank(str(p,"grade"))&&!PersonnelCredentialProof.sourceGradeBound(rule))return "证照等级义务未保留";
         }
         if(rule.predicate().equals("CONTRACT")){
-            String basis=str(p,"amountBasis");for(String required:List.of("建安工程费","建安费","施工费","设计费"))if(quote.contains(required)&&!basis.contains(required))return "合同金额组成口径未保留";
+            String basis=str(p,"amountBasis");for(String required:cn.bidcheck.compat.Java8Api.listOf("建安工程费", "建安费", "施工费", "设计费"))if(quote.contains(required)&&!basis.contains(required))return "合同金额组成口径未保留";
             if(quote.contains("不含税")&&!str(p,"taxBasis").equals("不含税"))return "合同税基义务未保留";
-            if(p.containsKey("amountMinimum")){Rule numeric=new Rule(rule.id(),rule.description(),"NUMBER",rule.subject(),rule.field(),">=",str(p,"amountMinimum"),rule.unit(),p,quote,"",List.of());String bound=issue(numeric);if(bound!=null)return "合同最低金额："+bound;}
+            if(p.containsKey("amountMinimum")){Rule numeric=new Rule(rule.id(),rule.description(),"NUMBER",rule.subject(),rule.field(),">=",str(p,"amountMinimum"),rule.unit(),p,quote,"",cn.bidcheck.compat.Java8Api.listOf());String bound=issue(numeric);if(bound!=null)return "合同最低金额："+bound;}
         }
         return null;
     }
-    static boolean completeSubjects(String quote,List<String> subjects){if(subjects.isEmpty())return false;String list="";Matcher explicit=Pattern.compile("(?:包括|分别为|为|[:：])\\s*([^；。\\n]+?(?:、|，|,)[^；。\\n]+?)(?:均|各|分别|全部|须|应|$)").matcher(quote);if(explicit.find())list=explicit.group(1);else {Matcher plain=Pattern.compile("^([^；。\\n]+?(?:、|，|,)[^；。\\n]+?)(?:均|各|分别|全部|须|应)").matcher(quote);if(plain.find())list=plain.group(1);}if(list.isBlank())return false;Set<String> expected=new LinkedHashSet<>(Arrays.stream(list.split("[、，,]|及|和")).map(String::strip).filter(s->!s.isBlank()).toList());return expected.equals(new LinkedHashSet<>(subjects));}
-    static BigDecimal number(String value){BigDecimal decimal=decimal(value);if(decimal!=null)return decimal;Map<Character,Integer> digits=Map.of('零',0,'一',1,'二',2,'三',3,'四',4,'五',5,'六',6,'七',7,'八',8,'九',9);int sum=0,current=0;for(char c:value.toCharArray()){if(c=='两'){current=2;continue;}if(digits.containsKey(c)){current=digits.get(c);continue;}if(c=='十'||c=='百'){sum+=(current==0?1:current)*(c=='十'?10:100);current=0;}else return null;}return BigDecimal.valueOf(sum+current);}
-    static String canonicalOp(String op){return switch(op){case "GE",">="->">=";case "LE","<="->"<=";case "EQ","==","="->"=";case "GT",">"->">";case "LT","<"->"<";default->"?";};}
-    static String operator(String phrase){return switch(phrase){case "不少于","不低于","至少","最低","≥",">="->">=";case "不超过","不得超过","至多","最多","不高于","最高","≤","<="->"<=";case "大于","超过",">"->">";case "小于","少于","低于","<"->"<";default->"=";};}
+    static boolean completeSubjects(String quote,List<String> subjects){if(subjects.isEmpty())return false;String list="";Matcher explicit=Pattern.compile("(?:包括|分别为|为|[:：])\\s*([^；。\\n]+?(?:、|，|,)[^；。\\n]+?)(?:均|各|分别|全部|须|应|$)").matcher(quote);if(explicit.find())list=explicit.group(1);else {Matcher plain=Pattern.compile("^([^；。\\n]+?(?:、|，|,)[^；。\\n]+?)(?:均|各|分别|全部|须|应)").matcher(quote);if(plain.find())list=plain.group(1);}if(cn.bidcheck.compat.Java8Api.isBlank(list))return false;Set<String> expected=new LinkedHashSet<>(cn.bidcheck.compat.Java8Api.toList(Arrays.stream(list.split("[、，,]|及|和")).map(cn.bidcheck.compat.Java8Api::strip).filter(s->!cn.bidcheck.compat.Java8Api.isBlank(s))));return expected.equals(new LinkedHashSet<>(subjects));}
+    static BigDecimal number(String value){BigDecimal decimal=decimal(value);if(decimal!=null)return decimal;Map<Character,Integer> digits=cn.bidcheck.compat.Java8Api.mapOf('零', 0, '一', 1, '二', 2, '三', 3, '四', 4, '五', 5, '六', 6, '七', 7, '八', 8, '九', 9);int sum=0,current=0;for(char c:value.toCharArray()){if(c=='两'){current=2;continue;}if(digits.containsKey(c)){current=digits.get(c);continue;}if(c=='十'||c=='百'){sum+=(current==0?1:current)*(c=='十'?10:100);current=0;}else return null;}return BigDecimal.valueOf(sum+current);}
+    static String canonicalOp(String op){switch (op) {case "GE":case ">=":return ">=";case "LE":case "<=":return "<=";case "EQ":case "==":case "=":return "=";case "GT":case ">":return ">";case "LT":case "<":return "<";default:return "?";}}
+    static String operator(String phrase){switch (phrase) {case "不少于":case "不低于":case "至少":case "最低":case "≥":case ">=":return ">=";case "不超过":case "不得超过":case "至多":case "最多":case "不高于":case "最高":case "≤":case "<=":return "<=";case "大于":case "超过":case ">":return ">";case "小于":case "少于":case "低于":case "<":return "<";default:return "=";}}
     static boolean unitEquals(String a,String b){return canonicalUnit(a).equals(canonicalUnit(b));}
-    static String canonicalUnit(String unit){return switch(unit){case "CNY"->"元";case "DAY","日"->"天";case "MONTH","个月"->"月";case "YEAR"->"年";default->unit;};}
+    static String canonicalUnit(String unit){switch (unit) {case "CNY":return "元";case "DAY":case "日":return "天";case "MONTH":case "个月":return "月";case "YEAR":return "年";default:return unit;}}
 }

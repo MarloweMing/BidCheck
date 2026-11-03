@@ -8,7 +8,20 @@ import java.util.*;
 public final class OnDemandPolicy {
     public static final String VERSION = "rules-retrieval-on-demand-4-shared-proofs";
     private OnDemandPolicy() { }
-    public record Decision(String code, String reason, boolean requestModel) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public static final class Decision {
+        private final String code;
+        private final String reason;
+        private final boolean requestModel;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public Decision(@com.fasterxml.jackson.annotation.JsonProperty("code") String code, @com.fasterxml.jackson.annotation.JsonProperty("reason") String reason, @com.fasterxml.jackson.annotation.JsonProperty("requestModel") boolean requestModel) { this.code = code; this.reason = reason; this.requestModel = requestModel; }
+        public String code() { return code; }
+        public String reason() { return reason; }
+        public boolean requestModel() { return requestModel; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Decision that = (Decision) other; return java.util.Objects.equals(this.code, that.code) && java.util.Objects.equals(this.reason, that.reason) && java.util.Objects.equals(this.requestModel, that.requestModel); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.code); hash = 31 * hash + java.util.Objects.hashCode(this.reason); hash = 31 * hash + java.util.Objects.hashCode(this.requestModel); return hash; }
+        @Override public String toString() { return "Decision[" + "code=" + code + ", reason=" + reason + ", requestModel=" + requestModel + "]"; }
+ }
 
     public static Decision decide(Checkpoint check, List<Evidence> evidence) {
         String requirement = Objects.toString(check.expected(), "");
@@ -16,8 +29,8 @@ public final class OnDemandPolicy {
         if (requirement.matches("(?s).*(本轮|本次审查).{0,30}(未提供|未取得|待补).*")
                 || query.matches("(?s).*(签字真伪|印章真伪|现场核验|官方实时|实时查询|原件真实性).*") )
             return new Decision("EXTERNAL_INPUT_REQUIRED", "所需外部输入、原图真实性或现场信息不能由现有文字证明，保留待核；未调用文字模型。", false);
-        List<Evidence> substantive = evidence.stream().filter(e -> e != null && e.quote() != null)
-                .filter(e -> !ClaimGrounding.indexOnly(e.quote())).filter(e -> related(query, e.quote())).toList();
+        List<Evidence> substantive = cn.bidcheck.compat.Java8Api.toList(evidence.stream().filter(e -> e != null && e.quote() != null)
+                .filter(e -> !ClaimGrounding.indexOnly(e.quote())).filter(e -> related(query, e.quote())));
         if (substantive.isEmpty())
             return new Decision("EVIDENCE_INSUFFICIENT", "定向检索尚未取得实质相关原文；候选排序或目录提及不能证明响应，也不能据此认定文件缺失。", false);
         boolean separateProof = query.matches("(?s).*(证明|证书|证件|社保|缴费|业绩|有效期|任职|合同|资质|信用).*");
@@ -41,7 +54,7 @@ public final class OnDemandPolicy {
         for (String token : value.split("[^\\p{IsHan}A-Za-z0-9]+")) {
             for (int i = 0; i + 1 < token.length(); i++) result.add(token.substring(i, i + 2));
         }
-        result.removeAll(Set.of("投标", "标人", "文件", "要求", "提供", "项目", "应当", "是否", "检查", "符合", "本项", "本次", "满足"));
+        result.removeAll(cn.bidcheck.compat.Java8Api.setOf("投标", "标人", "文件", "要求", "提供", "项目", "应当", "是否", "检查", "符合", "本项", "本次", "满足"));
         return result;
     }
 }

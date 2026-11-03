@@ -8,7 +8,7 @@ import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.UploadObjectArgs;
 import io.minio.errors.ErrorResponseException;
-import jakarta.annotation.PreDestroy;
+import javax.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -52,13 +52,13 @@ public class ConfiguredArtifactStorage implements ArtifactStorage {
     /** Injection seam for deterministic storage tests; no external service is required by local mode. */
     ConfiguredArtifactStorage(String directory, String mode, MinioClient client, String bucket) throws IOException {
         this.mode = normalizedMode(mode);
-        this.bucket = bucket == null || bucket.isBlank() ? APP_BUCKET : bucket.strip();
+        this.bucket = bucket == null || cn.bidcheck.compat.Java8Api.isBlank(bucket) ? APP_BUCKET : cn.bidcheck.compat.Java8Api.strip(bucket);
         if ("minio".equals(this.mode) && !APP_BUCKET.equals(this.bucket)) {
             throw new IOException("MinIO 仅允许使用本应用专用的 bidcheck 存储桶。");
         }
         if ("minio".equals(this.mode) && client == null) throw new IOException("MinIO 存储配置不完整。");
         this.client = "minio".equals(this.mode) ? client : null;
-        Path root = Path.of(directory).toAbsolutePath().normalize().resolve("files");
+        Path root = java.nio.file.Paths.get(directory).toAbsolutePath().normalize().resolve("files");
         Files.createDirectories(root);
         this.files = root.toRealPath();
         for (int i = 0; i < locks.length; i++) locks[i] = new Object();
@@ -75,7 +75,7 @@ public class ConfiguredArtifactStorage implements ArtifactStorage {
                 throw new IOException("文档编号已持久化，不能覆盖原始文件。");
             }
             if (!Files.exists(pending, LinkOption.NOFOLLOW_LINKS)) {
-                Files.writeString(pending, "pending", StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+                cn.bidcheck.compat.Java8Api.writeString(pending, "pending", StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
             }
             return target;
         }
@@ -101,7 +101,7 @@ public class ConfiguredArtifactStorage implements ArtifactStorage {
                     remoteAvailable = false;
                     bucketReady = false;
                     // Do not attach the SDK cause: exception details may carry request credentials or document data.
-                    if (failure instanceof ErrorResponseException error && "RequestTimeTooSkewed".equals(error.errorResponse().code())) {
+                    if (failure instanceof ErrorResponseException && "RequestTimeTooSkewed".equals(((ErrorResponseException) (failure)).errorResponse().code())) {
                         throw new StorageUnavailableException("文件存储服务器与本机时间不同步，请校准虚拟机时间后重试上传。");
                     }
                     throw new StorageUnavailableException("原始文件写入 MinIO 失败；未创建解析任务，请检查对象存储及虚拟机时间后重试。");
@@ -194,16 +194,16 @@ public class ConfiguredArtifactStorage implements ArtifactStorage {
 
     private static MinioClient createClient(String type, String endpoint, String accessKey, String secretKey) throws IOException {
         if ("local".equals(normalizedMode(type))) return null;
-        if (endpoint == null || endpoint.isBlank() || accessKey == null || accessKey.isBlank() || secretKey == null || secretKey.isBlank()) {
+        if (endpoint == null || cn.bidcheck.compat.Java8Api.isBlank(endpoint) || accessKey == null || cn.bidcheck.compat.Java8Api.isBlank(accessKey) || secretKey == null || cn.bidcheck.compat.Java8Api.isBlank(secretKey)) {
             throw new IOException("MinIO 存储需要配置地址、访问标识和密钥。");
         }
         try {
-            URI uri = URI.create(endpoint.strip());
-            if (!java.util.Set.of("http", "https").contains(uri.getScheme()) || uri.getHost() == null
+            URI uri = URI.create(cn.bidcheck.compat.Java8Api.strip(endpoint));
+            if (!cn.bidcheck.compat.Java8Api.setOf("http", "https").contains(uri.getScheme()) || uri.getHost() == null
                     || uri.getUserInfo() != null || uri.getQuery() != null || uri.getFragment() != null) {
                 throw new IllegalArgumentException();
             }
-            MinioClient client = MinioClient.builder().endpoint(endpoint.strip()).credentials(accessKey, secretKey).build();
+            MinioClient client = MinioClient.builder().endpoint(cn.bidcheck.compat.Java8Api.strip(endpoint)).credentials(accessKey, secretKey).build();
             client.setTimeout(3000, 15000, 15000);
             return client;
         } catch (IllegalArgumentException ignored) {
@@ -212,8 +212,8 @@ public class ConfiguredArtifactStorage implements ArtifactStorage {
     }
 
     private static String normalizedMode(String type) throws IOException {
-        String mode = type == null || type.isBlank() ? "local" : type.strip().toLowerCase(Locale.ROOT);
-        if (!java.util.Set.of("local", "minio").contains(mode)) throw new IOException("文件存储类型仅支持 local 或 minio。");
+        String mode = type == null || cn.bidcheck.compat.Java8Api.isBlank(type) ? "local" : cn.bidcheck.compat.Java8Api.strip(type).toLowerCase(Locale.ROOT);
+        if (!cn.bidcheck.compat.Java8Api.setOf("local", "minio").contains(mode)) throw new IOException("文件存储类型仅支持 local 或 minio。");
         return mode;
     }
 

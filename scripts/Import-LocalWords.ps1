@@ -91,13 +91,13 @@ if (-not [IO.File]::Exists($wordsSource)) { throw 'The source JAR does not exist
 if ([string]::IsNullOrWhiteSpace($JavaHome)) { $JavaHome = $env:JAVA_HOME }
 if ([string]::IsNullOrWhiteSpace($JavaHome)) {
     $compiler = Get-Command javac.exe -ErrorAction SilentlyContinue
-    if ($null -eq $compiler) { throw 'Provide -JavaHome pointing to a JDK 17 or later.' }
+    if ($null -eq $compiler) { throw 'Provide -JavaHome pointing to a JDK 8 or later.' }
     $JavaHome = Split-Path -Parent (Split-Path -Parent $compiler.Source)
 }
 $wordsJava = Join-Path ([IO.Path]::GetFullPath($JavaHome)) 'bin/java.exe'
 $wordsJavac = Join-Path ([IO.Path]::GetFullPath($JavaHome)) 'bin/javac.exe'
 if (-not [IO.File]::Exists($wordsJava) -or -not [IO.File]::Exists($wordsJavac)) {
-    throw 'JavaHome must contain java.exe and javac.exe from JDK 17 or later.'
+    throw 'JavaHome must contain java.exe and javac.exe from JDK 8 or later.'
 }
 
 [IO.Directory]::CreateDirectory($wordsTemporaryRoot) | Out-Null
@@ -115,13 +115,12 @@ try {
 
     $probeCode = @'
 import java.net.URLClassLoader;
-import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 public final class WordsVersionProbe {
     public static void main(String[] args) throws Exception {
-        if (Runtime.version().feature() < 17) throw new IllegalStateException();
-        try (var loader = new URLClassLoader(new java.net.URL[]{Path.of(args[0]).toUri().toURL()}, ClassLoader.getPlatformClassLoader())) {
+        try (URLClassLoader loader = new URLClassLoader(new java.net.URL[]{Paths.get(args[0]).toUri().toURL()}, null)) {
             Class<?> type = Class.forName("com.aspose.words.BuildVersionInfo", false, loader);
             String version = (String)type.getMethod("getVersion").invoke(null);
             String product = (String)type.getMethod("getProduct").invoke(null);
@@ -133,7 +132,7 @@ public final class WordsVersionProbe {
 '@
     $probeSource = Join-Path $wordsStaging 'WordsVersionProbe.java'
     [IO.File]::WriteAllText($probeSource, $probeCode, $wordsUtf8)
-    Invoke-BoundedJava $wordsJavac @('-encoding', 'UTF-8', '--release', '17', '-d', $wordsStaging, $probeSource) 30 | Out-Null
+    Invoke-BoundedJava $wordsJavac @('-encoding', 'UTF-8', '-source', '8', '-target', '8', '-d', $wordsStaging, $probeSource) 30 | Out-Null
     $probeOutput = Invoke-BoundedJava $wordsJava @('-Dfile.encoding=UTF-8', '-cp', $wordsStaging, 'WordsVersionProbe', $wordsSource) 20
     $probeLines = @($probeOutput.Trim() -split '\r?\n')
     if ($probeLines.Count -ne 2 -or $probeLines[0] -notmatch '^VERSION=([A-Za-z0-9+/=]+)$') { throw 'BuildVersionInfo returned an unexpected response.' }

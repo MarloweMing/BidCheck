@@ -38,18 +38,18 @@ public final class ConsistencyPublication {
     public void publish(TaskRow task,String runId,Document document,String engine,Map<String,Object> report,
                         List<Finding> findings,Consumer<String> progress) {
         if(TransactionSynchronizationManager.isActualTransactionActive())throw new IllegalStateException("CONSISTENCY_PUBLICATION_REQUIRES_NO_TRANSACTION");
-        checkInterrupted();List<Document> documents=List.of(document);
-        var manifest=ledger.prepareManifest(task.projectId,engine,documents);
-        var batches=publicationBatches(store,runId,documents,report,MAX_BATCH_FACTS,MAX_BATCH_SOURCES,TARGET_BATCH_BYTES).stream()
-            .map(batch->ledger.prepareBatch(manifest,runId,"full-text-consistency",batch)).toList();
+        checkInterrupted();List<Document> documents=cn.bidcheck.compat.Java8Api.listOf(document);
+        cn.bidcheck.verification.facts.FactLedgerService.PreparedManifest manifest=ledger.prepareManifest(task.projectId,engine,documents);
+        java.util.List<cn.bidcheck.verification.facts.FactLedgerService.PreparedBatch> batches=cn.bidcheck.compat.Java8Api.toList(publicationBatches(store,runId,documents,report,MAX_BATCH_FACTS,MAX_BATCH_SOURCES,TARGET_BATCH_BYTES).stream()
+            .map(batch->ledger.prepareBatch(manifest,runId,"full-text-consistency",batch)));
         if(batches.stream().anyMatch(batch->batch.rejected()||batch.acceptedCount()!=batch.inputCount()))
             throw new IllegalStateException("一致性事实未通过原文验证，不能发布报告");
         String planDigest=digest(values("version",VERSION,"runId",runId,"engine",engine,"manifest",manifest.identity(),
-            "batches",batches.stream().map(FactLedgerService.PreparedBatch::digest).toList()));
+            "batches",cn.bidcheck.compat.Java8Api.toList(batches.stream().map(FactLedgerService.PreparedBatch::digest))));
         List<Map<String,Object>> receipts=new ArrayList<>(),timings=new ArrayList<>();int total=batches.stream().mapToInt(FactLedgerService.PreparedBatch::inputCount).sum(),saved=0;
         try {
         for(int index=0;index<batches.size();index++) {
-            checkInterrupted();var batch=batches.get(index);int unit=index,completed=saved+batch.inputCount();
+            checkInterrupted();cn.bidcheck.verification.facts.FactLedgerService.PreparedBatch batch=batches.get(index);int unit=index,completed=saved+batch.inputCount();
             Map<String,Object> receipt=publishBatch(unit,batch.inputCount(),timings,()->{
                 fence(task);store.lock("project",task.projectId);validateRun(task,runId,document,engine);
                 String receiptId=receiptId(runId,unit);Stored prior=store.mapper().get(receiptId);Map<String,Object> value;
@@ -69,17 +69,17 @@ public final class ConsistencyPublication {
         }
         tx.executeWithoutResult(status->{fence(task);progress.accept("全文事实已保存，正在核对完整性（"+total+" 条）");});
         // This phase may hydrate thousands of immutable records; it must never hold the task row.
-        checkInterrupted();var prepared=ledger.prepareSnapshot(manifest,runId,receipts.stream().map(r->map(r.get("result"))).toList());
+        checkInterrupted();cn.bidcheck.verification.facts.FactLedgerService.PreparedSnapshot prepared=ledger.prepareSnapshot(manifest,runId,cn.bidcheck.compat.Java8Api.toList(receipts.stream().map(r->map(r.get("result")))));
         tx.executeWithoutResult(status->{fence(task);progress.accept("事实完整性已核对，正在准备检查报告");});
-        List<String> receiptDigests=receipts.stream().map(this::digest).toList();
+        List<String> receiptDigests=cn.bidcheck.compat.Java8Api.toList(receipts.stream().map(this::digest));
         Map<String,Object> publishedReport=new LinkedHashMap<>(report);
         attachPublication(publishedReport,runId,documents,engine,prepared.metadata(),true);
         publishedReport.put("publication",values("policyVersion",VERSION,"planDigest",planDigest,"batchCount",batches.size(),"factsSaved",total,"complete",true,
             "maxBatchFacts",MAX_BATCH_FACTS,"maxBatchSources",MAX_BATCH_SOURCES,"targetBatchBytes",TARGET_BATCH_BYTES,"oversizedSingleFactPolicy","ISOLATE_AND_VALIDATE",
             "batchTransactionTimeoutSeconds",TRANSACTION_TIMEOUT_SECONDS,"finalTransactionTimeoutSeconds",FINAL_TRANSACTION_TIMEOUT_SECONDS,
             "transactionPolicyVersion",TRANSACTION_POLICY_VERSION,"maxTransactionAttempts",MAX_TRANSACTION_ATTEMPTS,"batchTransactionTimings",timings));
-        var preparedReport=store.prepareRecord("consistency_report",reportId(runId),task.projectId,runId,publishedReport);
-        var preparedFindings=findings.stream().map(finding->store.prepareRecord("finding",finding.id(),task.projectId,runId,finding)).toList();
+        cn.bidcheck.persistence.Store.PreparedRecord preparedReport=store.prepareRecord("consistency_report",reportId(runId),task.projectId,runId,publishedReport);
+        java.util.List<cn.bidcheck.persistence.Store.PreparedRecord> preparedFindings=cn.bidcheck.compat.Java8Api.toList(findings.stream().map(finding->store.prepareRecord("finding",finding.id(),task.projectId,runId,finding)));
         checkInterrupted();
         finalTx.executeWithoutResult(status->{
             fence(task);store.lock("project",task.projectId);validateRun(task,runId,document,engine);
@@ -97,7 +97,7 @@ public final class ConsistencyPublication {
                 if(!digest(current).equals(receiptDigests.get(index)))throw new IllegalStateException("CONSISTENCY_BATCH_CHANGED");
             }
             ledger.freezePreparedSnapshot(prepared);
-            for(var finding:preparedFindings)store.savePrepared(finding);
+            for(cn.bidcheck.persistence.Store.PreparedRecord finding:preparedFindings)store.savePrepared(finding);
             store.savePrepared(preparedReport);
             fence(task);progress.accept("全文一致性扫描已保存");
         });
@@ -167,8 +167,8 @@ public final class ConsistencyPublication {
     private static void validateReceipt(Map<String,Object> receipt,String plan,String batch,int count) {
         Map<String,Object> result=map(receipt.get("result"));
         if(!VERSION.equals(receipt.get("policyVersion"))||!plan.equals(receipt.get("planDigest"))||!batch.equals(receipt.get("batchDigest"))
-            ||!(receipt.get("inputCount") instanceof Number n)||n.intValue()!=count
-            ||!(result.get("accepted") instanceof Number accepted)||accepted.intValue()!=count||!maps(result.get("rejected")).isEmpty())
+            ||!(receipt.get("inputCount") instanceof Number)||((Number) (receipt.get("inputCount"))).intValue()!=count
+            ||!(result.get("accepted") instanceof Number)||((Number) (result.get("accepted"))).intValue()!=count||!maps(result.get("rejected")).isEmpty())
             throw new IllegalStateException("CONSISTENCY_BATCH_PLAN_MISMATCH");
     }
     private void fence(TaskRow task) {
@@ -180,7 +180,7 @@ public final class ConsistencyPublication {
     private void validateRun(TaskRow task,String runId,Document document,String engine) {
         Map<String,Object> run=store.getMap("run",runId);
         if(!task.id.equals(run.get("taskId"))||!"RUNNING".equals(run.get("status"))||!task.projectId.equals(run.get("projectId"))
-            ||!document.id().equals(run.get("documentId"))||!(run.get("documentVersion") instanceof Number version)||version.intValue()!=document.version()
+            ||!document.id().equals(run.get("documentId"))||!(run.get("documentVersion") instanceof Number)||((Number) (run.get("documentVersion"))).intValue()!=document.version()
             ||!engine.equals(run.get("consistencyIdentity")))throw new IllegalStateException("CONSISTENCY_PUBLICATION_RUN_CHANGED");
     }
     private String digest(Object value) {

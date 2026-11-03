@@ -29,13 +29,7 @@ import java.util.stream.Collectors;
  * ID. This service never publishes or executes a CheckSpec.</p>
  */
 public final class RequirementMappingService {
-    public static final Set<String> ALLOWED_TEMPLATE_IDS = Set.of(
-            "MATERIAL_PRESENT", "COMMITMENT_WITH_SEAL", "MATERIAL_ALTERNATIVE",
-            "CERTIFICATE_VALIDITY", "PRICE_COMPARE", "PERSONNEL_ROSTER",
-            "SECTION_CHECKLIST", "ENTITY_FIELD_MATCH", "PERSONNEL_CREDENTIAL",
-            "CONSORTIUM_RESPONSIBILITY", "PRICE_RECONCILE", "DURATION_COMPARE",
-            "CROSS_DOCUMENT_CONSISTENCY", "FORM_FIELD_COMPLETENESS", "DATE_RELATION",
-            "TEXT_ANOMALY", "OBJECTIVE_SCORING", "QUALITY_ADVISORY", "EXTERNAL_CHECK");
+    public static final Set<String> ALLOWED_TEMPLATE_IDS = cn.bidcheck.compat.Java8Api.setOf("MATERIAL_PRESENT", "COMMITMENT_WITH_SEAL", "MATERIAL_ALTERNATIVE", "CERTIFICATE_VALIDITY", "PRICE_COMPARE", "PERSONNEL_ROSTER", "SECTION_CHECKLIST", "ENTITY_FIELD_MATCH", "PERSONNEL_CREDENTIAL", "CONSORTIUM_RESPONSIBILITY", "PRICE_RECONCILE", "DURATION_COMPARE", "CROSS_DOCUMENT_CONSISTENCY", "FORM_FIELD_COMPLETENESS", "DATE_RELATION", "TEXT_ANOMALY", "OBJECTIVE_SCORING", "QUALITY_ADVISORY", "EXTERNAL_CHECK");
 
     private static final Pattern SENTENCE_BREAK = Pattern.compile("[。；;\\r\\n]+");
     private static final Pattern OBLIGATION = Pattern.compile(
@@ -70,25 +64,17 @@ public final class RequirementMappingService {
     private static final Pattern DATE_RELATION_POSITION = Pattern.compile(
             DATE_ROLE + "\\s*(?:应当|应|须|必须)?\\s*在\\s*" + DATE_ROLE
                     + "\\s*(之前|以前|之后|以后)");
-    private static final List<String> ROLES = List.of(
-            "施工企业主要负责人", "施工部分负责人", "设计部分负责人", "专职安全生产管理人员", "专职安全员", "项目技术负责人", "项目负责人", "设计负责人", "项目经理",
-            "技术负责人", "注册结构工程师", "注册建筑师", "造价工程师", "安全员", "施工员",
-            "质量员", "材料员", "资料员", "造价员");
-    private static final List<String> CREDENTIALS = List.of(
-            "一级注册建造师", "二级注册建造师", "一级建造师", "二级建造师", "注册建造师",
-            "注册建筑师", "注册结构工程师", "安全生产考核合格证", "职称证书", "职称证", "岗位证书", "岗位证", "资格证书", "资格证");
-    private static final List<String> MATERIALS = List.of(
-            "法定代表人身份证明", "法定代表人授权委托书", "授权委托书", "联合体协议书", "营业执照",
-            "投标函", "投标保证金", "报价表", "承诺书", "承诺函", "资质证书", "社保证明",
-            "业绩证明", "财务报告", "纳税证明", "信用报告", "合同复印件", "合同", "证明材料");
+    private static final List<String> ROLES = cn.bidcheck.compat.Java8Api.listOf("施工企业主要负责人", "施工部分负责人", "设计部分负责人", "专职安全生产管理人员", "专职安全员", "项目技术负责人", "项目负责人", "设计负责人", "项目经理", "技术负责人", "注册结构工程师", "注册建筑师", "造价工程师", "安全员", "施工员", "质量员", "材料员", "资料员", "造价员");
+    private static final List<String> CREDENTIALS = cn.bidcheck.compat.Java8Api.listOf("一级注册建造师", "二级注册建造师", "一级建造师", "二级建造师", "注册建造师", "注册建筑师", "注册结构工程师", "安全生产考核合格证", "职称证书", "职称证", "岗位证书", "岗位证", "资格证书", "资格证");
+    private static final List<String> MATERIALS = cn.bidcheck.compat.Java8Api.listOf("法定代表人身份证明", "法定代表人授权委托书", "授权委托书", "联合体协议书", "营业执照", "投标函", "投标保证金", "报价表", "承诺书", "承诺函", "资质证书", "社保证明", "业绩证明", "财务报告", "纳税证明", "信用报告", "合同复印件", "合同", "证明材料");
 
     private final RestrictedTemplateClassifier classifier;
     private final Map<String, String> enabledAdapterBySource;
 
-    public RequirementMappingService() { this(RestrictedTemplateClassifier.disabled(), Map.of()); }
+    public RequirementMappingService() { this(RestrictedTemplateClassifier.disabled(), cn.bidcheck.compat.Java8Api.mapOf()); }
 
     public RequirementMappingService(RestrictedTemplateClassifier classifier) {
-        this(classifier, Map.of());
+        this(classifier, cn.bidcheck.compat.Java8Api.mapOf());
     }
 
     public RequirementMappingService(Map<String, String> enabledAdapterBySource) {
@@ -101,11 +87,11 @@ public final class RequirementMappingService {
         LinkedHashMap<String, String> configured = new LinkedHashMap<>();
         if (enabledAdapterBySource != null) enabledAdapterBySource.forEach((source, adapterId) -> {
             String normalizedSource = normalizeSource(source);
-            String safeAdapter = adapterId == null ? "" : adapterId.strip();
-            if (!normalizedSource.isBlank() && safeAdapter.matches("[A-Z][A-Z0-9_]{0,63}"))
+            String safeAdapter = adapterId == null ? "" : cn.bidcheck.compat.Java8Api.strip(adapterId);
+            if (!cn.bidcheck.compat.Java8Api.isBlank(normalizedSource) && safeAdapter.matches("[A-Z][A-Z0-9_]{0,63}"))
                 configured.putIfAbsent(normalizedSource, safeAdapter);
         });
-        this.enabledAdapterBySource = Map.copyOf(configured);
+        this.enabledAdapterBySource = cn.bidcheck.compat.Java8Api.mapCopyOf(configured);
     }
 
     public RequirementMappingResult map(List<ClauseNode> roots) {
@@ -113,7 +99,7 @@ public final class RequirementMappingService {
     }
 
     public RequirementMappingResult map(List<ClauseNode> roots, MappingOptions options) {
-        List<ClauseNode> safeRoots = roots == null ? List.of() : List.copyOf(roots);
+        List<ClauseNode> safeRoots = roots == null ? cn.bidcheck.compat.Java8Api.listOf() : cn.bidcheck.compat.Java8Api.listCopyOf(roots);
         MappingOptions safeOptions = options == null ? MappingOptions.localOnly() : options;
         validateUniqueIds(safeRoots);
         Accumulator accumulator = new Accumulator();
@@ -145,7 +131,7 @@ public final class RequirementMappingService {
 
     private void mapNode(ClauseNode node, SourceContext context, Accumulator result, MappingOptions options) {
         List<Fragment> fragments = fragments(node);
-        if (fragments.isEmpty()) fragments = List.of(new Fragment(node.id() + ":f0", "", 0, 0, node.sourceRef()));
+        if (fragments.isEmpty()) fragments = cn.bidcheck.compat.Java8Api.listOf(new Fragment(node.id() + ":f0", "", 0, 0, node.sourceRef()));
         for (Fragment fragment : fragments) {
             mapFragment(node, fragment, context, result, options);
         }
@@ -156,7 +142,7 @@ public final class RequirementMappingService {
         String text = fragment.text();
         if (isNonChecking(node, text)) {
             result.coverage.add(coverage(fragment, node, context, CoverageItem.Status.NON_CHECKING,
-                    "", List.of(), "STRUCTURAL_OR_EXPLANATORY", "结构标题或未包含检查义务的说明"));
+                    "", cn.bidcheck.compat.Java8Api.listOf(), "STRUCTURAL_OR_EXPLANATORY", "结构标题或未包含检查义务的说明"));
             return;
         }
 
@@ -175,9 +161,9 @@ public final class RequirementMappingService {
                     RestrictedTemplateClassifier.Suggestion proposed = suggestion.get();
                     if (ALLOWED_TEMPLATE_IDS.contains(proposed.templateId())) {
                         Map<String, List<SourceRef>> sources = sources(proposed.parameters().keySet(), fragment.sourceRef());
-                        candidates = List.of(new TemplateCandidate(proposed.templateId(), proposed.templateVersion(),
+                        candidates = cn.bidcheck.compat.Java8Api.listOf(new TemplateCandidate(proposed.templateId(), proposed.templateVersion(),
                                 proposed.confidence(), TemplateCandidate.Origin.RESTRICTED_CLASSIFIER,
-                                proposed.explanation(), proposed.parameters(), sources, List.of(fragment.sourceRef()),
+                                proposed.explanation(), proposed.parameters(), sources, cn.bidcheck.compat.Java8Api.listOf(fragment.sourceRef()),
                                 proposed.unresolvedFragments()));
                         for (String unresolved : proposed.unresolvedFragments()) {
                             unsupported.add(new RequirementDraft.UnsupportedFragment(unresolved,
@@ -200,13 +186,13 @@ public final class RequirementMappingService {
                         "该要求依赖指定平台或业务时点，已登记但不在本地文档中判定", fragment.sourceRef()));
                 String draftId = stableId("draft", fragment.id() + "|EXTERNAL|" + text);
                 RequirementDraft draft = new RequirementDraft(draftId, node.id(), fragment.id(), text, context,
-                        List.of(), mapOf("dataSource", externalSource(text), "requiredTime", externalTime(text)),
-                        sources(List.of("dataSource", "requiredTime"), fragment.sourceRef()),
-                        List.of(fragment.sourceRef()), unsupported,
+                        cn.bidcheck.compat.Java8Api.listOf(), mapOf("dataSource", externalSource(text), "requiredTime", externalTime(text)),
+                        sources(cn.bidcheck.compat.Java8Api.listOf("dataSource", "requiredTime"), fragment.sourceRef()),
+                        cn.bidcheck.compat.Java8Api.listOf(fragment.sourceRef()), unsupported,
                         RequirementDraft.MappingState.EXTERNAL_REQUIRED, false);
                 result.drafts.add(draft);
                 result.coverage.add(coverage(fragment, node, context, CoverageItem.Status.EXTERNAL_REQUIRED,
-                        draftId, List.of(), "EXTERNAL_DATA_REQUIRED",
+                        draftId, cn.bidcheck.compat.Java8Api.listOf(), "EXTERNAL_DATA_REQUIRED",
                         "要求已登记，但结论依赖指定外部数据或时点"));
                 return;
             }
@@ -216,39 +202,27 @@ public final class RequirementMappingService {
             }
             String draftId = stableId("draft", fragment.id() + "|UNSUPPORTED|" + text);
             RequirementDraft draft = new RequirementDraft(draftId, node.id(), fragment.id(), text, context,
-                    List.of(), Map.of(), Map.of(), List.of(fragment.sourceRef()), unsupported,
+                    cn.bidcheck.compat.Java8Api.listOf(), cn.bidcheck.compat.Java8Api.mapOf(), cn.bidcheck.compat.Java8Api.mapOf(), cn.bidcheck.compat.Java8Api.listOf(fragment.sourceRef()), unsupported,
                     RequirementDraft.MappingState.UNSUPPORTED, classifierConsulted);
             result.drafts.add(draft);
             result.coverage.add(coverage(fragment, node, context, CoverageItem.Status.UNSUPPORTED,
-                    draftId, List.of(), unsupported.get(0).reasonCode(), unsupported.get(0).explanation()));
+                    draftId, cn.bidcheck.compat.Java8Api.listOf(), unsupported.get(0).reasonCode(), unsupported.get(0).explanation()));
             return;
         }
 
-        candidates = candidates.stream()
+        candidates = cn.bidcheck.compat.Java8Api.toList(candidates.stream()
                 .collect(Collectors.toMap(TemplateCandidate::templateId, Function.identity(),
                         (left, right) -> left.confidence() >= right.confidence() ? left : right,
                         LinkedHashMap::new)).values().stream()
                 .sorted(Comparator.comparingDouble(TemplateCandidate::confidence).reversed()
-                        .thenComparing(TemplateCandidate::templateId)).toList();
+                        .thenComparing(TemplateCandidate::templateId)));
         TemplateCandidate primary = candidates.get(0);
         for (TemplateCandidate candidate : candidates) {
             for (String missing : candidate.missingParameters()) {
-                String code = switch (missing) {
-                    case "closedScoreEvidenceSet" -> "SCORE_EVIDENCE_SET_REQUIRED";
-                    case "typoDictionary" -> "TYPO_DICTIONARY_REQUIRED";
-                    case "adapterId" -> "EXTERNAL_ADAPTER_NOT_CONFIGURED";
-                    case "asOfDate" -> "EXTERNAL_AS_OF_DATE_REQUIRED";
-                    case "evaluationStage" -> "EXTERNAL_STAGE_REQUIRED";
-                    default -> "PARAMETER_NOT_BOUND";
-                };
-                String explanation = switch (missing) {
-                    case "closedScoreEvidenceSet" -> "该条款描述计分规则；当前模板只汇总已识别分值，需先绑定可追溯且范围闭合的分值集合";
-                    case "typoDictionary" -> "错别字扫描需配置确定性的“错词=>正确词”词典或接入带范围回执的检测器";
-                    case "adapterId" -> "条款指定的来源尚未匹配管理员启用的外部适配器";
-                    case "asOfDate" -> "外部核验必须冻结明确的查询日期，不能用执行当天日期代替";
-                    case "evaluationStage" -> "外部核验必须明确在开标、投标截止或评审哪个阶段执行";
-                    default -> "模板参数未能从该条款及其父级上下文确定";
-                };
+                String code;
+switch (missing) {case "closedScoreEvidenceSet":code = "SCORE_EVIDENCE_SET_REQUIRED"; break;case "typoDictionary":code = "TYPO_DICTIONARY_REQUIRED"; break;case "adapterId":code = "EXTERNAL_ADAPTER_NOT_CONFIGURED"; break;case "asOfDate":code = "EXTERNAL_AS_OF_DATE_REQUIRED"; break;case "evaluationStage":code = "EXTERNAL_STAGE_REQUIRED"; break;default:code = "PARAMETER_NOT_BOUND"; break;}
+                String explanation;
+switch (missing) {case "closedScoreEvidenceSet":explanation = "该条款描述计分规则；当前模板只汇总已识别分值，需先绑定可追溯且范围闭合的分值集合"; break;case "typoDictionary":explanation = "错别字扫描需配置确定性的“错词=>正确词”词典或接入带范围回执的检测器"; break;case "adapterId":explanation = "条款指定的来源尚未匹配管理员启用的外部适配器"; break;case "asOfDate":explanation = "外部核验必须冻结明确的查询日期，不能用执行当天日期代替"; break;case "evaluationStage":explanation = "外部核验必须明确在开标、投标截止或评审哪个阶段执行"; break;default:explanation = "模板参数未能从该条款及其父级上下文确定"; break;}
                 unsupported.add(new RequirementDraft.UnsupportedFragment(missing, code,
                         explanation, fragment.sourceRef()));
             }
@@ -264,9 +238,9 @@ public final class RequirementMappingService {
                 : RequirementDraft.MappingState.NEEDS_CONFIRMATION;
         String identity = candidates.stream().map(TemplateCandidate::templateId).sorted().collect(Collectors.joining(","));
         String draftId = stableId("draft", fragment.id() + "|" + identity + "|" + text);
-        List<SourceRef> requirementRefs = candidates.stream().flatMap(candidate -> candidate.requirementRefs().stream())
+        List<SourceRef> requirementRefs = cn.bidcheck.compat.Java8Api.toList(candidates.stream().flatMap(candidate -> candidate.requirementRefs().stream())
                 .collect(Collectors.toMap(this::sourceIdentity, Function.identity(), (left, right) -> left,
-                        LinkedHashMap::new)).values().stream().toList();
+                        LinkedHashMap::new)).values().stream());
         RequirementDraft draft = new RequirementDraft(draftId, node.id(), fragment.id(), text, context,
                 candidates, primary.parameters(), primary.parameterSources(), requirementRefs,
                 unsupported, state, classifierConsulted);
@@ -277,7 +251,7 @@ public final class RequirementMappingService {
                 : complete ? "DETERMINISTIC_TEMPLATE_MATCH"
                 : candidates.size() > 1 ? "MULTIPLE_TEMPLATE_CANDIDATES" : "PARAMETER_OR_CONFIDENCE_REVIEW";
         result.coverage.add(coverage(fragment, node, context, coverageStatus, draftId,
-                candidates.stream().map(TemplateCandidate::templateId).toList(), reason,
+                cn.bidcheck.compat.Java8Api.toList(candidates.stream().map(TemplateCandidate::templateId)), reason,
                 coverageExplanation(coverageStatus)));
     }
 
@@ -296,7 +270,7 @@ public final class RequirementMappingService {
                     "asOfDate", extractDate(text), "adapterId", adapterId,
                     "evaluationStage", externalTime(text));
             candidates.add(candidate("EXTERNAL_CHECK", 0.99,
-                    adapterId.isBlank() ? "命中外部核验要求；尚未绑定管理员启用的来源适配器"
+                    cn.bidcheck.compat.Java8Api.isBlank(adapterId) ? "命中外部核验要求；尚未绑定管理员启用的来源适配器"
                             : "命中外部核验要求并绑定管理员启用的来源适配器",
                     parameters, missing(parameters, "source", "queryObject", "requiredFields",
                             "asOfDate", "adapterId", "evaluationStage"), source));
@@ -318,7 +292,7 @@ public final class RequirementMappingService {
         }
 
         String consistencyField = crossDocumentField(text);
-        if (!consistencyField.isBlank() && explicitCrossDocument(text)
+        if (!cn.bidcheck.compat.Java8Api.isBlank(consistencyField) && explicitCrossDocument(text)
                 && containsAny(text, "一致", "相同", "相符", "保持一致")) {
             Map<String, Object> parameters = mapOf("field", consistencyField,
                     "minimumOccurrences", 2, "caseSensitive", false);
@@ -354,7 +328,7 @@ public final class RequirementMappingService {
             // supplied by a source-bound detector receipt before it becomes executable.
             if (anomalyTypes.contains("TYPO")) missing.add("typoDictionary");
             candidates.add(candidate("TEXT_ANOMALY", 0.94, "命中文字质量异常检查范围",
-                    parameters, List.copyOf(missing), source));
+                    parameters, cn.bidcheck.compat.Java8Api.listCopyOf(missing), source));
         }
 
         if (objectiveScoring(text)) {
@@ -370,7 +344,7 @@ public final class RequirementMappingService {
             candidates.add(candidate("OBJECTIVE_SCORING", 0.95,
                     binaryMaterialScoreRule(text) ? "命中单一材料型客观计分规则，可按证明材料核验"
                             : "命中客观计分规则；需绑定已识别且范围闭合的分值集合后再汇总",
-                    parameters, List.copyOf(missing), source));
+                    parameters, cn.bidcheck.compat.Java8Api.listCopyOf(missing), source));
         }
 
         if (!objectiveScoring(text) && qualityAdvisory(text)) {
@@ -384,33 +358,33 @@ public final class RequirementMappingService {
         List<String> alternatives = alternatives(text);
         if (alternatives.size() >= 2 && containsAny(text, "提供", "提交", "附具", "证明")) {
             candidates.add(candidate("MATERIAL_ALTERNATIVE", 0.91, "命中允许任选或替代证明路径",
-                    mapOf("alternatives", alternatives, "atLeast", 1, "requireBody", true), List.of(), source));
+                    mapOf("alternatives", alternatives, "atLeast", 1, "requireBody", true), cn.bidcheck.compat.Java8Api.listOf(), source));
         }
 
         if (containsAny(text, "承诺书", "承诺函", "书面承诺") && containsAny(text, "盖章", "加盖", "公章", "签章")) {
-            String material = firstContained(text, List.of("承诺书", "承诺函", "书面承诺"));
+            String material = firstContained(text, cn.bidcheck.compat.Java8Api.listOf("承诺书", "承诺函", "书面承诺"));
             String issuer = issuerRole(text, context);
             String sealLocation = sealLocation(text);
             Map<String, Object> parameters = mapOf("materialType", material,
-                    "requiredCommitmentPoints", List.of(text), "issuerRole", issuer, "sealLocation", sealLocation);
+                    "requiredCommitmentPoints", cn.bidcheck.compat.Java8Api.listOf(text), "issuerRole", issuer, "sealLocation", sealLocation);
             candidates.add(candidate("COMMITMENT_WITH_SEAL", 0.97, "同时命中承诺文件和签章要求", parameters,
                     missing(parameters, "materialType", "requiredCommitmentPoints", "issuerRole", "sealLocation"), source));
         }
 
         if (looksLikeChecklist(node, text)) {
-            List<String> items = node.children().stream().map(ClauseNode::text)
-                    .filter(value -> value != null && !value.isBlank()).toList();
-            List<SourceRef> itemSources = node.children().stream().map(ClauseNode::sourceRef).toList();
+            List<String> items = cn.bidcheck.compat.Java8Api.toList(node.children().stream().map(ClauseNode::text)
+                    .filter(value -> value != null && !cn.bidcheck.compat.Java8Api.isBlank(value)));
+            List<SourceRef> itemSources = cn.bidcheck.compat.Java8Api.toList(node.children().stream().map(ClauseNode::sourceRef));
             Map<String, Object> parameters = mapOf("requiredItems", items, "requireBody", true);
             Map<String, List<SourceRef>> parameterSources = new LinkedHashMap<>();
             parameterSources.put("requiredItems", itemSources);
-            parameterSources.put("requireBody", List.of(source));
+            parameterSources.put("requireBody", cn.bidcheck.compat.Java8Api.listOf(source));
             List<SourceRef> requirementRefs = new ArrayList<>();
             requirementRefs.add(source);
             requirementRefs.addAll(itemSources);
             candidates.add(new TemplateCandidate("SECTION_CHECKLIST", "1.0", 0.94,
                     TemplateCandidate.Origin.DETERMINISTIC_RULE, "父条款与结构化子项构成材料清单", parameters,
-                    parameterSources, requirementRefs, items.isEmpty() ? List.of("requiredItems") : List.of()));
+                    parameterSources, requirementRefs, items.isEmpty() ? cn.bidcheck.compat.Java8Api.listOf("requiredItems") : cn.bidcheck.compat.Java8Api.listOf()));
         }
 
         if (containsAny(text, "联合体") && containsAny(text, "牵头", "成员", "职责", "分工", "承担", "负责")) {
@@ -418,7 +392,7 @@ public final class RequirementMappingService {
             if (containsAny(text, "牵头")) memberRoles.add("LEADER");
             if (containsAny(text, "成员", "各方")) memberRoles.add("MEMBER");
             Map<String, Object> parameters = mapOf("materialType", "联合体协议书",
-                    "requiredMemberRoles", memberRoles, "requiredResponsibilities", List.of(text),
+                    "requiredMemberRoles", memberRoles, "requiredResponsibilities", cn.bidcheck.compat.Java8Api.listOf(text),
                     "leadRole", containsAny(text, "牵头") ? "LEADER" : "", "minMembers", 2, "memberPrefix", "成员:");
             candidates.add(candidate("CONSORTIUM_RESPONSIBILITY", 0.96, "命中联合体成员身份或责任分工要求",
                     parameters, missing(parameters, "requiredMemberRoles", "requiredResponsibilities", "leadRole"), source));
@@ -433,14 +407,14 @@ public final class RequirementMappingService {
             String employerRelation = containsAny(text, "注册单位", "聘用单位", "本单位", "投标人")
                     ? "MATCH_BIDDER_OR_APPLICABLE_CONSORTIUM_MEMBER" : "";
             Map<String, Object> parameters = mapOf("role", role, "certificateType", certificateType,
-                    "requiredLevel", extractGrade(text), "requireEmployerMatch", !employerRelation.isBlank(),
+                    "requiredLevel", extractGrade(text), "requireEmployerMatch", !cn.bidcheck.compat.Java8Api.isBlank(employerRelation),
                     "comparisonDate", extractDate(text), "inclusive", true);
             candidates.add(candidate("PERSONNEL_CREDENTIAL", 0.95, "岗位与证书条件出现在同一上下文",
                     parameters, missing(parameters, "role", "certificateType"), source));
         }
 
         Matcher personCount = PERSON_COUNT.matcher(text);
-        if (!role.isBlank() && personCount.find()) {
+        if (!cn.bidcheck.compat.Java8Api.isBlank(role) && personCount.find()) {
             String comparator = personCount.group(1) == null ? "" : personCount.group(1);
             int count = chineseNumber(personCount.group(2));
             Integer min = containsAny(comparator, "不超过", "至多", "最多") ? null : count;
@@ -455,7 +429,7 @@ public final class RequirementMappingService {
         if (!objectiveScoring(text) && containsAny(text, "证书", "证件", "执照")
                 && containsAny(text, "有效期", "有效至", "在有效期内", "有效")) {
             String certificate = firstContained(text, CREDENTIALS);
-            if (certificate.isBlank()) certificate = firstContained(text, List.of("资质证书", "证书", "证件", "执照"));
+            if (cn.bidcheck.compat.Java8Api.isBlank(certificate)) certificate = firstContained(text, cn.bidcheck.compat.Java8Api.listOf("资质证书", "证书", "证件", "执照"));
             String comparisonDate = extractDate(text);
             Map<String, Object> parameters = mapOf("certificateType", certificate,
                     "comparisonDate", comparisonDate, "inclusive", true);
@@ -493,7 +467,7 @@ public final class RequirementMappingService {
                 }
             }
             Map<String, Object> parameters = mapOf("totalField", totalField,
-                    "componentFields", componentFields.stream().distinct().toList(), "currency", "CNY",
+                    "componentFields", cn.bidcheck.compat.Java8Api.toList(componentFields.stream().distinct()), "currency", "CNY",
                     "taxBasis", taxBasis(text), "lot", context.lotScope(), "totalPriceLayer", "TOTAL",
                     "calculation", calculation);
             candidates.add(candidate("PRICE_RECONCILE", 0.90,
@@ -513,15 +487,15 @@ public final class RequirementMappingService {
                     parameters, missing(parameters, "role", "leftField", "rightField"), source));
         }
 
-        if (candidates.stream().noneMatch(candidate -> Set.of("MATERIAL_ALTERNATIVE", "COMMITMENT_WITH_SEAL", "SECTION_CHECKLIST", "FORM_FIELD_COMPLETENESS")
+        if (candidates.stream().noneMatch(candidate -> cn.bidcheck.compat.Java8Api.setOf("MATERIAL_ALTERNATIVE", "COMMITMENT_WITH_SEAL", "SECTION_CHECKLIST", "FORM_FIELD_COMPLETENESS")
                 .contains(candidate.templateId())) && containsAny(text, "提供", "提交", "附具", "附上", "出具")) {
             String material = firstContained(text, MATERIALS);
-            if (!material.isBlank()) {
+            if (!cn.bidcheck.compat.Java8Api.isBlank(material)) {
                 candidates.add(candidate("MATERIAL_PRESENT", 0.90, "命中明确材料提交要求",
-                        mapOf("materialType", material, "requireBody", true), List.of(), source));
+                        mapOf("materialType", material, "requireBody", true), cn.bidcheck.compat.Java8Api.listOf(), source));
             }
         }
-        return candidates.stream().map(candidate -> bindInheritedParameterSources(candidate, text, context)).toList();
+        return cn.bidcheck.compat.Java8Api.toList(candidates.stream().map(candidate -> bindInheritedParameterSources(candidate, text, context)));
     }
 
     private TemplateCandidate bindInheritedParameterSources(TemplateCandidate candidate, String text,
@@ -537,8 +511,8 @@ public final class RequirementMappingService {
                 context.contextSources().get("lotScope"));
         List<SourceRef> requirementRefs = new ArrayList<>(candidate.requirementRefs());
         sources.values().forEach(requirementRefs::addAll);
-        requirementRefs = requirementRefs.stream().collect(Collectors.toMap(this::sourceIdentity,
-                Function.identity(), (left, right) -> left, LinkedHashMap::new)).values().stream().toList();
+        requirementRefs = cn.bidcheck.compat.Java8Api.toList(requirementRefs.stream().collect(Collectors.toMap(this::sourceIdentity,
+                Function.identity(), (left, right) -> left, LinkedHashMap::new)).values().stream());
         return new TemplateCandidate(candidate.templateId(), candidate.templateVersion(), candidate.confidence(),
                 candidate.origin(), candidate.reason(), candidate.parameters(), sources,
                 requirementRefs, candidate.missingParameters());
@@ -547,7 +521,7 @@ public final class RequirementMappingService {
     private void bindInherited(Map<String, List<SourceRef>> sources, Map<String, Object> parameters,
                                String parameterName, String inheritedValue, String text,
                                List<SourceRef> inheritedSources) {
-        if (inheritedValue == null || inheritedValue.isBlank() || inheritedSources == null || inheritedSources.isEmpty()) return;
+        if (inheritedValue == null || cn.bidcheck.compat.Java8Api.isBlank(inheritedValue) || inheritedSources == null || inheritedSources.isEmpty()) return;
         Object value = parameters.get(parameterName);
         if (value != null && inheritedValue.equals(String.valueOf(value)) && !text.contains(inheritedValue)) {
             sources.put(parameterName, inheritedSources);
@@ -557,13 +531,13 @@ public final class RequirementMappingService {
     private TemplateCandidate candidate(String templateId, double confidence, String reason,
                                         Map<String, Object> parameters, List<String> missing, SourceRef source) {
         return new TemplateCandidate(templateId, "1.0", confidence, TemplateCandidate.Origin.DETERMINISTIC_RULE,
-                reason, parameters, sources(parameters.keySet(), source), List.of(source), missing);
+                reason, parameters, sources(parameters.keySet(), source), cn.bidcheck.compat.Java8Api.listOf(source), missing);
     }
 
     private Map<String, List<SourceRef>> sources(Collection<String> names, SourceRef source) {
         Map<String, List<SourceRef>> result = new LinkedHashMap<>();
-        for (String name : names) result.put(name, List.of(source));
-        return Map.copyOf(result);
+        for (String name : names) result.put(name, cn.bidcheck.compat.Java8Api.listOf(source));
+        return cn.bidcheck.compat.Java8Api.mapCopyOf(result);
     }
 
     private SourceContext resolve(SourceContext parent, ClauseNode node, String previous, String next) {
@@ -571,40 +545,40 @@ public final class RequirementMappingService {
         List<String> sections = append(parent.sectionPath(), sectionTitle(node));
         List<String> clausePath = append(parent.clausePath(), node.id());
         String marker = local.listMarker();
-        if (marker.isBlank() && node.kind() == ClauseNode.Kind.LIST_ITEM) marker = node.id();
+        if (cn.bidcheck.compat.Java8Api.isBlank(marker) && node.kind() == ClauseNode.Kind.LIST_ITEM) marker = node.id();
         List<String> listPath = append(parent.listPath(), marker);
         ClauseNode.TableContext table = mergeTable(parent, local.table());
         List<String> crossReferences = new ArrayList<>(parent.crossReferences());
         crossReferences.addAll(local.crossReferences());
         Map<String, List<SourceRef>> contextSources = new LinkedHashMap<>(parent.contextSources());
-        if (!sectionTitle(node).isBlank()) appendSource(contextSources, "sectionPath", node.sourceRef());
-        if (!marker.isBlank()) appendSource(contextSources, "listPath", node.sourceRef());
+        if (!cn.bidcheck.compat.Java8Api.isBlank(sectionTitle(node))) appendSource(contextSources, "sectionPath", node.sourceRef());
+        if (!cn.bidcheck.compat.Java8Api.isBlank(marker)) appendSource(contextSources, "listPath", node.sourceRef());
         if (local.table() != null) appendSource(contextSources, "table", node.sourceRef());
-        if (!local.projectScope().isBlank()) appendSource(contextSources, "projectScope", node.sourceRef());
-        if (!local.lotScope().isBlank()) appendSource(contextSources, "lotScope", node.sourceRef());
-        if (!local.subjectRole().isBlank()) appendSource(contextSources, "subjectRole", node.sourceRef());
-        if (!local.documentRole().isBlank()) appendSource(contextSources, "documentRole", node.sourceRef());
+        if (!cn.bidcheck.compat.Java8Api.isBlank(local.projectScope())) appendSource(contextSources, "projectScope", node.sourceRef());
+        if (!cn.bidcheck.compat.Java8Api.isBlank(local.lotScope())) appendSource(contextSources, "lotScope", node.sourceRef());
+        if (!cn.bidcheck.compat.Java8Api.isBlank(local.subjectRole())) appendSource(contextSources, "subjectRole", node.sourceRef());
+        if (!cn.bidcheck.compat.Java8Api.isBlank(local.documentRole())) appendSource(contextSources, "documentRole", node.sourceRef());
         if (local.boundary() != ClauseNode.Boundary.UNSPECIFIED) appendSource(contextSources, "boundary", node.sourceRef());
         if (!local.crossReferences().isEmpty()) appendSource(contextSources, "crossReferences", node.sourceRef());
         return new SourceContext(sections, clausePath, listPath,
                 table == null ? "" : table.tableId(), table == null ? "" : table.title(),
-                table == null ? List.of() : table.headers(), table == null ? null : table.rowIndex(),
+                table == null ? cn.bidcheck.compat.Java8Api.listOf() : table.headers(), table == null ? null : table.rowIndex(),
                 table == null ? null : table.columnIndex(), table == null ? null : table.rowSpan(),
                 table == null ? null : table.columnSpan(), inherit(local.projectScope(), parent.projectScope()),
                 inherit(local.lotScope(), parent.lotScope()), inherit(local.subjectRole(), parent.subjectRole()),
                 inherit(local.documentRole(), parent.documentRole()),
                 local.boundary() == ClauseNode.Boundary.UNSPECIFIED ? parent.boundary() : local.boundary(),
-                crossReferences.stream().distinct().toList(), contextSources, previous, next);
+                cn.bidcheck.compat.Java8Api.toList(crossReferences.stream().distinct()), contextSources, previous, next);
     }
 
     private void appendSource(Map<String, List<SourceRef>> contextSources, String key, SourceRef source) {
-        List<SourceRef> values = new ArrayList<>(contextSources.getOrDefault(key, List.of()));
+        List<SourceRef> values = new ArrayList<>(contextSources.getOrDefault(key, cn.bidcheck.compat.Java8Api.listOf()));
         values.add(source);
-        contextSources.put(key, List.copyOf(values));
+        contextSources.put(key, cn.bidcheck.compat.Java8Api.listCopyOf(values));
     }
 
     private ClauseNode.TableContext mergeTable(SourceContext parent, ClauseNode.TableContext local) {
-        if (local == null && parent.tableId().isBlank() && parent.tableTitle().isBlank()
+        if (local == null && cn.bidcheck.compat.Java8Api.isBlank(parent.tableId()) && cn.bidcheck.compat.Java8Api.isBlank(parent.tableTitle())
                 && parent.tableHeaders().isEmpty()) return null;
         if (local == null) return new ClauseNode.TableContext(parent.tableId(), parent.tableTitle(),
                 parent.tableHeaders(), parent.tableRow(), parent.tableColumn(), parent.rowSpan(), parent.columnSpan());
@@ -619,7 +593,7 @@ public final class RequirementMappingService {
 
     private List<Fragment> fragments(ClauseNode node) {
         String text = node.text();
-        if (text.isBlank()) return List.of();
+        if (cn.bidcheck.compat.Java8Api.isBlank(text)) return cn.bidcheck.compat.Java8Api.listOf();
         List<Fragment> fragments = new ArrayList<>();
         Matcher matcher = SENTENCE_BREAK.matcher(text);
         int start = 0;
@@ -629,7 +603,7 @@ public final class RequirementMappingService {
             // required by the immediately preceding submission verb, not another obligation.
             // Keep the exact contiguous source so neither half loses its object or action.
             String preceding=text.substring(start,matcher.start());
-            String following=text.substring(matcher.end()).stripLeading();
+            String following=cn.bidcheck.compat.Java8Api.stripLeading(text.substring(matcher.end()));
             if(containsAny(preceding,"提交","提供","出具","附具")
                     &&following.matches("(?s)^(?:见|详见)第[一二三四五六七八九十0-9]+章中?《[^》]+》.*"))continue;
             addFragment(fragments, node, text, start, matcher.start(), index++);
@@ -672,7 +646,7 @@ public final class RequirementMappingService {
         for (RequirementDraft draft : accumulator.drafts) {
             Optional<TemplateCandidate> checklist = draft.templateCandidates().stream()
                     .filter(candidate -> "SECTION_CHECKLIST".equals(candidate.templateId())).findFirst();
-            if (checklist.isEmpty()) continue;
+            if ((!checklist.isPresent())) continue;
             String ownSource = coverageSourceIdentity(draft.requirementRefs().get(0));
             for (SourceRef reference : checklist.get().requirementRefs()) {
                 if (!coverageSourceIdentity(reference).equals(ownSource)) {
@@ -688,10 +662,10 @@ public final class RequirementMappingService {
             if (parent == null || current.status() == CoverageItem.Status.MAPPED
                     || current.status() == CoverageItem.Status.EXTERNAL_REQUIRED
                     || current.status() == CoverageItem.Status.NEEDS_CONFIRMATION) continue;
-            if (!current.draftId().isBlank()) supersededDrafts.add(current.draftId());
+            if (!cn.bidcheck.compat.Java8Api.isBlank(current.draftId())) supersededDrafts.add(current.draftId());
             accumulator.coverage.set(index, new CoverageItem(current.fragmentId(), current.clauseId(), current.text(),
                     current.sourceRef(), current.sourceContext(), CoverageItem.Status.MAPPED, parent.id(),
-                    List.of("SECTION_CHECKLIST"), "CHECKLIST_ITEM_BOUND_TO_PARENT",
+                    cn.bidcheck.compat.Java8Api.listOf("SECTION_CHECKLIST"), "CHECKLIST_ITEM_BOUND_TO_PARENT",
                     "该结构化子项已作为父级清单的独立组成项登记"));
         }
         if (!supersededDrafts.isEmpty()) {
@@ -705,13 +679,13 @@ public final class RequirementMappingService {
     }
 
     private String coverageSourceIdentity(SourceRef source) {
-        String normalizedQuote = source.quote().strip().replaceAll("[。；;，,：:]$", "").strip();
+        String normalizedQuote = cn.bidcheck.compat.Java8Api.strip(cn.bidcheck.compat.Java8Api.strip(source.quote()).replaceAll("[。；;，,：:]$", ""));
         return source.documentId() + "|" + source.documentVersion() + "|" + source.locationType() + "|"
                 + source.location() + "|" + normalizedQuote;
     }
 
     private boolean isNonChecking(ClauseNode node, String text) {
-        if (text == null || text.isBlank()) return true;
+        if (text == null || cn.bidcheck.compat.Java8Api.isBlank(text)) return true;
         if (OBLIGATION.matcher(text).find()) return false;
         if (node.kind() == ClauseNode.Kind.DOCUMENT || node.kind() == ClauseNode.Kind.SECTION
                 || node.kind() == ClauseNode.Kind.TABLE) return true;
@@ -723,19 +697,19 @@ public final class RequirementMappingService {
     }
 
     private List<String> alternatives(String text) {
-        if (!containsAny(text, "或者", "或", "任选", "任一")) return List.of();
+        if (!containsAny(text, "或者", "或", "任选", "任一")) return cn.bidcheck.compat.Java8Api.listOf();
         String normalized = text.replace("任选其一", "或").replace("任选一种", "或")
                 .replace("任一", "或").replace("或者", "或");
-        List<String> parts = Pattern.compile("或").splitAsStream(normalized)
-                .map(String::trim).filter(value -> !value.isBlank()).toList();
-        if (parts.size() < 2) return List.of();
+        List<String> parts = cn.bidcheck.compat.Java8Api.toList(Pattern.compile("或").splitAsStream(normalized)
+                .map(String::trim).filter(value -> !cn.bidcheck.compat.Java8Api.isBlank(value)));
+        if (parts.size() < 2) return cn.bidcheck.compat.Java8Api.listOf();
         List<String> materials = new ArrayList<>();
         for (String part : parts) {
             String material = firstContained(part, MATERIALS);
-            if (material.isBlank()) material = stripRequirementVerb(part);
-            if (!material.isBlank()) materials.add(material);
+            if (cn.bidcheck.compat.Java8Api.isBlank(material)) material = stripRequirementVerb(part);
+            if (!cn.bidcheck.compat.Java8Api.isBlank(material)) materials.add(material);
         }
-        return materials.stream().distinct().toList();
+        return cn.bidcheck.compat.Java8Api.toList(materials.stream().distinct());
     }
 
     private String stripRequirementVerb(String value) {
@@ -745,16 +719,16 @@ public final class RequirementMappingService {
 
     private String role(String text, SourceContext context) {
         String role = firstContained(text, ROLES);
-        return role.isBlank() ? context.subjectRole() : role;
+        return cn.bidcheck.compat.Java8Api.isBlank(role) ? context.subjectRole() : role;
     }
 
     private String issuerRole(String text, SourceContext context) {
-        String explicit = firstContained(text, List.of("联合体牵头人", "联合体成员", "法定代表人", "投标人"));
-        return explicit.isBlank() ? context.subjectRole() : explicit;
+        String explicit = firstContained(text, cn.bidcheck.compat.Java8Api.listOf("联合体牵头人", "联合体成员", "法定代表人", "投标人"));
+        return cn.bidcheck.compat.Java8Api.isBlank(explicit) ? context.subjectRole() : explicit;
     }
 
     private String sealLocation(String text) {
-        if (containsAny(text, "投标人公章", "单位公章")) return firstContained(text, List.of("投标人公章", "单位公章"));
+        if (containsAny(text, "投标人公章", "单位公章")) return firstContained(text, cn.bidcheck.compat.Java8Api.listOf("投标人公章", "单位公章"));
         if (containsAny(text, "每页盖章", "逐页盖章")) return "EACH_PAGE";
         if (containsAny(text, "盖章处", "签章处")) return "DESIGNATED_POSITION";
         return containsAny(text, "盖章", "加盖", "签章") ? "REQUIREMENT_POSITION" : "";
@@ -770,7 +744,7 @@ public final class RequirementMappingService {
     }
 
     private String extractGrade(String text) {
-        return firstContained(text, List.of("正高级", "高级", "中级", "初级", "一级", "二级"));
+        return firstContained(text, cn.bidcheck.compat.Java8Api.listOf("正高级", "高级", "中级", "初级", "一级", "二级"));
     }
 
     private String priceField(String text) {
@@ -811,7 +785,7 @@ public final class RequirementMappingService {
         for (Map.Entry<String, String> entry : vocabulary.entrySet()) {
             if (text.contains(entry.getKey())) fields.add(entry.getValue());
         }
-        return fields.stream().distinct().toList();
+        return cn.bidcheck.compat.Java8Api.toList(fields.stream().distinct());
     }
 
     private String durationField(String label) {
@@ -838,8 +812,7 @@ public final class RequirementMappingService {
     }
 
     private String durationStartEvent(String text) {
-        return firstContained(text, List.of("合同签订之日", "合同签订后", "开工令发出之日", "开工之日",
-                "中标通知书发出之日", "收到订单之日", "投标截止之日"));
+        return firstContained(text, cn.bidcheck.compat.Java8Api.listOf("合同签订之日", "合同签订后", "开工令发出之日", "开工之日", "中标通知书发出之日", "收到订单之日", "投标截止之日"));
     }
 
     private String crossDocumentField(String text) {
@@ -854,45 +827,43 @@ public final class RequirementMappingService {
     }
 
     private boolean explicitCrossDocument(String text) {
-        long documents = List.of("招标文件", "投标文件", "营业执照", "资质证书", "合同", "投标函", "报价表")
+        long documents = cn.bidcheck.compat.Java8Api.listOf("招标文件", "投标文件", "营业执照", "资质证书", "合同", "投标函", "报价表")
                 .stream().filter(text::contains).count();
         return documents >= 2;
     }
 
     private String formType(String text, SourceContext context) {
-        String explicit = firstContained(text, List.of("开标一览表", "投标函附录", "投标函", "报价表",
-                "法定代表人身份证明", "授权委托书", "资格审查表", "人员配置表", "业绩表", "表格", "表单"));
-        if (!explicit.isBlank()) return explicit;
+        String explicit = firstContained(text, cn.bidcheck.compat.Java8Api.listOf("开标一览表", "投标函附录", "投标函", "报价表", "法定代表人身份证明", "授权委托书", "资格审查表", "人员配置表", "业绩表", "表格", "表单"));
+        if (!cn.bidcheck.compat.Java8Api.isBlank(explicit)) return explicit;
         return context.sectionPath().isEmpty() ? "" : context.sectionPath().get(context.sectionPath().size() - 1);
     }
 
     private List<String> requiredFormFields(ClauseNode node, String text) {
         LinkedHashSet<String> fields = new LinkedHashSet<>();
-        List<String> vocabulary = List.of("项目名称", "项目编号", "投标人名称", "统一社会信用代码", "投标报价",
-                "总报价", "工期", "日期", "法定代表人", "委托代理人", "姓名", "证书编号");
+        List<String> vocabulary = cn.bidcheck.compat.Java8Api.listOf("项目名称", "项目编号", "投标人名称", "统一社会信用代码", "投标报价", "总报价", "工期", "日期", "法定代表人", "委托代理人", "姓名", "证书编号");
         List<String> fragments = new ArrayList<>();fragments.add(text);
-        node.children().stream().map(ClauseNode::text).map(String::strip).filter(value -> !value.isBlank())
+        node.children().stream().map(ClauseNode::text).map(cn.bidcheck.compat.Java8Api::strip).filter(value -> !cn.bidcheck.compat.Java8Api.isBlank(value))
                 .forEach(fragments::add);
         for (String fragment : fragments) {
             for (String field : vocabulary) if (fragment.contains(field)) fields.add(field);
-            String label = fragment.replaceAll("^[（(]?[0-9一二三四五六七八九十]+[）).、．.]?\\s*", "")
-                    .replaceAll("[（(](?:必填|必选|不得留空)[）)]", "").strip();
+            String label = cn.bidcheck.compat.Java8Api.strip(fragment.replaceAll("^[（(]?[0-9一二三四五六七八九十]+[）).、．.]?\\s*", "")
+                    .replaceAll("[（(](?:必填|必选|不得留空)[）)]", ""));
             int separator = Math.max(label.indexOf('：'), label.indexOf(':'));
-            if (separator > 0) label = label.substring(0, separator).strip();
+            if (separator > 0) label = cn.bidcheck.compat.Java8Api.strip(label.substring(0, separator));
             if (formFieldLabel(label)) fields.add(label);
         }
-        return List.copyOf(fields);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(fields);
     }
 
     private boolean formFieldLabel(String value) {
-        if (value.isBlank() || value.length() > 30 || value.matches(".*[，,。；;！？!?].*")) return false;
+        if (cn.bidcheck.compat.Java8Api.isBlank(value) || value.length() > 30 || value.matches(".*[，,。；;！？!?].*")) return false;
         return !value.matches("(?s).*(?:应当|应|须|必须|不得|填写|完整|留空|空白|提供|提交|说明|要求).*" );
     }
 
     private String expectedFormSubject(String text) {
         Matcher matcher = Pattern.compile("(?:投标人|投标单位|供应商)(?:名称)?\\s*(?:应为|应填写|[:：=])\\s*([^，,。；;]{2,80})")
                 .matcher(text);
-        return matcher.find() ? matcher.group(1).strip() : "";
+        return matcher.find() ? cn.bidcheck.compat.Java8Api.strip(matcher.group(1)) : "";
     }
 
     private DateRelationMatch dateRelation(String text) {
@@ -918,11 +889,24 @@ public final class RequirementMappingService {
         return "";
     }
 
-    private record DateRelationMatch(String leftRole, String rightRole, String operator) {}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class DateRelationMatch {
+        private final String leftRole;
+        private final String rightRole;
+        private final String operator;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private DateRelationMatch(@com.fasterxml.jackson.annotation.JsonProperty("leftRole") String leftRole, @com.fasterxml.jackson.annotation.JsonProperty("rightRole") String rightRole, @com.fasterxml.jackson.annotation.JsonProperty("operator") String operator) { this.leftRole = leftRole; this.rightRole = rightRole; this.operator = operator; }
+        public String leftRole() { return leftRole; }
+        public String rightRole() { return rightRole; }
+        public String operator() { return operator; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; DateRelationMatch that = (DateRelationMatch) other; return java.util.Objects.equals(this.leftRole, that.leftRole) && java.util.Objects.equals(this.rightRole, that.rightRole) && java.util.Objects.equals(this.operator, that.operator); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.leftRole); hash = 31 * hash + java.util.Objects.hashCode(this.rightRole); hash = 31 * hash + java.util.Objects.hashCode(this.operator); return hash; }
+        @Override public String toString() { return "DateRelationMatch[" + "leftRole=" + leftRole + ", rightRole=" + rightRole + ", operator=" + operator + "]"; }
+}
 
     private String textScope(String text, SourceContext context) {
         if (containsAny(text, "全文", "整份", "全部内容")) return "全文";
-        for (String type : List.of("投标函", "报价表", "施工组织设计", "技术方案", "资格文件", "商务文件"))
+        for (String type : cn.bidcheck.compat.Java8Api.listOf("投标函", "报价表", "施工组织设计", "技术方案", "资格文件", "商务文件"))
             if (text.contains(type)) return type;
         return context.sectionPath().isEmpty() ? "全文" : context.sectionPath().get(context.sectionPath().size() - 1);
     }
@@ -932,7 +916,7 @@ public final class RequirementMappingService {
         if (containsAny(text, "错别字", "缺字", "多字")) result.add("TYPO");
         if (containsAny(text, "截断", "缺失")) result.add("TRUNCATED");
         if (containsAny(text, "乱码", "OCR错误", "OCR异常")) result.add("OCR_SUSPECT");
-        return result.isEmpty() ? List.of("TYPO", "TRUNCATED", "OCR_SUSPECT") : List.copyOf(result);
+        return result.isEmpty() ? cn.bidcheck.compat.Java8Api.listOf("TYPO", "TRUNCATED", "OCR_SUSPECT") : cn.bidcheck.compat.Java8Api.listCopyOf(result);
     }
 
     private boolean objectiveScoring(String text) {
@@ -950,13 +934,13 @@ public final class RequirementMappingService {
     }
 
     private String scoringCriterion(String text) {
-        String value = text.replaceAll("(?:最高|上限|满分)?\\s*[0-9]+(?:\\.[0-9]+)?\\s*分", "")
+        String value = cn.bidcheck.compat.Java8Api.strip(text.replaceAll("(?:最高|上限|满分)?\\s*[0-9]+(?:\\.[0-9]+)?\\s*分", "")
                 .replaceAll("^(?:投标人|供应商|响应人)[应须必须]*", "")
                 // Removing the numeric award from “具备某证书，得1分” must not leave a
                 // dangling “得/计” in the criterion identity.  The source quote still retains
                 // the complete scoring rule for evidence compilation and audit.
                 .replaceAll("(?:得|计)\\s*[，,。；;]?\\s*$", "")
-                .replaceAll("[，,。；;]\\s*$", "").strip();
+                .replaceAll("[，,。；;]\\s*$", ""));
         return value.length() <= 120 ? value : value.substring(0, 120);
     }
 
@@ -993,32 +977,30 @@ public final class RequirementMappingService {
     }
 
     private String qualityMaterial(String text, SourceContext context) {
-        String type = firstContained(text, List.of("施工组织设计", "技术方案", "实施方案", "设计方案",
-                "服务方案", "质量保证措施", "进度计划", "方案"));
-        if (!type.isBlank()) return type;
+        String type = firstContained(text, cn.bidcheck.compat.Java8Api.listOf("施工组织设计", "技术方案", "实施方案", "设计方案", "服务方案", "质量保证措施", "进度计划", "方案"));
+        if (!cn.bidcheck.compat.Java8Api.isBlank(type)) return type;
         return context.sectionPath().isEmpty() ? "" : context.sectionPath().get(context.sectionPath().size() - 1);
     }
 
     private List<String> qualityDimensions(String text) {
         LinkedHashSet<String> result = new LinkedHashSet<>();
-        for (String dimension : List.of("合理性", "科学性", "可行性", "先进性", "完整性", "针对性",
-                "安全措施", "质量措施", "进度计划", "资源配置")) if (text.contains(dimension)) result.add(dimension);
+        for (String dimension : cn.bidcheck.compat.Java8Api.listOf("合理性", "科学性", "可行性", "先进性", "完整性", "针对性", "安全措施", "质量措施", "进度计划", "资源配置")) if (text.contains(dimension)) result.add(dimension);
         Matcher count = Pattern.compile("([2-9]|10)\\s*项(?:内容|要素|指标|方面)?").matcher(text);
         if (count.find()) {
             int expected = Integer.parseInt(count.group(1));
             String prefix = text.substring(Math.max(0, count.start() - 180), count.start());
             int colon = Math.max(prefix.lastIndexOf('：'), prefix.lastIndexOf(':'));
             if (colon >= 0) prefix = prefix.substring(colon + 1);
-            prefix = prefix.replaceFirst("^\\s*(?:对)?(?:本项目|本工程)?的?", "").strip();
-            List<String> sections = java.util.Arrays.stream(prefix.split("[、,，]|(?:以及|及|和)"))
-                    .map(String::strip).map(value -> value.replaceFirst("^(?:包括|包含|涵盖)\\s*", ""))
-                    .filter(value -> value.length() >= 2 && value.length() <= 28).toList();
+            prefix = cn.bidcheck.compat.Java8Api.strip(prefix.replaceFirst("^\\s*(?:对)?(?:本项目|本工程)?的?", ""));
+            List<String> sections = cn.bidcheck.compat.Java8Api.toList(java.util.Arrays.stream(prefix.split("[、,，]|(?:以及|及|和)"))
+                    .map(cn.bidcheck.compat.Java8Api::strip).map(value -> value.replaceFirst("^(?:包括|包含|涵盖)\\s*", ""))
+                    .filter(value -> value.length() >= 2 && value.length() <= 28));
             if (sections.size() == expected && sections.stream().map(this::normalizeText).distinct().count() == sections.size()) {
                 result.remove("完整性");
                 result.addAll(sections);
             }
         }
-        return List.copyOf(result);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(result);
     }
 
     private String normalizeText(String value) {
@@ -1027,8 +1009,8 @@ public final class RequirementMappingService {
     }
 
     private String externalQueryObject(String text, SourceContext context) {
-        String value = firstContained(text, List.of("投标人", "供应商", "响应人", "联合体成员", "项目负责人", "法定代表人"));
-        return value.isBlank() ? context.subjectRole() : value;
+        String value = firstContained(text, cn.bidcheck.compat.Java8Api.listOf("投标人", "供应商", "响应人", "联合体成员", "项目负责人", "法定代表人"));
+        return cn.bidcheck.compat.Java8Api.isBlank(value) ? context.subjectRole() : value;
     }
 
     private List<String> externalRequiredFields(String text) {
@@ -1039,11 +1021,11 @@ public final class RequirementMappingService {
         if (containsAny(text, "经营异常")) fields.add("abnormalOperation");
         if (containsAny(text, "信用记录", "信用信息")) fields.add("creditStatus");
         if (fields.isEmpty()) fields.add("queryResult");
-        return List.copyOf(fields);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(fields);
     }
 
     private String externalSource(String text) {
-        return firstContained(text, List.of("国家企业信用信息公示系统", "中国执行信息公开网", "信用中国", "开标现场", "外部平台"));
+        return firstContained(text, cn.bidcheck.compat.Java8Api.listOf("国家企业信用信息公示系统", "中国执行信息公开网", "信用中国", "开标现场", "外部平台"));
     }
 
     private String externalTime(String text) {
@@ -1057,27 +1039,27 @@ public final class RequirementMappingService {
     }
 
     private String sectionTitle(ClauseNode node) {
-        if (!node.localContext().sectionTitle().isBlank()) return node.localContext().sectionTitle();
+        if (!cn.bidcheck.compat.Java8Api.isBlank(node.localContext().sectionTitle())) return node.localContext().sectionTitle();
         return node.kind() == ClauseNode.Kind.SECTION ? node.text() : "";
     }
 
     private List<String> append(List<String> existing, String value) {
-        if (value == null || value.isBlank()) return existing;
+        if (value == null || cn.bidcheck.compat.Java8Api.isBlank(value)) return existing;
         List<String> result = new ArrayList<>(existing);
         result.add(value.trim());
-        return List.copyOf(result);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(result);
     }
 
     private String inherit(String local, String parent) {
-        return local == null || local.isBlank() ? parent : local.trim();
+        return local == null || cn.bidcheck.compat.Java8Api.isBlank(local) ? parent : local.trim();
     }
 
     private List<String> missing(Map<String, Object> parameters, String... required) {
         List<String> missing = new ArrayList<>();
         for (String name : required) {
             Object value = parameters.get(name);
-            if (value == null || value instanceof String string && string.isBlank()
-                    || value instanceof Collection<?> collection && collection.isEmpty()) missing.add(name);
+            if (value == null || value instanceof String && cn.bidcheck.compat.Java8Api.isBlank(((String) (value)))
+                    || value instanceof Collection<?> && ((Collection<?>) (value)).isEmpty()) missing.add(name);
         }
         return missing;
     }
@@ -1086,11 +1068,11 @@ public final class RequirementMappingService {
         Map<String, Object> result = new LinkedHashMap<>();
         for (int index = 0; index < values.length; index += 2) {
             Object value = values[index + 1];
-            if (value == null || value instanceof String string && string.isBlank()
-                    || value instanceof Collection<?> collection && collection.isEmpty()) continue;
+            if (value == null || value instanceof String && cn.bidcheck.compat.Java8Api.isBlank(((String) (value)))
+                    || value instanceof Collection<?> && ((Collection<?>) (value)).isEmpty()) continue;
             result.put(String.valueOf(values[index]), value);
         }
-        return Map.copyOf(result);
+        return cn.bidcheck.compat.Java8Api.mapCopyOf(result);
     }
 
     private String firstContained(String text, List<String> values) {
@@ -1099,14 +1081,13 @@ public final class RequirementMappingService {
 
     private boolean containsAny(String text, String... values) {
         if (text == null) return false;
-        for (String value : values) if (value != null && !value.isBlank() && text.contains(value)) return true;
+        for (String value : values) if (value != null && !cn.bidcheck.compat.Java8Api.isBlank(value) && text.contains(value)) return true;
         return false;
     }
 
     private int chineseNumber(String value) {
         if (value.chars().allMatch(Character::isDigit)) return Integer.parseInt(value);
-        Map<Character, Integer> digits = Map.of('一', 1, '二', 2, '两', 2, '三', 3, '四', 4,
-                '五', 5, '六', 6, '七', 7, '八', 8, '九', 9);
+        Map<Character, Integer> digits = cn.bidcheck.compat.Java8Api.mapOf('一', 1, '二', 2, '两', 2, '三', 3, '四', 4, '五', 5, '六', 6, '七', 7, '八', 8, '九', 9);
         if ("十".equals(value)) return 10;
         int ten = value.indexOf('十');
         if (ten >= 0) {
@@ -1118,12 +1099,7 @@ public final class RequirementMappingService {
     }
 
     private String coverageExplanation(CoverageItem.Status status) {
-        return switch (status) {
-            case MAPPED -> "本地规则已生成来源绑定的模板草稿，仍需确认后才能执行";
-            case NEEDS_CONFIRMATION -> "存在多个候选或关键参数尚未绑定";
-            case EXTERNAL_REQUIRED -> "要求已登记，但结论依赖指定外部数据或时点";
-            default -> "";
-        };
+        switch (status) {case MAPPED:return "本地规则已生成来源绑定的模板草稿，仍需确认后才能执行";case NEEDS_CONFIRMATION:return "存在多个候选或关键参数尚未绑定";case EXTERNAL_REQUIRED:return "要求已登记，但结论依赖指定外部数据或时点";default:return "";}
     }
 
     private void validateUniqueIds(List<ClauseNode> roots) {
@@ -1149,7 +1125,24 @@ public final class RequirementMappingService {
         }
     }
 
-    private record Fragment(String id, String text, int start, int end, SourceRef sourceRef) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Fragment {
+        private final String id;
+        private final String text;
+        private final int start;
+        private final int end;
+        private final SourceRef sourceRef;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Fragment(@com.fasterxml.jackson.annotation.JsonProperty("id") String id, @com.fasterxml.jackson.annotation.JsonProperty("text") String text, @com.fasterxml.jackson.annotation.JsonProperty("start") int start, @com.fasterxml.jackson.annotation.JsonProperty("end") int end, @com.fasterxml.jackson.annotation.JsonProperty("sourceRef") SourceRef sourceRef) { this.id = id; this.text = text; this.start = start; this.end = end; this.sourceRef = sourceRef; }
+        public String id() { return id; }
+        public String text() { return text; }
+        public int start() { return start; }
+        public int end() { return end; }
+        public SourceRef sourceRef() { return sourceRef; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Fragment that = (Fragment) other; return java.util.Objects.equals(this.id, that.id) && java.util.Objects.equals(this.text, that.text) && java.util.Objects.equals(this.start, that.start) && java.util.Objects.equals(this.end, that.end) && java.util.Objects.equals(this.sourceRef, that.sourceRef); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.id); hash = 31 * hash + java.util.Objects.hashCode(this.text); hash = 31 * hash + java.util.Objects.hashCode(this.start); hash = 31 * hash + java.util.Objects.hashCode(this.end); hash = 31 * hash + java.util.Objects.hashCode(this.sourceRef); return hash; }
+        @Override public String toString() { return "Fragment[" + "id=" + id + ", text=" + text + ", start=" + start + ", end=" + end + ", sourceRef=" + sourceRef + "]"; }
+ }
 
     private static final class Accumulator {
         private final List<RequirementDraft> drafts = new ArrayList<>();

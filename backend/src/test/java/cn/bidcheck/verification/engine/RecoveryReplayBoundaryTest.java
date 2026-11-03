@@ -13,85 +13,85 @@ class RecoveryReplayBoundaryTest {
     private static final String REQUIREMENT="提交守法承诺书；提交履约承诺书";
     private final ModelGateway noModel=new ModelGateway(){public boolean enabled(){return true;}public String identity(){return "replay-boundary";}public JsonNode request(String operation,Map<String,Object> input){fail("Local recovery called model: "+operation);return null;}};
     private final HybridRetriever noRetriever=new HybridRetriever(){@Override public boolean enabled(){return true;}@Override public String identity(){return "no-network-retriever";}@Override public RetrievalResult search(Document document,String query,int limit){fail("Local recovery called retriever");return null;}};
-    private Document bid(){return new Document("bid","p","BID","投标.pdf",1,"frozen-hash","",List.of(new Page(1,
-        "本项目投标文件\n守法承诺书\n本单位承诺遵守本项目相关法律法规，依法履行全部投标义务并对提交材料承担责任。\n履约承诺书\n本单位承诺在中标后依法依约完成本项目工作，安排所需人员并落实合同约定的全部责任。","PAGE","PDF_TEXT","")),List.of());}
+    private Document bid(){return new Document("bid","p","BID","投标.pdf",1,"frozen-hash","",cn.bidcheck.compat.Java8Api.listOf(new Page(1,
+        "本项目投标文件\n守法承诺书\n本单位承诺遵守本项目相关法律法规，依法履行全部投标义务并对提交材料承担责任。\n履约承诺书\n本单位承诺在中标后依法依约完成本项目工作，安排所需人员并落实合同约定的全部责任。","PAGE","PDF_TEXT","")),cn.bidcheck.compat.Java8Api.listOf());}
     private Checkpoint cp(){return new Checkpoint("cp","提交两份承诺书","组成检查","HIGH","SEMANTIC_RESPONSE","material","EXISTS",REQUIREMENT,"",true,true,true,null);}
-    private Map<String,Object> rule(String id,String name){return linked("id",id,"description","提交"+name,"predicate","DECLARATION","subject","","field","material","operator","EXISTS","expected",name,"unit","","sourceQuote","提交"+name,"parameters",Map.of(),"children",List.of());}
-    private Map<String,Object> plan(){return linked("logic","ALL","rules",List.of(rule("R1","守法承诺书"),rule("R2","履约承诺书")),"issues",List.of());}
-    private Map<String,Object> fact(Document bid,String name){String sourceId=new EvidenceCorpus(List.of(bid)).all.get(0).id();return linked("id","irrelevant-old-id","kind","DECLARATION","subject","","field","material","rawValue",name,"value",name,"unit","","basis","","scope","CURRENT_PROJECT","sourceIds",List.of(sourceId),"attributes",Map.of());}
+    private Map<String,Object> rule(String id,String name){return linked("id",id,"description","提交"+name,"predicate","DECLARATION","subject","","field","material","operator","EXISTS","expected",name,"unit","","sourceQuote","提交"+name,"parameters",cn.bidcheck.compat.Java8Api.mapOf(),"children",cn.bidcheck.compat.Java8Api.listOf());}
+    private Map<String,Object> plan(){return linked("logic","ALL","rules",cn.bidcheck.compat.Java8Api.listOf(rule("R1","守法承诺书"), rule("R2","履约承诺书")),"issues",cn.bidcheck.compat.Java8Api.listOf());}
+    private Map<String,Object> fact(Document bid,String name){String sourceId=new EvidenceCorpus(cn.bidcheck.compat.Java8Api.listOf(bid)).all.get(0).id();return linked("id","irrelevant-old-id","kind","DECLARATION","subject","","field","material","rawValue",name,"value",name,"unit","","basis","","scope","CURRENT_PROJECT","sourceIds",cn.bidcheck.compat.Java8Api.listOf(sourceId),"attributes",cn.bidcheck.compat.Java8Api.mapOf());}
     private Map<String,Object> context(Document bid,List<Map<String,Object>> facts){
-        List<String> sources=new EvidenceCorpus(List.of(bid)).all.stream().map(Source::id).toList();
+        List<String> sources=cn.bidcheck.compat.Java8Api.toList(new EvidenceCorpus(cn.bidcheck.compat.Java8Api.listOf(bid)).all.stream().map(Source::id));
         Map<String,Object> step=linked("type","FACT_VALIDATION_0","status","COMPLETED","schemaVersion",VERSION,"modelIdentity",noModel.identity(),"output",linked("facts",facts,"sourceIds",sources));
-        return linked("recoveryMode","RECOMPUTE_ONLY","recoveryModelAllowed",false,"recoveryTargetObligationIds",List.of("R2"),
-            "previousAtomicCheck",linked("plan",plan(),"complete",true,"businessDecision","PASS","conditions",List.of(Map.of("id","R1","status","PASS"),Map.of("id","R2","status","PASS"))),"priorSteps",List.of(step));
+        return linked("recoveryMode","RECOMPUTE_ONLY","recoveryModelAllowed",false,"recoveryTargetObligationIds",cn.bidcheck.compat.Java8Api.listOf("R2"),
+            "previousAtomicCheck",linked("plan",plan(),"complete",true,"businessDecision","PASS","conditions",cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("id", "R1", "status", "PASS"), cn.bidcheck.compat.Java8Api.mapOf("id", "R2", "status", "PASS"))),"priorSteps",cn.bidcheck.compat.Java8Api.listOf(step));
     }
-    private Map<String,Object> evaluate(Document bid,Map<String,Object> context){return new VerificationEngine(noModel,noRetriever).evaluate(cp(),List.of(bid),null,context);}
+    private Map<String,Object> evaluate(Document bid,Map<String,Object> context){return new VerificationEngine(noModel,noRetriever).evaluate(cp(),cn.bidcheck.compat.Java8Api.listOf(bid),null,context);}
     @Test void validatedObservationsRecomputeAllConditionsWithoutCompileExtractOrRetrieval(){
-        Document bid=bid();Map<String,Object> result=evaluate(bid,context(bid,List.of(fact(bid,"守法承诺书"),fact(bid,"履约承诺书"))));
+        Document bid=bid();Map<String,Object> result=evaluate(bid,context(bid,cn.bidcheck.compat.Java8Api.listOf(fact(bid,"守法承诺书"), fact(bid,"履约承诺书"))));
         assertEquals("PASS",result.get("businessDecision"));assertEquals(0,((Map<?,?>)result.get("metrics")).get("modelCalls"));
         assertEquals(2,RuleEvaluator.maps(result.get("obligations")).size());
-        assertTrue(RuleEvaluator.maps(result.get("steps")).stream().noneMatch(s->Set.of("COMPILE","EXTRACT").contains(s.get("type"))||str(s,"type").startsWith("RETRIEVE_")));
+        assertTrue(RuleEvaluator.maps(result.get("steps")).stream().noneMatch(s->cn.bidcheck.compat.Java8Api.setOf("COMPILE", "EXTRACT").contains(s.get("type"))||str(s,"type").startsWith("RETRIEVE_")));
     }
     @Test void savedPassFlagsCannotSubstituteForMissingProofOrDropTheOtherCondition(){
-        Document bid=bid();Map<String,Object> result=evaluate(bid,context(bid,List.of(fact(bid,"守法承诺书"))));
+        Document bid=bid();Map<String,Object> result=evaluate(bid,context(bid,cn.bidcheck.compat.Java8Api.listOf(fact(bid,"守法承诺书"))));
         assertEquals("UNDETERMINED",result.get("businessDecision"));List<Map<String,Object>> decisions=RuleEvaluator.maps(result.get("obligations"));
-        assertEquals(2,decisions.size());assertEquals("PASS",decisions.stream().filter(d->"R1".equals(d.get("id"))).findFirst().orElseThrow().get("status"));
-        assertEquals("UNDETERMINED",decisions.stream().filter(d->"R2".equals(d.get("id"))).findFirst().orElseThrow().get("status"));
+        assertEquals(2,decisions.size());assertEquals("PASS",decisions.stream().filter(d->"R1".equals(d.get("id"))).findFirst().orElseThrow(java.util.NoSuchElementException::new).get("status"));
+        assertEquals("UNDETERMINED",decisions.stream().filter(d->"R2".equals(d.get("id"))).findFirst().orElseThrow(java.util.NoSuchElementException::new).get("status"));
         assertFalse(Boolean.TRUE.equals(result.get("complete")));
     }
     @Test void changedFrozenDocumentRejectsPreviousReadsEvenWhenVisibleTextIsTheSame(){
-        Document before=bid();Map<String,Object> context=context(before,List.of(fact(before,"守法承诺书"),fact(before,"履约承诺书")));
+        Document before=bid();Map<String,Object> context=context(before,cn.bidcheck.compat.Java8Api.listOf(fact(before,"守法承诺书"), fact(before,"履约承诺书")));
         Document changed=new Document(before.id(),before.projectId(),before.role(),before.name(),2,"new-hash","",before.pages(),before.warnings());
         Map<String,Object> result=evaluate(changed,context);assertEquals("UNDETERMINED",result.get("businessDecision"));assertTrue(((List<?>)result.get("facts")).isEmpty());
     }
     @Test void ungroundedPreviouslyAcceptedValueIsRejectedAgain(){
         Document bid=bid();Map<String,Object> forged=fact(bid,"履约承诺书");forged.put("rawValue","并不存在于原文的证明");
-        Map<String,Object> result=evaluate(bid,context(bid,List.of(fact(bid,"守法承诺书"),forged)));
+        Map<String,Object> result=evaluate(bid,context(bid,cn.bidcheck.compat.Java8Api.listOf(fact(bid,"守法承诺书"), forged)));
         assertEquals("UNDETERMINED",result.get("businessDecision"));assertTrue(RuleEvaluator.maps(result.get("rejectedFacts")).stream().anyMatch(r->"RAW_VALUE_UNGROUNDED".equals(r.get("code"))));
         assertEquals(2,RuleEvaluator.maps(result.get("obligations")).size());
     }
     @Test void stepsFromOtherModelOrSchemaAreNotTrustedAsCurrentReads(){
-        for(String property:List.of("modelIdentity","schemaVersion","status")){
-            Document bid=bid();Map<String,Object> context=context(bid,List.of(fact(bid,"守法承诺书"),fact(bid,"履约承诺书")));
-            Map<String,Object> step=new LinkedHashMap<>(RuleEvaluator.maps(context.get("priorSteps")).get(0));step.put(property,"foreign");context.put("priorSteps",List.of(step));
+        for(String property:cn.bidcheck.compat.Java8Api.listOf("modelIdentity", "schemaVersion", "status")){
+            Document bid=bid();Map<String,Object> context=context(bid,cn.bidcheck.compat.Java8Api.listOf(fact(bid,"守法承诺书"), fact(bid,"履约承诺书")));
+            Map<String,Object> step=new LinkedHashMap<>(RuleEvaluator.maps(context.get("priorSteps")).get(0));step.put(property,"foreign");context.put("priorSteps",cn.bidcheck.compat.Java8Api.listOf(step));
             assertEquals("UNDETERMINED",evaluate(bid,context).get("businessDecision"),property);
         }
     }
     @Test void changedTenderSourceCannotReuseAOnceValidPlan(){
-        Document bid=bid();Map<String,Object> context=context(bid,List.of(fact(bid,"守法承诺书"),fact(bid,"履约承诺书")));
+        Document bid=bid();Map<String,Object> context=context(bid,cn.bidcheck.compat.Java8Api.listOf(fact(bid,"守法承诺书"), fact(bid,"履约承诺书")));
         Checkpoint sourced=new Checkpoint("cp",cp().title(),cp().category(),cp().severity(),cp().type(),cp().field(),cp().operator(),REQUIREMENT,"",true,true,true,
             new Evidence("tender","招标.docx",1,"BLOCK",REQUIREMENT,"",1));
-        Document tender=new Document("tender","p","TENDER","招标.docx",2,"new-tender-hash","",List.of(new Page(1,"提交另一份承诺书","BLOCK","DOCX","")),List.of());
-        Map<String,Object> result=new VerificationEngine(noModel,noRetriever).evaluate(sourced,List.of(bid),tender,context);
+        Document tender=new Document("tender","p","TENDER","招标.docx",2,"new-tender-hash","",cn.bidcheck.compat.Java8Api.listOf(new Page(1,"提交另一份承诺书","BLOCK","DOCX","")),cn.bidcheck.compat.Java8Api.listOf());
+        Map<String,Object> result=new VerificationEngine(noModel,noRetriever).evaluate(sourced,cn.bidcheck.compat.Java8Api.listOf(bid),tender,context);
         assertEquals("UNDETERMINED",result.get("businessDecision"));assertEquals("SCOPE_UNRESOLVED",JSON.valueToTree(result.get("plan")).path("method").asText());
     }
     @Test void oldUnsupportedMetadataCannotAuthorizeAnUngroundedRepairedRule(){
-        Document bid=bid();Map<String,Object> context=context(bid,List.of());Map<String,Object> bad=rule("R1","守法承诺书");
-        bad.put("predicate","UNSUPPORTED");bad.put("parameters",Map.of("originalPredicate","DECLARATION"));bad.put("expected","免除全部投标义务");
-        context.put("previousAtomicCheck",Map.of("plan",Map.of("logic","ALL","rules",List.of(bad,rule("R2","履约承诺书")))));
+        Document bid=bid();Map<String,Object> context=context(bid,cn.bidcheck.compat.Java8Api.listOf());Map<String,Object> bad=rule("R1","守法承诺书");
+        bad.put("predicate","UNSUPPORTED");bad.put("parameters",cn.bidcheck.compat.Java8Api.mapOf("originalPredicate", "DECLARATION"));bad.put("expected","免除全部投标义务");
+        context.put("previousAtomicCheck",cn.bidcheck.compat.Java8Api.mapOf("plan", cn.bidcheck.compat.Java8Api.mapOf("logic", "ALL", "rules", cn.bidcheck.compat.Java8Api.listOf(bad, rule("R2","履约承诺书")))));
         Map<String,Object> result=evaluate(bid,context);assertEquals("UNDETERMINED",result.get("businessDecision"));
         assertTrue(RuleEvaluator.maps(result.get("obligations")).stream().anyMatch(d->"UNDETERMINED".equals(d.get("status"))));
     }
     @Test void priorNativeReadWindowsAreReplayedWithoutInventingAFactValidationPacket(){
-        Document bid=bid();Map<String,Object> context=context(bid,List.of());EvidenceCorpus corpus=new EvidenceCorpus(List.of(bid));
-        context.put("priorSteps",List.of(linked("type","EVIDENCE_PLAN_0","status","COMPLETED","schemaVersion",VERSION,"modelIdentity",noModel.identity(),
-            "output",Map.of("candidates",corpus.inputs(corpus.all)))));
+        Document bid=bid();Map<String,Object> context=context(bid,cn.bidcheck.compat.Java8Api.listOf());EvidenceCorpus corpus=new EvidenceCorpus(cn.bidcheck.compat.Java8Api.listOf(bid));
+        context.put("priorSteps",cn.bidcheck.compat.Java8Api.listOf(linked("type","EVIDENCE_PLAN_0","status","COMPLETED","schemaVersion",VERSION,"modelIdentity",noModel.identity(),
+            "output",cn.bidcheck.compat.Java8Api.mapOf("candidates", corpus.inputs(corpus.all)))));
         assertEquals(corpus.all,RecoveryReplay.sources(context,corpus,noModel.identity()));
         Document changed=new Document(bid.id(),bid.projectId(),bid.role(),bid.name(),2,"other-hash","",bid.pages(),bid.warnings());
-        assertTrue(RecoveryReplay.sources(context,new EvidenceCorpus(List.of(changed)),noModel.identity()).isEmpty());
-        assertTrue(RecoveryReplay.facts(context,corpus.all,List.of(),noModel.identity()).facts().isEmpty(),"A read window itself is not an extracted fact");
+        assertTrue(RecoveryReplay.sources(context,new EvidenceCorpus(cn.bidcheck.compat.Java8Api.listOf(changed)),noModel.identity()).isEmpty());
+        assertTrue(RecoveryReplay.facts(context,corpus.all,cn.bidcheck.compat.Java8Api.listOf(),noModel.identity()).facts().isEmpty(),"A read window itself is not an extracted fact");
     }
     @Test void dependencyEventsAddAllNewSourceWindowsButNeverAuthorizeOldVersionIds(){
         Document first=bid();List<Page> pages=new ArrayList<>(first.pages());pages.add(new Page(2,"本项目补充资格材料\n注册证书编号A123，登记单位为本次投标设计单位。该证书及其查询记录共同证明本页所列登记信息。","PAGE","PDF_TEXT",""));
         Document doc=new Document(first.id(),first.projectId(),first.role(),first.name(),first.version(),first.sha256(),first.createdAt(),pages,first.warnings());
-        EvidenceCorpus corpus=new EvidenceCorpus(List.of(doc));assertTrue(corpus.all.size()>=2);
+        EvidenceCorpus corpus=new EvidenceCorpus(cn.bidcheck.compat.Java8Api.listOf(doc));assertTrue(corpus.all.size()>=2);
         String oldSource=corpus.all.get(0).id(),newSource=corpus.all.get(corpus.all.size()-1).id();
-        Map<String,Object> context=linked("recoveryChangedSourceIds",List.of(newSource,oldSource,"foreign-source-id"));
+        Map<String,Object> context=linked("recoveryChangedSourceIds",cn.bidcheck.compat.Java8Api.listOf(newSource, oldSource, "foreign-source-id"));
         List<Source> selected=RecoveryReplay.sources(context,corpus,noModel.identity());
-        assertEquals(Set.of(oldSource,newSource),new HashSet<>(selected.stream().map(Source::id).toList()));
-        assertTrue(RecoveryReplay.facts(context,selected,List.of(),noModel.identity()).facts().isEmpty(),"new source locations still require actual source-grounded fact lookup");
+        assertEquals(cn.bidcheck.compat.Java8Api.setOf(oldSource, newSource),new HashSet<>(cn.bidcheck.compat.Java8Api.toList(selected.stream().map(Source::id))));
+        assertTrue(RecoveryReplay.facts(context,selected,cn.bidcheck.compat.Java8Api.listOf(),noModel.identity()).facts().isEmpty(),"new source locations still require actual source-grounded fact lookup");
         Document changed=new Document(doc.id(),doc.projectId(),doc.role(),doc.name(),2,"changed-hash",doc.createdAt(),doc.pages(),doc.warnings());
-        assertTrue(RecoveryReplay.sources(context,new EvidenceCorpus(List.of(changed)),noModel.identity()).isEmpty());
-        assertFalse(RecoveryReplay.localOnly(linked("recoveryStrategy","TARGETED_EVIDENCE","recoveryChangedSourceIds",List.of("foreign-source-id"))),"unknown changed IDs must leave ordinary targeted retrieval available");
+        assertTrue(RecoveryReplay.sources(context,new EvidenceCorpus(cn.bidcheck.compat.Java8Api.listOf(changed)),noModel.identity()).isEmpty());
+        assertFalse(RecoveryReplay.localOnly(linked("recoveryStrategy","TARGETED_EVIDENCE","recoveryChangedSourceIds",cn.bidcheck.compat.Java8Api.listOf("foreign-source-id"))),"unknown changed IDs must leave ordinary targeted retrieval available");
     }
 }

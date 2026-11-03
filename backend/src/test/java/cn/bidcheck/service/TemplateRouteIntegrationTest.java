@@ -30,7 +30,7 @@ class TemplateRouteIntegrationTest {
     @Autowired BidService service;@Autowired Store store;
 
     @Test void ordinaryCheckEntryFreezesAndExecutesTheFixedTemplateWithoutCompilation() throws Exception {
-        String project=service.createProject(Map.of("name","固定模板入口测试")).get("id").toString();
+        String project=service.createProject(cn.bidcheck.compat.Java8Api.mapOf("name", "固定模板入口测试")).get("id").toString();
         String tender=parsed(project,"TENDER","投标文件应提供法定代表人身份证明正文。");
         service.execute(service.extract(project,tender));
         Checkpoint material=configureSourceBoundMaterialCheckpoint(project,tender);
@@ -49,14 +49,14 @@ class TemplateRouteIntegrationTest {
         service.execute(service.task(created.get("taskId").toString()));
 
         Finding finding=((List<Finding>)service.run(created.get("id").toString(),false).get("results")).stream()
-            .filter(value->material.id().equals(value.checkpoint().id())).findFirst().orElseThrow();
+            .filter(value->material.id().equals(value.checkpoint().id())).findFirst().orElseThrow(java.util.NoSuchElementException::new);
         assertTrue(finding.evaluation().method().startsWith("TEMPLATE_FIXED"));
         Map<?,?> trace=(Map<?,?>)finding.assessment().get("templateTrace");assertEquals(0,trace.get("compileRequests"));
         Map<?,?> projection=(Map<?,?>)finding.assessment().get("resultProjection");
-        assertEquals(true,projection.get("finalReconciled"));assertEquals(finding.evaluation().status(),finding.assessment().get("businessPresentation") instanceof Map<?,?> p?p.get("finalStatus"):null);
+        assertEquals(true,projection.get("finalReconciled"));assertEquals(finding.evaluation().status(),finding.assessment().get("businessPresentation") instanceof Map<?,?>?((Map<?,?>) (finding.assessment().get("businessPresentation"))).get("finalStatus"):null);
         Map<String,Object> graph=service.templateDependencyGraph(created.get("id").toString());
         assertEquals("template-dependency-snapshot-v1",graph.get("schemaVersion"));
-        assertTrue(((Map<?,?>)graph.get("reverseNeedIndex")).values().stream().anyMatch(value->value instanceof List<?> ids&&ids.contains(material.id())), graph::toString);
+        assertTrue(((Map<?,?>)graph.get("reverseNeedIndex")).values().stream().anyMatch(value->value instanceof List<?>&&((List<?>) (value)).contains(material.id())), graph::toString);
         assertNotNull(store.mapper().get(ConsistencyRunSupport.reportId(created.get("id").toString())),
             "兼容模板没有冻结 CheckSpec，必须保留旧全文流程");
     }
@@ -86,24 +86,23 @@ class TemplateRouteIntegrationTest {
     }
 
     @Test void sourceLessManualTypedCheckpointDoesNotEnterTheFixedTemplateRoute() throws Exception {
-        String project=service.createProject(Map.of("name","无来源手工项路由测试")).get("id").toString();
+        String project=service.createProject(cn.bidcheck.compat.Java8Api.mapOf("name", "无来源手工项路由测试")).get("id").toString();
         String tender=parsed(project,"TENDER","投标文件应提供法定代表人身份证明正文。");
         service.execute(service.extract(project,tender));
         for(Checkpoint checkpoint:checkpoints(project))service.updateCheckpoint(checkpoint.id(),new Checkpoint(checkpoint.id(),checkpoint.title(),checkpoint.category(),checkpoint.severity(),checkpoint.type(),checkpoint.field(),checkpoint.operator(),checkpoint.expected(),checkpoint.unit(),checkpoint.required(),true,false,checkpoint.source()));
-        Checkpoint manual=service.createCheckpoint(project,Map.of("title","法定代表人身份证明","category","形式检查","severity","HIGH",
-            "type","MATERIAL_EXISTENCE","field","material","operator","EXISTS","expected","法定代表人身份证明","unit","","confirmed",true,"enabled",true));
+        Checkpoint manual=service.createCheckpoint(project,cn.bidcheck.compat.Java8Api.mapOf("title", "法定代表人身份证明", "category", "形式检查", "severity", "HIGH", "type", "MATERIAL_EXISTENCE", "field", "material", "operator", "EXISTS", "expected", "法定代表人身份证明", "unit", "", "confirmed", true, "enabled", true));
         String bid=parsed(project,"BID","法定代表人身份证明\n投标人：海南示例建设有限公司\n特此证明。");
 
         Map<String,Object> created=service.startRun(project,bid);service.execute(service.task(created.get("taskId").toString()));
         Finding finding=((List<Finding>)service.run(created.get("id").toString(),false).get("results")).stream()
-            .filter(value->manual.id().equals(value.checkpoint().id())).findFirst().orElseThrow();
+            .filter(value->manual.id().equals(value.checkpoint().id())).findFirst().orElseThrow(java.util.NoSuchElementException::new);
         assertFalse(finding.evaluation().method().startsWith("TEMPLATE_FIXED"));
         assertFalse(((Map<?,?>)service.templateDependencyGraph(created.get("id").toString()).get("reverseNeedIndex")).values().stream()
-            .anyMatch(value->value instanceof List<?> ids&&ids.contains(manual.id())));
+            .anyMatch(value->value instanceof List<?>&&((List<?>) (value)).contains(manual.id())));
     }
 
     private String projectWithConfirmedMaterialCheck(String name) throws Exception {
-        String project=service.createProject(Map.of("name",name)).get("id").toString();
+        String project=service.createProject(cn.bidcheck.compat.Java8Api.mapOf("name", name)).get("id").toString();
         String tender=parsed(project,"TENDER","投标文件应提供法定代表人身份证明正文。");
         service.execute(service.extract(project,tender));
         configureSourceBoundMaterialCheckpoint(project,tender);
@@ -113,15 +112,14 @@ class TemplateRouteIntegrationTest {
     private Checkpoint configureSourceBoundMaterialCheckpoint(String project,String tender) {
         List<Checkpoint> extracted=checkpoints(project);
         for(Checkpoint checkpoint:extracted)service.updateCheckpoint(checkpoint.id(),new Checkpoint(checkpoint.id(),checkpoint.title(),checkpoint.category(),checkpoint.severity(),checkpoint.type(),checkpoint.field(),checkpoint.operator(),checkpoint.expected(),checkpoint.unit(),checkpoint.required(),true,false,checkpoint.source()));
-        Checkpoint created=service.createCheckpoint(project,Map.of("title","法定代表人身份证明","category","形式检查","severity","HIGH",
-            "type","MATERIAL_EXISTENCE","field","material","operator","EXISTS","expected","法定代表人身份证明","unit","","confirmed",true,"enabled",true));
+        Checkpoint created=service.createCheckpoint(project,cn.bidcheck.compat.Java8Api.mapOf("title", "法定代表人身份证明", "category", "形式检查", "severity", "HIGH", "type", "MATERIAL_EXISTENCE", "field", "material", "operator", "EXISTS", "expected", "法定代表人身份证明", "unit", "", "confirmed", true, "enabled", true));
         Evidence source=new Evidence(tender,"tender.txt",1,"PAGE","投标文件应提供法定代表人身份证明正文。","",1);
         Checkpoint sourceBound=new Checkpoint(created.id(),created.title(),created.category(),created.severity(),created.type(),created.field(),created.operator(),created.expected(),created.unit(),created.required(),created.confirmed(),created.enabled(),source);
         store.save("checkpoint",sourceBound.id(),project,tender,sourceBound);
         return sourceBound;
     }
 
-    @SuppressWarnings("unchecked") private Finding firstFinding(Map<String,Object> run){return ((List<Finding>)service.run(run.get("id").toString(),false).get("results")).stream().findFirst().orElseThrow();}
+    @SuppressWarnings("unchecked") private Finding firstFinding(Map<String,Object> run){return ((List<Finding>)service.run(run.get("id").toString(),false).get("results")).stream().findFirst().orElseThrow(java.util.NoSuchElementException::new);}
 
     @SuppressWarnings("unchecked") private List<Checkpoint> checkpoints(String project){return (List<Checkpoint>)service.detail(project).get("checkpoints");}
     private String parsed(String project,String role,String text) throws Exception {

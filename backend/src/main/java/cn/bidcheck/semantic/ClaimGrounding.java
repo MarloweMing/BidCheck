@@ -35,7 +35,7 @@ final class ClaimGrounding {
         return "";
     }
     static boolean navigationStatement(JsonNode claim){
-        if(!Set.of("TEXT","MATERIAL").contains(claim.path("kind").asText()))return false;
+        if(!cn.bidcheck.compat.Java8Api.setOf("TEXT", "MATERIAL").contains(claim.path("kind").asText()))return false;
         String statement=claim.path("text").asText();
         if(assertsSubstantiveContent(statement)||statement.matches("(?s).*(?:正文|实质性内容|内容齐全|内容完整|全部已提交|全部已提供|满足要求).*"))return false;
         return statement.matches("(?s).*(?:目录|索引).*" )
@@ -66,7 +66,7 @@ final class ClaimGrounding {
             List<Evidence> sources = new ArrayList<>();
             for (JsonNode id : claim.path("evidenceIds")) sources.add(available.get(id.asText()));
             if (claim.path("text").asText().matches("(?s).*(社保|社会保险|养老保险|医疗保险|工伤保险|失业保险).*")) {
-                var companies = COMPANY.matcher(claim.path("text").asText());
+                java.util.regex.Matcher companies = COMPANY.matcher(claim.path("text").asText());
                 while (companies.find()) {
                     String company = companies.group().replaceFirst("^.*?(?:为|在|由)", "");
                     if (sources.stream().noneMatch(e -> contains(e.quote(), company)))
@@ -79,7 +79,7 @@ final class ClaimGrounding {
             }
             if ("RELATION".equals(kind)) {
                 String subject = claim.path("subject").asText(), object = claim.path("object").asText(), relation = claim.path("relation").asText();
-                if(Set.of("ISSUED_COMMITMENT","DECLARATION_BY").contains(relation)){
+                if(cn.bidcheck.compat.Java8Api.setOf("ISSUED_COMMITMENT", "DECLARATION_BY").contains(relation)){
                     boolean proved=sources.stream().anyMatch(e->!DeclarationSourceProof.prove(bid,e,subject,object,available.values()).isEmpty());
                     if(proved)continue;
                     // The legacy no-document path accepts only a single excerpt containing the actual
@@ -91,7 +91,7 @@ final class ClaimGrounding {
                         && sources.stream().anyMatch(e -> contains(e.quote(), subject)) && sources.stream().anyMatch(e -> contains(e.quote(), object))
                         && sources.stream().noneMatch(e -> contains(e.quote(), subject) && contains(e.quote(), object)))
                     return "已找到人员行和单位表头原文，但分处不同片段，同份材料与社保主体关联仍待核。不能据同标题或相邻位置自动认定缴费单位，也不能据此声称主体不符。";
-                if (!meaningful(subject) || !meaningful(object) || relation.isBlank() || relation.length() > 80
+                if (!meaningful(subject) || !meaningful(object) || cn.bidcheck.compat.Java8Api.isBlank(relation) || relation.length() > 80
                         || sources.stream().noneMatch(e -> contains(e.quote(), subject) && contains(e.quote(), object)))
                     return "关系断言缺少可追溯的两端主体或原子关系：同一来源须明确支持subject与object，人员所属单位及单位分工应分开引用，不能仅凭协议推定人员归属。";
                 if (claim.path("text").asText().matches("(?s).*(该单位|该企业|该公司|并且|同时).*(负责|任职|属于|注册|受聘).*"))
@@ -128,18 +128,18 @@ final class ClaimGrounding {
                         || starts.size() != 1 || ends.size() != 1)
                     return "有效期覆盖判断缺少明确的适用期字段、参照日期或其来源，不能仅凭证书有效期推断投标时点有效。";
                 LocalDate start = starts.iterator().next(), end = ends.iterator().next(), referenceDay = referenceDates.iterator().next();
-                List<Evidence> periodSources = sources.stream().filter(e -> fieldDates(e.quote(), field, 2).equals(List.of(start, end))).toList();
+                List<Evidence> periodSources = cn.bidcheck.compat.Java8Api.toList(sources.stream().filter(e -> fieldDates(e.quote(), field, 2).equals(cn.bidcheck.compat.Java8Api.listOf(start, end))));
                 if (periodSources.isEmpty() || end.isBefore(start)) return "有效期起止值没有对应到所引证照的同一适用期字段，不能混用注册期限、使用期限或其他日期。";
                 if (referenceDay.isBefore(start) || referenceDay.isAfter(end)) return "参照日期不在所引用的有效期区间内，模型的覆盖解释缺乏支持，已撤回该解释，请核对适用期及最终时点。";
                 boolean anchored = false;
                 for (JsonNode id : references) {
                     Evidence evidence = available.get(id.asText());
                     if (!ownIds.contains(id.asText()) || evidence == null) return "有效期参照日期未引用实际发送的原文，不能确认适用时点。";
-                    if (fieldDates(evidence.quote(), basis, 1).equals(List.of(referenceDay))) anchored = true;
+                    if (fieldDates(evidence.quote(), basis, 1).equals(cn.bidcheck.compat.Java8Api.listOf(referenceDay))) anchored = true;
                 }
                 if (claim.path("text").asText().matches("(?s).*(投标|递交|截止).*" ) && !basis.matches(".*(截止|递交|提交).*")) anchored = false;
                 if (!anchored) return "参照日期及日期类别没有同时出现在所引原文，不能用签署或编制日期替代未经确认的投标时点。";
-                for (String applicable : List.of("注册有效期", "使用有效期")) {
+                for (String applicable : cn.bidcheck.compat.Java8Api.listOf("注册有效期", "使用有效期")) {
                     for (Evidence certificate : periodSources) if (certificate.quote().contains(applicable)) {
                         boolean covered = false;
                         for (JsonNode other : claims) if ("DATE".equals(other.path("kind").asText()) && applicable.equals(other.path("validityField").asText())) {
@@ -171,7 +171,7 @@ final class ClaimGrounding {
     static boolean amountValueGrounded(String rawValue, List<Evidence> sources) {
         if(rawValue == null || rawValue.length()>200)return false;
         Pattern number=Pattern.compile("(?<![0-9.])[0-9]+(?:,[0-9]{3})*(?:\\.[0-9]+)?(?![0-9.])");
-        var wanted=number.matcher(rawValue.replaceAll("\\s+",""));if(!wanted.find())return false;
+        java.util.regex.Matcher wanted=number.matcher(rawValue.replaceAll("\\s+",""));if(!wanted.find())return false;
         java.math.BigDecimal value;
         try {value=new java.math.BigDecimal(wanted.group().replace(",",""));}catch(NumberFormatException invalid){return false;}
         if(wanted.find())return false;
@@ -179,7 +179,7 @@ final class ClaimGrounding {
             // Do not merge numeric table cells: a month column "4 1501.16"
             // contains the amount 1501.16, not the invented number 41501.16.
             String text=source.quote().replaceAll("(?<=\\d)\\s*([.,])\\s*(?=\\d)","$1");
-            var actual=number.matcher(text);
+            java.util.regex.Matcher actual=number.matcher(text);
             while(actual.find())try{if(new java.math.BigDecimal(actual.group().replace(",","")).compareTo(value)==0)return true;}
             catch(NumberFormatException invalid){/* malformed numeric token does not ground an amount */}
         }
@@ -192,32 +192,32 @@ final class ClaimGrounding {
             if(id.startsWith("C") && source!=null && source.quote().matches("(?s).*(证书|证照|许可证|认证).*(有效期|有效期限).*"))required.add(id);
         }
         for(JsonNode claim:claims) if("DATE".equals(claim.path("kind").asText()) && assertsValidity(claim.path("text").asText())
-                && !claim.path("referenceDate").asText().isBlank() && claim.path("referenceEvidenceIds").isArray() && !claim.path("referenceEvidenceIds").isEmpty()) {
+                && !cn.bidcheck.compat.Java8Api.isBlank(claim.path("referenceDate").asText()) && claim.path("referenceEvidenceIds").isArray() && !claim.path("referenceEvidenceIds").isEmpty()) {
             Set<LocalDate> starts=dates(claim.path("startDate").asText()), ends=dates(claim.path("endDate").asText());
             if(starts.size()!=1 || ends.size()!=1)continue;
             for(JsonNode id:claim.path("evidenceIds")) {
                 Evidence source=available.get(id.asText());
                 if(id.asText().startsWith("C") && source!=null && fieldDates(source.quote(),claim.path("validityField").asText(),2)
-                        .equals(List.of(starts.iterator().next(),ends.iterator().next())))covered.add(id.asText());
+                        .equals(cn.bidcheck.compat.Java8Api.listOf(starts.iterator().next(), ends.iterator().next())))covered.add(id.asText());
             }
         }
         return !covered.isEmpty() && covered.containsAll(required);
     }
     private static boolean boundAmount(List<Evidence> sources, String labels, String rawValue) {
         Pattern numbers = Pattern.compile("[0-9]+(?:,[0-9]{3})*(?:\\.[0-9]+)?");
-        var valueMatch = numbers.matcher(rawValue);if(!valueMatch.find())return false;
+        java.util.regex.Matcher valueMatch = numbers.matcher(rawValue);if(!valueMatch.find())return false;
         java.math.BigDecimal expected;
         try { expected = new java.math.BigDecimal(valueMatch.group().replace(",","")); } catch(NumberFormatException invalid) {return false;}
         if(valueMatch.find())return false;
         for(Evidence source:sources) {
-            var label=Pattern.compile(labels).matcher(source.quote());
+            java.util.regex.Matcher label=Pattern.compile(labels).matcher(source.quote());
             while(label.find()) {
                 String after=source.quote().substring(label.end(),Math.min(source.quote().length(),label.end()+80));
-                var amount=numbers.matcher(after);if(!amount.find())continue;
+                java.util.regex.Matcher amount=numbers.matcher(after);if(!amount.find())continue;
                 String between=after.substring(0,amount.start());
                 if(between.matches("(?s).*(?:总价|总额|总造价|工程造价|设计费|另见|未明确|待核|不详|[；;。]).*"))continue;
                 String tail=after.substring(amount.end());
-                var another=numbers.matcher(tail);
+                java.util.regex.Matcher another=numbers.matcher(tail);
                 // More than one amount in the same unbroken cell/phrase is ambiguous.
                 if(another.find() && !tail.substring(0,another.start()).matches("(?s).*[；;。\\n].*"))continue;
                 try {if(new java.math.BigDecimal(amount.group().replace(",","")).compareTo(expected)==0)return true;}
@@ -237,7 +237,7 @@ final class ClaimGrounding {
             if (sentence.matches("(?s).*(编号|证书信息|截图信息|查询信息|有效期|注册单位|姓名).*(一致|相同).*" )
                     || sentence.matches("(?s).*(一致|相同).*(编号|证书信息|截图信息|查询信息|有效期|注册单位|姓名).*")) {
                 String remaining = sentence;boolean found = false;
-                for (String field : List.of("电子证书编号", "统一社会信用代码", "注册有效期", "使用有效期", "执业印章号", "注册编号", "证书编号", "身份证号", "注册单位", "聘用单位", "有效期", "姓名")) {
+                for (String field : cn.bidcheck.compat.Java8Api.listOf("电子证书编号", "统一社会信用代码", "注册有效期", "使用有效期", "执业印章号", "注册编号", "证书编号", "身份证号", "注册单位", "聘用单位", "有效期", "姓名")) {
                     if (remaining.contains(field)) { fields.add(field);remaining = remaining.replace(field, "");found = true; }
                 }
                 if (!found) fields.add("UNSPECIFIED_FIELDS");
@@ -259,7 +259,7 @@ final class ClaimGrounding {
     }
     static boolean dateValueGrounded(JsonNode claim, List<Evidence> sources) {
         String value = claim.path("value").asText();
-        if (!value.isBlank() && value.length() <= 200 && !SourceRelations.normalized(value).isBlank()) {
+        if (!cn.bidcheck.compat.Java8Api.isBlank(value) && value.length() <= 200 && !cn.bidcheck.compat.Java8Api.isBlank(SourceRelations.normalized(value))) {
             String namedField=claim.path("validityField").asText();Set<LocalDate> values=dates(value);
             if(meaningful(namedField)&&!values.isEmpty())return sources.stream().anyMatch(e->new HashSet<>(DateFieldValues.readAssertion(e.quote(),namedField,values.size())).equals(values));
             return sources.stream().anyMatch(e -> contains(e.quote(), value) || sourceContainsDateValue(e.quote(), value));
@@ -267,11 +267,11 @@ final class ClaimGrounding {
         Set<LocalDate> starts = dates(claim.path("startDate").asText()), ends = dates(claim.path("endDate").asText());
         String field = claim.path("validityField").asText();
         if (starts.size() == 1 && ends.size() == 1) return meaningful(field)
-                && sources.stream().anyMatch(e -> fieldDates(e.quote(), field, 2).equals(List.of(starts.iterator().next(), ends.iterator().next())));
+                && sources.stream().anyMatch(e -> fieldDates(e.quote(), field, 2).equals(cn.bidcheck.compat.Java8Api.listOf(starts.iterator().next(), ends.iterator().next())));
         if (meaningful(field) && starts.isEmpty() && ends.size() == 1)
-            return sources.stream().anyMatch(e -> fieldDates(e.quote(), field, 2).equals(List.of(ends.iterator().next())));
+            return sources.stream().anyMatch(e -> fieldDates(e.quote(), field, 2).equals(cn.bidcheck.compat.Java8Api.listOf(ends.iterator().next())));
         if (meaningful(field) && ends.isEmpty() && starts.size() == 1)
-            return sources.stream().anyMatch(e -> fieldDates(e.quote(), field, 2).equals(List.of(starts.iterator().next())));
+            return sources.stream().anyMatch(e -> fieldDates(e.quote(), field, 2).equals(cn.bidcheck.compat.Java8Api.listOf(starts.iterator().next())));
         Set<YearMonth> monthStarts = months(claim.path("startDate").asText()), monthEnds = months(claim.path("endDate").asText());
         return monthStarts.size() == 1 && monthEnds.size() == 1 && sources.stream().anyMatch(e ->
                 months(e.quote()).containsAll(monthStarts) && months(e.quote()).containsAll(monthEnds));
@@ -280,9 +280,9 @@ final class ClaimGrounding {
         return DateFieldValues.read(quote,field,limit);
     }
     static List<Map<String,Object>> declarationProofs(JsonNode claims,Map<String,Evidence> available,Document bid){
-        List<Map<String,Object>> proofs=new ArrayList<>();for(JsonNode claim:claims)if("RELATION".equals(claim.path("kind").asText())&&Set.of("ISSUED_COMMITMENT","DECLARATION_BY").contains(claim.path("relation").asText()))
-            for(JsonNode id:claim.path("evidenceIds")){var proof=DeclarationSourceProof.prove(bid,available.get(id.asText()),claim.path("subject").asText(),claim.path("object").asText(),available.values());if(!proof.isEmpty()){proofs.add(proof);break;}}
-        return List.copyOf(proofs);
+        List<Map<String,Object>> proofs=new ArrayList<>();for(JsonNode claim:claims)if("RELATION".equals(claim.path("kind").asText())&&cn.bidcheck.compat.Java8Api.setOf("ISSUED_COMMITMENT", "DECLARATION_BY").contains(claim.path("relation").asText()))
+            for(JsonNode id:claim.path("evidenceIds")){java.util.Map<java.lang.String, java.lang.Object> proof=DeclarationSourceProof.prove(bid,available.get(id.asText()),claim.path("subject").asText(),claim.path("object").asText(),available.values());if(!proof.isEmpty()){proofs.add(proof);break;}}
+        return cn.bidcheck.compat.Java8Api.listCopyOf(proofs);
     }
     private static boolean meaningful(String value) { return value.length() <= 200 && SourceRelations.normalized(value).length() >= 2; }
     private static boolean contains(String quote, String value) { return SourceRelations.normalized(quote).contains(SourceRelations.normalized(value)); }
@@ -291,13 +291,13 @@ final class ClaimGrounding {
         return Pattern.compile(Pattern.quote(compact(label)) + "[:：]?" + Pattern.quote(compact(value))).matcher(compact(quote)).find();
     }
     private static Set<LocalDate> dates(String text) {
-        Set<LocalDate> values = new HashSet<>();var match = DATE.matcher(text);
+        Set<LocalDate> values = new HashSet<>();java.util.regex.Matcher match = DATE.matcher(text);
         while (match.find()) try { values.add(LocalDate.of(Integer.parseInt(match.group(1)), Integer.parseInt(match.group(2)), Integer.parseInt(match.group(3)))); }
         catch (RuntimeException invalid) { /* Invalid dates cannot anchor a validity assertion. */ }
         return values;
     }
     private static Set<YearMonth> months(String text) {
-        Set<YearMonth> values = new HashSet<>();var match = MONTH.matcher(text);
+        Set<YearMonth> values = new HashSet<>();java.util.regex.Matcher match = MONTH.matcher(text);
         while(match.find()) try { values.add(YearMonth.of(Integer.parseInt(match.group(1)),Integer.parseInt(match.group(2)))); }
         catch(RuntimeException invalid) { /* Invalid months are never grounding evidence. */ }
         return values;

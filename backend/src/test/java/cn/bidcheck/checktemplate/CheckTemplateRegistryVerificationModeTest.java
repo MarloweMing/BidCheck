@@ -47,9 +47,9 @@ class CheckTemplateRegistryVerificationModeTest {
         return new CheckSpec("spec-" + templateId, 1, "item-" + templateId,
                 "checkpoint-" + templateId, TemplateTypes.Category.QUALIFICATION,
                 TemplateTypes.Purpose.MANDATORY, mode, templateId, "1.0",
-                SubjectSelector.bidder(), Map.of(), Applicability.applies(), standard,
-                List.of(source), List.of(), Map.of(), Map.of(),
-                Map.of("state", "FULL", "complete", true), true,
+                SubjectSelector.bidder(), cn.bidcheck.compat.Java8Api.mapOf(), Applicability.applies(), standard,
+                cn.bidcheck.compat.Java8Api.listOf(source), cn.bidcheck.compat.Java8Api.listOf(), cn.bidcheck.compat.Java8Api.mapOf(), cn.bidcheck.compat.Java8Api.mapOf(),
+                cn.bidcheck.compat.Java8Api.mapOf("state", "FULL", "complete", true), true,
                 Confirmation.legacyConfirmed(), "semantic-" + templateId);
     }
 }

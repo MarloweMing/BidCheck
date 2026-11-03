@@ -39,9 +39,9 @@ public final class ConsistencyDoubtReviewer {
     public Map<String,Object> review(Document doc, Map<String,Object> report, BooleanSupplier reserve,
                                      Consumer<Map<String,Object>> persist) {
         Object previousElapsed=map(report.get("doubtReview")).get("elapsedMillis");
-        long savedMillis=previousElapsed instanceof Number n?Math.max(0,Math.min(n.longValue(),86_400_000)):0;
+        long savedMillis=previousElapsed instanceof Number?Math.max(0,Math.min(((Number) (previousElapsed)).longValue(),86_400_000)):0;
         long started=System.nanoTime()-savedMillis*1_000_000;
-        List<Map<String,Object>> groups=maps(report.get("groups")).stream().map(LinkedHashMap::new).map(v->(Map<String,Object>)v).toList();
+        List<Map<String,Object>> groups=cn.bidcheck.compat.Java8Api.toList(maps(report.get("groups")).stream().map(LinkedHashMap::new).map(v->(Map<String,Object>)v));
         report.put("groups",groups);
         Map<String,Map<String,Object>> occurrences=new HashMap<>();
         for(Map<String,Object> o:maps(report.get("occurrences"))) occurrences.put(string(o,"id"),o);
@@ -58,7 +58,7 @@ public final class ConsistencyDoubtReviewer {
                     Map<String,Object> recovered=new LinkedHashMap<>(prior);
                     recovered.put("status","ERROR"); recovered.put("reason","上次复核在保存收据前中断，实际发送情况未知；不自动重复调用，保留人工复核。");
                     recovered.put("modelRequested",null); recovered.put("requestOutcomeUnknown",true);
-                    recovered.put("model",values("requested",null,"state","UNKNOWN","attempts",List.of()));
+                    recovered.put("model",values("requested",null,"state","UNKNOWN","attempts",cn.bidcheck.compat.Java8Api.listOf()));
                     group.put("targetedReview",recovered); updateSummary(report,started); persist.accept(group);
                 }
                 derived.evaluate(group);
@@ -67,7 +67,7 @@ public final class ConsistencyDoubtReviewer {
             checkInterrupted();
             Map<String,Object> receipt=base(group,doc);
             List<Evidence> originals=evidence(group.get("evidences"));
-            List<Evidence> validOriginal=unique(originals.stream().filter(e->valid(doc,e)).toList());
+            List<Evidence> validOriginal=unique(cn.bidcheck.compat.Java8Api.toList(originals.stream().filter(e->valid(doc,e))));
             int invalidOriginal=(int)originals.stream().filter(e->!valid(doc,e)).count();
             receipt.put("evidences",validOriginal);
             receipt.put("candidateCount",originals.size()); receipt.put("acceptedEvidenceCount",validOriginal.size());
@@ -80,7 +80,7 @@ public final class ConsistencyDoubtReviewer {
             } else if("RULE_COMPARISON_AVAILABLE".equals(triage.get("reasonCode"))) {
                 finish(receipt,"RULE_CONFIRMED","本地规则已形成有来源的差异；保留原结论与双方证据，交由人工确认适用条件。");
             } else if(!Boolean.TRUE.equals(triage.get("eligible"))) {
-                if(Set.of("NO_DISTINCT_VALUES","UNALIGNED_AGGREGATE","ORIGINAL_PACKET_LIMIT").contains(string(triage,"reasonCode"))) {
+                if(cn.bidcheck.compat.Java8Api.setOf("NO_DISTINCT_VALUES", "UNALIGNED_AGGREGATE", "ORIGINAL_PACKET_LIMIT").contains(string(triage,"reasonCode"))) {
                     finish(receipt,"IN_PROGRESS","正在按有来源的对象拆分缺口并定向补查；原始事项保留。");
                     group.put("targetedReview",receipt);updateSummary(report,started);persist.accept(group);
                     try { recoverObjects(doc,group,occurrences,receipt,objectRecovery,reserve,()->{updateSummary(report,started);persist.accept(group);}); }
@@ -105,7 +105,7 @@ public final class ConsistencyDoubtReviewer {
     private void recoverObjects(Document doc,Map<String,Object> group,Map<String,Map<String,Object>> occurrences,
                                 Map<String,Object> receipt,ConsistencyObjectRecovery recovery,BooleanSupplier reserve,Runnable persist)throws IOException {
         Map<String,Object> plan=recovery.plan(group,occurrences);receipt.put("objectRecovery",plan);
-        var sourceScope=cn.bidcheck.verification.engine.DocumentScopeProof.forDocument(doc);
+        cn.bidcheck.verification.engine.DocumentScopeProof.Resolver sourceScope=cn.bidcheck.verification.engine.DocumentScopeProof.forDocument(doc);
         List<Map<String,Object>> attempts=new ArrayList<>();int searches=0,localVerified=0;boolean requested=false;Set<String> searched=new HashSet<>();
         for(Map<String,Object> object:maps(plan.get("objects"))) {
             checkInterrupted();List<Evidence> originals=evidence(object.get("evidences"));
@@ -138,9 +138,9 @@ public final class ConsistencyDoubtReviewer {
                 String anchor=Objects.toString(map(object.get("identityProof")).get("instanceId"),"");
                 // A current project-name comparison uses only original, server-scoped occurrences.
                 // Retrieved snippets remain candidates; they never become model-supplied identity facts.
-                List<Evidence> additions=result.hits().stream().filter(e->valid(doc,e)).filter(e->"CURRENT_PROJECT_NAME".equals(object.get("objectKind"))
+                List<Evidence> additions=cn.bidcheck.compat.Java8Api.toList(result.hits().stream().filter(e->valid(doc,e)).filter(e->"CURRENT_PROJECT_NAME".equals(object.get("objectKind"))
                     ?e.quote().contains("项目名称")&&Boolean.TRUE.equals(sourceScope.currentEvidence(e).get("verifiedCurrent"))
-                    :!anchor.isBlank()&&e.quote().matches("(?s).*(?<![A-Za-z0-9])"+java.util.regex.Pattern.quote(anchor)+"(?![A-Za-z0-9]).*")).toList();
+                    :!cn.bidcheck.compat.Java8Api.isBlank(anchor)&&e.quote().matches("(?s).*(?<![A-Za-z0-9])"+java.util.regex.Pattern.quote(anchor)+"(?![A-Za-z0-9]).*")));
                 List<Evidence> all=new ArrayList<>(originals);all.addAll(additions);List<Evidence> merged=unique(all);
                 object.put("retrieval",values("mode",result.mode(),"query",query,"diagnostics",result.diagnostics(),"candidateCount",result.hits().size(),"acceptedEvidenceCount",additions.size(),"newEvidenceCount",merged.size()-originals.size(),"scope","EXACT_OBJECT_ANCHOR_ONLY"));
                 object.put("evidences",merged);
@@ -171,7 +171,7 @@ public final class ConsistencyDoubtReviewer {
         String query=string(group,"fieldLabel")+" "+string(group,"subject")+" "+string(group,"title")+" "+Objects.toString(group.get("values"),"");
         RetrievalResult result=lookup.search(doc,clip(query,1600),Duration.ofSeconds(12));
         receipt.put("retrieval",values("mode",result.mode(),"diagnostics",result.diagnostics(),"query",clip(query,1600),"scope","GROUP_EVIDENCE_ONLY"));
-        List<Evidence> additions=result.hits().stream().filter(e->valid(doc,e)).toList();
+        List<Evidence> additions=cn.bidcheck.compat.Java8Api.toList(result.hits().stream().filter(e->valid(doc,e)));
         List<Evidence> all=new ArrayList<>(originals);all.addAll(additions);
         List<Evidence> packet=unique(all);
         int rawCount=((Number)receipt.get("candidateCount")).intValue()+result.hits().size();
@@ -179,11 +179,11 @@ public final class ConsistencyDoubtReviewer {
         receipt.put("acceptedEvidenceCount",packet.size());
         receipt.put("rejectedEvidenceCount",result.hits().size()-additions.size());
         receipt.put("deduplicatedEvidenceCount",rawCount-(result.hits().size()-additions.size())-packet.size());
-        receipt.put("evidences",List.copyOf(packet));
+        receipt.put("evidences",cn.bidcheck.compat.Java8Api.listCopyOf(packet));
         List<Map<String,Object>> sides=new ArrayList<>();
-        if(group.get("occurrenceIds") instanceof List<?> ids) for(Object id:ids) {Map<String,Object> o=occurrences.get(id.toString());if(o!=null)sides.add(o);}
+        if(group.get("occurrenceIds") instanceof List<?>) for(Object id:((List<?>) (group.get("occurrenceIds")))) {Map<String,Object> o=occurrences.get(id.toString());if(o!=null)sides.add(o);}
         Set<String> distinctValues=new LinkedHashSet<>();
-        for(Map<String,Object> o:sides) if(!string(o,"value").isBlank()) distinctValues.add(string(o,"value"));
+        for(Map<String,Object> o:sides) if(!cn.bidcheck.compat.Java8Api.isBlank(string(o,"value"))) distinctValues.add(string(o,"value"));
         if(distinctValues.size()<2 || sides.stream().anyMatch(o->!valid(doc,toEvidence(o.get("evidence"))))) {
             finish(receipt,"EVIDENCE_INSUFFICIENT","已补充候选原文，但尚未取得两个可追溯的不同值或完整比较来源；不调用模型猜测缺失关系。"); return;
         }
@@ -196,10 +196,10 @@ public final class ConsistencyDoubtReviewer {
             +"。必须引用原始比较双方；范围或身份不能对齐时保留待核；不得凭同名、默认归属或相似度确认相同主体，不得猜改OCR。";
         Checkpoint cp=new Checkpoint("consistency-doubt-"+string(group,"id"),clip(string(group,"title"),250),"全文信息检查","HIGH",
             "SEMANTIC_RESPONSE",string(group,"field"),"REVIEW",expected,"",true,true,true,null);
-        SemanticAssessment assessment=judge.assess(cp,doc,List.copyOf(packet),()->{checkInterrupted();return reserve.getAsBoolean();});
+        SemanticAssessment assessment=judge.assess(cp,doc,cn.bidcheck.compat.Java8Api.listCopyOf(packet),()->{checkInterrupted();return reserve.getAsBoolean();});
         Map<String,Object> audit=assessment.audit(), model=map(audit.get("model"));
         receipt.put("model",model); receipt.put("modelRequested",Boolean.TRUE.equals(model.get("requested")));
-        receipt.put("decision",model.getOrDefault("decision","UNKNOWN")); receipt.put("guards",audit.getOrDefault("guards",List.of()));
+        receipt.put("decision",model.getOrDefault("decision","UNKNOWN")); receipt.put("guards",audit.getOrDefault("guards",cn.bidcheck.compat.Java8Api.listOf()));
         Evaluation evaluation=assessment.evaluation();
         List<Evidence> citedEvidence=evaluation.evidences();
         boolean bothSides=distinctValues.stream().allMatch(value->sides.stream().filter(o->value.equals(string(o,"value")))
@@ -210,7 +210,7 @@ public final class ConsistencyDoubtReviewer {
             receipt.put("guards",guards);
             evaluation=new Evaluation("UNDETERMINED","模型建议未覆盖原始差异双方，已撤回建议，需人工核对。","对照每个原始值及其上下文。",originals,0,"CONSISTENCY_REVIEW_GUARD");
             Map<String,Object> guarded=new LinkedHashMap<>(model);
-            List<Map<String,Object>> attempts=maps(model.get("attempts")).stream().map(LinkedHashMap::new).map(v->(Map<String,Object>)v).toList();
+            List<Map<String,Object>> attempts=cn.bidcheck.compat.Java8Api.toList(maps(model.get("attempts")).stream().map(LinkedHashMap::new).map(v->(Map<String,Object>)v));
             if(!attempts.isEmpty())attempts.get(attempts.size()-1).put("state","GUARDED_OUTPUT");
             guarded.put("attempts",attempts);receipt.put("model",guarded);
         }
@@ -223,14 +223,14 @@ public final class ConsistencyDoubtReviewer {
     private static Map<String,Object> base(Map<String,Object> group,Document doc) {
         return values("policyVersion",VERSION,"documentId",doc.id(),"documentVersion",doc.version(),"documentHash",doc.sha256(),
             "admitted",false,"candidateCount",0,"acceptedEvidenceCount",0,"rejectedEvidenceCount",0,"deduplicatedEvidenceCount",0,
-            "missingDimensions",missing(group),"modelRequested",false,"decision","NOT_REQUESTED","evidences",List.of(),
-            "retrieval",Map.of("mode","NOT_RUN"),"model",Map.of("attempts",List.of(),"requested",false),"guards",List.of());
+            "missingDimensions",missing(group),"modelRequested",false,"decision","NOT_REQUESTED","evidences",cn.bidcheck.compat.Java8Api.listOf(),
+            "retrieval",cn.bidcheck.compat.Java8Api.mapOf("mode", "NOT_RUN"),"model",cn.bidcheck.compat.Java8Api.mapOf("attempts", cn.bidcheck.compat.Java8Api.listOf(), "requested", false),"guards",cn.bidcheck.compat.Java8Api.listOf());
     }
     private static Map<String,Object> triage(Document doc,Map<String,Object> group,Map<String,Map<String,Object>> occurrences,
                                               List<Evidence> originals,int invalidOriginal) {
-        List<?> ids=group.get("occurrenceIds") instanceof List<?> values?values:List.of();
-        List<Map<String,Object>> sides=ids.stream().map(id->occurrences.get(Objects.toString(id,""))).filter(Objects::nonNull).toList();
-        long distinct=sides.stream().map(o->string(o,"value")).filter(v->!v.isBlank()).distinct().count();
+        List<?> ids=group.get("occurrenceIds") instanceof List<?>?((List<?>) (group.get("occurrenceIds"))):cn.bidcheck.compat.Java8Api.listOf();
+        List<Map<String,Object>> sides=cn.bidcheck.compat.Java8Api.toList(ids.stream().map(id->occurrences.get(Objects.toString(id,""))).filter(Objects::nonNull));
+        long distinct=sides.stream().map(o->string(o,"value")).filter(v->!cn.bidcheck.compat.Java8Api.isBlank(v)).distinct().count();
         Map<String,Object> result=values("eligible",false,"reasonCode","COMPARABLE_VALUES","originalEvidenceCount",originals.size(),
             "occurrenceCount",sides.size(),"distinctValueCount",distinct,"scope","LOCAL_COMPARISON_PREREQUISITES",
             "humanConfirmationRequired",true);
@@ -248,7 +248,7 @@ public final class ConsistencyDoubtReviewer {
             code="NO_DISTINCT_VALUES";reason="当前仅有一种可追溯取值，尚无两处不同值可比较；需补核对象或范围依据，未启动检索或模型。";
         } else if(originals.size()>24||originals.stream().anyMatch(e->e.quote().length()>1800)) {
             code="ORIGINAL_PACKET_LIMIT";reason="该组汇集的原文较多，需先按具体项目、主体和口径拆分；完整证据已保留，未截断后交给模型判断。";
-        } else if("EVIDENCE_INSUFFICIENT".equals(group.get("status"))&&!string(map(group.get("comparisonContext")),"aggregation").isBlank()) {
+        } else if("EVIDENCE_INSUFFICIENT".equals(group.get("status"))&&!cn.bidcheck.compat.Java8Api.isBlank(string(map(group.get("comparisonContext")),"aggregation"))) {
             code="UNALIGNED_AGGREGATE";reason="这是按缺口汇总的待核材料，尚未形成同一对象、项目及口径的比较双方；请先核对归属依据，未将不同材料强行交给模型比较。";
         } else {
             code="COMPARABLE_VALUES";reason="原始比较双方及取值已通过本地核对，将继续定向补检与复核，不因组数或阶段时长提前暂缓。";result.put("eligible",true);
@@ -257,11 +257,11 @@ public final class ConsistencyDoubtReviewer {
     }
     private static List<String> missing(Map<String,Object> group) {
         LinkedHashSet<String> gaps=new LinkedHashSet<>();
-        if(group.get("missingContext") instanceof List<?> values) values.forEach(v->gaps.add(v.toString()));
+        if(group.get("missingContext") instanceof List<?>) ((List<?>) (group.get("missingContext"))).forEach(v->gaps.add(v.toString()));
         Map<String,Object> context=map(group.get("comparisonContext"));
-        for(String key:List.of("subject","scope")) if(string(context,key).isBlank()||"UNRESOLVED".equals(context.get(key))) gaps.add(key.equals("subject")?"可确认的比较对象":"可确认的项目范围");
+        for(String key:cn.bidcheck.compat.Java8Api.listOf("subject", "scope")) if(cn.bidcheck.compat.Java8Api.isBlank(string(context,key))||"UNRESOLVED".equals(context.get(key))) gaps.add(key.equals("subject")?"可确认的比较对象":"可确认的项目范围");
         if("UNRESOLVED".equals(group.get("contextStatus"))) gaps.add("上下文归属依据");
-        return List.copyOf(gaps);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(gaps);
     }
     private static void finish(Map<String,Object> receipt,String status,String reason) {receipt.put("status",status);receipt.put("reason",reason);}
     public static void updateSummary(Map<String,Object> report,long started) {
@@ -287,13 +287,13 @@ public final class ConsistencyDoubtReviewer {
             "unlimitedGroups",true,"unlimitedModelAttempts",true,"unlimitedAdmissionTime",true,"processAllEligibleGroups",true,
             "boundary","所有组先核对本地比较前提，满足前提的组逐一处理，不设置组数、模型调用总量或阶段时长上限。缺少比较双方或归属依据的材料明确待核；单组输入大小、单次检索12秒、请求超时与重试上限、来源校验和中断保护仍然生效。阶段处理数不是业务复核完成数；原结论和模型建议均需人工确认。中断预约与实际HTTP分别统计。"));
     }
-    private static boolean valid(Document doc,Evidence e) {return e!=null&&doc.id().equals(e.documentId())&&e.quote()!=null&&!e.quote().isBlank()
+    private static boolean valid(Document doc,Evidence e) {return e!=null&&doc.id().equals(e.documentId())&&e.quote()!=null&&!cn.bidcheck.compat.Java8Api.isBlank(e.quote())
         &&doc.pages().stream().anyMatch(p->p.number()==e.page()&&Objects.equals(p.locationType(),e.locationType())&&p.text()!=null&&p.text().contains(e.quote()));}
     private static boolean covers(Evidence cited,Evidence original) {return cited!=null&&original!=null&&cited.documentId().equals(original.documentId())&&cited.page()==original.page()
         &&Objects.equals(cited.locationType(),original.locationType())&&cited.quote().contains(original.quote());}
-    private static Evidence toEvidence(Object raw) {try{return raw instanceof Evidence e?e:JSON.convertValue(raw,Evidence.class);}catch(IllegalArgumentException invalid){return null;}}
-    private static List<Evidence> unique(List<Evidence> input) {Map<String,Evidence> out=new LinkedHashMap<>();for(Evidence e:input)out.putIfAbsent(e.documentId()+"|"+e.locationType()+"|"+e.page()+"|"+e.quote(),e);return List.copyOf(out.values());}
-    private static List<Evidence> evidence(Object raw) {if(!(raw instanceof List<?> list))return List.of();return list.stream().map(ConsistencyDoubtReviewer::toEvidence).toList();}
+    private static Evidence toEvidence(Object raw) {try{return raw instanceof Evidence?((Evidence) (raw)):JSON.convertValue(raw,Evidence.class);}catch(IllegalArgumentException invalid){return null;}}
+    private static List<Evidence> unique(List<Evidence> input) {Map<String,Evidence> out=new LinkedHashMap<>();for(Evidence e:input)out.putIfAbsent(e.documentId()+"|"+e.locationType()+"|"+e.page()+"|"+e.quote(),e);return cn.bidcheck.compat.Java8Api.listCopyOf(out.values());}
+    private static List<Evidence> evidence(Object raw) {if(!(raw instanceof List<?>))return cn.bidcheck.compat.Java8Api.listOf();return cn.bidcheck.compat.Java8Api.toList(((List<?>) (raw)).stream().map(ConsistencyDoubtReviewer::toEvidence));}
     private static long elapsed(long started) {return (System.nanoTime()-started)/1_000_000;}
     private static String clip(String text,int limit) {return text.substring(0,Math.min(text.length(),limit));}
     private static void checkInterrupted() {if(Thread.currentThread().isInterrupted())throw new CancellationException("Doubt review interrupted");}

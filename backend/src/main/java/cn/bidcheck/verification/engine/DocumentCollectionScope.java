@@ -7,8 +7,44 @@ import static cn.bidcheck.verification.engine.VerificationTypes.clean;
 
 /** Narrow, server-derived scope proof for a bounded commitment collection, never a personnel relation. */
 final class DocumentCollectionScope {
-    private record Navigation(String label,String title,int page,Page source,String quote,boolean root) { }
-    private record Proof(int first,int last,String project,String projectNumber,List<Map<String,Object>> anchors) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Navigation {
+        private final String label;
+        private final String title;
+        private final int page;
+        private final Page source;
+        private final String quote;
+        private final boolean root;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Navigation(@com.fasterxml.jackson.annotation.JsonProperty("label") String label, @com.fasterxml.jackson.annotation.JsonProperty("title") String title, @com.fasterxml.jackson.annotation.JsonProperty("page") int page, @com.fasterxml.jackson.annotation.JsonProperty("source") Page source, @com.fasterxml.jackson.annotation.JsonProperty("quote") String quote, @com.fasterxml.jackson.annotation.JsonProperty("root") boolean root) { this.label = label; this.title = title; this.page = page; this.source = source; this.quote = quote; this.root = root; }
+        public String label() { return label; }
+        public String title() { return title; }
+        public int page() { return page; }
+        public Page source() { return source; }
+        public String quote() { return quote; }
+        public boolean root() { return root; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Navigation that = (Navigation) other; return java.util.Objects.equals(this.label, that.label) && java.util.Objects.equals(this.title, that.title) && java.util.Objects.equals(this.page, that.page) && java.util.Objects.equals(this.source, that.source) && java.util.Objects.equals(this.quote, that.quote) && java.util.Objects.equals(this.root, that.root); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.label); hash = 31 * hash + java.util.Objects.hashCode(this.title); hash = 31 * hash + java.util.Objects.hashCode(this.page); hash = 31 * hash + java.util.Objects.hashCode(this.source); hash = 31 * hash + java.util.Objects.hashCode(this.quote); hash = 31 * hash + java.util.Objects.hashCode(this.root); return hash; }
+        @Override public String toString() { return "Navigation[" + "label=" + label + ", title=" + title + ", page=" + page + ", source=" + source + ", quote=" + quote + ", root=" + root + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Proof {
+        private final int first;
+        private final int last;
+        private final String project;
+        private final String projectNumber;
+        private final List<Map<String,Object>> anchors;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Proof(@com.fasterxml.jackson.annotation.JsonProperty("first") int first, @com.fasterxml.jackson.annotation.JsonProperty("last") int last, @com.fasterxml.jackson.annotation.JsonProperty("project") String project, @com.fasterxml.jackson.annotation.JsonProperty("projectNumber") String projectNumber, @com.fasterxml.jackson.annotation.JsonProperty("anchors") List<Map<String,Object>> anchors) { this.first = first; this.last = last; this.project = project; this.projectNumber = projectNumber; this.anchors = anchors; }
+        public int first() { return first; }
+        public int last() { return last; }
+        public String project() { return project; }
+        public String projectNumber() { return projectNumber; }
+        public List<Map<String,Object>> anchors() { return anchors; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Proof that = (Proof) other; return java.util.Objects.equals(this.first, that.first) && java.util.Objects.equals(this.last, that.last) && java.util.Objects.equals(this.project, that.project) && java.util.Objects.equals(this.projectNumber, that.projectNumber) && java.util.Objects.equals(this.anchors, that.anchors); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.first); hash = 31 * hash + java.util.Objects.hashCode(this.last); hash = 31 * hash + java.util.Objects.hashCode(this.project); hash = 31 * hash + java.util.Objects.hashCode(this.projectNumber); hash = 31 * hash + java.util.Objects.hashCode(this.anchors); return hash; }
+        @Override public String toString() { return "Proof[" + "first=" + first + ", last=" + last + ", project=" + project + ", projectNumber=" + projectNumber + ", anchors=" + anchors + "]"; }
+ }
     private final Map<Integer,Proof> approved=new HashMap<>();
     private static final Pattern NAVIGATION=Pattern.compile("^((?:[0-9]+(?:\\.[0-9]+)*[.、]?|[（(][0-9]+[）)]))\\s*([^\\n]{2,65}?)\\s*[.．…·]{3,}\\s*([0-9]+)\\s*$");
     private static final Pattern HISTORICAL=Pattern.compile("(?m)^\\s*(?:[0-9.、（）()一二三四五六七八九十]*\\s*)?(?:历史项目|类似项目业绩|已完成项目|工作经历|工作履历|主要工作经历|合同协议书|填写示例|填写样例|仅供参考|示范文本)(?:\\s|[:：]|$)");
@@ -17,7 +53,7 @@ final class DocumentCollectionScope {
     DocumentCollectionScope(Document document){
         if(document==null||!"BID".equals(document.role())||document.pages()==null)return;
         String project=coverProject(document),number=coverNumber(document),bidder=coverBidder(document);
-        if(project.isBlank()||number.isBlank()||bidder.isBlank())return;
+        if(cn.bidcheck.compat.Java8Api.isBlank(project)||cn.bidcheck.compat.Java8Api.isBlank(number)||cn.bidcheck.compat.Java8Api.isBlank(bidder))return;
         Map<Integer,Page> pages=new HashMap<>();Set<Integer> duplicate=new HashSet<>();
         for(Page p:document.pages())if("PAGE".equals(p.locationType())&&pages.putIfAbsent(p.number(),p)!=null)duplicate.add(p.number());
         List<Navigation> nav=navigation(document);
@@ -28,10 +64,10 @@ final class DocumentCollectionScope {
             // Unbounded inheritance is prohibited. A second independently mapped same-level section is required.
             Navigation next=nav.stream().filter(n->n.root()&&n.page()==end).findFirst().orElse(null);
             if(next==null||end-entry.page()>24||!mapped(next,pages.get(end)))continue;
-            List<Navigation> children=nav.stream().filter(n->!n.root()&&n.page()>=entry.page()&&n.page()<end&&n.title().contains("承诺")).toList();
+            List<Navigation> children=cn.bidcheck.compat.Java8Api.toList(nav.stream().filter(n->!n.root()&&n.page()>=entry.page()&&n.page()<end&&n.title().contains("承诺")));
             if(children.size()<2||children.stream().anyMatch(n->!mapped(n,pages.get(n.page()))))continue;
             List<Map<String,Object>> anchors=new ArrayList<>();anchors.add(anchor(document.pages().get(0),"COVER_PROJECT_NUMBER_BIDDER",project+" / "+number+" / "+bidder));
-            anchors.add(anchor(entry.source(),"NAVIGATION",entry.quote()));anchors.add(anchor(first,"SECTION_BODY",first.text().lines().limit(3).reduce("",(a,b)->a+"\n"+b)));
+            anchors.add(anchor(entry.source(),"NAVIGATION",entry.quote()));anchors.add(anchor(first,"SECTION_BODY",cn.bidcheck.compat.Java8Extras.lines(first.text()).limit(3).reduce("",(a,b)->a+"\n"+b)));
             Page declaration=null;
             for(int p=entry.page()-3;p<entry.page();p++){
                 Page candidate=pages.get(p);if(candidate==null||!printedMatches(candidate)||unsafe(candidate.text(),project,number))continue;
@@ -55,23 +91,21 @@ final class DocumentCollectionScope {
             anchors.add(anchor(corroboration,"PROJECT_AND_NUMBER_CORROBORATION",project+" / "+number));
             anchors.add(anchor(pages.get(end),"NEXT_SECTION_BOUNDARY",next.label()+next.title()));
             for(Navigation child:children)anchors.add(anchor(pages.get(child.page()),"MAPPED_CHILD_TITLE",child.label()+child.title()));
-            Proof proof=new Proof(entry.page(),end-1,project,number,List.copyOf(anchors));
+            Proof proof=new Proof(entry.page(),end-1,project,number,cn.bidcheck.compat.Java8Api.listCopyOf(anchors));
             for(int p=entry.page();p<end;p++)approved.put(p,proof);
         }
     }
 
     Map<String,Object> currentEvidence(Page page,String quote){
-        Proof proof=approved.get(page.number());if(proof==null||!"PAGE".equals(page.locationType()))return Map.of();
+        Proof proof=approved.get(page.number());if(proof==null||!"PAGE".equals(page.locationType()))return cn.bidcheck.compat.Java8Api.mapOf();
         // A result is only a document-range claim. It cannot bind staff to an employer, role or consortium.
-        return Map.of("status","CURRENT_BID_SECTION","projectName",proof.project(),"projectNumber",proof.projectNumber(),
-            "sectionStart",proof.first(),"sectionEnd",proof.last(),"anchors",proof.anchors(),"derivedBy","SERVER_COLLECTION_SECTION_SCOPE",
-            "boundary","仅证明当前承诺文书范围；不证明签章真实性、承诺是否履行或人员任职关系");
+        return cn.bidcheck.compat.Java8Api.mapOf("status", "CURRENT_BID_SECTION", "projectName", proof.project(), "projectNumber", proof.projectNumber(), "sectionStart", proof.first(), "sectionEnd", proof.last(), "anchors", proof.anchors(), "derivedBy", "SERVER_COLLECTION_SECTION_SCOPE", "boundary", "仅证明当前承诺文书范围；不证明签章真实性、承诺是否履行或人员任职关系");
     }
     private static List<Navigation> navigation(Document doc){
         List<Navigation> result=new ArrayList<>();
-        for(Page page:doc.pages().stream().limit(10).toList()){
-            String text=Objects.toString(page.text(),"");if(!text.contains("目录")&&text.lines().filter(line->line.matches(".*[.．…·]{3,}.*")).count()<2)continue;
-            for(String line:text.split("\\R")){Matcher m=NAVIGATION.matcher(line.strip());if(m.matches()){
+        for(Page page:cn.bidcheck.compat.Java8Api.toList(doc.pages().stream().limit(10))){
+            String text=Objects.toString(page.text(),"");if(!text.contains("目录")&&cn.bidcheck.compat.Java8Extras.lines(text).filter(line->line.matches(".*[.．…·]{3,}.*")).count()<2)continue;
+            for(String line:text.split("\\R")){Matcher m=NAVIGATION.matcher(cn.bidcheck.compat.Java8Api.strip(line));if(m.matches()){
                 String label=clean(m.group(1)),title=title(m.group(2));boolean root=label.matches("[0-9]+[.、]?");
                 result.add(new Navigation(label,title,Integer.parseInt(m.group(3)),page,line,root));
             }}
@@ -80,10 +114,10 @@ final class DocumentCollectionScope {
     private static boolean mapped(Navigation nav,Page page){
         if(page==null||!printedMatches(page))return false;
         String expected=title(nav.label()+nav.title());
-        return page.text().lines().limit(6).map(DocumentCollectionScope::title).anyMatch(expected::equals);
+        return cn.bidcheck.compat.Java8Extras.lines(page.text()).limit(6).map(DocumentCollectionScope::title).anyMatch(expected::equals);
     }
     private static boolean printedMatches(Page page){
-        List<String> lines=Objects.toString(page.text(),"").lines().map(String::strip).filter(s->!s.isBlank()).toList();
+        List<String> lines=cn.bidcheck.compat.Java8Api.toList(cn.bidcheck.compat.Java8Extras.lines(Objects.toString(page.text(),"")).map(cn.bidcheck.compat.Java8Api::strip).filter(s->!cn.bidcheck.compat.Java8Api.isBlank(s)));
         return !lines.isEmpty()&&lines.get(lines.size()-1).equals(Integer.toString(page.number()));
     }
     private static boolean unsafe(String value,String project,String number){
@@ -95,18 +129,18 @@ final class DocumentCollectionScope {
         return false;
     }
     private static String coverProject(Document doc){
-        for(Page page:doc.pages().stream().limit(3).toList()){
+        for(Page page:cn.bidcheck.compat.Java8Api.toList(doc.pages().stream().limit(3))){
             String text=Objects.toString(page.text(),"");if(!text.contains("投标文件")||text.matches("(?s).*[.．…·]{3,}.*"))continue;
-            for(String line:text.split("\\R"))if(line.strip().matches("[（(].{8,200}(?:工程|项目)[）)]"))return normalizeProject(line);
+            for(String line:text.split("\\R"))if(cn.bidcheck.compat.Java8Api.strip(line).matches("[（(].{8,200}(?:工程|项目)[）)]"))return normalizeProject(line);
         }return "";
     }
-    private static String coverNumber(Document doc){for(Page page:doc.pages().stream().limit(3).toList())if(Objects.toString(page.text(),"").contains("投标文件")){
+    private static String coverNumber(Document doc){for(Page page:cn.bidcheck.compat.Java8Api.toList(doc.pages().stream().limit(3)))if(Objects.toString(page.text(),"").contains("投标文件")){
         Matcher m=Pattern.compile("招标项目编号[:：][（(]?([A-Za-z0-9-]+)").matcher(clean(page.text()));if(m.find())return m.group(1);
     }return "";}
-    private static String coverBidder(Document doc){for(Page page:doc.pages().stream().limit(3).toList())if(Objects.toString(page.text(),"").contains("投标文件")){
+    private static String coverBidder(Document doc){for(Page page:cn.bidcheck.compat.Java8Api.toList(doc.pages().stream().limit(3)))if(Objects.toString(page.text(),"").contains("投标文件")){
         Matcher m=Pattern.compile("(?m)^投标人名称[:：][（(]盖章[）)]([^\\n]+)$").matcher(page.text());if(m.find())return clean(m.group(1));
     }return "";}
     private static String normalizeProject(String text){return clean(text).replaceAll("^[（(]|[）)]$","");}
     private static String title(String text){return clean(text).replace("★","").replace("（","(").replace("）",")");}
-    private static Map<String,Object> anchor(Page page,String kind,String quote){return Map.of("page",page.number(),"locationType",page.locationType(),"kind",kind,"quote",quote);}
+    private static Map<String,Object> anchor(Page page,String kind,String quote){return cn.bidcheck.compat.Java8Api.mapOf("page", page.number(), "locationType", page.locationType(), "kind", kind, "quote", quote);}
 }

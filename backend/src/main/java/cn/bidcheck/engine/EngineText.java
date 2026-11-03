@@ -13,13 +13,13 @@ final class EngineText {
     static final String ENGINE_PATTERN = "(?i)(?:发动机号|发动机号码)\\s*[:：=]?\\s*([A-Z0-9-]{4,24})";
     static final String PLATE_PATTERN = "(?:车牌号(?:码)?|号牌号码|车牌)\\s*[:：=]?\\s*([\\u4e00-\\u9fff][A-Za-z][A-Za-z0-9·・]{5,7})";
     static final Pattern DATE = Pattern.compile("(20\\d{2})[年/.-](\\d{1,2})[月/.-](\\d{1,2})日?");
-    static final List<String> MATERIALS = List.of("营业执照", "授权委托书", "法定代表人身份证明", "财务审计报告", "财务报告", "纳税证明", "社保证明", "资质证书", "业绩合同", "投标保证金", "投标函", "车辆行驶证");
+    static final List<String> MATERIALS = cn.bidcheck.compat.Java8Api.listOf("营业执照", "授权委托书", "法定代表人身份证明", "财务审计报告", "财务报告", "纳税证明", "社保证明", "资质证书", "业绩合同", "投标保证金", "投标函", "车辆行驶证");
     private EngineText() {}
 
     static String clean(String text) { return text == null ? "" : text.replace('\u00a0', ' ').replace('：', ':').trim(); }
     static String normalized(String text) { return clean(text).replaceAll("[\\s·・]", "").toUpperCase(Locale.ROOT); }
     // Quotes must retain original punctuation; normalize extracted values separately.
-    static List<String> lines(Page page) { return Arrays.stream((page.text()==null?"":page.text()).split("\\R")).map(String::trim).filter(s -> !s.isBlank()).toList(); }
+    static List<String> lines(Page page) { return cn.bidcheck.compat.Java8Api.toList(Arrays.stream((page.text()==null?"":page.text()).split("\\R")).map(String::trim).filter(s -> !cn.bidcheck.compat.Java8Api.isBlank(s))); }
     static Evidence evidence(Document doc, Page page, int line, String quote) {
         return new Evidence(doc.id(), doc.name(), page.number(), page.locationType(), quote, "p"+page.number()+"-l"+line,
                 page.parser() != null && page.parser().contains("OCR") ? 0d : 1.0d);
@@ -38,7 +38,8 @@ final class EngineText {
             if (d>=0) { digit=d; continue; }
             if (c=='两') { digit=2; continue; }
             if (c=='〇') { digit=0; continue; }
-            long unit=switch(c) { case '十'->10; case '百'->100; case '千'->1000; case '万'->10000; case '亿'->100000000; default->throw new IllegalArgumentException("无法识别数值"); };
+            long unit;
+switch (c) {case '十':unit = 10; break;case '百':unit = 100; break;case '千':unit = 1000; break;case '万':unit = 10000; break;case '亿':unit = 100000000; break;default:throw new IllegalArgumentException("无法识别数值");}
             if(unit<10000) { section+=(digit==0 ? 1 : digit)*unit; digit=0; }
             else { section+=digit; total+=(section==0 ? 1 : section)*unit; section=0; digit=0; }
         }
@@ -66,9 +67,9 @@ final class EngineText {
     }
     static boolean incomplete(Document document) {
         if (deferred(document)) return true;
-        String warnings=String.join(" ", (document.warnings()==null ? List.<String>of() : document.warnings()).stream().filter(EngineText::needsCompletenessCheck).toList());
+        String warnings=String.join(" ", cn.bidcheck.compat.Java8Api.toList((document.warnings()==null ? cn.bidcheck.compat.Java8Api.<String>listOf() : document.warnings()).stream().filter(EngineText::needsCompletenessCheck)));
         if (warnings.matches("(?is).*(OCR|扫描|未识别|未解析|无法解析|解析失败|不完整|图片未|图像未|无可提取|无可复制|未提取).*")) return true;
-        return document.pages()==null || document.pages().isEmpty() || document.pages().stream().anyMatch(p -> p.text()==null || p.text().isBlank() || (p.warning()!=null && needsCompletenessCheck(p.warning()) && p.warning().matches("(?is).*(OCR|扫描|未识别|未解析|无法|失败|无文本|图片).*")));
+        return document.pages()==null || document.pages().isEmpty() || document.pages().stream().anyMatch(p -> p.text()==null || cn.bidcheck.compat.Java8Api.isBlank(p.text()) || (p.warning()!=null && needsCompletenessCheck(p.warning()) && p.warning().matches("(?is).*(OCR|扫描|未识别|未解析|无法|失败|无文本|图片).*")));
     }
     private static boolean needsCompletenessCheck(String warning) {
         return warning==null || !warning.contains("[OCR已识别]") || ocrIncomplete(warning);

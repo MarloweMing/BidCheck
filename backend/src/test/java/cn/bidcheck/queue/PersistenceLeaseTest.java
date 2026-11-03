@@ -18,7 +18,7 @@ class PersistenceLeaseTest {
         new ResourceDatabasePopulator(new ClassPathResource("schema.sql")).execute(source);
         SqlSessionFactoryBean factory=new SqlSessionFactoryBean();factory.setDataSource(source);
         factory.setDatabaseIdProvider(new DatabaseConfiguration().databaseIdProvider());
-        factory.setMapperLocations(new ClassPathResource("mappers/RecordMapper.xml"));
+        factory.setMapperLocations(new org.springframework.core.io.Resource[]{new ClassPathResource("mappers/RecordMapper.xml")});
         return factory.getObject().openSession(true);
     }
     private String pending(RecordMapper mapper) {
@@ -26,7 +26,7 @@ class PersistenceLeaseTest {
         mapper.insertTask(t);return t.id;
     }
     private void expire(SqlSession session,String id) throws Exception {
-        try(var sql=session.getConnection().prepareStatement("UPDATE qc_task SET lease_until=? WHERE id=?")) { sql.setLong(1,System.currentTimeMillis()-1);sql.setString(2,id);sql.executeUpdate(); }
+        try(java.sql.PreparedStatement sql=session.getConnection().prepareStatement("UPDATE qc_task SET lease_until=? WHERE id=?")) { sql.setLong(1,System.currentTimeMillis()-1);sql.setString(2,id);sql.executeUpdate(); }
         session.clearCache();
     }
     private Stored record(String id,String kind,String projectId,String parentId,long createdAt) {
@@ -100,7 +100,7 @@ class PersistenceLeaseTest {
     @Test void batchInsertAndSummaryQueriesPreserveProjectAndParentScope() throws Exception {
         try(SqlSession session=database()) {
             RecordMapper mapper=session.getMapper(RecordMapper.class);
-            mapper.insertRecords(List.of(record("old","fact","project-a","doc-a",1),record("new","fact","project-a","doc-a",2),record("other-document","fact","project-a","doc-b",3),record("other-project","fact","project-b","doc-a",4),record("other-kind","snapshot","project-a","doc-a",5)));
+            mapper.insertRecords(cn.bidcheck.compat.Java8Api.listOf(record("old","fact","project-a","doc-a",1), record("new","fact","project-a","doc-a",2), record("other-document","fact","project-a","doc-b",3), record("other-project","fact","project-b","doc-a",4), record("other-kind","snapshot","project-a","doc-a",5)));
             assertThat(mapper.count("fact","project-a","doc-a")).isEqualTo(2);
             assertThat(mapper.count("fact","project-a",null)).isEqualTo(3);
             assertThat(mapper.count("fact",null,null)).isEqualTo(4);
@@ -113,8 +113,8 @@ class PersistenceLeaseTest {
     @Test void batchCollisionCannotOverwriteExistingEvidenceOrPartiallyInsert() throws Exception {
         try(SqlSession session=database()) {
             RecordMapper mapper=session.getMapper(RecordMapper.class);Stored existing=record("evidence","fact","project","doc",1);
-            mapper.insertRecords(List.of(existing));Stored replacement=record("evidence","snapshot","other","other",2);
-            assertThatThrownBy(()->mapper.insertRecords(List.of(record("must-rollback","fact","project","doc",2),replacement))).isInstanceOf(org.apache.ibatis.exceptions.PersistenceException.class);
+            mapper.insertRecords(cn.bidcheck.compat.Java8Api.listOf(existing));Stored replacement=record("evidence","snapshot","other","other",2);
+            assertThatThrownBy(()->mapper.insertRecords(cn.bidcheck.compat.Java8Api.listOf(record("must-rollback","fact","project","doc",2), replacement))).isInstanceOf(org.apache.ibatis.exceptions.PersistenceException.class);
             assertThat(mapper.get("must-rollback")).isNull();
             assertThat(mapper.get("evidence").kind).isEqualTo("fact");
             assertThat(mapper.count("fact","project","doc")).isEqualTo(1);

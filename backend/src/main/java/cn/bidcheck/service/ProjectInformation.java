@@ -12,14 +12,14 @@ import java.util.regex.Pattern;
 
 /** Project fields retain their source and explicit user corrections across document versions. */
 final class ProjectInformation {
-    static final List<String> FIELDS = List.of("name", "projectNumber", "openingTime");
-    private static final Map<String,String> LABELS = Map.of("项目名称", "name", "项目编号", "projectNumber", "开标时间", "openingTime");
+    static final List<String> FIELDS = cn.bidcheck.compat.Java8Api.listOf("name", "projectNumber", "openingTime");
+    private static final Map<String,String> LABELS = cn.bidcheck.compat.Java8Api.mapOf("项目名称", "name", "项目编号", "projectNumber", "开标时间", "openingTime");
     private static final Pattern DATE = Pattern.compile("^(\\d{4})[-./年](\\d{1,2})[-./月](\\d{1,2})日?(?:[T\\s]*(\\d{1,2})[:：时](\\d{1,2})分?(?::\\d{2})?)?(?:\\s*[（(]北京时间[）)])?$");
     private ProjectInformation() {}
 
     static String openingTime(String raw) {
-        if (raw == null || raw.isBlank()) return "";
-        Matcher m = DATE.matcher(raw.strip());
+        if (raw == null || cn.bidcheck.compat.Java8Api.isBlank(raw)) return "";
+        Matcher m = DATE.matcher(cn.bidcheck.compat.Java8Api.strip(raw));
         if (!m.matches()) throw BidService.bad("开标时间请填写有效日期或时间，例如 2026-10-13 09:30");
         try {
             LocalDate date = LocalDate.of(Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)), Integer.parseInt(m.group(3)));
@@ -31,7 +31,7 @@ final class ProjectInformation {
 
     static Set<String> manualFields(Map<String,Object> project) {
         Set<String> result = new LinkedHashSet<>();
-        if (project.get("manualFields") instanceof Collection<?> items) for (Object item : items) if (FIELDS.contains(item)) result.add(item.toString());
+        if (project.get("manualFields") instanceof Collection<?>) for (Object item : ((Collection<?>) (project.get("manualFields")))) if (FIELDS.contains(item)) result.add(item.toString());
         return result;
     }
 
@@ -48,16 +48,16 @@ final class ProjectInformation {
     static void apply(Document tender, Map<String,Object> project) {
         Map<String,LinkedHashMap<String,Object>> candidates = new LinkedHashMap<>();
         Map<String,Object> profile = new ProfileExtractor().extract(tender);
-        if (profile.get("groups") instanceof List<?> groups) for (Object rawGroup : groups) {
-            if (!(rawGroup instanceof Map<?,?> group) || !"项目基本信息".equals(group.get("title"))) continue;
-            if (group.get("items") instanceof List<?> items) for (Object rawItem : items) {
-                if (!(rawItem instanceof Map<?,?> item)) continue;
-                String key = LABELS.get(String.valueOf(item.get("label")));
-                if (key == null || item.get("value") == null) continue;
-                String value = item.get("value").toString().strip();
-                if (value.isBlank() || value.length() > (key.equals("name") ? 160 : 100)) continue;
+        if (profile.get("groups") instanceof List<?>) for (Object rawGroup : ((List<?>) (profile.get("groups")))) {
+            if (!(rawGroup instanceof Map<?,?>) || !"项目基本信息".equals(((Map<?,?>) (rawGroup)).get("title"))) continue;
+            if (((Map<?,?>) (rawGroup)).get("items") instanceof List<?>) for (Object rawItem : ((List<?>) (((Map<?,?>) (rawGroup)).get("items")))) {
+                if (!(rawItem instanceof Map<?,?>)) continue;
+                String key = LABELS.get(String.valueOf(((Map<?,?>) (rawItem)).get("label")));
+                if (key == null || ((Map<?,?>) (rawItem)).get("value") == null) continue;
+                String value = cn.bidcheck.compat.Java8Api.strip(((Map<?,?>) (rawItem)).get("value").toString());
+                if (cn.bidcheck.compat.Java8Api.isBlank(value) || value.length() > (key.equals("name") ? 160 : 100)) continue;
                 if (key.equals("openingTime")) { try { value = openingTime(value); } catch (RuntimeException ignored) { continue; } }
-                candidates.computeIfAbsent(key, ignored -> new LinkedHashMap<>()).putIfAbsent(value, item.get("evidence"));
+                candidates.computeIfAbsent(key, ignored -> new LinkedHashMap<>()).putIfAbsent(value, ((Map<?,?>) (rawItem)).get("evidence"));
             }
         }
         Set<String> manual = manualFields(project);
@@ -74,7 +74,7 @@ final class ProjectInformation {
             }
         }
         project.put("code", BidService.text(project,"projectNumber"));
-        project.put("manualFields", List.copyOf(manual));
+        project.put("manualFields", cn.bidcheck.compat.Java8Api.listCopyOf(manual));
         project.put("fieldSources", sources);
         project.put("fieldWarnings", warnings);
         project.put("informationTenderId", tender.id());

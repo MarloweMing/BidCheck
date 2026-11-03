@@ -8,9 +8,9 @@ class DocumentLimitsTest {
     @Test void streamsExactlyOneGigabyteAndRejectsOneAdditionalByteWithoutAllocatingTheFile() throws Exception {
         assertEquals(1024L * 1024 * 1024, DocumentLimits.MAX_FILE_BYTES);
         assertEquals(DocumentLimits.MAX_FILE_BYTES,DocumentLimits.copy(countingInput(DocumentLimits.MAX_FILE_BYTES),
-                OutputStream.nullOutputStream(),DocumentLimits.MAX_FILE_BYTES));
+                cn.bidcheck.compat.Java8Extras.nullOutputStream(),DocumentLimits.MAX_FILE_BYTES));
         assertThrows(IOException.class,()->DocumentLimits.copy(countingInput(DocumentLimits.MAX_FILE_BYTES+1),
-                OutputStream.nullOutputStream(),DocumentLimits.MAX_FILE_BYTES));
+                cn.bidcheck.compat.Java8Extras.nullOutputStream(),DocumentLimits.MAX_FILE_BYTES));
     }
     private static InputStream countingInput(long bytes) {
         return new InputStream() {
@@ -23,9 +23,9 @@ class DocumentLimitsTest {
     }
     @Test void aStreamCannotBypassTheAdvertisedLimit() throws Exception {
         byte[] data = new byte[64 * 1024 + 1];
-        var out = new ByteArrayOutputStream();
+        java.io.ByteArrayOutputStream out = new ByteArrayOutputStream();
         assertThrows(IOException.class, () -> DocumentLimits.copy(new ByteArrayInputStream(data), out, 64 * 1024));
         assertEquals(64 * 1024, out.size());
-        assertEquals(64 * 1024, DocumentLimits.copy(new ByteArrayInputStream(new byte[64 * 1024]), OutputStream.nullOutputStream(), 64 * 1024));
+        assertEquals(64 * 1024, DocumentLimits.copy(new ByteArrayInputStream(new byte[64 * 1024]), cn.bidcheck.compat.Java8Extras.nullOutputStream(), 64 * 1024));
     }
 }

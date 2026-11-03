@@ -50,13 +50,13 @@ public class EvidenceLayoutService {
     }
     /** allowScan is an explicit tool permission, never inferred from a failed native preload. */
     public java.util.function.Function<Integer,Map<String,Object>> documentPageLayouts(Document doc,NativePdfSource source,boolean allowScan){
-        return new java.util.function.Function<>(){
+        return new java.util.function.Function<Integer,Map<String,Object>>(){
             private Path path;private java.nio.file.attribute.BasicFileAttributes stamp;
-            private final Map<Integer,Map<String,Object>> pages=Collections.synchronizedMap(new LinkedHashMap<>(32,.75f,true){@Override protected boolean removeEldestEntry(Map.Entry<Integer,Map<String,Object>> entry){return size()>128;}});
+            private final Map<Integer,Map<String,Object>> pages=Collections.synchronizedMap(new LinkedHashMap<Integer,Map<String,Object>>(32,.75f,true){@Override protected boolean removeEldestEntry(Map.Entry<Integer,Map<String,Object>> entry){return size()>128;}});
             private final ConcurrentMap<Integer,CompletableFuture<Map<String,Object>>> active=new ConcurrentHashMap<>();
             private synchronized Path current()throws IOException{
-                if(path==null){Path candidate=source.get();var before=java.nio.file.Files.readAttributes(candidate,java.nio.file.attribute.BasicFileAttributes.class);SourceSafety.verify(doc,candidate);var after=java.nio.file.Files.readAttributes(candidate,java.nio.file.attribute.BasicFileAttributes.class);if(!same(before,after))throw new IOException("NATIVE_TABLE_SOURCE_CHANGED");path=candidate;stamp=after;}
-                var now=java.nio.file.Files.readAttributes(path,java.nio.file.attribute.BasicFileAttributes.class);if(!same(stamp,now))throw new IOException("NATIVE_TABLE_SOURCE_CHANGED");return path;
+                if(path==null){Path candidate=source.get();java.nio.file.attribute.BasicFileAttributes before=java.nio.file.Files.readAttributes(candidate,java.nio.file.attribute.BasicFileAttributes.class);SourceSafety.verify(doc,candidate);java.nio.file.attribute.BasicFileAttributes after=java.nio.file.Files.readAttributes(candidate,java.nio.file.attribute.BasicFileAttributes.class);if(!same(before,after))throw new IOException("NATIVE_TABLE_SOURCE_CHANGED");path=candidate;stamp=after;}
+                java.nio.file.attribute.BasicFileAttributes now=java.nio.file.Files.readAttributes(path,java.nio.file.attribute.BasicFileAttributes.class);if(!same(stamp,now))throw new IOException("NATIVE_TABLE_SOURCE_CHANGED");return path;
             }
             private boolean same(java.nio.file.attribute.BasicFileAttributes a,java.nio.file.attribute.BasicFileAttributes b){return a.size()==b.size()&&a.lastModifiedTime().equals(b.lastModifiedTime())&&Objects.equals(a.fileKey(),b.fileKey());}
             @Override public Map<String,Object> apply(Integer number){
@@ -64,10 +64,10 @@ public class EvidenceLayoutService {
                 if(!"pdf".equals(SourceSafety.extension(doc)))return PdfNativeTableLayout.unavailable(doc,page,"NATIVE_TABLE_REQUIRES_PDF");
                 try{
                     Path verified=current();Map<String,Object> hit=pages.get(number);if(hit!=null)return hit;
-                    var mine=new CompletableFuture<Map<String,Object>>();var previous=active.putIfAbsent(number,mine);
+                    java.util.concurrent.CompletableFuture<java.util.Map<java.lang.String, java.lang.Object>> mine=new CompletableFuture<Map<String,Object>>();java.util.concurrent.CompletableFuture<java.util.Map<java.lang.String, java.lang.Object>> previous=active.putIfAbsent(number,mine);
                     if(previous!=null){try{return previous.get();}catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new CancellationException("页面结构等待已中断");}catch(ExecutionException failed){throw new IOException("PAGE_LAYOUT_SHARED_REQUEST_FAILED");}}
                     try{
-                        Map<String,Object> value=transcribedLayout(doc,Set.of(number));
+                        Map<String,Object> value=transcribedLayout(doc,cn.bidcheck.compat.Java8Api.setOf(number));
                         if(asMaps(value.get("spans")).stream().noneMatch(s->"TABLE_CELL".equals(s.get("kind")))){
                             value=Objects.toString(page.parser(),"").contains("NATIVE")?PdfNativeTableLayout.extract(doc,page,verified):PdfNativeTableLayout.unavailable(doc,page,"NATIVE_TABLE_REQUIRES_NATIVE_TEXT");
                             if(allowScan&&asMaps(value.get("spans")).stream().noneMatch(s->"TABLE_CELL".equals(s.get("kind")))&&scanPages!=null&&scanPages.enabled())value=scanPages.extractVerified(doc,page,verified,Objects.toString(value.get("diagnosticCode"),Objects.toString(value.get("errorCode"),"NATIVE_TABLE_NOT_AVAILABLE")));
@@ -80,18 +80,14 @@ public class EvidenceLayoutService {
             }
         };
     }
-    public String cacheIdentity(Document doc){return SourceSafety.digest((identity()+":"+doc.id()+":"+doc.sha256()+":"+doc.version()+":"+doc.pages().stream().map(FactLedgerService::parserFingerprint).toList()).getBytes(StandardCharsets.UTF_8));}
+    public String cacheIdentity(Document doc){return SourceSafety.digest((identity()+":"+doc.id()+":"+doc.sha256()+":"+doc.version()+":"+cn.bidcheck.compat.Java8Api.toList(doc.pages().stream().map(FactLedgerService::parserFingerprint))).getBytes(StandardCharsets.UTF_8));}
     public Map<String,Object> wordConfiguration(){return wordRenderer==null?map("enabled",false,"licensed",false,"status","DISABLED"):wordRenderer.configuration();}
     public Map<String,Object> layout(Document doc,Path original){
         boolean permit=false;
         try{
             if(!CAPACITY.tryAcquire(15,TimeUnit.SECONDS))return error("LAYOUT_BUSY");permit=true;
             String hash=SourceSafety.verify(doc,original);List<Map<String,Object>> spans=new ArrayList<>(),pages=new ArrayList<>();List<String> limits=new ArrayList<>();
-            switch(SourceSafety.extension(doc)){
-                case "pdf" -> pdf(doc,original,hash,spans,pages,limits);
-                case "docx" -> word(doc,original,hash,spans,limits);
-                default -> {for(Page p:doc.pages())spans.add(map("id",id(hash,"block:"+p.number()),"kind","PARAGRAPH","documentBlock",p.number(),"physicalPage",null,"printedPage",null,"text",p.text(),"bbox",null,"coordinateSpace",null,"source","PARSED_TEXT_NO_LAYOUT"));limits.add("此格式未提供真实布局坐标。");}
-            }
+            switch (SourceSafety.extension(doc)) {case "pdf":pdf(doc,original,hash,spans,pages,limits); break;case "docx":word(doc,original,hash,spans,limits); break;default:{for(Page p:doc.pages())spans.add(map("id",id(hash,"block:"+p.number()),"kind","PARAGRAPH","documentBlock",p.number(),"physicalPage",null,"printedPage",null,"text",p.text(),"bbox",null,"coordinateSpace",null,"source","PARSED_TEXT_NO_LAYOUT"));limits.add("此格式未提供真实布局坐标。");} break;}
             List<Integer> omittedStructureLocations=new ArrayList<>();
             long characters=spans.stream().mapToLong(s->Objects.toString(s.get("text"),"").length()).sum();
             for(Page source:doc.pages()){
@@ -113,8 +109,8 @@ public class EvidenceLayoutService {
                 // Rendering pages are a separate namespace; original block and OOXML evidence remains unchanged.
                 if(Boolean.TRUE.equals(rendering.get("usableForEvidence"))){
                     Map<Integer,List<Map<String,Object>>> mapping=new HashMap<>();
-                    for(Map<String,Object> rendered:asMaps(rendering.get("spans")))if(rendered.get("documentBlock") instanceof Number block)mapping.computeIfAbsent(block.intValue(),k->new ArrayList<>()).add(rendered);
-                    for(Map<String,Object> span:spans)if(span.get("documentBlock") instanceof Number block&&mapping.containsKey(block.intValue()))span.put("renderedMapping",mapping.get(block.intValue()));
+                    for(Map<String,Object> rendered:asMaps(rendering.get("spans")))if(rendered.get("documentBlock") instanceof Number)mapping.computeIfAbsent(((Number) (rendered.get("documentBlock"))).intValue(),k->new ArrayList<>()).add(rendered);
+                    for(Map<String,Object> span:spans)if(span.get("documentBlock") instanceof Number&&mapping.containsKey(((Number) (span.get("documentBlock"))).intValue()))span.put("renderedMapping",mapping.get(((Number) (span.get("documentBlock"))).intValue()));
                 }else limits.add("Word整页渲染尚不可用，保留原生段落与表格证据；状态："+rendering.get("status"));
             }
             if("pdf".equals(SourceSafety.extension(doc)))result.put("digitalSignatures",new DigitalSignatureInspector().inspect(doc,original));
@@ -124,16 +120,16 @@ public class EvidenceLayoutService {
         catch(IOException|RuntimeException e){return error(e instanceof IOException?e.getMessage():"LAYOUT_INVALID_SOURCE");}
         finally{if(permit)CAPACITY.release();}
     }
-    @SuppressWarnings("unchecked") private static List<Map<String,Object>> asMaps(Object raw){return raw instanceof List<?> rows?rows.stream().filter(Map.class::isInstance).map(x->(Map<String,Object>)x).toList():List.of();}
-    private static Map<String,Object> error(String code){return map("status","ERROR","version",VERSION,"errorCode",code!=null&&code.matches("[A-Z0-9_]{1,80}")?code:"LAYOUT_EXTRACTION_FAILED","spans",List.of(),"pages",List.of(),"limitations",List.of("布局提取未完成，不能据此认定原件缺少内容。"));}
+    @SuppressWarnings("unchecked") private static List<Map<String,Object>> asMaps(Object raw){return raw instanceof List<?>?cn.bidcheck.compat.Java8Api.toList(((List<?>) (raw)).stream().filter(Map.class::isInstance).map(x->(Map<String,Object>)x)):cn.bidcheck.compat.Java8Api.listOf();}
+    private static Map<String,Object> error(String code){return map("status","ERROR","version",VERSION,"errorCode",code!=null&&code.matches("[A-Z0-9_]{1,80}")?code:"LAYOUT_EXTRACTION_FAILED","spans",cn.bidcheck.compat.Java8Api.listOf(),"pages",cn.bidcheck.compat.Java8Api.listOf(),"limitations",cn.bidcheck.compat.Java8Api.listOf("布局提取未完成，不能据此认定原件缺少内容。"));}
     private static String id(String hash,String location){return SourceSafety.digest((VERSION+":"+hash+":"+location).getBytes(StandardCharsets.UTF_8));}
     private static void pdf(Document doc,Path original,String hash,List<Map<String,Object>> spans,List<Map<String,Object>> pages,List<String> limits)throws IOException{
         try(PDDocument pdf=Loader.loadPDF(original.toFile(),IOUtils.createTempFileOnlyStreamCache())){
-            SourceSafety.pdf(pdf);PositionStripper stripper=new PositionStripper(hash,spans,pages);stripper.setSortByPosition(true);stripper.writeText(pdf,Writer.nullWriter());
+            SourceSafety.pdf(pdf);PositionStripper stripper=new PositionStripper(hash,spans,pages);stripper.setSortByPosition(true);stripper.writeText(pdf,cn.bidcheck.compat.Java8Extras.nullWriter());
             for(Page page:doc.pages())if(page.parser()!=null&&page.parser().contains("OCR")){
-                String text=page.text();int offset=text.indexOf("【OCR识别文字】");if(offset>=0)text=text.substring(offset+"【OCR识别文字】".length()).strip();
+                String text=page.text();int offset=text.indexOf("【OCR识别文字】");if(offset>=0)text=cn.bidcheck.compat.Java8Api.strip(text.substring(offset+"【OCR识别文字】".length()));
                 else if(!page.parser().equals("PDFBOX_OCR"))continue;
-                if(!text.isBlank()){if(spans.size()>=MAX_SPANS)throw new IOException("LAYOUT_SPAN_LIMIT");spans.add(map("id",id(hash,"ocr:"+page.number()),"kind","OCR_TEXT","physicalPage",page.number(),"documentBlock",page.number(),"printedPage",null,"text",text,"bbox",null,"coordinateSpace",null,"source","OCR_WITHOUT_BOXES"));}
+                if(!cn.bidcheck.compat.Java8Api.isBlank(text)){if(spans.size()>=MAX_SPANS)throw new IOException("LAYOUT_SPAN_LIMIT");spans.add(map("id",id(hash,"ocr:"+page.number()),"kind","OCR_TEXT","physicalPage",page.number(),"documentBlock",page.number(),"printedPage",null,"text",text,"bbox",null,"coordinateSpace",null,"source","OCR_WITHOUT_BOXES"));}
             }
         }
         limits.add("PDF框由原生TextPosition字形度量提取，表示文字位置，不代表手写签字或印章边界。OCR未提供定位框时bbox为null。");
@@ -148,7 +144,7 @@ public class EvidenceLayoutService {
             double scale=Math.min(1.5,Math.min(2400/Math.max(width,height),Math.sqrt(4_000_000/(width*height))));
             int pixelWidth=Math.max(1,(int)Math.floor(width*(float)scale)),pixelHeight=Math.max(1,(int)Math.floor(height*(float)scale));
             page=map("physicalPage",number,"width",width,"height",height,"rotation",rotation,"coordinateSpace","PDF_DISPLAY_POINTS_TOP_LEFT","printedPage",null,
-                "renderMapping",map("renderer","FileParser.renderPdfPage","scale",(double)(float)scale,"pixelWidth",pixelWidth,"pixelHeight",pixelHeight,"cropBox",List.of(p.getCropBox().getLowerLeftX(),p.getCropBox().getLowerLeftY(),p.getCropBox().getWidth(),p.getCropBox().getHeight())));
+                "renderMapping",map("renderer","FileParser.renderPdfPage","scale",(double)(float)scale,"pixelWidth",pixelWidth,"pixelHeight",pixelHeight,"cropBox",cn.bidcheck.compat.Java8Api.listOf(p.getCropBox().getLowerLeftX(), p.getCropBox().getLowerLeftY(), p.getCropBox().getWidth(), p.getCropBox().getHeight())));
             pages.add(page);
         }
         @Override protected void processTextPosition(TextPosition text){if(++glyphs>50_000)throw new LayoutLimit();SourceSafety.interrupted();super.processTextPosition(text);}
@@ -156,29 +152,29 @@ public class EvidenceLayoutService {
             SourceSafety.interrupted();if(++operators>250_000||System.nanoTime()>deadline)throw new IOException("PDF_LAYOUT_PROCESSING_LIMIT");super.processOperator(operator,arguments);
         }
         @Override protected void writeString(String text,List<TextPosition> positions)throws IOException{
-            if(text.isBlank()||positions.isEmpty())return;characters+=text.length();if(characters>MAX_CHARS||spans.size()>=MAX_SPANS)throw new IOException("LAYOUT_TEXT_LIMIT");
+            if(cn.bidcheck.compat.Java8Api.isBlank(text)||positions.isEmpty())return;characters+=text.length();if(characters>MAX_CHARS||spans.size()>=MAX_SPANS)throw new IOException("LAYOUT_TEXT_LIMIT");
             double x0=Double.POSITIVE_INFINITY,y0=x0,x1=-x0,y1=-x0;
             for(TextPosition t:positions){double a=Math.toRadians(rotation-t.getDir()),c=Math.cos(a),s=Math.sin(a),w=t.getWidthDirAdj(),h=t.getHeightDir();
-                for(double[] q:List.of(new double[]{0,0},new double[]{w,0},new double[]{0,h},new double[]{w,h})){
+                for(double[] q:cn.bidcheck.compat.Java8Api.listOf(new double[]{0,0}, new double[]{w,0}, new double[]{0,h}, new double[]{w,h})){
                     double x=t.getX()+q[0]*c+q[1]*s,y=t.getY()+q[0]*s-q[1]*c;x0=Math.min(x0,x);x1=Math.max(x1,x);y0=Math.min(y0,y);y1=Math.max(y1,y);}
             }
             if(!Double.isFinite(x0)||!Double.isFinite(y0)||!Double.isFinite(x1)||!Double.isFinite(y1))throw new IOException("PDF_COORDINATES_INVALID");
             x0=Math.max(0,x0);y0=Math.max(0,y0);x1=Math.min(width,x1);y1=Math.min(height,y1);
-            String spanId=id(hash,"pdf:"+number+":"+(++index));List<Double> box=x1>x0&&y1>y0?List.of(x0,y0,x1,y1):null;
+            String spanId=id(hash,"pdf:"+number+":"+(++index));List<Double> box=x1>x0&&y1>y0?cn.bidcheck.compat.Java8Api.listOf(x0, y0, x1, y1):null;
             spans.add(map("id",spanId,"kind","TEXT_SPAN","physicalPage",number,"documentBlock",number,"printedPage",null,"text",text,"bbox",box,"coordinateSpace","PDF_DISPLAY_POINTS_TOP_LEFT","source","PDFBOX_TEXT_POSITION"));
-            if(box!=null&&y0>height*.85&&text.strip().matches("(?:第\\s*)?[0-9]{1,5}(?:\\s*页)?"))page.put("printedPage",map("label",text.strip(),"sourceSpanId",spanId,"status","CANDIDATE_NOT_VERIFIED"));
+            if(box!=null&&y0>height*.85&&cn.bidcheck.compat.Java8Api.strip(text).matches("(?:第\\s*)?[0-9]{1,5}(?:\\s*页)?"))page.put("printedPage",map("label",cn.bidcheck.compat.Java8Api.strip(text),"sourceSpanId",spanId,"status","CANDIDATE_NOT_VERIFIED"));
         }
     }
     private static final class LayoutLimit extends RuntimeException{}
     private static void word(Document doc,Path original,String hash,List<Map<String,Object>> spans,List<String> limits)throws IOException{
-        WordWalk walk=new WordWalk(doc,hash,spans);for(var part:SourceSafety.wordXml(original).entrySet())walk.walk(SourceSafety.xml(part.getValue()).getDocumentElement(),part.getKey(),"",0,null);
+        WordWalk walk=new WordWalk(doc,hash,spans);for(java.util.Map.Entry<java.lang.String, byte[]> part:SourceSafety.wordXml(original).entrySet())walk.walk(SourceSafety.xml(part.getValue()).getDocumentElement(),part.getKey(),"",0,null);
         limits.add("Word原生位置是OOXML段落/表格位置，physicalPage、bbox与printedPage为null；许可渲染与页面映射单独提供，不能把内容块号当物理页码。");
         limits.add("Word旧解析块只在原生内容唯一精确对应时映射；无法确认时documentBlock为null。修订文本保留来源标记，不自动当作最终正文。");
     }
     private static final class WordWalk{
         final String hash;final List<Map<String,Object>> spans;final Map<String,List<Integer>> blocks=new HashMap<>();int chars;
         WordWalk(Document doc,String hash,List<Map<String,Object>> spans){this.hash=hash;this.spans=spans;for(Page p:doc.pages()){
-            String t=p.text().split("【OCR识别文字】",2)[0].replace("【原生文字】","").strip();blocks.computeIfAbsent(norm(t),k->new ArrayList<>()).add(p.number());}}
+            String t=cn.bidcheck.compat.Java8Api.strip(p.text().split("【OCR识别文字】",2)[0].replace("【原生文字】",""));blocks.computeIfAbsent(norm(t),k->new ArrayList<>()).add(p.number());}}
         void walk(Element element,String part,String path,int depth,Map<String,Object> cell)throws IOException{
             SourceSafety.interrupted();if(depth>40)throw new IOException("WORD_DEPTH_LIMIT");String name=element.getLocalName();
             if(W.equals(element.getNamespaceURI())&&"tbl".equals(name)){table(element,part,path,depth);return;}
@@ -199,7 +195,7 @@ public class EvidenceLayoutService {
                 for(Element tc:direct(tr,"tc")){cellIndex++;Element pr=first(tc,"tcPr"),grid=pr==null?null:first(pr,"gridSpan"),merge=pr==null?null:first(pr,"vMerge");int colSpan=1;
                     try{if(grid!=null)colSpan=Integer.parseInt(grid.getAttributeNS(W,"val"));}catch(NumberFormatException e){throw new IOException("WORD_GRID_INVALID");}
                     if(colSpan<1||colSpan>1000||column>1000)throw new IOException("WORD_GRID_LIMIT");
-                    String cp=path+"/w:tr["+row+"]/w:tc["+cellIndex+"]";String value=String.join("\n",direct(tc,"p").stream().map(EvidenceLayoutService::text).toList());
+                    String cp=path+"/w:tr["+row+"]/w:tc["+cellIndex+"]";String value=String.join("\n",cn.bidcheck.compat.Java8Api.toList(direct(tc,"p").stream().map(EvidenceLayoutService::text)));
                     Map<String,Object> cell=base(part,cp,"TABLE_CELL",value);cell.putAll(map("tableId",id(hash,part+path),"row",row,"column",column,"columnSpan",colSpan,"rowSpan",1,"mergeContinuationOf",null));
                     if(merge!=null){boolean continuation=!"restart".equals(merge.getAttributeNS(W,"val"));Map<String,Object> origin=vertical.get(column);
                         if(continuation&&origin!=null&&Objects.equals(origin.get("columnSpan"),colSpan)){cell.put("mergeContinuationOf",origin.get("id"));origin.put("rowSpan",(int)origin.get("rowSpan")+1);next.put(column,origin);}
@@ -208,15 +204,15 @@ public class EvidenceLayoutService {
                 }vertical=next;
             }
         }
-        Map<String,Object> base(String part,String path,String kind,String text){List<Integer> ids=blocks.getOrDefault(norm(text),List.of());Integer block=!text.isBlank()&&ids.size()==1?ids.get(0):null;
+        Map<String,Object> base(String part,String path,String kind,String text){List<Integer> ids=blocks.getOrDefault(norm(text),cn.bidcheck.compat.Java8Api.listOf());Integer block=!cn.bidcheck.compat.Java8Api.isBlank(text)&&ids.size()==1?ids.get(0):null;
             return map("id",id(hash,part+path+kind),"kind",kind,"ooxml",map("part",part,"path",path),"physicalPage",null,"printedPage",null,"documentBlock",block,"text",text,"bbox",null,"coordinateSpace",null,"source","OOXML_NATIVE");}
         void add(Map<String,Object> item)throws IOException{chars+=((String)item.get("text")).length();if(chars>MAX_CHARS||spans.size()>=MAX_SPANS)throw new IOException("LAYOUT_TEXT_LIMIT");spans.add(item);}
     }
     private static String ancestorRevision(Element e){for(Node p=e.getParentNode();p instanceof Element;p=p.getParentNode()){if("del".equals(p.getLocalName()))return "DELETED";if("ins".equals(p.getLocalName()))return "INSERTED";}if(e.getElementsByTagNameNS(W,"del").getLength()>0||e.getElementsByTagNameNS(W,"ins").getLength()>0)return "CONTAINS_REVISIONS";return "NONE";}
-    private static List<Element> children(Element e){List<Element> result=new ArrayList<>();for(Node n=e.getFirstChild();n!=null;n=n.getNextSibling())if(n instanceof Element c)result.add(c);return result;}
-    private static List<Element> direct(Element e,String name){return children(e).stream().filter(x->W.equals(x.getNamespaceURI())&&name.equals(x.getLocalName())).toList();}
+    private static List<Element> children(Element e){List<Element> result=new ArrayList<>();for(Node n=e.getFirstChild();n!=null;n=n.getNextSibling())if(n instanceof Element)result.add(((Element) (n)));return result;}
+    private static List<Element> direct(Element e,String name){return cn.bidcheck.compat.Java8Api.toList(children(e).stream().filter(x->W.equals(x.getNamespaceURI())&&name.equals(x.getLocalName())));}
     private static Element first(Element e,String name){return direct(e,name).stream().findFirst().orElse(null);}
-    private static String text(Element e){StringBuilder b=new StringBuilder();collect(e,b,0);return b.toString().strip();}
-    private static void collect(Element e,StringBuilder b,int depth){if(depth>40||b.length()>100_000)throw new LayoutLimit();if(W.equals(e.getNamespaceURI())&&Set.of("t","delText").contains(e.getLocalName())){b.append(e.getTextContent());return;}if(W.equals(e.getNamespaceURI())&&Set.of("tab","br","cr").contains(e.getLocalName()))b.append(' ');for(Element child:children(e))collect(child,b,depth+1);}
+    private static String text(Element e){StringBuilder b=new StringBuilder();collect(e,b,0);return cn.bidcheck.compat.Java8Api.strip(b.toString());}
+    private static void collect(Element e,StringBuilder b,int depth){if(depth>40||b.length()>100_000)throw new LayoutLimit();if(W.equals(e.getNamespaceURI())&&cn.bidcheck.compat.Java8Api.setOf("t", "delText").contains(e.getLocalName())){b.append(e.getTextContent());return;}if(W.equals(e.getNamespaceURI())&&cn.bidcheck.compat.Java8Api.setOf("tab", "br", "cr").contains(e.getLocalName()))b.append(' ');for(Element child:children(e))collect(child,b,depth+1);}
     private static String norm(String s){return s.replaceAll("\\s+","");}
 }

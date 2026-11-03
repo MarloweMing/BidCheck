@@ -53,9 +53,8 @@ class RequirementMappingStoreServiceTest {
     void fixture() {
         project = UUID.randomUUID().toString();
         tender = UUID.randomUUID().toString();
-        store.save("project", project, project, "", Map.of(
-                "id", project, "name", "条款覆盖测试", "activeTenderId", tender));
-        store.save("document", tender, project, "", document(1, "a".repeat(64)));
+        store.save("project", project, project, "", cn.bidcheck.compat.Java8Api.mapOf("id", project, "name", "条款覆盖测试", "activeTenderId", tender));
+        store.save("document", tender, project, "", document(1, cn.bidcheck.compat.Java8Api.repeat("a", 64)));
     }
 
     @Test
@@ -83,7 +82,7 @@ class RequirementMappingStoreServiceTest {
     void apiReadsAndRefreshesCoverageButNeverPublishesIt() throws Exception {
         mvc.perform(post("/api/projects/{id}/requirement-mapping/refresh", project)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsBytes(Map.of("documentId", tender))))
+                        .content(json.writeValueAsBytes(cn.bidcheck.compat.Java8Api.mapOf("documentId", tender))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("READY"))
                 .andExpect(jsonPath("$.affectsBusinessConclusion").value(false))
@@ -102,7 +101,7 @@ class RequirementMappingStoreServiceTest {
     @Test
     void refusesToPresentAChangedDocumentUnderAnOldSnapshotAsReady() {
         mappings.refresh(project, tender, false);
-        store.save("document", tender, project, "", document(2, "b".repeat(64)));
+        store.save("document", tender, project, "", document(2, cn.bidcheck.compat.Java8Api.repeat("b", 64)));
 
         assertThat(mappings.current(project, false))
                 .containsEntry("status", "STALE")
@@ -111,7 +110,7 @@ class RequirementMappingStoreServiceTest {
 
     @Test
     void refusesToPresentASnapshotBuiltByAnOlderTreeVersionAsReady() {
-        RequirementMappingSnapshot current = mappings.analyze(document(1, "a".repeat(64)));
+        RequirementMappingSnapshot current = mappings.analyze(document(1, cn.bidcheck.compat.Java8Api.repeat("a", 64)));
         RequirementMappingSnapshot old = new RequirementMappingSnapshot(current.schema(),
                 "document-clause-tree-1|requirement-mapper-1", current.projectId(),
                 current.tenderDocumentId(), current.tenderDocumentVersion(), current.tenderDocumentHash(),
@@ -136,21 +135,21 @@ class RequirementMappingStoreServiceTest {
 
     @Test
     void clauseSourcesRetainPageVersionHashAndExactOffsets() {
-        RequirementMappingSnapshot snapshot = mappings.analyze(document(1, "a".repeat(64)));
+        RequirementMappingSnapshot snapshot = mappings.analyze(document(1, cn.bidcheck.compat.Java8Api.repeat("a", 64)));
         CoverageItem item = snapshot.coverage().stream()
-                .filter(value -> !value.text().isBlank() && value.sourceRef().startOffset() != null)
-                .findFirst().orElseThrow();
-        String pageText = document(1, "a".repeat(64)).pages().get(item.sourceRef().location() - 1).text();
+                .filter(value -> !cn.bidcheck.compat.Java8Api.isBlank(value.text()) && value.sourceRef().startOffset() != null)
+                .findFirst().orElseThrow(java.util.NoSuchElementException::new);
+        String pageText = document(1, cn.bidcheck.compat.Java8Api.repeat("a", 64)).pages().get(item.sourceRef().location() - 1).text();
 
         assertThat(item.sourceRef().documentVersion()).isEqualTo(1);
-        assertThat(item.sourceRef().documentHash()).isEqualTo("a".repeat(64));
+        assertThat(item.sourceRef().documentHash()).isEqualTo(cn.bidcheck.compat.Java8Api.repeat("a", 64));
         assertThat(pageText.substring(item.sourceRef().startOffset(), item.sourceRef().endOffset()))
                 .isEqualTo(item.sourceRef().quote());
     }
 
     @Test
     void realBuilderNestsListItemsAndProducesASectionChecklistCandidate() {
-        Document source = document(List.of(new Page(1, "第三章 技术要求\n"
+        Document source = document(cn.bidcheck.compat.Java8Api.listOf(new Page(1, "第三章 技术要求\n"
                 + "施工组织设计应包括以下内容：\n"
                 + "1. 施工方案\n"
                 + "2. 质量保证措施", "PAGE", "TEXT", "")));
@@ -159,19 +158,19 @@ class RequirementMappingStoreServiceTest {
         RequirementDraft checklist = snapshot.drafts().stream()
                 .filter(draft -> draft.templateCandidates().stream()
                         .anyMatch(candidate -> "SECTION_CHECKLIST".equals(candidate.templateId())))
-                .findFirst().orElseThrow();
+                .findFirst().orElseThrow(java.util.NoSuchElementException::new);
         TemplateCandidate candidate = checklist.templateCandidates().stream()
-                .filter(value -> "SECTION_CHECKLIST".equals(value.templateId())).findFirst().orElseThrow();
+                .filter(value -> "SECTION_CHECKLIST".equals(value.templateId())).findFirst().orElseThrow(java.util.NoSuchElementException::new);
 
         assertThat(candidate.parameters().get("requiredItems"))
-                .isEqualTo(List.of("施工方案", "质量保证措施"));
+                .isEqualTo(cn.bidcheck.compat.Java8Api.listOf("施工方案", "质量保证措施"));
         assertThat(checklist.sourceContext().sectionPath()).containsExactly("第三章 技术要求");
         assertExactSources(source, candidate.requirementRefs());
     }
 
     @Test
     void numberedChecklistLeadOwnsOnlyItsDeeperNumberedChildren() {
-        Document source = document(List.of(new Page(1, "第三章 响应文件格式\n"
+        Document source = document(cn.bidcheck.compat.Java8Api.listOf(new Page(1, "第三章 响应文件格式\n"
                 + "1. 投标文件应包括以下内容：\n"
                 + "1.1 投标函\n"
                 + "1.2 报价表\n"
@@ -182,12 +181,12 @@ class RequirementMappingStoreServiceTest {
                 .filter(draft -> draft.text().contains("投标文件应包括以下内容"))
                 .filter(draft -> draft.templateCandidates().stream()
                         .anyMatch(candidate -> "SECTION_CHECKLIST".equals(candidate.templateId())))
-                .findFirst().orElseThrow();
+                .findFirst().orElseThrow(java.util.NoSuchElementException::new);
         TemplateCandidate candidate = checklist.templateCandidates().stream()
-                .filter(value -> "SECTION_CHECKLIST".equals(value.templateId())).findFirst().orElseThrow();
+                .filter(value -> "SECTION_CHECKLIST".equals(value.templateId())).findFirst().orElseThrow(java.util.NoSuchElementException::new);
 
         assertThat(candidate.parameters().get("requiredItems"))
-                .isEqualTo(List.of("投标函", "报价表"));
+                .isEqualTo(cn.bidcheck.compat.Java8Api.listOf("投标函", "报价表"));
         assertThat(candidate.requirementRefs()).extracting(ref -> ref.quote())
                 .doesNotContain("其他说明");
         assertThat(checklist.sourceContext().sectionPath()).containsExactly("第三章 响应文件格式");
@@ -196,20 +195,18 @@ class RequirementMappingStoreServiceTest {
 
     @Test
     void checklistAndSectionContextContinueAcrossAdjacentPagesWithoutLosingSources() {
-        Document source = document(List.of(
-                new Page(1, "第三章 技术要求\n施工组织设计应包括以下内容：\n1. 施工方案", "PAGE", "TEXT", ""),
-                new Page(2, "2. 质量保证措施\n3. 安全文明施工措施", "PAGE", "TEXT", "")));
+        Document source = document(cn.bidcheck.compat.Java8Api.listOf(new Page(1, "第三章 技术要求\n施工组织设计应包括以下内容：\n1. 施工方案", "PAGE", "TEXT", ""), new Page(2, "2. 质量保证措施\n3. 安全文明施工措施", "PAGE", "TEXT", "")));
 
         RequirementMappingSnapshot snapshot = mappings.analyze(source);
         RequirementDraft checklist = snapshot.drafts().stream()
                 .filter(draft -> draft.templateCandidates().stream()
                         .anyMatch(candidate -> "SECTION_CHECKLIST".equals(candidate.templateId())))
-                .findFirst().orElseThrow();
+                .findFirst().orElseThrow(java.util.NoSuchElementException::new);
         TemplateCandidate candidate = checklist.templateCandidates().stream()
-                .filter(value -> "SECTION_CHECKLIST".equals(value.templateId())).findFirst().orElseThrow();
+                .filter(value -> "SECTION_CHECKLIST".equals(value.templateId())).findFirst().orElseThrow(java.util.NoSuchElementException::new);
 
         assertThat(candidate.parameters().get("requiredItems"))
-                .isEqualTo(List.of("施工方案", "质量保证措施", "安全文明施工措施"));
+                .isEqualTo(cn.bidcheck.compat.Java8Api.listOf("施工方案", "质量保证措施", "安全文明施工措施"));
         assertThat(candidate.requirementRefs()).extracting(ref -> ref.location())
                 .containsExactly(1, 1, 2, 2);
         assertThat(checklist.sourceContext().sectionPath()).containsExactly("第三章 技术要求");
@@ -218,18 +215,16 @@ class RequirementMappingStoreServiceTest {
 
     @Test
     void tableContinuationInheritsHeadersTableIdentityAndSectionAcrossPages() {
-        Document source = document(List.of(
-                new Page(1, "第三章 人员资格要求\n"
+        Document source = document(cn.bidcheck.compat.Java8Api.listOf(new Page(1, "第三章 人员资格要求\n"
                         + "| 岗位 | 资格条件 |\n| --- | --- |\n| 技术负责人 | 应具备高级职称证书 |",
-                        "PAGE", "TEXT", ""),
-                new Page(2, "| 项目经理 | 应具备一级建造师证书 |", "PAGE", "TEXT", "")));
+                        "PAGE", "TEXT", ""), new Page(2, "| 项目经理 | 应具备一级建造师证书 |", "PAGE", "TEXT", "")));
 
         RequirementMappingSnapshot snapshot = mappings.analyze(source);
         RequirementDraft pageTwo = snapshot.drafts().stream()
                 .filter(draft -> draft.requirementRefs().stream().anyMatch(ref -> ref.location() == 2))
                 .filter(draft -> draft.templateCandidates().stream()
                         .anyMatch(candidate -> "PERSONNEL_CREDENTIAL".equals(candidate.templateId())))
-                .findFirst().orElseThrow();
+                .findFirst().orElseThrow(java.util.NoSuchElementException::new);
 
         assertThat(pageTwo.sourceContext().sectionPath()).containsExactly("第三章 人员资格要求");
         assertThat(pageTwo.sourceContext().tableHeaders()).containsExactly("岗位", "资格条件");
@@ -244,20 +239,18 @@ class RequirementMappingStoreServiceTest {
                 + "3. 投标人应通过信用中国网站查询失信记录。";
         String pageTwo = "第四章 其他要求\n投标人应以全息视频演示施工路径。";
         return new Document(tender, project, "TENDER", "招标文件.txt", version, hash,
-                "2026-10-19T00:00:00Z", List.of(
-                new Page(1, pageOne, "PAGE", "TEXT", ""),
-                new Page(2, pageTwo, "PAGE", "TEXT", "")), List.of());
+                "2026-10-19T00:00:00Z", cn.bidcheck.compat.Java8Api.listOf(new Page(1, pageOne, "PAGE", "TEXT", ""), new Page(2, pageTwo, "PAGE", "TEXT", "")), cn.bidcheck.compat.Java8Api.listOf());
     }
 
     private Document document(List<Page> pages) {
-        return new Document(tender, project, "TENDER", "招标文件.txt", 1, "a".repeat(64),
-                "2026-10-19T00:00:00Z", pages, List.of());
+        return new Document(tender, project, "TENDER", "招标文件.txt", 1, cn.bidcheck.compat.Java8Api.repeat("a", 64),
+                "2026-10-19T00:00:00Z", pages, cn.bidcheck.compat.Java8Api.listOf());
     }
 
     private static void assertExactSources(Document document, List<cn.bidcheck.checktemplate.SourceRef> refs) {
         for (cn.bidcheck.checktemplate.SourceRef ref : refs) {
             Page page = document.pages().stream().filter(item -> item.number() == ref.location())
-                    .findFirst().orElseThrow();
+                    .findFirst().orElseThrow(java.util.NoSuchElementException::new);
             assertThat(ref.startOffset()).isNotNull();
             assertThat(ref.endOffset()).isNotNull();
             assertThat(page.text().substring(ref.startOffset(), ref.endOffset())).isEqualTo(ref.quote());

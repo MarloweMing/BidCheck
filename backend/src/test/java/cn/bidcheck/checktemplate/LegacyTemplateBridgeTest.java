@@ -25,7 +25,7 @@ class LegacyTemplateBridgeTest {
 
     @Test void legacyPriceUsesTemplateProjectionAndNeverCompilesARule(){
         Checkpoint checkpoint=checkpoint("VALUE_COMPARE","totalPrice","<=","100","万元");
-        Document bid=new Document("bid","project","BID","投标文件",1,"sha","",List.of(new Page(1,"投标函\n投标总报价：99万元","PAGE","PDF",null)),List.of());
+        Document bid=new Document("bid","project","BID","投标文件",1,"sha","",cn.bidcheck.compat.Java8Api.listOf(new Page(1,"投标函\n投标总报价：99万元","PAGE","PDF",null)),cn.bidcheck.compat.Java8Api.listOf());
         LegacyTemplateBridge.BridgeResult result=bridge.evaluate(checkpoint,bid,null,new FactExtractor().extract(bid));
         assertEquals("PASS",result.evaluation().status());
         assertEquals("PRICE_COMPARE",result.spec().templateId());
@@ -40,7 +40,7 @@ class LegacyTemplateBridgeTest {
         Checkpoint base=checkpoint("VALUE_COMPARE","totalPrice","<=","100","万元");
         Checkpoint unconfirmed=new Checkpoint(base.id(),base.title(),base.category(),base.severity(),base.type(),base.field(),base.operator(),base.expected(),base.unit(),base.required(),false,true,base.source());
         assertFalse(bridge.supports(unconfirmed));
-        assertThrows(IllegalArgumentException.class,()->bridge.evaluate(unconfirmed,null,null,List.of()));
+        assertThrows(IllegalArgumentException.class,()->bridge.evaluate(unconfirmed,null,null,cn.bidcheck.compat.Java8Api.listOf()));
     }
 
     private Checkpoint checkpoint(String type,String field,String operator,String expected,String unit){return new Checkpoint("cp","测试","响应检查","HIGH",type,field,operator,expected,unit,true,true,true,source);}

@@ -19,14 +19,67 @@ final class CertificateSourceComparison {
     private static final Pattern PERIOD=Pattern.compile("(注册有效期|证书有效期|有效期限|有效期至|有效期)[:：]?("+DATE+")(?:[-至—~～]("+DATE+"))?");
     private CertificateSourceComparison() {}
 
-    record Field(String key,String label,String raw,String value,String sourceId,Evidence evidence) {
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    static final class Field {
+        private final String key;
+        private final String label;
+        private final String raw;
+        private final String value;
+        private final String sourceId;
+        private final Evidence evidence;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        Field(@com.fasterxml.jackson.annotation.JsonProperty("key") String key, @com.fasterxml.jackson.annotation.JsonProperty("label") String label, @com.fasterxml.jackson.annotation.JsonProperty("raw") String raw, @com.fasterxml.jackson.annotation.JsonProperty("value") String value, @com.fasterxml.jackson.annotation.JsonProperty("sourceId") String sourceId, @com.fasterxml.jackson.annotation.JsonProperty("evidence") Evidence evidence) { this.key = key; this.label = label; this.raw = raw; this.value = value; this.sourceId = sourceId; this.evidence = evidence; }
+        public String key() { return key; }
+        public String label() { return label; }
+        public String raw() { return raw; }
+        public String value() { return value; }
+        public String sourceId() { return sourceId; }
+        public Evidence evidence() { return evidence; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Field that = (Field) other; return java.util.Objects.equals(this.key, that.key) && java.util.Objects.equals(this.label, that.label) && java.util.Objects.equals(this.raw, that.raw) && java.util.Objects.equals(this.value, that.value) && java.util.Objects.equals(this.sourceId, that.sourceId) && java.util.Objects.equals(this.evidence, that.evidence); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.key); hash = 31 * hash + java.util.Objects.hashCode(this.label); hash = 31 * hash + java.util.Objects.hashCode(this.raw); hash = 31 * hash + java.util.Objects.hashCode(this.value); hash = 31 * hash + java.util.Objects.hashCode(this.sourceId); hash = 31 * hash + java.util.Objects.hashCode(this.evidence); return hash; }
+        @Override public String toString() { return "Field[" + "key=" + key + ", label=" + label + ", raw=" + raw + ", value=" + value + ", sourceId=" + sourceId + ", evidence=" + evidence + "]"; }
+
         Map<String,Object> audit(){return linked("field",key,"label",label,"rawValue",raw,"value",value,"sourceId",sourceId,"source",evidence);}
     }
-    record Record(String id,String side,String category,String owner,List<Source> sources,Map<String,Field> fields,List<String> issues) {
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    static final class Record {
+        private final String id;
+        private final String side;
+        private final String category;
+        private final String owner;
+        private final List<Source> sources;
+        private final Map<String,Field> fields;
+        private final List<String> issues;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        Record(@com.fasterxml.jackson.annotation.JsonProperty("id") String id, @com.fasterxml.jackson.annotation.JsonProperty("side") String side, @com.fasterxml.jackson.annotation.JsonProperty("category") String category, @com.fasterxml.jackson.annotation.JsonProperty("owner") String owner, @com.fasterxml.jackson.annotation.JsonProperty("sources") List<Source> sources, @com.fasterxml.jackson.annotation.JsonProperty("fields") Map<String,Field> fields, @com.fasterxml.jackson.annotation.JsonProperty("issues") List<String> issues) { this.id = id; this.side = side; this.category = category; this.owner = owner; this.sources = sources; this.fields = fields; this.issues = issues; }
+        public String id() { return id; }
+        public String side() { return side; }
+        public String category() { return category; }
+        public String owner() { return owner; }
+        public List<Source> sources() { return sources; }
+        public Map<String,Field> fields() { return fields; }
+        public List<String> issues() { return issues; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Record that = (Record) other; return java.util.Objects.equals(this.id, that.id) && java.util.Objects.equals(this.side, that.side) && java.util.Objects.equals(this.category, that.category) && java.util.Objects.equals(this.owner, that.owner) && java.util.Objects.equals(this.sources, that.sources) && java.util.Objects.equals(this.fields, that.fields) && java.util.Objects.equals(this.issues, that.issues); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.id); hash = 31 * hash + java.util.Objects.hashCode(this.side); hash = 31 * hash + java.util.Objects.hashCode(this.category); hash = 31 * hash + java.util.Objects.hashCode(this.owner); hash = 31 * hash + java.util.Objects.hashCode(this.sources); hash = 31 * hash + java.util.Objects.hashCode(this.fields); hash = 31 * hash + java.util.Objects.hashCode(this.issues); return hash; }
+        @Override public String toString() { return "Record[" + "id=" + id + ", side=" + side + ", category=" + category + ", owner=" + owner + ", sources=" + sources + ", fields=" + fields + ", issues=" + issues + "]"; }
+
         String value(String key){Field f=fields.get(key);return f==null?"":f.value();}
-        Map<String,Object> audit(){return linked("recordId",id,"side",side,"category",category,"subject",owner,"sourceIds",sources.stream().map(Source::id).toList(),"fields",fields.values().stream().map(Field::audit).toList(),"issues",issues);}
+        Map<String,Object> audit(){return linked("recordId",id,"side",side,"category",category,"subject",owner,"sourceIds",cn.bidcheck.compat.Java8Api.toList(sources.stream().map(Source::id)),"fields",cn.bidcheck.compat.Java8Api.toList(fields.values().stream().map(Field::audit)),"issues",issues);}
     }
-    private record Compact(String text,int[] offsets,String original) {
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Compact {
+        private final String text;
+        private final int[] offsets;
+        private final String original;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Compact(@com.fasterxml.jackson.annotation.JsonProperty("text") String text, @com.fasterxml.jackson.annotation.JsonProperty("offsets") int[] offsets, @com.fasterxml.jackson.annotation.JsonProperty("original") String original) { this.text = text; this.offsets = offsets; this.original = original; }
+        public String text() { return text; }
+        public int[] offsets() { return offsets; }
+        public String original() { return original; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Compact that = (Compact) other; return java.util.Objects.equals(this.text, that.text) && java.util.Objects.equals(this.offsets, that.offsets) && java.util.Objects.equals(this.original, that.original); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.text); hash = 31 * hash + java.util.Objects.hashCode(this.offsets); hash = 31 * hash + java.util.Objects.hashCode(this.original); return hash; }
+        @Override public String toString() { return "Compact[" + "text=" + text + ", offsets=" + offsets + ", original=" + original + "]"; }
+
         static Compact of(String text){StringBuilder compact=new StringBuilder();int[] temp=new int[text.length()];int count=0;for(int i=0;i<text.length();i++)if(!Character.isWhitespace(text.charAt(i))){temp[count++]=i;compact.append(text.charAt(i));}return new Compact(compact.toString(),Arrays.copyOf(temp,count),text);}
     }
 
@@ -44,105 +97,118 @@ final class CertificateSourceComparison {
     }
 
     private static Decision comparePerson(Rule rule,String name,List<Record> records,RuleEvaluator evaluator){
-        List<Fact> roles=evaluator.facts.stream().filter(f->Set.of("PERSON_ROLE","RELATION").contains(f.kind())&&"CURRENT_PROJECT".equals(f.scope())&&DomainBindings.currentRoleSource(f,evaluator.corpus.byId))
+        List<Fact> roles=cn.bidcheck.compat.Java8Api.toList(evaluator.facts.stream().filter(f->cn.bidcheck.compat.Java8Api.setOf("PERSON_ROLE", "RELATION").contains(f.kind())&&"CURRENT_PROJECT".equals(f.scope())&&DomainBindings.currentRoleSource(f,evaluator.corpus.byId))
             .filter(f->name.equals(f.kind().equals("PERSON_ROLE")?f.value():DomainBindings.roleTarget(f,DomainBindings.sourceRole(f))))
-            .filter(f->new ProofVerifier().issue(f,evaluator.corpus.byId)==null&&DomainBindings.issue(f,evaluator.corpus.byId,List.of())==null).toList();
-        List<Record> candidates=records.stream().filter(r->ConfirmedSubjectBindings.recordMatches(name,r,evaluator)).toList();
+            .filter(f->new ProofVerifier().issue(f,evaluator.corpus.byId)==null&&DomainBindings.issue(f,evaluator.corpus.byId,cn.bidcheck.compat.Java8Api.listOf())==null));
+        List<Record> candidates=cn.bidcheck.compat.Java8Api.toList(records.stream().filter(r->ConfirmedSubjectBindings.recordMatches(name,r,evaluator)));
         if(candidates.isEmpty())return SameFieldComparisonTarget.unresolved(rule,evaluator.match(rule),evaluator);
-        if(roles.isEmpty())return pending(rule,evaluator,"SUBJECT_RELATION_UNPROVEN","已发现同名证书候选，但尚无已核源的本次岗位任职，不能以同名材料替代当前人员",roles,candidates,Map.of());
-        SubjectIdentity.Problem identity=evaluator.identities.issue(new Rule(rule.id(),rule.description(),"CERTIFICATE",rule.subject(),rule.field(),rule.operator(),rule.expected(),rule.unit(),rule.parameters(),rule.sourceQuote(),rule.logic(),List.of()),List.of());
-        if(identity!=null)return pending(rule,evaluator,identity.code(),identity.reason(),roles,candidates,Map.of());
+        if(roles.isEmpty())return pending(rule,evaluator,"SUBJECT_RELATION_UNPROVEN","已发现同名证书候选，但尚无已核源的本次岗位任职，不能以同名材料替代当前人员",roles,candidates,cn.bidcheck.compat.Java8Api.mapOf());
+        SubjectIdentity.Problem identity=evaluator.identities.issue(new Rule(rule.id(),rule.description(),"CERTIFICATE",rule.subject(),rule.field(),rule.operator(),rule.expected(),rule.unit(),rule.parameters(),rule.sourceQuote(),rule.logic(),cn.bidcheck.compat.Java8Api.listOf()),cn.bidcheck.compat.Java8Api.listOf());
+        if(identity!=null)return pending(rule,evaluator,identity.code(),identity.reason(),roles,candidates,cn.bidcheck.compat.Java8Api.mapOf());
         Set<String> categories=requiredCategories(rule,candidates,evaluator.context);
-        if(categories.isEmpty())return pending(rule,evaluator,"REQUIREMENT_COMPARISON_TARGET_UNRESOLVED","原条款要求的证照类型尚未与两端记录对应，不以另一类现有证照缩小检查范围",roles,candidates,Map.of());
-        List<Decision> compared=new ArrayList<>();for(String category:categories)compared.add(compareCategory(rule,name,category,candidates.stream().filter(r->r.category().equals(category)).toList(),roles,evaluator));
+        if(categories.isEmpty())return pending(rule,evaluator,"REQUIREMENT_COMPARISON_TARGET_UNRESOLVED","原条款要求的证照类型尚未与两端记录对应，不以另一类现有证照缩小检查范围",roles,candidates,cn.bidcheck.compat.Java8Api.mapOf());
+        List<Decision> compared=new ArrayList<>();for(String category:categories)compared.add(compareCategory(rule,name,category,cn.bidcheck.compat.Java8Api.toList(candidates.stream().filter(r->r.category().equals(category))),roles,evaluator));
         return compared.size()==1?compared.get(0):RuleEvaluator.combine(rule.id(),rule.description(),"ALL",compared);
     }
 
     private static Decision compareCategory(Rule rule,String name,String category,List<Record> candidates,List<Fact> roles,RuleEvaluator evaluator){
-        List<Record> left=candidates.stream().filter(r->r.side().equals("CERTIFICATE")).toList(),right=candidates.stream().filter(r->r.side().equals("QUERY")).toList();
+        List<Record> left=cn.bidcheck.compat.Java8Api.toList(candidates.stream().filter(r->r.side().equals("CERTIFICATE"))),right=cn.bidcheck.compat.Java8Api.toList(candidates.stream().filter(r->r.side().equals("QUERY")));
         if(left.size()!=1||right.size()!=1)return pending(rule,evaluator,"COMPARISON_SOURCE_REQUIRED","需要本人员同类证书与查询记录各一个明确版本；缺少一端或存在多版时不选择性比较",roles,candidates,linked("certificateRecords",left.size(),"queryRecords",right.size()));
         Record certificate=left.get(0),query=right.get(0);
-        if(!certificate.issues().isEmpty()||!query.issues().isEmpty())return pending(rule,evaluator,"COMPARISON_FIELD_MAPPING_REQUIRED","同一记录内字段缺少明确边界或出现多个取值，不能取第一个值作比较",roles,candidates,Map.of());
+        if(!certificate.issues().isEmpty()||!query.issues().isEmpty())return pending(rule,evaluator,"COMPARISON_FIELD_MAPPING_REQUIRED","同一记录内字段缺少明确边界或出现多个取值，不能取第一个值作比较",roles,candidates,cn.bidcheck.compat.Java8Api.mapOf());
         Field selectedNumber=certificate.fields().get("CERTIFICATE_NUMBER");if(selectedNumber==null)selectedNumber=certificate.fields().get("REGISTRATION_NUMBER");
-        if(selectedNumber==null)return pending(rule,evaluator,"COMPARISON_RECORD_IDENTITY_UNPROVEN","证书一端没有明确类型的编号，不能只凭姓名关联查询记录",roles,candidates,Map.of());
+        if(selectedNumber==null)return pending(rule,evaluator,"COMPARISON_RECORD_IDENTITY_UNPROVEN","证书一端没有明确类型的编号，不能只凭姓名关联查询记录",roles,candidates,cn.bidcheck.compat.Java8Api.mapOf());
         Fact selected=ConfirmedSubjectBindings.recordIdentity(certificate);
-        Rule identityRule=new Rule(rule.id(),rule.description(),"CERTIFICATE",rule.subject(),rule.field(),rule.operator(),rule.expected(),rule.unit(),rule.parameters(),rule.sourceQuote(),"",List.of());
-        SubjectIdentity.Problem roleIdentity=evaluator.identities.issue(identityRule,List.of(selected));
-        if(roleIdentity!=null)return pending(rule,evaluator,roleIdentity.code(),roleIdentity.reason(),roles,candidates,Map.of("comparisonIdentityScope","CURRENT_ROLE_TO_SELECTED_CERTIFICATE"));
+        Rule identityRule=new Rule(rule.id(),rule.description(),"CERTIFICATE",rule.subject(),rule.field(),rule.operator(),rule.expected(),rule.unit(),rule.parameters(),rule.sourceQuote(),"",cn.bidcheck.compat.Java8Api.listOf());
+        SubjectIdentity.Problem roleIdentity=evaluator.identities.issue(identityRule,cn.bidcheck.compat.Java8Api.listOf(selected));
+        if(roleIdentity!=null)return pending(rule,evaluator,roleIdentity.code(),roleIdentity.reason(),roles,candidates,cn.bidcheck.compat.Java8Api.mapOf("comparisonIdentityScope", "CURRENT_ROLE_TO_SELECTED_CERTIFICATE"));
         String certNumber=certificate.value("CERTIFICATE_NUMBER"),queryNumber=query.value("CERTIFICATE_NUMBER");
-        boolean typedNumber=!certNumber.isBlank()&&certNumber.equals(queryNumber);
-        boolean typedRegistration=!certificate.value("REGISTRATION_NUMBER").isBlank()&&certificate.value("REGISTRATION_NUMBER").equals(query.value("REGISTRATION_NUMBER"));
-        boolean personId=!certificate.value("PERSON_ID").isBlank()&&certificate.value("PERSON_ID").equals(query.value("PERSON_ID"));
-        if(!certificate.value("PERSON_ID").isBlank()&&!query.value("PERSON_ID").isBlank()&&!personId)return pending(rule,evaluator,"SUBJECT_IDENTITY_CONFLICT","同名证照与查询记录存在不同个人证件号码，不能合并为同一人",roles,candidates,Map.of());
-        if(!typedNumber&&!typedRegistration&&!personId)return pending(rule,evaluator,"COMPARISON_RECORD_IDENTITY_UNPROVEN","同名同类证照尚未通过同类型证书编号、注册编号或完整个人证件号建立对应关系；执业印章号不作为证书编号",roles,candidates,Map.of());
+        boolean typedNumber=!cn.bidcheck.compat.Java8Api.isBlank(certNumber)&&certNumber.equals(queryNumber);
+        boolean typedRegistration=!cn.bidcheck.compat.Java8Api.isBlank(certificate.value("REGISTRATION_NUMBER"))&&certificate.value("REGISTRATION_NUMBER").equals(query.value("REGISTRATION_NUMBER"));
+        boolean personId=!cn.bidcheck.compat.Java8Api.isBlank(certificate.value("PERSON_ID"))&&certificate.value("PERSON_ID").equals(query.value("PERSON_ID"));
+        if(!cn.bidcheck.compat.Java8Api.isBlank(certificate.value("PERSON_ID"))&&!cn.bidcheck.compat.Java8Api.isBlank(query.value("PERSON_ID"))&&!personId)return pending(rule,evaluator,"SUBJECT_IDENTITY_CONFLICT","同名证照与查询记录存在不同个人证件号码，不能合并为同一人",roles,candidates,cn.bidcheck.compat.Java8Api.mapOf());
+        if(!typedNumber&&!typedRegistration&&!personId)return pending(rule,evaluator,"COMPARISON_RECORD_IDENTITY_UNPROVEN","同名同类证照尚未通过同类型证书编号、注册编号或完整个人证件号建立对应关系；执业印章号不作为证书编号",roles,candidates,cn.bidcheck.compat.Java8Api.mapOf());
         Set<String> requiredFields=requiredFields(rule);
         boolean generic=clean(rule.sourceQuote()).matches(".*(?:查询截图|查询结果).*(?:信息|内容).*一致.*");
-        if(generic&&typedRegistration&&certNumber.isBlank()&&queryNumber.isBlank()){requiredFields.remove("CERTIFICATE_NUMBER");requiredFields.add("REGISTRATION_NUMBER");}
-        if(clean(rule.sourceQuote()).matches(".*(?:查询截图|查询结果).*(?:信息|内容).*一致.*"))for(String field:List.of("PERSON_ID","GENDER","BIRTH_DATE","PROFESSION","VALIDITY_START"))if(certificate.fields().containsKey(field)&&query.fields().containsKey(field))requiredFields.add(field);
+        if(generic&&typedRegistration&&cn.bidcheck.compat.Java8Api.isBlank(certNumber)&&cn.bidcheck.compat.Java8Api.isBlank(queryNumber)){requiredFields.remove("CERTIFICATE_NUMBER");requiredFields.add("REGISTRATION_NUMBER");}
+        if(clean(rule.sourceQuote()).matches(".*(?:查询截图|查询结果).*(?:信息|内容).*一致.*"))for(String field:cn.bidcheck.compat.Java8Api.listOf("PERSON_ID", "GENDER", "BIRTH_DATE", "PROFESSION", "VALIDITY_START"))if(certificate.fields().containsKey(field)&&query.fields().containsKey(field))requiredFields.add(field);
         List<Map<String,Object>> fieldResults=new ArrayList<>();boolean mismatch=false,missing=false;
         String requiredProfession=requiredProfession(rule,evaluator.context);
         for(String field:requiredFields){
-            Field a=certificate.fields().get(field),b=query.fields().get(field);Map<String,Object> dateScope=Map.of();
-            if(Set.of("VALIDITY_START","VALIDITY_END").contains(field)){
+            Field a=certificate.fields().get(field),b=query.fields().get(field);Map<String,Object> dateScope=cn.bidcheck.compat.Java8Api.mapOf();
+            if(cn.bidcheck.compat.Java8Api.setOf("VALIDITY_START", "VALIDITY_END").contains(field)){
                 DatePair pair=datePair(field,certificate,query,requiredProfession);a=pair.certificate();b=pair.query();dateScope=pair.audit();
                 LOG.info("bidcheck.certificate_comparison_date ruleId={} field={} profession={} certificateRecord={} queryRecord={} certificateField={} queryField={} resolution={}",rule.id(),field,requiredProfession,certificate.id(),query.id(),a==null?"":a.key(),b==null?"":b.key(),str(dateScope,"resolution"));
             }
-            Map<String,Object> confirmation=Map.of();if(field.equals("NAME")&&a!=null&&b!=null&&!a.value().equals(b.value())){Fact queried=ConfirmedSubjectBindings.recordIdentity(query);if(queried!=null)confirmation=ConfirmedSubjectBindings.edge(name,queried,evaluator.facts,evaluator.corpus);if(confirmation.isEmpty())confirmation=ConfirmedSubjectBindings.edge(name,selected,evaluator.facts,evaluator.corpus);}
+            Map<String,Object> confirmation=cn.bidcheck.compat.Java8Api.mapOf();if(field.equals("NAME")&&a!=null&&b!=null&&!a.value().equals(b.value())){Fact queried=ConfirmedSubjectBindings.recordIdentity(query);if(queried!=null)confirmation=ConfirmedSubjectBindings.edge(name,queried,evaluator.facts,evaluator.corpus);if(confirmation.isEmpty())confirmation=ConfirmedSubjectBindings.edge(name,selected,evaluator.facts,evaluator.corpus);}
             boolean sameValue=a!=null&&b!=null&&equivalentFieldValue(category,field,a.value(),b.value());
             String status=a==null||b==null?"UNDETERMINED":sameValue||!confirmation.isEmpty()?"PASS":"FAIL";
             missing|=status.equals("UNDETERMINED");mismatch|=status.equals("FAIL");
-            Map<String,Object> compared=linked("field",field,"status",status,"certificate",a==null?Map.of():a.audit(),"query",b==null?Map.of():b.audit(),"identityConfirmation",confirmation);
+            Map<String,Object> compared=linked("field",field,"status",status,"certificate",a==null?cn.bidcheck.compat.Java8Api.mapOf():a.audit(),"query",b==null?cn.bidcheck.compat.Java8Api.mapOf():b.audit(),"identityConfirmation",confirmation);
             if(sameValue&&!a.value().equals(b.value()))compared.put("normalization","REGISTERED_BUILDER_BUILDING_PROFESSION_ALIAS");
             if(!dateScope.isEmpty())compared.put("dateScope",dateScope);fieldResults.add(compared);
         }
-        Map<String,Object> proof=proof(rule,roles,candidates);proof.putAll(linked("subject",name,"category",category,"requiredFields",requiredFields,"fieldComparisons",fieldResults,"recordBinding",typedNumber?"CURRENT_APPOINTMENT_AND_NAME_CATEGORY_TYPED_CERTIFICATE_NUMBER":typedRegistration?"CURRENT_APPOINTMENT_AND_NAME_CATEGORY_TYPED_REGISTRATION_NUMBER":"CURRENT_APPOINTMENT_AND_NAME_CATEGORY_PERSON_ID","comparisonComplete",!missing,"proofScope","REFERENCED_CERTIFICATE_FIELDS","comparedRecordCount",2,"doesNotProveCurrentOnlineStatus",true,"identityBindings",evaluator.identities.bindings(List.of(selected))));
+        Map<String,Object> proof=proof(rule,roles,candidates);proof.putAll(linked("subject",name,"category",category,"requiredFields",requiredFields,"fieldComparisons",fieldResults,"recordBinding",typedNumber?"CURRENT_APPOINTMENT_AND_NAME_CATEGORY_TYPED_CERTIFICATE_NUMBER":typedRegistration?"CURRENT_APPOINTMENT_AND_NAME_CATEGORY_TYPED_REGISTRATION_NUMBER":"CURRENT_APPOINTMENT_AND_NAME_CATEGORY_PERSON_ID","comparisonComplete",!missing,"proofScope","REFERENCED_CERTIFICATE_FIELDS","comparedRecordCount",2,"doesNotProveCurrentOnlineStatus",true,"identityBindings",evaluator.identities.bindings(cn.bidcheck.compat.Java8Api.listOf(selected))));
         List<Evidence> evidence=evidences(roles,candidates,evaluator);String status=mismatch?"FAIL":missing?"UNDETERMINED":"PASS";
         String reason=mismatch?"已绑定的同类证照与查询记录存在有原文的字段差异":missing?"已保留完成的字段比较；仍有必需字段缺失或不能对齐":"已按原文逐字段核对本人员的证照与查询记录，所要求字段一致";
-        return new Decision(rule.id(),rule.description(),status,reason,evidence,missing?List.of(gap("COMPARISON_FIELD_MAPPING_REQUIRED",reason)):List.of(),proof);
+        return new Decision(rule.id(),rule.description(),status,reason,evidence,missing?cn.bidcheck.compat.Java8Api.listOf(gap("COMPARISON_FIELD_MAPPING_REQUIRED",reason)):cn.bidcheck.compat.Java8Api.listOf(),proof);
     }
 
     static boolean equivalentFieldValue(String category,String field,String left,String right){
         if(left.equals(right))return true;
         if(!"PROFESSION".equals(field)||!category.matches("[一二]级注册建造师"))return false;
-        return Set.of("建筑","建筑工程").contains(left)&&Set.of("建筑","建筑工程").contains(right);
+        return cn.bidcheck.compat.Java8Api.setOf("建筑", "建筑工程").contains(left)&&cn.bidcheck.compat.Java8Api.setOf("建筑", "建筑工程").contains(right);
     }
 
     static String requirementQuote(Rule rule,Map<String,Object> context){
         String quote=rule.sourceQuote();Object bindings=rule.parameters().get("requirementBindings");
-        if(bindings instanceof Map<?,?> all&&all.get("subject") instanceof Map<?,?> subject){String full=Objects.toString(subject.get("sourceQuote"),"");if(full.contains(rule.sourceQuote())&&clean(full).contains(clean(rule.subject())))quote=full;}
+        if(bindings instanceof Map<?,?>&&((Map<?,?>) (bindings)).get("subject") instanceof Map<?,?>){String full=Objects.toString(((Map<?,?>) (((Map<?,?>) (bindings)).get("subject"))).get("sourceQuote"),"");if(full.contains(rule.sourceQuote())&&clean(full).contains(clean(rule.subject())))quote=full;}
         String compiledRequirement=str(rule.parameters(),"certificateRequirementQuote"),originalRequirement=str(context,"originalRequirement");
-        if(!compiledRequirement.isBlank()&&compiledRequirement.contains(rule.sourceQuote())&&originalRequirement.contains(compiledRequirement))quote=compiledRequirement;
+        if(!cn.bidcheck.compat.Java8Api.isBlank(compiledRequirement)&&compiledRequirement.contains(rule.sourceQuote())&&originalRequirement.contains(compiledRequirement))quote=compiledRequirement;
         return quote;
     }
     static Set<String> requiredCategories(Rule rule,List<Record> records,Map<String,Object> context){
         String original=clean(requirementQuote(rule,context));Set<String> required=new LinkedHashSet<>();boolean scoped=false;
-        for(String family:List.of("建造师","建筑师","监理工程师","造价工程师"))if(original.contains(family)){
+        for(String family:cn.bidcheck.compat.Java8Api.listOf("建造师", "建筑师", "监理工程师", "造价工程师"))if(original.contains(family)){
             scoped=true;Set<String> found=new LinkedHashSet<>();records.stream().filter(r->r.category().contains(family)).forEach(r->found.add(r.category()));
-            if(found.size()!=1)return Set.of();required.addAll(found);
+            if(found.size()!=1)return cn.bidcheck.compat.Java8Api.setOf();required.addAll(found);
         }
         if(original.contains("安全生产考核合格证")){
             scoped=true;Set<String> allowed=new LinkedHashSet<>();Matcher types=Pattern.compile("[（(]([AB]|C[123]?)(?:类|证)?[）)]").matcher(original);while(types.find())allowed.add("安全生产考核合格证书("+types.group(1)+")");
             Set<String> found=new LinkedHashSet<>();records.stream().filter(r->r.category().startsWith("安全生产考核合格证书")).filter(r->allowed.isEmpty()||allowed.contains(r.category())).forEach(r->found.add(r.category()));
-            if(found.size()!=1)return Set.of();required.addAll(found);
+            if(found.size()!=1)return cn.bidcheck.compat.Java8Api.setOf();required.addAll(found);
         }
-        if(!scoped){records.forEach(r->required.add(r.category()));if(required.size()!=1)return Set.of();}
+        if(!scoped){records.forEach(r->required.add(r.category()));if(required.size()!=1)return cn.bidcheck.compat.Java8Api.setOf();}
         return required;
     }
 
-    private record DatePair(Field certificate,Field query,Map<String,Object> audit){}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class DatePair{
+        private final Field certificate;
+        private final Field query;
+        private final Map<String,Object> audit;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private DatePair(@com.fasterxml.jackson.annotation.JsonProperty("certificate") Field certificate, @com.fasterxml.jackson.annotation.JsonProperty("query") Field query, @com.fasterxml.jackson.annotation.JsonProperty("audit") Map<String,Object> audit) { this.certificate = certificate; this.query = query; this.audit = audit; }
+        public Field certificate() { return certificate; }
+        public Field query() { return query; }
+        public Map<String,Object> audit() { return audit; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; DatePair that = (DatePair) other; return java.util.Objects.equals(this.certificate, that.certificate) && java.util.Objects.equals(this.query, that.query) && java.util.Objects.equals(this.audit, that.audit); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.certificate); hash = 31 * hash + java.util.Objects.hashCode(this.query); hash = 31 * hash + java.util.Objects.hashCode(this.audit); return hash; }
+        @Override public String toString() { return "DatePair[" + "certificate=" + certificate + ", query=" + query + ", audit=" + audit + "]"; }
+}
     private static DatePair datePair(String field,Record certificate,Record query,String required){
         boolean scoped=certificate.fields().keySet().stream().anyMatch(k->k.startsWith(field+":"))
             ||query.fields().keySet().stream().anyMatch(k->k.startsWith(field+":"));
-        if(!scoped)return new DatePair(certificate.fields().get(field),query.fields().get(field),Map.of("resolution","SAME_UNQUALIFIED_DATE_FIELD"));
+        if(!scoped)return new DatePair(certificate.fields().get(field),query.fields().get(field),cn.bidcheck.compat.Java8Api.mapOf("resolution", "SAME_UNQUALIFIED_DATE_FIELD"));
         Field left=null,right=null;
-        if(!required.isBlank()){
+        if(!cn.bidcheck.compat.Java8Api.isBlank(required)){
             left=professionalDate(certificate,field,required);right=professionalDate(query,field,required);
         }
-        return new DatePair(left,right,linked("resolution",required.isBlank()?"REQUIREMENT_PROFESSION_UNRESOLVED":left==null||right==null?"PROFESSION_DATE_SCOPE_NOT_ALIGNED":"SAME_SOURCE_BOUND_PROFESSION",
-            "requiredProfession",required,"certificateAvailableFields",certificate.fields().keySet().stream().filter(k->k.startsWith(field)).toList(),
-            "queryAvailableFields",query.fields().keySet().stream().filter(k->k.startsWith(field)).toList(),"certificateProfession",certificate.value("PROFESSION"),"queryProfession",query.value("PROFESSION"),
-            "unqualifiedCertificateDate",certificate.fields().containsKey(field)?certificate.fields().get(field).audit():Map.of(),
-            "unqualifiedQueryDate",query.fields().containsKey(field)?query.fields().get(field).audit():Map.of(),
+        return new DatePair(left,right,linked("resolution",cn.bidcheck.compat.Java8Api.isBlank(required)?"REQUIREMENT_PROFESSION_UNRESOLVED":left==null||right==null?"PROFESSION_DATE_SCOPE_NOT_ALIGNED":"SAME_SOURCE_BOUND_PROFESSION",
+            "requiredProfession",required,"certificateAvailableFields",cn.bidcheck.compat.Java8Api.toList(certificate.fields().keySet().stream().filter(k->k.startsWith(field))),
+            "queryAvailableFields",cn.bidcheck.compat.Java8Api.toList(query.fields().keySet().stream().filter(k->k.startsWith(field))),"certificateProfession",certificate.value("PROFESSION"),"queryProfession",query.value("PROFESSION"),
+            "unqualifiedCertificateDate",certificate.fields().containsKey(field)?certificate.fields().get(field).audit():cn.bidcheck.compat.Java8Api.mapOf(),
+            "unqualifiedQueryDate",query.fields().containsKey(field)?query.fields().get(field).audit():cn.bidcheck.compat.Java8Api.mapOf(),
             "noCrossProfessionDateSubstitution",true));
     }
     private static Field professionalDate(Record record,String field,String required){
@@ -158,30 +224,30 @@ final class CertificateSourceComparison {
         while(matcher.find())values.add(canonicalProfession(matcher.group(1)));
         return values.size()==1?values.iterator().next():"";
     }
-    private static String canonicalProfession(String value){return switch(clean(value)){case "房屋建筑工程","建筑"->"建筑工程";case "机电"->"机电工程";default->clean(value);};}
+    private static String canonicalProfession(String value){switch (clean(value)) {case "房屋建筑工程":case "建筑":return "建筑工程";case "机电":return "机电工程";default:return clean(value);}}
 
     static Set<String> requiredFields(Rule rule){
         // Only original comparison wording can narrow the set; model parameters cannot drop fields.
         String quote=clean(rule.sourceQuote());int start=quote.lastIndexOf("查询截图");if(start<0)start=quote.lastIndexOf("查询结果");String clause=start<0?quote:quote.substring(start).split("[。；;（）()]",2)[0];
         LinkedHashSet<String> fields=new LinkedHashSet<>();
-        if(clause.matches(".*(?:信息|内容).*一致.*"))return new LinkedHashSet<>(List.of("NAME","EMPLOYER","CERTIFICATE_NUMBER","VALIDITY_END"));
+        if(clause.matches(".*(?:信息|内容).*一致.*"))return new LinkedHashSet<>(cn.bidcheck.compat.Java8Api.listOf("NAME", "EMPLOYER", "CERTIFICATE_NUMBER", "VALIDITY_END"));
         if(clause.contains("姓名")||clause.contains("持证人"))fields.add("NAME");
         if(clause.contains("单位"))fields.add("EMPLOYER");
         if(clause.contains("执业印章号"))fields.add("PRACTICE_SEAL_NUMBER");
         else if(clause.contains("编号")||clause.contains("证号"))fields.add("CERTIFICATE_NUMBER");
         if(clause.contains("有效期")){fields.add("VALIDITY_END");if(clause.contains("起止")||clause.contains("开始"))fields.add("VALIDITY_START");}
         if(clause.contains("身份证")||clause.contains("证件号码"))fields.add("PERSON_ID");
-        return fields.isEmpty()?new LinkedHashSet<>(List.of("NAME","EMPLOYER","CERTIFICATE_NUMBER","VALIDITY_END")):fields;
+        return fields.isEmpty()?new LinkedHashSet<>(cn.bidcheck.compat.Java8Api.listOf("NAME", "EMPLOYER", "CERTIFICATE_NUMBER", "VALIDITY_END")):fields;
     }
 
     static List<Record> records(EvidenceCorpus corpus){
         Map<String,CertificateEvidenceRecords.ScopeResolver> resolvers=new HashMap<>();Map<String,List<Source>> pages=new LinkedHashMap<>();for(Source s:corpus.all)if(CertificateEvidenceRecords.usable(s,corpus,resolvers))pages.computeIfAbsent(EvidenceCorpus.pageKey(s.evidence().documentId(),s.evidence().page(),s.evidence().locationType()),k->new ArrayList<>()).add(s);
-        List<Record> out=new ArrayList<>();for(var entry:pages.entrySet()){
-            var page=corpus.pages.get(entry.getKey());if(page==null)continue;String text=Objects.toString(page.text(),"");List<Record> typed=PersonnelCertificateRecords.read(entry.getValue(),text);if(!typed.isEmpty())out.addAll(typed);else{Record record=read(entry.getValue(),text);if(record!=null)out.add(record);}
+        List<Record> out=new ArrayList<>();for(java.util.Map.Entry<java.lang.String, java.util.List<cn.bidcheck.verification.engine.VerificationTypes.Source>> entry:pages.entrySet()){
+            cn.bidcheck.domain.Domain.Page page=corpus.pages.get(entry.getKey());if(page==null)continue;String text=Objects.toString(page.text(),"");List<Record> typed=PersonnelCertificateRecords.read(entry.getValue(),text);if(!typed.isEmpty())out.addAll(typed);else{Record record=read(entry.getValue(),text);if(record!=null)out.add(record);}
         }
         // Identical duplicates retain all source locations. Different versions never collapse.
-        Map<String,Record> unique=new LinkedHashMap<>();for(Record r:out){String key=r.side()+r.category()+r.owner()+r.fields().entrySet().stream().map(e->e.getKey()+":"+e.getValue().value()).toList();Record old=unique.get(key);if(old==null)unique.put(key,r);else{List<Source> sources=new ArrayList<>(old.sources());sources.addAll(r.sources());unique.put(key,new Record(old.id(),old.side(),old.category(),old.owner(),sources.stream().distinct().toList(),old.fields(),old.issues()));}}
-        return List.copyOf(unique.values());
+        Map<String,Record> unique=new LinkedHashMap<>();for(Record r:out){String key=r.side()+r.category()+r.owner()+cn.bidcheck.compat.Java8Api.toList(r.fields().entrySet().stream().map(e->e.getKey()+":"+e.getValue().value()));Record old=unique.get(key);if(old==null)unique.put(key,r);else{List<Source> sources=new ArrayList<>(old.sources());sources.addAll(r.sources());unique.put(key,new Record(old.id(),old.side(),old.category(),old.owner(),cn.bidcheck.compat.Java8Api.toList(sources.stream().distinct()),old.fields(),old.issues()));}}
+        return cn.bidcheck.compat.Java8Api.listCopyOf(unique.values());
     }
     private static Record read(List<Source> sources,String original){
         Compact c=Compact.of(original);String text=c.text();if(text.matches(".*(?:填写示例|示范文本|仅供参考|未取得|拟取得|证书模板).*"))return null;
@@ -207,10 +273,10 @@ final class CertificateSourceComparison {
             if(period.group(3)!=null)add(fields,issues,field("VALIDITY_START",period.group(1),period.group(2),period.start(2),period.end(2),c,sources));
             int group=period.group(3)==null?2:3;add(fields,issues,field("VALIDITY_END",period.group(1),period.group(group),period.start(group),period.end(group),c,sources));
         }
-        for(String[] spec:List.of(new String[]{"GENDER","性别","性别[:：]?([男女])"},new String[]{"BIRTH_DATE","出生日期","出生日期[:：]?("+DATE+")"},new String[]{"PROFESSION","注册专业","注册专业[:：]?([^:：|│]{1,40}?)(?=有效期|注册有效期|$)"})){
+        for(String[] spec:cn.bidcheck.compat.Java8Api.listOf(new String[]{"GENDER","性别","性别[:：]?([男女])"}, new String[]{"BIRTH_DATE","出生日期","出生日期[:：]?("+DATE+")"}, new String[]{"PROFESSION","注册专业","注册专业[:：]?([^:：|│]{1,40}?)(?=有效期|注册有效期|$)"})){
             Matcher value=Pattern.compile(spec[2]).matcher(text);while(value.find())add(fields,issues,field(spec[0],spec[1],value.group(1),value.start(1),value.end(1),c,sources));
         }
-        String id="CR"+identity(sources.get(0).id()+category+name.value()).substring(0,20);return new Record(id,query?"QUERY":"CERTIFICATE",category,name.value(),List.copyOf(sources),fields,List.copyOf(issues));
+        String id="CR"+identity(sources.get(0).id()+category+name.value()).substring(0,20);return new Record(id,query?"QUERY":"CERTIFICATE",category,name.value(),cn.bidcheck.compat.Java8Api.listCopyOf(sources),fields,cn.bidcheck.compat.Java8Api.listCopyOf(issues));
     }
     private static String canonicalCategory(String text){return text.replace('壹','一').replace('贰','二');}
     private static Field field(String key,String label,String value,int start,int end,Compact compact,List<Source> sources){
@@ -219,7 +285,7 @@ final class CertificateSourceComparison {
         Evidence origin=source.evidence();return new Field(key,label,raw,normalized,source.id(),new Evidence(origin.documentId(),origin.documentName(),origin.page(),origin.locationType(),raw,"chars:"+from+"-"+to,origin.confidence()));
     }
     private static void add(Map<String,Field> fields,List<String> issues,Field field){if(field==null)return;Field old=fields.putIfAbsent(field.key(),field);if(old!=null&&!old.value().equals(field.value()))issues.add("MULTIPLE_VALUES:"+field.key());}
-    private static Map<String,Object> proof(Rule rule,List<Fact> roles,List<Record> records){return linked("comparisonVersion",VERSION,"comparisonOperandKind","SOURCE_REFERENCE","comparisonTargetReference",SameFieldComparisonTarget.reference(rule),"literalTargetComparisonRejected",true,"materialMissingProven",false,"records",records.stream().map(Record::audit).toList(),"roleBindings",roles.stream().map(f->linked("factId",f.id(),"subject",f.subject(),"person",f.value(),"sourceIds",f.sourceIds())).toList(),"requirementQuote",rule.sourceQuote());}
-    private static List<Evidence> evidences(List<Fact> roles,List<Record> records,RuleEvaluator evaluator){List<Evidence> out=new ArrayList<>();roles.stream().flatMap(f->f.sourceIds().stream()).map(evaluator.corpus.byId::get).filter(Objects::nonNull).map(Source::evidence).forEach(out::add);records.stream().flatMap(r->r.fields().values().stream()).map(Field::evidence).forEach(out::add);return out.stream().distinct().toList();}
-    private static Decision pending(Rule rule,RuleEvaluator evaluator,String code,String reason,List<Fact> roles,List<Record> records,Map<String,Object> extra){Map<String,Object> proof=proof(rule,roles,records);proof.putAll(extra);return new Decision(rule.id(),rule.description(),"UNDETERMINED",reason,evidences(roles,records,evaluator),List.of(new Gap(code,reason,"由系统补齐两端定位、证照身份或字段关系，不把未对齐解释为材料缺失",code.startsWith("REQUIREMENT_")?"REQUIREMENT_MAPPING_CHANGED":"INPUT_OR_EVIDENCE_CHANGED")),proof);}
+    private static Map<String,Object> proof(Rule rule,List<Fact> roles,List<Record> records){return linked("comparisonVersion",VERSION,"comparisonOperandKind","SOURCE_REFERENCE","comparisonTargetReference",SameFieldComparisonTarget.reference(rule),"literalTargetComparisonRejected",true,"materialMissingProven",false,"records",cn.bidcheck.compat.Java8Api.toList(records.stream().map(Record::audit)),"roleBindings",cn.bidcheck.compat.Java8Api.toList(roles.stream().map(f->linked("factId",f.id(),"subject",f.subject(),"person",f.value(),"sourceIds",f.sourceIds()))),"requirementQuote",rule.sourceQuote());}
+    private static List<Evidence> evidences(List<Fact> roles,List<Record> records,RuleEvaluator evaluator){List<Evidence> out=new ArrayList<>();roles.stream().flatMap(f->f.sourceIds().stream()).map(evaluator.corpus.byId::get).filter(Objects::nonNull).map(Source::evidence).forEach(out::add);records.stream().flatMap(r->r.fields().values().stream()).map(Field::evidence).forEach(out::add);return cn.bidcheck.compat.Java8Api.toList(out.stream().distinct());}
+    private static Decision pending(Rule rule,RuleEvaluator evaluator,String code,String reason,List<Fact> roles,List<Record> records,Map<String,Object> extra){Map<String,Object> proof=proof(rule,roles,records);proof.putAll(extra);return new Decision(rule.id(),rule.description(),"UNDETERMINED",reason,evidences(roles,records,evaluator),cn.bidcheck.compat.Java8Api.listOf(new Gap(code,reason,"由系统补齐两端定位、证照身份或字段关系，不把未对齐解释为材料缺失",code.startsWith("REQUIREMENT_")?"REQUIREMENT_MAPPING_CHANGED":"INPUT_OR_EVIDENCE_CHANGED")),proof);}
 }

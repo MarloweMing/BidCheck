@@ -21,7 +21,7 @@ final class WordsCompatibility {
             ||!Boolean.TRUE.equals(State.CAPABILITIES.get("disableFormScripts"));}
     static boolean compatible(){return Boolean.TRUE.equals(State.CAPABILITIES.get("compatible"));}
     static String identity(){return State.FINGERPRINT;}
-    static Map<String,Object> configuration(){var result=new LinkedHashMap<>(State.CAPABILITIES);result.put("adapterVersion",VERSION);result.put("identity",identity());return result;}
+    static Map<String,Object> configuration(){java.util.LinkedHashMap<java.lang.String, java.lang.Object> result=new LinkedHashMap<>(State.CAPABILITIES);result.put("adapterVersion",VERSION);result.put("identity",identity());return result;}
 
     static void configureLoad(LoadOptions options,Path temp,Runnable deadline)throws IOException {
         requireCompatible();optional(options,"setIgnoreOleData",boolean.class,true);
@@ -50,8 +50,7 @@ final class WordsCompatibility {
         Method setter=callbackMethod(target.getClass(),name);if(setter==null)return false;
         Class<?> callback=setter.getParameterTypes()[0];
         Object handler=Proxy.newProxyInstance(callback.getClassLoader(),new Class<?>[]{callback},(proxy,method,args)->{
-            if(method.getDeclaringClass()==Object.class)return switch(method.getName()){
-                case "toString"->"BoundedWordProgress";case "hashCode"->System.identityHashCode(proxy);case "equals"->proxy==args[0];default->null;};
+            if(method.getDeclaringClass()==Object.class)switch (method.getName()) {case "toString":return "BoundedWordProgress";case "hashCode":return System.identityHashCode(proxy);case "equals":return proxy==args[0];default:return null;}
             if(method.getReturnType()!=void.class)throw new IllegalStateException("WORD_SDK_CALLBACK_INVALID");
             check.run();return null;
         });
@@ -79,10 +78,10 @@ final class WordsCompatibility {
     }
     private static String fingerprint(){
         // Loaded code, not the user-supplied filename, determines the cache identity.
-        var parts=new TreeMap<String,String>();parts.put("policy",VERSION);parts.put("capabilities",State.CAPABILITIES.toString());
-        for(Class<?> type:List.of(BuildVersionInfo.class,Document.class,LoadOptions.class,PdfSaveOptions.class,LayoutOptions.class,License.class)){
+        java.util.TreeMap<java.lang.String, java.lang.String> parts=new TreeMap<String,String>();parts.put("policy",VERSION);parts.put("capabilities",State.CAPABILITIES.toString());
+        for(Class<?> type:cn.bidcheck.compat.Java8Api.listOf(BuildVersionInfo.class, Document.class, LoadOptions.class, PdfSaveOptions.class, LayoutOptions.class, License.class)){
             try(InputStream in=type.getResourceAsStream(type.getSimpleName()+".class")){
-                if(in==null)throw new IOException();byte[] bytes=in.readNBytes(8*1024*1024+1);if(bytes.length>8*1024*1024)throw new IOException();parts.put(type.getName(),hash(bytes));
+                if(in==null)throw new IOException();byte[] bytes=cn.bidcheck.compat.Java8Api.readNBytes(in, 8*1024*1024+1);if(bytes.length>8*1024*1024)throw new IOException();parts.put(type.getName(),hash(bytes));
             }catch(IOException failure){throw new IllegalStateException("WORD_SDK_FINGERPRINT_UNAVAILABLE");}
         }
         return hash(parts.toString());

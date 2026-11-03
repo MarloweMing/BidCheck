@@ -13,13 +13,7 @@ public final class OcrBatchMetrics {
         Set<String> states=SEEN.computeIfAbsent(event.id(),id->new HashSet<>());
         if(!states.add(event.status()))return;
         if(SEEN.size()>2048)SEEN.remove(SEEN.keySet().iterator().next());
-        switch(event.status()) {
-            case "RUNNING"->{batches++;images+=event.inputIds().size();pixels+=Math.max(0,event.pixels());tokens+=Math.max(0,event.estimatedTokens());}
-            case "SPLITTING"->{splits++;outcome(states,false,event.elapsedMillis());}
-            case "SUCCEEDED"->outcome(states,true,event.elapsedMillis());
-            case "FAILED","PARTIAL_FAILED"->outcome(states,false,event.elapsedMillis());
-            default->{}
-        }
+        switch (event.status()) {case "RUNNING":{batches++;images+=event.inputIds().size();pixels+=Math.max(0,event.pixels());tokens+=Math.max(0,event.estimatedTokens());} break;case "SPLITTING":{splits++;outcome(states,false,event.elapsedMillis());} break;case "SUCCEEDED":outcome(states,true,event.elapsedMillis()); break;case "FAILED":case "PARTIAL_FAILED":outcome(states,false,event.elapsedMillis()); break;default:{} break;}
     }
     private static void outcome(Set<String> states,boolean success,long elapsed){
         // Local size splitting/cancelled admission has no service result; recovered parents have already been counted.
@@ -29,12 +23,8 @@ public final class OcrBatchMetrics {
     }
     private static void sample(long duration){if(LATENCIES.size()==512)LATENCIES.removeFirst();LATENCIES.addLast(Math.max(0,duration));}
     public static synchronized Map<String,Object> summary(){
-        List<Long> values=LATENCIES.stream().sorted().toList();
-        return Map.ofEntries(Map.entry("requests",batches),Map.entry("inputImagesIncludingRetries",images),Map.entry("splits",splits),
-            Map.entry("succeededBatches",succeeded),Map.entry("failedBatches",failed),Map.entry("inputPixels",pixels),
-            Map.entry("estimatedVisualTokens",tokens),Map.entry("latencySamples",values.size()),
-            Map.entry("p50Millis",percentile(values,.50)),Map.entry("p95Millis",percentile(values,.95)),Map.entry("p99Millis",percentile(values,.99)),
-            Map.entry("uptimeMillis",(System.nanoTime()-START)/1_000_000),Map.entry("boundary","最近512个完成批次的延迟；输入数含拆分重试，Token为估算，不是账单"));
+        List<Long> values=cn.bidcheck.compat.Java8Api.toList(LATENCIES.stream().sorted());
+        return cn.bidcheck.compat.Java8Api.mapOfEntries(cn.bidcheck.compat.Java8Api.entry("requests", batches), cn.bidcheck.compat.Java8Api.entry("inputImagesIncludingRetries", images), cn.bidcheck.compat.Java8Api.entry("splits", splits), cn.bidcheck.compat.Java8Api.entry("succeededBatches", succeeded), cn.bidcheck.compat.Java8Api.entry("failedBatches", failed), cn.bidcheck.compat.Java8Api.entry("inputPixels", pixels), cn.bidcheck.compat.Java8Api.entry("estimatedVisualTokens", tokens), cn.bidcheck.compat.Java8Api.entry("latencySamples", values.size()), cn.bidcheck.compat.Java8Api.entry("p50Millis", percentile(values,.50)), cn.bidcheck.compat.Java8Api.entry("p95Millis", percentile(values,.95)), cn.bidcheck.compat.Java8Api.entry("p99Millis", percentile(values,.99)), cn.bidcheck.compat.Java8Api.entry("uptimeMillis", (System.nanoTime()-START)/1_000_000), cn.bidcheck.compat.Java8Api.entry("boundary", "最近512个完成批次的延迟；输入数含拆分重试，Token为估算，不是账单"));
     }
     private static long percentile(List<Long> values,double fraction){return values.isEmpty()?0:values.get(Math.min(values.size()-1,(int)Math.ceil(values.size()*fraction)-1));}
 }

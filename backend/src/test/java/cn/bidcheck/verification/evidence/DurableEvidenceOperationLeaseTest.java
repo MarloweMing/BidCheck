@@ -32,12 +32,12 @@ class DurableEvidenceOperationLeaseTest {
             try(EvidenceOperationRepository.Lease owner=first.coordinate("project",key)){
                 assertTrue(owner.ownsDurableExecution());
                 CountDownLatch entered=new CountDownLatch(1);
-                Future<List<Boolean>> follower=worker.submit(()->{entered.countDown();try(var lease=second.coordinate("project",key)){
-                    return List.of(lease.ownsDurableExecution(),lease.completionObserved(),second.completed("project",key).isPresent());
+                Future<List<Boolean>> follower=worker.submit(()->{entered.countDown();try(cn.bidcheck.verification.evidence.EvidenceOperationRepository.Lease lease=second.coordinate("project",key)){
+                    return cn.bidcheck.compat.Java8Api.listOf(lease.ownsDurableExecution(), lease.completionObserved(), second.completed("project",key).isPresent());
                 }});
                 assertTrue(entered.await(1,TimeUnit.SECONDS));Thread.sleep(80);assertFalse(follower.isDone());
                 first.publishCompleted("project",key,descriptor,result);
-                assertEquals(List.of(false,true,true),follower.get(2,TimeUnit.SECONDS));
+                assertEquals(cn.bidcheck.compat.Java8Api.listOf(false, true, true),follower.get(2,TimeUnit.SECONDS));
             }finally{worker.shutdownNow();}
             assertNull(firstSession.getMapper(RecordMapper.class).evidenceOperationLease(key));
         }
@@ -53,7 +53,7 @@ class DurableEvidenceOperationLeaseTest {
             Thread.sleep(120);
             CountDownLatch acquired=new CountDownLatch(1),release=new CountDownLatch(1);ExecutorService worker=Executors.newSingleThreadExecutor();
             try{
-                Future<Boolean> replacement=worker.submit(()->{try(var lease=second.coordinate("project",key)){
+                Future<Boolean> replacement=worker.submit(()->{try(cn.bidcheck.verification.evidence.EvidenceOperationRepository.Lease lease=second.coordinate("project",key)){
                     boolean owns=lease.ownsDurableExecution();acquired.countDown();release.await();return owns;
                 }});
                 assertTrue(acquired.await(2,TimeUnit.SECONDS));
@@ -75,7 +75,7 @@ class DurableEvidenceOperationLeaseTest {
             Map<String,Object> descriptor=descriptor();String key=EvidenceOperationRepository.key(descriptor);
             ExecutorService worker=Executors.newSingleThreadExecutor();
             try(EvidenceOperationRepository.Lease owner=first.coordinate("project",key)){
-                Future<Boolean> follower=worker.submit(()->{try(var lease=second.coordinate("project",key)){return lease.ownsDurableExecution();}});
+                Future<Boolean> follower=worker.submit(()->{try(cn.bidcheck.verification.evidence.EvidenceOperationRepository.Lease lease=second.coordinate("project",key)){return lease.ownsDurableExecution();}});
                 Thread.sleep(320);assertFalse(follower.isDone(),"renewed live lease must not be taken over");
                 first.publishCompleted("project",key,descriptor,result());
                 assertFalse(follower.get(2,TimeUnit.SECONDS),"follower must consume completed evidence");
@@ -87,16 +87,16 @@ class DurableEvidenceOperationLeaseTest {
         return new EvidenceOperationRepository(new Store(session.getMapper(RecordMapper.class),new ObjectMapper()),local,ttl,renew,poll);
     }
     private static Map<String,Object> descriptor(){
-        return EvidenceOperationRepository.descriptor("project","TEXT_FACT_EXTRACTION",List.of(),
-            List.of(Map.of("id","source","documentHash","a".repeat(64))),List.of(Map.of("field","amount")),
+        return EvidenceOperationRepository.descriptor("project","TEXT_FACT_EXTRACTION",cn.bidcheck.compat.Java8Api.listOf(),
+            cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("id", "source", "documentHash", cn.bidcheck.compat.Java8Api.repeat("a", 64))),cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("field", "amount")),
             "requirement","model","FACTS_ONLY","extractor");
     }
-    private static Map<String,Object> result(){return Map.of("facts",List.of(),"sources",List.of(Map.of("id","source")),"fieldCoverage",List.of(Map.of("field","amount")));}
+    private static Map<String,Object> result(){return cn.bidcheck.compat.Java8Api.mapOf("facts", cn.bidcheck.compat.Java8Api.listOf(), "sources", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("id", "source")), "fieldCoverage", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("field", "amount")));}
     private static SqlSessionFactory database()throws Exception{
         DriverManagerDataSource source=new DriverManagerDataSource("jdbc:h2:mem:evidence_lease_"+UUID.randomUUID()+";DB_CLOSE_DELAY=-1","sa","");
         new ResourceDatabasePopulator(new ClassPathResource("schema.sql")).execute(source);
         SqlSessionFactoryBean factory=new SqlSessionFactoryBean();factory.setDataSource(source);
         factory.setDatabaseIdProvider(new DatabaseConfiguration().databaseIdProvider());
-        factory.setMapperLocations(new ClassPathResource("mappers/RecordMapper.xml"));return factory.getObject();
+        factory.setMapperLocations(new org.springframework.core.io.Resource[]{new ClassPathResource("mappers/RecordMapper.xml")});return factory.getObject();
     }
 }

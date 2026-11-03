@@ -11,7 +11,7 @@ public final class RestrictedLogic {
         List<TemplateTypes.ConditionState> values = values(states);
         if (values.isEmpty()) return TemplateTypes.ConditionState.UNKNOWN;
         if (values.stream().anyMatch(v -> v == TemplateTypes.ConditionState.NOT_SATISFIED)) return TemplateTypes.ConditionState.NOT_SATISFIED;
-        List<TemplateTypes.ConditionState> applicable = values.stream().filter(v -> v != TemplateTypes.ConditionState.NOT_APPLICABLE).toList();
+        List<TemplateTypes.ConditionState> applicable = cn.bidcheck.compat.Java8Api.toList(values.stream().filter(v -> v != TemplateTypes.ConditionState.NOT_APPLICABLE));
         if (applicable.isEmpty()) return TemplateTypes.ConditionState.NOT_APPLICABLE;
         if (applicable.stream().anyMatch(v -> v == TemplateTypes.ConditionState.UNKNOWN)) return TemplateTypes.ConditionState.UNKNOWN;
         return TemplateTypes.ConditionState.SATISFIED;
@@ -21,7 +21,7 @@ public final class RestrictedLogic {
         List<TemplateTypes.ConditionState> values = values(states);
         if (values.isEmpty()) return TemplateTypes.ConditionState.UNKNOWN;
         if (values.stream().anyMatch(v -> v == TemplateTypes.ConditionState.SATISFIED)) return TemplateTypes.ConditionState.SATISFIED;
-        List<TemplateTypes.ConditionState> applicable = values.stream().filter(v -> v != TemplateTypes.ConditionState.NOT_APPLICABLE).toList();
+        List<TemplateTypes.ConditionState> applicable = cn.bidcheck.compat.Java8Api.toList(values.stream().filter(v -> v != TemplateTypes.ConditionState.NOT_APPLICABLE));
         if (applicable.isEmpty()) return TemplateTypes.ConditionState.NOT_APPLICABLE;
         if (applicable.stream().anyMatch(v -> v == TemplateTypes.ConditionState.UNKNOWN)) return TemplateTypes.ConditionState.UNKNOWN;
         return TemplateTypes.ConditionState.NOT_SATISFIED;
@@ -29,8 +29,8 @@ public final class RestrictedLogic {
 
     public static TemplateTypes.ConditionState atLeastN(List<TemplateTypes.ConditionState> states, int required) {
         if (required < 1) throw new IllegalArgumentException("required must be positive");
-        List<TemplateTypes.ConditionState> applicable = values(states).stream()
-                .filter(v -> v != TemplateTypes.ConditionState.NOT_APPLICABLE).toList();
+        List<TemplateTypes.ConditionState> applicable = cn.bidcheck.compat.Java8Api.toList(values(states).stream()
+                .filter(v -> v != TemplateTypes.ConditionState.NOT_APPLICABLE));
         if (applicable.isEmpty()) return TemplateTypes.ConditionState.NOT_APPLICABLE;
         long met = applicable.stream().filter(v -> v == TemplateTypes.ConditionState.SATISFIED).count();
         long unknown = applicable.stream().filter(v -> v == TemplateTypes.ConditionState.UNKNOWN).count();
@@ -43,11 +43,7 @@ public final class RestrictedLogic {
                                                           TemplateTypes.ConditionState result) {
         Objects.requireNonNull(applicability, "applicability");
         Objects.requireNonNull(result, "result");
-        return switch (applicability) {
-            case DOES_NOT_APPLY -> TemplateTypes.ConditionState.NOT_APPLICABLE;
-            case UNKNOWN -> TemplateTypes.ConditionState.UNKNOWN;
-            case APPLIES -> result;
-        };
+        switch (applicability) {case DOES_NOT_APPLY:return TemplateTypes.ConditionState.NOT_APPLICABLE;case UNKNOWN:return TemplateTypes.ConditionState.UNKNOWN;case APPLIES:return result;default:throw new IncompatibleClassChangeError();}
     }
 
     /** FOR_EACH_SUBJECT requires a closed subject set; an empty closed set is not a pass. */
@@ -57,6 +53,6 @@ public final class RestrictedLogic {
     }
 
     private static List<TemplateTypes.ConditionState> values(List<TemplateTypes.ConditionState> states) {
-        return states == null ? List.of() : states.stream().filter(Objects::nonNull).toList();
+        return states == null ? cn.bidcheck.compat.Java8Api.listOf() : cn.bidcheck.compat.Java8Api.toList(states.stream().filter(Objects::nonNull));
     }
 }

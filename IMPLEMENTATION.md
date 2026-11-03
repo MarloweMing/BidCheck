@@ -58,7 +58,7 @@ HTTP 入口由 `ApiController`、`VerificationController` 和相关服务提供�
 
 ## 4. 文档、OCR 与模型边界
 
-`FileParser` 统一处理原生文档内容、页面、表格和图片。PDFBox、Apache POI 负责可直接读取的内容；Aspose.Words 是可选的 DOCX 渲染增强；结构化 OCR 位于 `scripts/structured_ocr/`。
+`FileParser` 统一处理原生文档内容、页面、表格和图片。PDFBox、Apache POI 负责可直接读取的内容；Aspose.Words 是可选的 DOCX 渲染增强；结构化 OCR 和本地补字均位于 Java `cn.bidcheck.ocr` 包。
 
 处理顺序是：
 
@@ -220,13 +220,13 @@ SQL 文件：
 
 编译能够执行不等于业务证明已齐全。原文未提供的技术附件、未取得的外部/现场记录、签章位置原图、不能可靠关联的人员身份、没有闭合的申报清单以及总括项未完成依赖仍保留明确缺口。离线回放不复用历史模型结论、不能作为新的生产通过率或端到端耗时。
 
-## 12. 受控 Agents SDK 查证与根因修复（2026-10-27）
+## 12. 受控 Java 查证与根因修复（2026-10-27；2026-11-03 Java 迁移）
 
 ### 12.1 执行位置与责任
 
-`VerificationEngine` 的 `TARGETED_EVIDENCE` 阶段，在人员任职、人员证书关联、签署权事项仍有缺口时调用真实 OpenAI Agents SDK Python Worker。首次普通检查、已闭合事项、纯本地依赖重算继续由现有程序执行。SDK 失败恢复使用 `RETRY_FAILED_STEP`，保留原查证身份。调用身份包含 Worker 内容、提供方端点、模型和策略；不包含凭证或凭证哈希。
+`VerificationEngine` 的 `TARGETED_EVIDENCE` 阶段，在人员任职、人员证书关联、签署权事项仍有缺口时调用 JVM 内的 Java Agent。首次普通检查、已闭合事项、纯本地依赖重算继续由现有程序执行。查证失败恢复使用 `RETRY_FAILED_STEP`，保留原查证身份。调用身份包含实现策略、提供方端点和模型；不包含凭证或凭证哈希。
 
-Java 通过本机子进程 JSONL 与 `agent-worker/worker.py` 通信。Worker 固定 `openai-agents==0.24.0`，使用 `Agent`、`Runner`、`FunctionTool` 和 `OpenAIChatCompletionsModel`。模型服务沿用百炼，显式限制 DashScope 域名并禁用重定向、环境代理与云端 tracing。SDK 是编排依赖，不代表切换到 OpenAI 模型服务。
+模型工具回环由 Java 8 实现，直接请求现有百炼兼容接口。原桥接的可信回执、调用许可和租约取消边界保留；没有 Python 生产进程或 Agents SDK 运行依赖。模型服务沿用百炼，显式限制 DashScope 域名并禁用重定向、环境代理与云端 tracing。
 
 模型负责选取下一步证据工具；Java 负责文件版本隔离、来源验真、候选事实采纳与完整条件树重算。模型自然语言不能发布 PASS、修改要求或改变项目范围。每次模型请求先获得 Java 许可 ACK，再发往现有百炼。单次超时或异常留下系统失败，不转换为材料缺失；没有按业务事项数量设调用预算。
 
@@ -251,10 +251,10 @@ Java 通过本机子进程 JSONL 与 `agent-worker/worker.py` 通信。Worker �
 3. 共通查询证明只能消费闭合收据实际选择的证书，避免先排除冲突证书、后又借用该证书。
 4. 外部未配置、未执行、请求失败、无记录、阶段未到分别记录。没有新增外部证据时也保存诊断；诊断更新不记作业务重算。
 5. `WAIT_EXTERNAL` 表示等待明确的外部阶段，未配置连接仍属 `SYSTEM_INCOMPLETE`。整体 FAIL 但其他条件尚有缺口的事项继续补查，不能通过改标签虚降未完成数。
-6. 前端默认只展示业务结论；工具次数、有效证据数、失败原因和耗时进入可展开的处理详情。SDK 请求数、HTTP 审计与业务完成数分别统计。
+6. 前端默认只展示业务结论；工具次数、有效证据数、失败原因和耗时进入可展开的处理详情。模型请求数、HTTP 审计与业务完成数分别统计。
 
 ### 12.4 启动与验收
 
-`Start-BidCheck.ps1` 在项目本地 `.local/agent-venv` 和 Worker 就绪时启用查证，显式设置解释器及脚本绝对路径；`-LocalOnly` 保持本地运行。配置使用 `bidcheck.agent.*` / `BIDCHECK_AGENT_*`，默认最多两条查证任务并发。依赖安装及完整锁文件说明见 `agent-worker/README.md`。
+`Start-BidCheck.ps1` 仅启动 Java 应用，查证由 `BIDCHECK_AGENT_ENABLED` 显式启用；`-LocalOnly` 跳过此前保存的运行配置。配置使用 `bidcheck.agent.*` / `BIDCHECK_AGENT_*`，默认最多两条查证任务并发。运行说明见 `backend/src/main/java/cn/bidcheck/verification/agent/README-runtime.md`。
 
-交付记录属于未纳入仓库的私有隔离验收材料。验收覆盖真实 SDK 的模拟模型回环、Java 与 Python 进程桥接、来源与恢复反例、既有后端回归、前端状态回归、兼容接口合成小样本及脱敏人员关系隔离验证。所有隔离验证都不能作为新的生产通过率或含 OCR 的全流程耗时；历史检查记录保持不变。
+既往私有验收记录包含原 Python SDK 的模拟回环与进程桥接；历史实现已归档到 `tests/legacy-python/`，这些记录不代表 Java 迁移后的新验收。当前 Java 测试验证模型工具回环、来源与恢复边界、许可与取消、像素网格和本地补字。所有隔离验证都不能作为新的生产通过率或含 OCR 的全流程耗时；历史检查记录保持不变。

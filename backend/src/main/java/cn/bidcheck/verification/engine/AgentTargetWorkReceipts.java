@@ -24,12 +24,12 @@ final class AgentTargetWorkReceipts {
         List<String> beforeTargets=targets(result.get("semanticWorkItems"));
         String action;
         if(!submit){
-            if(!result.containsKey("semanticWorkItems"))result.put("semanticWorkItems",rules.stream()
-                .map(r->workflow.state(r,entity.apply(r),revision.apply(r))).toList());
+            if(!result.containsKey("semanticWorkItems"))result.put("semanticWorkItems",cn.bidcheck.compat.Java8Api.toList(rules.stream()
+                .map(r->workflow.state(r,entity.apply(r),revision.apply(r)))));
             action="GLOBAL_HOST_SNAPSHOT";
         }else if(target==null){
             // There is no legitimate target to invent. The worker normally rejects this before dispatch.
-            result.put("semanticWorkItems",List.of());
+            result.put("semanticWorkItems",cn.bidcheck.compat.Java8Api.listOf());
             action="INVALID_CALL_TARGET_NO_WORK_IDENTITY";
         }else if(result.containsKey("semanticWorkItems")){
             Object supplied=result.get("semanticWorkItems");
@@ -37,7 +37,7 @@ final class AgentTargetWorkReceipts {
                 String originalStatus=str(result,"status"),originalError=str(result,"error");
                 result.put("status","FAILED");result.put("error","HOST_TARGET_RECEIPT_INVALID");
                 result.put("receiptOriginalStatus",originalStatus);result.put("receiptOriginalError",originalError);
-                result.put("semanticWorkItems",List.of());
+                result.put("semanticWorkItems",cn.bidcheck.compat.Java8Api.listOf());
                 result.put("receiptFailureReason","Explicit host submit receipt must contain exactly the called target with valid work and evidence revisions.");
                 action="EXPLICIT_RECEIPT_REJECTED";
             }else action="EXPLICIT_SINGLE_TARGET_RECEIPT_PRESERVED";
@@ -45,11 +45,11 @@ final class AgentTargetWorkReceipts {
             String version=revision.apply(target),subject=entity.apply(target);
             boolean rejected="REJECTED".equals(str(result,"status"));
             List<Map<String,Object>> issues=new ArrayList<>(RuleEvaluator.maps(result.get("rejections")));
-            if(rejected&&issues.isEmpty())issues.add(linked("code",str(result,"error").isBlank()?"FACT_VALIDATION_REJECTED":str(result,"error")));
+            if(rejected&&issues.isEmpty())issues.add(linked("code",cn.bidcheck.compat.Java8Api.isBlank(str(result,"error"))?"FACT_VALIDATION_REJECTED":str(result,"error")));
             Map<String,Object> work=rejected?workflow.observe(target,subject,version,issues):workflow.state(target,subject,version);
-            result.put("semanticWorkItems",List.of(work));
+            result.put("semanticWorkItems",cn.bidcheck.compat.Java8Api.listOf(work));
             if(rejected){
-                result.put("affectedTargetObligationIds",List.of(target.id()));
+                result.put("affectedTargetObligationIds",cn.bidcheck.compat.Java8Api.listOf(target.id()));
                 result.putIfAbsent("rejectionEvidenceRevision",version);
                 result.putIfAbsent("businessProof",false);
             }
@@ -60,16 +60,16 @@ final class AgentTargetWorkReceipts {
             "action",action,"priorTargetObligationIds",beforeTargets,
             "returnedTargetObligationIds",targets(after),"status",result.getOrDefault("status",""),
             "error",result.getOrDefault("error",""),"receiptOriginalError",result.getOrDefault("receiptOriginalError",""),
-            "workItems",after.stream().map(w->linked("workKey",w.get("workKey"),"targetObligationId",w.get("targetObligationId"),
+            "workItems",cn.bidcheck.compat.Java8Api.toList(after.stream().map(w->linked("workKey",w.get("workKey"),"targetObligationId",w.get("targetObligationId"),
                 "evidenceRevision",w.get("evidenceRevision"),"failureFamily",w.get("failureFamily"),
-                "terminalForRevision",w.get("terminalForRevision"),"targetExhaustedForRevision",w.get("targetExhaustedForRevision"))).toList(),
+                "terminalForRevision",w.get("terminalForRevision"),"targetExhaustedForRevision",w.get("targetExhaustedForRevision")))),
             "businessDecisionChanged",false,"boundary","Work receipt completion is a protocol repair, not proof that a business condition is satisfied.");
     }
 
     private static boolean validSingleTarget(Object raw,String target){
-        if(!(raw instanceof List<?> list)||list.size()!=1||!(list.get(0) instanceof Map<?,?> item))return false;
-        return target.equals(item.get("targetObligationId"))&&validRevision(item.get("workKey"))&&validRevision(item.get("evidenceRevision"));
+        if(!(raw instanceof List<?>)||((List<?>) (raw)).size()!=1||!(((List<?>) (raw)).get(0) instanceof Map<?,?>))return false;
+        return target.equals(((Map<?,?>) (((List<?>) (raw)).get(0))).get("targetObligationId"))&&validRevision(((Map<?,?>) (((List<?>) (raw)).get(0))).get("workKey"))&&validRevision(((Map<?,?>) (((List<?>) (raw)).get(0))).get("evidenceRevision"));
     }
-    private static boolean validRevision(Object raw){return raw instanceof String text&&!text.isBlank()&&text.length()<=256;}
-    private static List<String> targets(Object raw){return RuleEvaluator.maps(raw).stream().map(w->str(w,"targetObligationId")).toList();}
+    private static boolean validRevision(Object raw){return raw instanceof String&&!cn.bidcheck.compat.Java8Api.isBlank(((String) (raw)))&&((String) (raw)).length()<=256;}
+    private static List<String> targets(Object raw){return cn.bidcheck.compat.Java8Api.toList(RuleEvaluator.maps(raw).stream().map(w->str(w,"targetObligationId")));}
 }

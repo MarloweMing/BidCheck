@@ -1,6 +1,6 @@
 package cn.bidcheck.service;
 
-import jakarta.annotation.PreDestroy;
+import javax.annotation.PreDestroy;
 import java.io.InterruptedIOException;
 import java.util.ArrayDeque;
 import java.util.HashSet;
@@ -64,8 +64,8 @@ public final class CheckpointExecutor {
                 catch(InterruptedException interrupted){throw interrupted(interrupted);}
                 catch(ExecutionException failed){
                     Throwable cause=failed.getCause();
-                    if(cause instanceof RuntimeException runtime)throw runtime;
-                    if(cause instanceof Error error)throw error;
+                    if(cause instanceof RuntimeException)throw ((RuntimeException) (cause));
+                    if(cause instanceof Error)throw ((Error) (cause));
                     throw new IllegalStateException("Checkpoint evaluation failed",cause);
                 }
                 pending.remove(future);
@@ -78,7 +78,18 @@ public final class CheckpointExecutor {
         } finally {for(Future<?> future:pending)future.cancel(true);}
     }
 
-    private record Indexed<T>(int index,T value) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Indexed<T> {
+        private final int index;
+        private final T value;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Indexed(@com.fasterxml.jackson.annotation.JsonProperty("index") int index, @com.fasterxml.jackson.annotation.JsonProperty("value") T value) { this.index = index; this.value = value; }
+        public int index() { return index; }
+        public T value() { return value; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Indexed that = (Indexed) other; return java.util.Objects.equals(this.index, that.index) && java.util.Objects.equals(this.value, that.value); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.index); hash = 31 * hash + java.util.Objects.hashCode(this.value); return hash; }
+        @Override public String toString() { return "Indexed[" + "index=" + index + ", value=" + value + "]"; }
+ }
 
     /** At most one window per invocation is submitted, including results awaiting consumption. */
     public <T> void forEachOrdered(int count,IntFunction<T> evaluate,BiConsumer<Integer,T> consume)
@@ -102,8 +113,8 @@ public final class CheckpointExecutor {
                 catch(InterruptedException interrupted) { throw interrupted(interrupted); }
                 catch(ExecutionException failed) {
                     Throwable cause=failed.getCause();
-                    if(cause instanceof RuntimeException runtime) throw runtime;
-                    if(cause instanceof Error error) throw error;
+                    if(cause instanceof RuntimeException) throw ((RuntimeException) (cause));
+                    if(cause instanceof Error) throw ((Error) (cause));
                     throw new IllegalStateException("Checkpoint evaluation failed",cause);
                 }
                 checkInterrupted();
@@ -134,6 +145,6 @@ public final class CheckpointExecutor {
     @PreDestroy
     public void shutdown() {
         // shutdownNow returns queued tasks without completing their futures; release their callers too.
-        for(Runnable queued:workers.shutdownNow()) if(queued instanceof Future<?> future) future.cancel(true);
+        for(Runnable queued:workers.shutdownNow()) if(queued instanceof Future<?>) ((Future<?>) (queued)).cancel(true);
     }
 }

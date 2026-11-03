@@ -17,7 +17,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.web.servlet.MockMvc;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -34,13 +34,13 @@ class OcrWorkflowIntegrationTest {
     @Autowired BidService service;
     @Autowired Store store;
     @Autowired MockMvc mvc;
-    @MockitoBean OcrClient ocr;
+    @MockBean OcrClient ocr;
 
     @BeforeEach void setup() throws Exception {
         when(ocr.enabled()).thenReturn(true); when(ocr.modelName()).thenReturn("test-ocr"); when(ocr.identity()).thenReturn("ocr-test-v1");
         when(ocr.recognize(any(byte[].class),anyString())).thenReturn(new OcrResult("项目编号：OCR-001\n投标有效期：60天","DASHSCOPE","test-ocr",false));
     }
-    private String project() { return (String)service.createProject(Map.of("name","OCR回归")).get("id"); }
+    private String project() { return (String)service.createProject(cn.bidcheck.compat.Java8Api.mapOf("name", "OCR回归")).get("id"); }
     private byte[] png() throws Exception {
         BufferedImage image=new BufferedImage(200,160,BufferedImage.TYPE_INT_RGB);
         ByteArrayOutputStream bytes=new ByteArrayOutputStream(); ImageIO.write(image,"PNG",bytes);return bytes.toByteArray();
@@ -87,7 +87,7 @@ class OcrWorkflowIntegrationTest {
         for(Checkpoint c:store.list("checkpoint",p,tender,Checkpoint.class)) service.updateCheckpoint(c.id(),new Checkpoint(c.id(),c.title(),c.category(),c.severity(),c.type(),c.field(),c.operator(),c.expected(),c.unit(),c.required(),true,c.enabled(),c.source()));
         Document bid=image(p);Map<String,Object> run=service.startRun(p,bid.id());service.execute(service.task((String)run.get("taskId")));
         List<Finding> findings=store.list("finding",p,(String)run.get("id"),Finding.class);
-        Finding validity=findings.stream().filter(f->"bidValidity".equals(f.checkpoint().field())).findFirst().orElseThrow();
+        Finding validity=findings.stream().filter(f->"bidValidity".equals(f.checkpoint().field())).findFirst().orElseThrow(java.util.NoSuchElementException::new);
         assertThat(validity.evaluation().status()).isEqualTo("FAIL");
         assertThat(validity.evaluation().method()).doesNotContain("OCR_REVIEW");
         assertThat(validity.assessment()).containsEntry("policyVersion","evidence-review-v3");

@@ -37,7 +37,7 @@ public class RequirementMappingStoreService {
         this.store = store;
         this.tx = new TransactionTemplate(transactionManager);
         this.mapper = new RequirementMappingService(externalAdapter == null
-                ? Map.of() : externalAdapter.enabledSourceTypes());
+                ? cn.bidcheck.compat.Java8Api.mapOf() : externalAdapter.enabledSourceTypes());
     }
 
     public RequirementMappingSnapshot analyze(Document document) {
@@ -78,7 +78,7 @@ public class RequirementMappingStoreService {
         tx.executeWithoutResult(status -> {
             Map<String, Object> project = store.map(store.lock("project", projectId).body);
             String activeTender = text(project.get("activeTenderId"));
-            if (!activeTender.isBlank() && !activeTender.equals(documentId)) {
+            if (!cn.bidcheck.compat.Java8Api.isBlank(activeTender) && !activeTender.equals(documentId)) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "当前招标文件已变更，请刷新后重试");
             }
             persist(snapshot);
@@ -90,18 +90,14 @@ public class RequirementMappingStoreService {
         String documentId = selectTender(projectId, "");
         Stored stored = store.mapper().get(id(documentId));
         if (stored == null || !KIND.equals(stored.kind) || !projectId.equals(stored.projectId)) {
-            return Map.of("status", "NOT_GENERATED", "projectId", projectId,
-                    "tenderDocumentId", documentId, "executionState", "DRAFT_ONLY",
-                    "affectsBusinessConclusion", false);
+            return cn.bidcheck.compat.Java8Api.mapOf("status", "NOT_GENERATED", "projectId", projectId, "tenderDocumentId", documentId, "executionState", "DRAFT_ONLY", "affectsBusinessConclusion", false);
         }
         RequirementMappingSnapshot snapshot = store.decode(stored.body, RequirementMappingSnapshot.class);
         Document active = store.get("document", documentId, Document.class);
         if (!VERSION.equals(snapshot.mappingVersion())
                 || active.version() != snapshot.tenderDocumentVersion()
                 || !active.sha256().equals(snapshot.tenderDocumentHash())) {
-            return Map.of("status", "STALE", "projectId", projectId, "tenderDocumentId", documentId,
-                    "executionState", "DRAFT_ONLY", "affectsBusinessConclusion", false,
-                    "reason", "条款整理规则或当前招标文件已变化，请重新整理条款模板覆盖");
+            return cn.bidcheck.compat.Java8Api.mapOf("status", "STALE", "projectId", projectId, "tenderDocumentId", documentId, "executionState", "DRAFT_ONLY", "affectsBusinessConclusion", false, "reason", "条款整理规则或当前招标文件已变化，请重新整理条款模板覆盖");
         }
         return response(snapshot, includeDetails);
     }
@@ -109,8 +105,7 @@ public class RequirementMappingStoreService {
     public Map<String, Object> currentSummary(String projectId) {
         Map<String, Object> full = current(projectId, false);
         Map<String, Object> compact = new LinkedHashMap<>();
-        for (String key : List.of("status", "projectId", "tenderDocumentId", "tenderDocumentVersion",
-                "tenderDocumentHash", "affectsBusinessConclusion", "summary", "reviewItemCount", "reason")) {
+        for (String key : cn.bidcheck.compat.Java8Api.listOf("status", "projectId", "tenderDocumentId", "tenderDocumentVersion", "tenderDocumentHash", "affectsBusinessConclusion", "summary", "reviewItemCount", "reason")) {
             if (full.containsKey(key)) compact.put(key, full.get(key));
         }
         return compact;
@@ -157,7 +152,7 @@ public class RequirementMappingStoreService {
             items.add(row);
             if (items.size() == SUMMARY_ITEM_LIMIT) break;
         }
-        return List.copyOf(items);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(items);
     }
 
     private static boolean reviewStatus(CoverageItem.Status status) {
@@ -170,9 +165,9 @@ public class RequirementMappingStoreService {
         Map<String, Object> project = store.getMap("project", projectId);
         String active = text(project.get("activeTenderId"));
         String requested = text(requestedDocumentId);
-        String selected = requested.isBlank() ? active : requested;
-        if (selected.isBlank()) throw new ResponseStatusException(HttpStatus.CONFLICT, "请先提取当前招标文件的检查项");
-        if (!active.isBlank() && !active.equals(selected)) {
+        String selected = cn.bidcheck.compat.Java8Api.isBlank(requested) ? active : requested;
+        if (cn.bidcheck.compat.Java8Api.isBlank(selected)) throw new ResponseStatusException(HttpStatus.CONFLICT, "请先提取当前招标文件的检查项");
+        if (!cn.bidcheck.compat.Java8Api.isBlank(active) && !active.equals(selected)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "只能刷新当前招标文件的条款映射");
         }
         return selected;

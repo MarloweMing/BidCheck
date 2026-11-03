@@ -14,7 +14,22 @@ import java.util.regex.Pattern;
 final class ObjectiveCertificateEligibility {
     enum State { ELIGIBLE, INELIGIBLE, UNRESOLVED }
 
-    record Assessment(State state, String reason, LocalDate validFrom, LocalDate validUntil) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    static final class Assessment {
+        private final State state;
+        private final String reason;
+        private final LocalDate validFrom;
+        private final LocalDate validUntil;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        Assessment(@com.fasterxml.jackson.annotation.JsonProperty("state") State state, @com.fasterxml.jackson.annotation.JsonProperty("reason") String reason, @com.fasterxml.jackson.annotation.JsonProperty("validFrom") LocalDate validFrom, @com.fasterxml.jackson.annotation.JsonProperty("validUntil") LocalDate validUntil) { this.state = state; this.reason = reason; this.validFrom = validFrom; this.validUntil = validUntil; }
+        public State state() { return state; }
+        public String reason() { return reason; }
+        public LocalDate validFrom() { return validFrom; }
+        public LocalDate validUntil() { return validUntil; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Assessment that = (Assessment) other; return java.util.Objects.equals(this.state, that.state) && java.util.Objects.equals(this.reason, that.reason) && java.util.Objects.equals(this.validFrom, that.validFrom) && java.util.Objects.equals(this.validUntil, that.validUntil); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.state); hash = 31 * hash + java.util.Objects.hashCode(this.reason); hash = 31 * hash + java.util.Objects.hashCode(this.validFrom); hash = 31 * hash + java.util.Objects.hashCode(this.validUntil); return hash; }
+        @Override public String toString() { return "Assessment[" + "state=" + state + ", reason=" + reason + ", validFrom=" + validFrom + ", validUntil=" + validUntil + "]"; }
+ }
 
     private static final String DATE_TOKEN = "\\d{4}[年./\\-]\\d{1,2}[月./\\-]\\d{1,2}日?";
     private static final Pattern IDENTIFIER = Pattern.compile(
@@ -34,7 +49,7 @@ final class ObjectiveCertificateEligibility {
 
     static Assessment assess(String rawText, LocalDate comparisonDate) {
         String text = clean(rawText);
-        if (text.isBlank() || !IDENTIFIER.matcher(text).find())
+        if (cn.bidcheck.compat.Java8Api.isBlank(text) || !IDENTIFIER.matcher(text).find())
             return unresolved("CERTIFICATE_IDENTIFIER_MISSING");
         // Scoring is historical: without one proved tender deadline, neither today's date nor a
         // current status can establish whether the certificate qualified when bids closed.
@@ -93,7 +108,7 @@ final class ObjectiveCertificateEligibility {
     }
 
     private static String clean(String value) {
-        return Objects.toString(value, "").replaceAll("(?is)<[^>]+>", " ")
-                .replaceAll("[*#`]", "").replaceAll("[\\s\\p{Z}]+", " ").strip();
+        return cn.bidcheck.compat.Java8Api.strip(Objects.toString(value, "").replaceAll("(?is)<[^>]+>", " ")
+                .replaceAll("[*#`]", "").replaceAll("[\\s\\p{Z}]+", " "));
     }
 }

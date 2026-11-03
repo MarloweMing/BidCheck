@@ -20,7 +20,7 @@ public interface FactRepository {
      * override this with a joined read; the default keeps isolated in-memory fixtures simple.
      */
     default List<Map<String,Object>> nativeRecords(String project,String engine,String document,int version,String hash) {
-        return nativeIds(project,engine,document,version,hash).stream().map(this::get).toList();
+        return cn.bidcheck.compat.Java8Api.toList(nativeIds(project,engine,document,version,hash).stream().map(this::get));
     }
     default List<Stored> legacyRows(String project,long afterCreatedAt,String afterId,int limit){throw new UnsupportedOperationException("SQL_MIGRATION_REQUIRED");}
 
@@ -30,9 +30,9 @@ public interface FactRepository {
             final Map<String,Map<String,Object>> rows=new LinkedHashMap<>();
             final com.fasterxml.jackson.databind.ObjectMapper json=new com.fasterxml.jackson.databind.ObjectMapper();
             @SuppressWarnings("unchecked") Map<String,Object> copy(Map<String,Object> x){return json.convertValue(x,LinkedHashMap.class);}
-            public Map<String,Object> get(String id){return rows.containsKey(id)?copy(rows.get(id)):Map.of();}
+            public Map<String,Object> get(String id){return rows.containsKey(id)?copy(rows.get(id)):cn.bidcheck.compat.Java8Api.mapOf();}
             public void insert(Map<String,Object> row){String id=Objects.toString(row.get("id"),"");if(rows.containsKey(id))throw new IllegalStateException("FACT_ALREADY_EXISTS");rows.put(id,copy(row));}
-            public List<String> nativeIds(String p,String e,String d,int v,String h){return rows.values().stream().filter(r->p.equals(r.get("projectId"))&&e.equals(r.get("engineIdentity"))&&"NATIVE_FACT".equals(r.get("sourceDomain"))).filter(r->{Object refs=r.get("sources");return refs instanceof List<?> l&&!l.isEmpty()&&l.get(0) instanceof Map<?,?> s&&Objects.equals(s.get("documentHash"),h)&&Objects.equals(s.get("documentVersion"),v)&&s.get("evidence") instanceof Map<?,?> ev&&d.equals(ev.get("documentId"));}).map(r->r.get("id").toString()).toList();}
+            public List<String> nativeIds(String p,String e,String d,int v,String h){return cn.bidcheck.compat.Java8Api.toList(rows.values().stream().filter(r->p.equals(r.get("projectId"))&&e.equals(r.get("engineIdentity"))&&"NATIVE_FACT".equals(r.get("sourceDomain"))).filter(r->{Object refs=r.get("sources");return refs instanceof List<?>&&!((List<?>) (refs)).isEmpty()&&((List<?>) (refs)).get(0) instanceof Map<?,?>&&Objects.equals(((Map<?,?>) (((List<?>) (refs)).get(0))).get("documentHash"),h)&&Objects.equals(((Map<?,?>) (((List<?>) (refs)).get(0))).get("documentVersion"),v)&&((Map<?,?>) (((List<?>) (refs)).get(0))).get("evidence") instanceof Map<?,?>&&d.equals(((Map<?,?>) (((Map<?,?>) (((List<?>) (refs)).get(0))).get("evidence"))).get("documentId"));}).map(r->r.get("id").toString()));}
         };
     }
 }

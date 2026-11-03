@@ -18,10 +18,10 @@ class EvidenceLeaseClaimRetryTest {
     @Test void repositoryRetriesAbortedClaimWithOneOwnerAndExecutesProviderOnlyAfterAcquisition()throws Exception{
         RecordMapper mapper=mock(RecordMapper.class);List<String> owners=new ArrayList<>();AtomicInteger attempts=new AtomicInteger(),provider=new AtomicInteger();
         when(mapper.tryInsertEvidenceOperationLease(any())).thenAnswer(call->{EvidenceOperationLeaseRow row=call.getArgument(0);owners.add(row.owner);if(attempts.incrementAndGet()==1)throw sql("40001",1213);return 1;});
-        var repository=new EvidenceOperationRepository(new Store(mapper,new ObjectMapper()),false,1000,0,5);
-        try(var lease=repository.coordinate("project","a".repeat(64))){assertTrue(lease.ownsDurableExecution());provider.incrementAndGet();}
+        cn.bidcheck.verification.evidence.EvidenceOperationRepository repository=new EvidenceOperationRepository(new Store(mapper,new ObjectMapper()),false,1000,0,5);
+        try(cn.bidcheck.verification.evidence.EvidenceOperationRepository.Lease lease=repository.coordinate("project",cn.bidcheck.compat.Java8Api.repeat("a", 64))){assertTrue(lease.ownsDurableExecution());provider.incrementAndGet();}
         assertEquals(2,attempts.get());assertEquals(1,new HashSet<>(owners).size());assertEquals(1,provider.get());
-        verify(mapper,times(1)).releaseEvidenceOperationLease(eq("a".repeat(64)),eq("project"),eq(owners.get(0)));
+        verify(mapper,times(1)).releaseEvidenceOperationLease(eq(cn.bidcheck.compat.Java8Api.repeat("a", 64)),eq("project"),eq(owners.get(0)));
         verify(mapper,never()).takeOverEvidenceOperationLease(any(),any(),any(),anyLong(),anyLong());
     }
     @Test void repeatedDeadlockStopsAfterThreeClaimsWithoutModelWork(){
@@ -30,7 +30,7 @@ class EvidenceLeaseClaimRetryTest {
         assertEquals(3,attempts.get());
     }
     @Test void connectionFailureLockTimeoutAndUncertainRollbackAreNotRetried(){
-        for(RuntimeException error:List.of(sql("08S01",0),sql("HY000",1205),new TransactionSystemException("rollback uncertain",sql("40001",1213)))){
+        for(RuntimeException error:cn.bidcheck.compat.Java8Api.listOf(sql("08S01",0), sql("HY000",1205), new TransactionSystemException("rollback uncertain",sql("40001",1213)))){
             AtomicInteger attempts=new AtomicInteger();assertSame(error,assertThrows(RuntimeException.class,()->EvidenceLeaseClaimRetry.execute("p","k",()->{attempts.incrementAndGet();throw error;})));assertEquals(1,attempts.get());
         }
     }
@@ -47,8 +47,8 @@ class EvidenceLeaseClaimRetryTest {
     @Test void visibleCompetingLeaseDoesNotHideNonDuplicateDatabaseError(){
         RecordMapper mapper=mock(RecordMapper.class);RuntimeException failure=sql("08S01",0);
         when(mapper.tryInsertEvidenceOperationLease(any())).thenThrow(failure);when(mapper.evidenceOperationLease(any())).thenReturn(new EvidenceOperationLeaseRow());
-        var repository=new EvidenceOperationRepository(new Store(mapper,new ObjectMapper()),false,1000,0,5);
-        assertSame(failure,assertThrows(RuntimeException.class,()->repository.coordinate("project","a".repeat(64))));
+        cn.bidcheck.verification.evidence.EvidenceOperationRepository repository=new EvidenceOperationRepository(new Store(mapper,new ObjectMapper()),false,1000,0,5);
+        assertSame(failure,assertThrows(RuntimeException.class,()->repository.coordinate("project",cn.bidcheck.compat.Java8Api.repeat("a", 64))));
         verify(mapper,never()).takeOverEvidenceOperationLease(any(),any(),any(),anyLong(),anyLong());
     }
 }

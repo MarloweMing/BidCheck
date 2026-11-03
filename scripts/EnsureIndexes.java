@@ -5,16 +5,27 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.TreeMap;
 
-/** Java 17 source launcher. Requires only the MySQL JDBC driver on the classpath. */
+/** Java 8 command-line tool. Compile first; requires the MySQL JDBC driver at runtime. */
 public final class EnsureIndexes {
-    private record Index(String table, String name, List<String> columns) {}
-    private static final List<Index> INDEXES = List.of(
-        new Index("qc_task", "idx_task_project_time", List.of("project_id", "created_at", "id")),
-        new Index("qc_record", "idx_record_project_time", List.of("kind", "project_id", "created_at", "id"))
+    private static final class Index {
+        private final String table;
+        private final String name;
+        private final List<String> columns;
+        private Index(String table, String name, List<String> columns) {
+            this.table = table; this.name = name; this.columns = columns;
+        }
+        private String table() { return table; }
+        private String name() { return name; }
+        private List<String> columns() { return columns; }
+    }
+    private static final List<Index> INDEXES = Arrays.asList(
+        new Index("qc_task", "idx_task_project_time", Arrays.asList("project_id", "created_at", "id")),
+        new Index("qc_record", "idx_record_project_time", Arrays.asList("kind", "project_id", "created_at", "id"))
     );
     private static String phase = "VALIDATION";
 
@@ -32,7 +43,7 @@ public final class EnsureIndexes {
                     throw new SafeFailure("The connected database is not MySQL; no indexes were changed.");
                 }
                 String catalog = connection.getCatalog();
-                if (catalog == null || catalog.isBlank()) throw new SafeFailure("Select an existing database in BIDCHECK_MYSQL_URL.");
+                if (catalog == null || catalog.trim().isEmpty()) throw new SafeFailure("Select an existing database in BIDCHECK_MYSQL_URL.");
                 // Validate both targets before any DDL. Never create tables or replace an index.
                 for (Index index : INDEXES) {
                     phase = "VALIDATE_" + index.table();
@@ -46,7 +57,8 @@ public final class EnsureIndexes {
             // JDBC messages and stack traces may contain connection details. Emit only safe diagnostics.
             System.err.println("ENSURE_INDEXES_FAILED phase=" + phase + " type=" + failure.getClass().getSimpleName());
             if (failure instanceof SafeFailure) System.err.println(failure.getMessage());
-            if (failure instanceof SQLException sql) {
+            if (failure instanceof SQLException) {
+                SQLException sql = (SQLException) failure;
                 String state = sql.getSQLState();
                 System.err.println("sqlState=" + (state != null && state.matches("[A-Z0-9]{5}") ? state : "unknown") + " vendorCode=" + sql.getErrorCode());
             }
@@ -57,7 +69,7 @@ public final class EnsureIndexes {
 
     private static String required(String name) throws SafeFailure {
         String value = System.getenv(name);
-        if (value == null || value.isBlank()) throw new SafeFailure("Missing required environment variable: " + name);
+        if (value == null || value.trim().isEmpty()) throw new SafeFailure("Missing required environment variable: " + name);
         return value;
     }
 

@@ -60,18 +60,16 @@ class OcrRequestGovernorTest {
     private void success(HttpExchange exchange, JsonNode request) throws IOException {
         String task = request.at("/parameters/ocr_options/task").asText();
         Object content = "advanced_recognition".equals(task)
-                ? Map.of("ocr_result", Map.of("words_info", List.of(Map.of("text", "项目甲", "rotate_rect", List.of(50, 30, 80, 20, 0)))))
-                : Map.of("text", task.isBlank() ? json.writeValueAsString(Map.of("status", "COMPLETE", "coordinateSystem","PIXEL","bboxFormat","XYWH","textBoxes", List.of(Map.of(
-                    "id", "b1", "frameId", "image", "text", "项目甲", "bbox", Map.of("x", 10, "y", 20, "width", 80, "height", 20))),
-                    "tables", List.of(), "readingOrder", List.of("b1"))) : "项目甲");
-        respond(exchange, 200, json.writeValueAsString(Map.of("output", Map.of("choices", List.of(Map.of("finish_reason", "stop", "message", Map.of("content", List.of(content))))))));
+                ? cn.bidcheck.compat.Java8Api.mapOf("ocr_result", cn.bidcheck.compat.Java8Api.mapOf("words_info", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("text", "项目甲", "rotate_rect", cn.bidcheck.compat.Java8Api.listOf(50, 30, 80, 20, 0)))))
+                : cn.bidcheck.compat.Java8Api.mapOf("text", cn.bidcheck.compat.Java8Api.isBlank(task) ? json.writeValueAsString(cn.bidcheck.compat.Java8Api.mapOf("status", "COMPLETE", "coordinateSystem", "PIXEL", "bboxFormat", "XYWH", "textBoxes", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("id", "b1", "frameId", "image", "text", "项目甲", "bbox", cn.bidcheck.compat.Java8Api.mapOf("x", 10, "y", 20, "width", 80, "height", 20))), "tables", cn.bidcheck.compat.Java8Api.listOf(), "readingOrder", cn.bidcheck.compat.Java8Api.listOf("b1"))) : "项目甲");
+        respond(exchange, 200, json.writeValueAsString(cn.bidcheck.compat.Java8Api.mapOf("output", cn.bidcheck.compat.Java8Api.mapOf("choices", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("finish_reason", "stop", "message", cn.bidcheck.compat.Java8Api.mapOf("content", cn.bidcheck.compat.Java8Api.listOf(content))))))));
     }
     private static void respond(HttpExchange exchange, int status, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8); exchange.sendResponseHeaders(status, bytes.length); exchange.getResponseBody().write(bytes);
     }
     private static byte[] image(int color) throws IOException {
         BufferedImage value = new BufferedImage(320, 200, BufferedImage.TYPE_INT_RGB); value.setRGB(0, 0, color);
-        var out = new ByteArrayOutputStream(); ImageIO.write(value, "png", out); value.flush(); return out.toByteArray();
+        java.io.ByteArrayOutputStream out = new ByteArrayOutputStream(); ImageIO.write(value, "png", out); value.flush(); return out.toByteArray();
     }
     private static void await(BooleanSupplier condition) throws InterruptedException {
         long until = System.nanoTime() + Duration.ofSeconds(3).toNanos();
@@ -81,48 +79,48 @@ class OcrRequestGovernorTest {
     private static long counter(String name) { return OcrRequestGovernor.summary().getOrDefault(name, 0L); }
 
     @Test void allThreeAdaptersShareServiceCapacityDespiteDifferentConfiguredIntegers() throws Exception {
-        var text = text("shared", 1); var advanced = advanced("shared", 3);
-        var layout = new DashScopeLayoutClient(true, url, "synthetic-secret", "shared", data.resolve("layout"), 4, Duration.ofSeconds(3), true, quick);
+        cn.bidcheck.ocr.DashScopeOcrClient text = text("shared", 1); cn.bidcheck.ocr.DashScopeAdvancedOcrClient advanced = advanced("shared", 3);
+        cn.bidcheck.ocr.DashScopeLayoutClient layout = new DashScopeLayoutClient(true, url, "synthetic-secret", "shared", data.resolve("layout"), 4, Duration.ofSeconds(3), true, quick);
         release = new CountDownLatch(1);
         responder = (exchange, call, request) -> { release.await(3, TimeUnit.SECONDS); success(exchange, request); };
-        var first = callers.submit(() -> text.recognize(image, "image/png")); await(() -> calls.get() == 1);
-        var second = callers.submit(() -> advanced.recognize(image, "image/png"));
-        var third = callers.submit(() -> layout.recognize(image, "image/png", "项目甲"));
+        java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> first = callers.submit(() -> text.recognize(image, "image/png")); await(() -> calls.get() == 1);
+        java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> second = callers.submit(() -> advanced.recognize(image, "image/png"));
+        java.util.concurrent.Future<cn.bidcheck.ocr.OcrLayout> third = callers.submit(() -> layout.recognize(image, "image/png", "项目甲"));
         await(() -> counter("queued") >= 2); assertEquals(1, calls.get()); release.countDown();
         assertNotNull(first.get(3, TimeUnit.SECONDS)); assertNotNull(second.get(3, TimeUnit.SECONDS)); assertNotNull(third.get(3, TimeUnit.SECONDS));
         assertEquals(3, calls.get()); assertEquals(1, peak.get());
     }
 
     @Test void differentCredentialsAndModelsHaveIndependentAdmissionGroups() throws Exception {
-        var first = text("one", "key-one", 1, Duration.ofSeconds(3), quick);
-        var otherKey = text("one", "key-two", 1, Duration.ofSeconds(3), quick);
-        var otherModel = text("two", "key-one", 1, Duration.ofSeconds(3), quick);
+        cn.bidcheck.ocr.DashScopeOcrClient first = text("one", "key-one", 1, Duration.ofSeconds(3), quick);
+        cn.bidcheck.ocr.DashScopeOcrClient otherKey = text("one", "key-two", 1, Duration.ofSeconds(3), quick);
+        cn.bidcheck.ocr.DashScopeOcrClient otherModel = text("two", "key-one", 1, Duration.ofSeconds(3), quick);
         release = new CountDownLatch(1);
         responder = (exchange, call, request) -> { release.await(3, TimeUnit.SECONDS); success(exchange, request); };
-        var a = callers.submit(() -> first.recognize(image, "image/png"));
-        var b = callers.submit(() -> otherKey.recognize(image(2), "image/png"));
-        var c = callers.submit(() -> otherModel.recognize(image(3), "image/png"));
+        java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> a = callers.submit(() -> first.recognize(image, "image/png"));
+        java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> b = callers.submit(() -> otherKey.recognize(image(2), "image/png"));
+        java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> c = callers.submit(() -> otherModel.recognize(image(3), "image/png"));
         await(() -> calls.get() == 3); assertEquals(3, peak.get()); release.countDown();
         a.get(3, TimeUnit.SECONDS); b.get(3, TimeUnit.SECONDS); c.get(3, TimeUnit.SECONDS);
     }
 
     @Test void duplicateImageWaiterDoesNotOccupyAnAvailableNetworkSlot() throws Exception {
-        var client = text("duplicate", 2); release = new CountDownLatch(1);
+        cn.bidcheck.ocr.DashScopeOcrClient client = text("duplicate", 2); release = new CountDownLatch(1);
         responder = (exchange, call, request) -> { if (call == 1) release.await(3, TimeUnit.SECONDS); success(exchange, request); };
         long shared = counter("sharedWaits");
-        var first = callers.submit(() -> client.recognize(image, "image/png")); await(() -> calls.get() == 1);
-        var duplicate = callers.submit(() -> client.recognize(image, "image/png")); await(() -> counter("sharedWaits") > shared);
-        var other = callers.submit(() -> client.recognize(image(2), "image/png"));
+        java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> first = callers.submit(() -> client.recognize(image, "image/png")); await(() -> calls.get() == 1);
+        java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> duplicate = callers.submit(() -> client.recognize(image, "image/png")); await(() -> counter("sharedWaits") > shared);
+        java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> other = callers.submit(() -> client.recognize(image(2), "image/png"));
         assertFalse(other.get(2, TimeUnit.SECONDS).cached()); assertEquals(2, calls.get()); assertFalse(duplicate.isDone());
         release.countDown(); assertFalse(first.get(2, TimeUnit.SECONDS).cached()); assertTrue(duplicate.get(2, TimeUnit.SECONDS).cached());
         assertEquals(2, calls.get());
     }
 
     @Test void fullQueueRejectsBeforeSendingAndRecoversAfterActiveRequestFinishes() throws Exception {
-        var client = text("queue", "synthetic-secret", 1, Duration.ofSeconds(3), new OcrRequestSettings(1, 3, 1, 2));
+        cn.bidcheck.ocr.DashScopeOcrClient client = text("queue", "synthetic-secret", 1, Duration.ofSeconds(3), new OcrRequestSettings(1, 3, 1, 2));
         release = new CountDownLatch(1); responder = (exchange, call, request) -> { release.await(3, TimeUnit.SECONDS); success(exchange, request); };
-        var first = callers.submit(() -> client.recognize(image, "image/png")); await(() -> calls.get() == 1);
-        var second = callers.submit(() -> client.recognize(image(2), "image/png")); await(() -> counter("queued") >= 1);
+        java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> first = callers.submit(() -> client.recognize(image, "image/png")); await(() -> calls.get() == 1);
+        java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> second = callers.submit(() -> client.recognize(image(2), "image/png")); await(() -> counter("queued") >= 1);
         OcrFailure failed = assertThrows(OcrFailure.class, () -> client.recognize(image(3), "image/png"));
         assertEquals("QUEUE_FULL", failed.code()); assertTrue(failed.temporary()); assertEquals(1, calls.get());
         release.countDown(); first.get(3, TimeUnit.SECONDS); second.get(3, TimeUnit.SECONDS);
@@ -131,7 +129,7 @@ class OcrRequestGovernorTest {
 
     @Test void onlySpecifiedTemporaryStatusesRetryAndSuccessfulRetryIsCached() throws Exception {
         for (int status : new int[]{429, 408, 502, 503, 504}) {
-            int before = calls.get(); var client = text("retry-" + status, 1);
+            int before = calls.get(); cn.bidcheck.ocr.DashScopeOcrClient client = text("retry-" + status, 1);
             responder = (exchange, call, request) -> { if (call - before <= 2) respond(exchange, status, "synthetic-secret private document"); else success(exchange, request); };
             assertFalse(client.recognize(image, "image/png").cached()); assertEquals(before + 3, calls.get());
             assertTrue(client.recognize(image, "image/png").cached()); assertEquals(before + 3, calls.get());
@@ -150,14 +148,14 @@ class OcrRequestGovernorTest {
     }
 
     @Test void retryAfterAppliesToOtherPagesSharingServiceAndBackoffHoldsNoPermit() throws Exception {
-        var client = text("rate", 1); long previousLimited = counter("rateLimited");
+        cn.bidcheck.ocr.DashScopeOcrClient client = text("rate", 1); long previousLimited = counter("rateLimited");
         responder = (exchange, call, request) -> {
             if (call == 1) { exchange.getResponseHeaders().set("Retry-After", "1"); respond(exchange, 429, "busy"); }
             else success(exchange, request);
         };
-        var first = callers.submit(() -> client.recognize(image, "image/png"));
+        java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> first = callers.submit(() -> client.recognize(image, "image/png"));
         await(() -> counter("rateLimited") > previousLimited && counter("active") == 0);
-        var other = callers.submit(() -> client.recognize(image(2), "image/png"));
+        java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> other = callers.submit(() -> client.recognize(image(2), "image/png"));
         Thread.sleep(100); assertEquals(1, calls.get()); assertEquals(0, counter("active"));
         first.get(4, TimeUnit.SECONDS); other.get(4, TimeUnit.SECONDS); assertEquals(3, calls.get());
         assertTrue(Duration.ofNanos(arrivals.get(1) - arrivals.get(0)).toMillis() >= 900);
@@ -165,7 +163,7 @@ class OcrRequestGovernorTest {
 
     @Test void retryAfterLongerThanTotalBudgetFailsWithoutSleepingOrSendingAnotherRequest() throws Exception {
         responder = (exchange, call, request) -> { exchange.getResponseHeaders().set("Retry-After", "999999999"); respond(exchange, 429, "busy"); };
-        var client = text("long-hint", "synthetic-secret", 1, Duration.ofMillis(200), quick);
+        cn.bidcheck.ocr.DashScopeOcrClient client = text("long-hint", "synthetic-secret", 1, Duration.ofMillis(200), quick);
         long started = System.nanoTime(); OcrFailure failure = assertThrows(OcrFailure.class, () -> client.recognize(image, "image/png"));
         assertEquals(429, failure.httpStatus()); assertTrue(failure.temporary()); assertEquals(1, calls.get());
         assertTrue(Duration.ofNanos(System.nanoTime() - started).toMillis() < 1500);
@@ -173,15 +171,15 @@ class OcrRequestGovernorTest {
     }
 
     @Test void unexpectedLeaderErrorCompletesDuplicateWaitersWithoutTheirFullTimeout() throws Exception {
-        var governor = OcrRequestGovernor.forService(java.net.URI.create(url), "leader-error", "synthetic-secret", 1, quick);
-        release = new CountDownLatch(1); var entered = new CountDownLatch(1); long shared = counter("sharedWaits");
-        var leader = callers.submit(() -> governor.singleFlight("same", Duration.ofSeconds(3), () -> {
+        cn.bidcheck.ocr.OcrRequestGovernor governor = OcrRequestGovernor.forService(java.net.URI.create(url), "leader-error", "synthetic-secret", 1, quick);
+        release = new CountDownLatch(1); java.util.concurrent.CountDownLatch entered = new CountDownLatch(1); long shared = counter("sharedWaits");
+        java.util.concurrent.Future<cn.bidcheck.ocr.OcrRequestGovernor.Shared<java.lang.Object>> leader = callers.submit(() -> governor.singleFlight("same", Duration.ofSeconds(3), () -> {
             entered.countDown(); try { release.await(3, TimeUnit.SECONDS); }
             catch (InterruptedException stopped) { Thread.currentThread().interrupt(); throw new InterruptedIOException(); }
             throw new AssertionError("synthetic-secret must not reach followers");
         }));
         assertTrue(entered.await(2, TimeUnit.SECONDS));
-        var follower = callers.submit(() -> governor.singleFlight("same", Duration.ofSeconds(3), () -> "unused"));
+        java.util.concurrent.Future<cn.bidcheck.ocr.OcrRequestGovernor.Shared<java.lang.String>> follower = callers.submit(() -> governor.singleFlight("same", Duration.ofSeconds(3), () -> "unused"));
         await(() -> counter("sharedWaits") > shared); release.countDown();
         assertInstanceOf(AssertionError.class, assertThrows(ExecutionException.class, () -> leader.get(1, TimeUnit.SECONDS)).getCause());
         Throwable failed = assertThrows(ExecutionException.class, () -> follower.get(1, TimeUnit.SECONDS)).getCause();
@@ -191,7 +189,7 @@ class OcrRequestGovernorTest {
 
     @Test void transportTimeoutRetriesAtMostThreeTimesWithinTotalBudget() throws Exception {
         responder = (exchange, call, request) -> { Thread.sleep(800); success(exchange, request); };
-        var client = text("timeout", "synthetic-secret", 1, Duration.ofMillis(150), quick);
+        cn.bidcheck.ocr.DashScopeOcrClient client = text("timeout", "synthetic-secret", 1, Duration.ofMillis(150), quick);
         long started = System.nanoTime(); OcrFailure failed = assertThrows(OcrFailure.class, () -> client.recognize(image, "image/png"));
         assertEquals("TIMEOUT", failed.code()); assertTrue(failed.temporary()); assertTrue(calls.get() >= 2 && calls.get() <= 3);
         assertTrue(Duration.ofNanos(System.nanoTime() - started).toMillis() < 1500); assertEquals(0, counter("active"));
@@ -199,8 +197,8 @@ class OcrRequestGovernorTest {
 
     @Test void interruptDuringRetryBackoffPreservesSignalAndPreventsFurtherAttempts() throws Exception {
         responder = (exchange, call, request) -> respond(exchange, 503, "busy");
-        var client = text("cancel-retry", "synthetic-secret", 1, Duration.ofSeconds(3), new OcrRequestSettings(16, 3, 1000, 1000));
-        long previousRetries = counter("retries"); var error = new AtomicReference<Throwable>(); var preserved = new AtomicBoolean();
+        cn.bidcheck.ocr.DashScopeOcrClient client = text("cancel-retry", "synthetic-secret", 1, Duration.ofSeconds(3), new OcrRequestSettings(16, 3, 1000, 1000));
+        long previousRetries = counter("retries"); java.util.concurrent.atomic.AtomicReference<java.lang.Throwable> error = new AtomicReference<Throwable>(); java.util.concurrent.atomic.AtomicBoolean preserved = new AtomicBoolean();
         Thread request = new Thread(() -> { try { client.recognize(image, "image/png"); } catch (Throwable failed) { error.set(failed); preserved.set(Thread.currentThread().isInterrupted()); } });
         request.start();
         try { await(() -> counter("retries") > previousRetries); request.interrupt(); request.join(1500);
@@ -210,10 +208,10 @@ class OcrRequestGovernorTest {
     }
 
     @Test void cancellingDuplicateWaiterDoesNotCancelLeaderOrConsumeAnotherCall() throws Exception {
-        var client = text("cancel-follower", 1); release = new CountDownLatch(1);
+        cn.bidcheck.ocr.DashScopeOcrClient client = text("cancel-follower", 1); release = new CountDownLatch(1);
         responder = (exchange, call, request) -> { release.await(3, TimeUnit.SECONDS); success(exchange, request); };
-        var leader = callers.submit(() -> client.recognize(image, "image/png")); await(() -> calls.get() == 1);
-        long previousShared = counter("sharedWaits"); var error = new AtomicReference<Throwable>(); var preserved = new AtomicBoolean();
+        java.util.concurrent.Future<cn.bidcheck.ocr.OcrResult> leader = callers.submit(() -> client.recognize(image, "image/png")); await(() -> calls.get() == 1);
+        long previousShared = counter("sharedWaits"); java.util.concurrent.atomic.AtomicReference<java.lang.Throwable> error = new AtomicReference<Throwable>(); java.util.concurrent.atomic.AtomicBoolean preserved = new AtomicBoolean();
         Thread follower = new Thread(() -> { try { client.recognize(image, "image/png"); } catch (Throwable failed) { error.set(failed); preserved.set(Thread.currentThread().isInterrupted()); } });
         follower.start();
         try { await(() -> counter("sharedWaits") > previousShared); follower.interrupt(); follower.join(1500);
@@ -223,20 +221,18 @@ class OcrRequestGovernorTest {
     }
 
     @Test void exhaustedTransientAdvancedFailureCannotTriggerImmediatePlainOcrFallback() throws Exception {
-        Path python = Files.writeString(data.resolve("dummy-runtime"), "never executed");
-        Path worker = Files.writeString(data.resolve("dummy-worker.py"), "never executed");
-        var fallbackCalls = new AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger fallbackCalls = new AtomicInteger();
         OcrClient fallback = new OcrClient() {
             public boolean enabled() { return true; } public String modelName() { return "fallback"; } public String identity() { return "fallback"; }
             public OcrResult recognize(byte[] image, String mime) { fallbackCalls.incrementAndGet(); return new OcrResult("项目甲", "local", "fallback", false); }
         };
-        try (var grid = new PixelGridClient(true, python.toString(), worker.toString(), data.toString(), 1, 1)) {
+        try (cn.bidcheck.ocr.PixelGridClient grid = new PixelGridClient(true, "", data.toString(), 1, 1)) {
             responder = (exchange, call, request) -> respond(exchange, 503, "busy");
-            var pipeline = new StructuredOcrClient(fallback, advanced("advanced-temporary", 1), grid);
+            cn.bidcheck.ocr.StructuredOcrClient pipeline = new StructuredOcrClient(fallback, advanced("advanced-temporary", 1), grid);
             OcrFailure failed = assertThrows(OcrFailure.class, () -> pipeline.recognize(image, "image/png"));
             assertTrue(failed.temporary()); assertEquals(3, calls.get()); assertEquals(0, fallbackCalls.get());
             responder = (exchange, call, request) -> respond(exchange, 200, "{}");
-            var unsupported = new StructuredOcrClient(fallback, advanced("advanced-unsupported", 1), grid);
+            cn.bidcheck.ocr.StructuredOcrClient unsupported = new StructuredOcrClient(fallback, advanced("advanced-unsupported", 1), grid);
             assertEquals("项目甲", unsupported.recognize(image, "image/png").text()); assertEquals(1, fallbackCalls.get());
         }
         String summary = OcrRequestGovernor.summary().toString();

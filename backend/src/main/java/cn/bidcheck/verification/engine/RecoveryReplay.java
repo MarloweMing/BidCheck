@@ -11,7 +11,7 @@ final class RecoveryReplay {
     private static final ObjectMapper JSON=new ObjectMapper();
     private RecoveryReplay() {}
     static boolean localOnly(Map<String,Object> context){return Boolean.FALSE.equals(context.get("recoveryModelAllowed"))
-        &&(RequirementRepairPolicy.recompile(context)||Set.of("RECOMPUTE_ONLY","EVIDENCE_RECOMPUTE").contains(str(context,"recoveryMode")));}
+        &&(RequirementRepairPolicy.recompile(context)||cn.bidcheck.compat.Java8Api.setOf("RECOMPUTE_ONLY", "EVIDENCE_RECOMPUTE").contains(str(context,"recoveryMode")));}
     static JsonNode plan(Map<String,Object> context,ObjectMapper json){
         Map<String,Object> previous=map(context.get("previousAtomicCheck"));Object value=previous.get("plan");if(value==null)return null;
         JsonNode tree=json.valueToTree(value);if(!tree.path("rules").isArray())return null;
@@ -22,7 +22,7 @@ final class RecoveryReplay {
             String predicate=node.path("parameters").path("originalPredicate").asText();
             if(PREDICATES.contains(predicate)&&!"UNSUPPORTED".equals(predicate))((ObjectNode)node).put("predicate",predicate);
         }
-        for(String key:List.of("rules","children"))if(node.path(key).isArray())node.path(key).forEach(RecoveryReplay::restore);
+        for(String key:cn.bidcheck.compat.Java8Api.listOf("rules", "children"))if(node.path(key).isArray())node.path(key).forEach(RecoveryReplay::restore);
     }
     static List<Source> sources(Map<String,Object> context,EvidenceCorpus corpus,String modelIdentity){
         // A validated canonical change can expose a window that this clause did not previously read.
@@ -35,35 +35,35 @@ final class RecoveryReplay {
         // Native-only proofs have read windows but no FACT_VALIDATION packet. Their exact frozen
         // source ids authorize rereading the original text, never reusing the former decision.
         for(Map<String,Object> step:RuleEvaluator.maps(context.get("priorSteps")))if(str(step,"type").startsWith("EVIDENCE_PLAN_")&&current(step,modelIdentity))
-            for(Map<String,Object> candidate:RuleEvaluator.maps(map(step.get("output")).get("candidates"))){String id=str(candidate,"id");if(!id.isBlank())ids.add(id);}
+            for(Map<String,Object> candidate:RuleEvaluator.maps(map(step.get("output")).get("candidates"))){String id=str(candidate,"id");if(!cn.bidcheck.compat.Java8Api.isBlank(id))ids.add(id);}
         for(Map<String,Object> step:snapshots(context,modelIdentity))for(Map<String,Object> metadata:RuleEvaluator.maps(map(step.get("output")).get("sources")))
             if(sourceMatches(corpus,metadata))ids.add(str(metadata,"id"));
         for(Source source:corpus.all)if(source.id().startsWith("V"))ids.add(source.id());
-        return ids.stream().map(corpus.byId::get).filter(Objects::nonNull).toList();
+        return cn.bidcheck.compat.Java8Api.toList(ids.stream().map(corpus.byId::get).filter(Objects::nonNull));
     }
     static ProofVerifier.Verified facts(Map<String,Object> context,List<Source> sources,List<Map<String,Object>> layout,String modelIdentity){
         ObjectMapper json=new ObjectMapper();Map<String,Fact> accepted=new LinkedHashMap<>();List<Map<String,Object>> rejected=new ArrayList<>();
-        Set<String> available=new HashSet<>(sources.stream().map(Source::id).toList());
+        Set<String> available=new HashSet<>(cn.bidcheck.compat.Java8Api.toList(sources.stream().map(Source::id)));
         for(Map<String,Object> step:steps(context,modelIdentity)){
             Map<String,Object> output=map(step.get("output"));List<String> refs=ProofVerifier.strings(output.get("sourceIds"));
             if(refs.isEmpty()||!available.containsAll(refs))continue;
-            List<Source> sent=sources.stream().filter(s->refs.contains(s.id())).toList();
-            ProofVerifier.Verified verified=new ProofVerifier().verify(json.valueToTree(Map.of("facts",RuleEvaluator.maps(output.get("facts")))),sent,layout);
+            List<Source> sent=cn.bidcheck.compat.Java8Api.toList(sources.stream().filter(s->refs.contains(s.id())));
+            ProofVerifier.Verified verified=new ProofVerifier().verify(json.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("facts", RuleEvaluator.maps(output.get("facts")))),sent,layout);
             verified.facts().stream().map(SharedFactReuse::canonical).forEach(f->accepted.put(f.id(),f));rejected.addAll(verified.rejected());
         }
-        return new ProofVerifier.Verified(List.copyOf(accepted.values()),List.copyOf(rejected));
+        return new ProofVerifier.Verified(cn.bidcheck.compat.Java8Api.listCopyOf(accepted.values()),cn.bidcheck.compat.Java8Api.listCopyOf(rejected));
     }
     /** Every origin is retained, but no previous decision or source/subject verification flag is reused. */
     static Map<String,Object> snapshot(EvidenceCorpus corpus,Collection<Fact> facts){
-        List<Fact> retained=facts.stream().filter(f->ProofVerifier.KINDS.contains(f.kind())).toList();
+        List<Fact> retained=cn.bidcheck.compat.Java8Api.toList(facts.stream().filter(f->ProofVerifier.KINDS.contains(f.kind())));
         Set<String> ids=new LinkedHashSet<>();retained.forEach(f->ids.addAll(f.sourceIds()));
-        return linked("facts",retained.stream().map(SharedFactReuse::value).toList(),"sourceIds",List.copyOf(ids),
-            "sources",ids.stream().map(corpus.byId::get).filter(Objects::nonNull).map(s->sourceMetadata(corpus,s)).toList(),"businessProof",false);
+        return linked("facts",cn.bidcheck.compat.Java8Api.toList(retained.stream().map(SharedFactReuse::value)),"sourceIds",cn.bidcheck.compat.Java8Api.listCopyOf(ids),
+            "sources",cn.bidcheck.compat.Java8Api.toList(ids.stream().map(corpus.byId::get).filter(Objects::nonNull).map(s->sourceMetadata(corpus,s))),"businessProof",false);
     }
     static ProofVerifier.Verified facts(Map<String,Object> context,EvidenceCorpus corpus,List<Source> sources,List<Map<String,Object>> layout,String modelIdentity){
         ProofVerifier.Verified legacy=facts(context,sources,layout,modelIdentity);
         Map<String,Fact> accepted=new LinkedHashMap<>();legacy.facts().forEach(f->accepted.put(f.id(),f));
-        List<Map<String,Object>> rejected=new ArrayList<>(legacy.rejected());Set<String> available=new HashSet<>(sources.stream().map(Source::id).toList());
+        List<Map<String,Object>> rejected=new ArrayList<>(legacy.rejected());Set<String> available=new HashSet<>(cn.bidcheck.compat.Java8Api.toList(sources.stream().map(Source::id)));
         for(Map<String,Object> step:snapshots(context,modelIdentity)){
             Map<String,Object> output=map(step.get("output"));Set<String> validated=new HashSet<>();
             for(Map<String,Object> metadata:RuleEvaluator.maps(output.get("sources")))if(sourceMatches(corpus,metadata))validated.add(str(metadata,"id"));
@@ -75,8 +75,8 @@ final class RecoveryReplay {
                 if(refs.isEmpty()||!available.containsAll(refs)||!validated.containsAll(refs)){
                     rejected.add(linked("code","RECOVERY_SOURCE_REVISION_MISMATCH","sourceIds",refs));continue;
                 }
-                List<Source> sent=refs.stream().map(corpus.byId::get).toList();
-                ProofVerifier.Verified verified=new ProofVerifier(corpus.byId).verify(JSON.valueToTree(Map.of("facts",List.of(raw))),sent,layout);
+                List<Source> sent=cn.bidcheck.compat.Java8Api.toList(refs.stream().map(corpus.byId::get));
+                ProofVerifier.Verified verified=new ProofVerifier(corpus.byId).verify(JSON.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("facts", cn.bidcheck.compat.Java8Api.listOf(raw))),sent,layout);
                 rejected.addAll(verified.rejected());for(Fact observed:verified.facts()){
                     if("SECTION".equals(observed.kind())){Map<String,Object> attrs=new LinkedHashMap<>(observed.attributes());attrs.put("fullSectionRead",SectionCoverage.covered(observed,corpus,sources));
                         observed=new Fact(observed.id(),observed.kind(),observed.subject(),observed.field(),observed.rawValue(),observed.value(),observed.unit(),observed.basis(),observed.scope(),observed.sourceIds(),attrs);}
@@ -84,12 +84,12 @@ final class RecoveryReplay {
                 }
             }
         }
-        return new ProofVerifier.Verified(List.copyOf(accepted.values()),List.copyOf(rejected));
+        return new ProofVerifier.Verified(cn.bidcheck.compat.Java8Api.listCopyOf(accepted.values()),cn.bidcheck.compat.Java8Api.listCopyOf(rejected));
     }
     private static Map<String,Object> sourceMetadata(EvidenceCorpus corpus,Source source){
-        var document=corpus.documents.stream().filter(d->d.id().equals(source.evidence().documentId())).findFirst().orElse(null);
-        if(document==null)return Map.of();
-        var page=corpus.pages.get(EvidenceCorpus.pageKey(document.id(),source.evidence().page(),source.evidence().locationType()));
+        cn.bidcheck.domain.Domain.Document document=corpus.documents.stream().filter(d->d.id().equals(source.evidence().documentId())).findFirst().orElse(null);
+        if(document==null)return cn.bidcheck.compat.Java8Api.mapOf();
+        cn.bidcheck.domain.Domain.Page page=corpus.pages.get(EvidenceCorpus.pageKey(document.id(),source.evidence().page(),source.evidence().locationType()));
         return linked("id",source.id(),"projectId",document.projectId(),"documentId",document.id(),"documentHash",document.sha256(),
             "documentVersion",String.valueOf(document.version()),"parserFingerprint",page==null?"":SharedFactReuse.parserFingerprint(page),
             "sourceFingerprint",identity(JSON.valueToTree(source).toString()));
@@ -98,11 +98,11 @@ final class RecoveryReplay {
         Source current=corpus.byId.get(str(saved,"id"));return current!=null&&sourceMetadata(corpus,current).equals(saved);
     }
     private static List<Map<String,Object>> snapshots(Map<String,Object> context,String modelIdentity){
-        return RuleEvaluator.maps(context.get("priorSteps")).stream().filter(s->FACT_SNAPSHOT.equals(str(s,"type"))&&current(s,modelIdentity)).toList();
+        return cn.bidcheck.compat.Java8Api.toList(RuleEvaluator.maps(context.get("priorSteps")).stream().filter(s->FACT_SNAPSHOT.equals(str(s,"type"))&&current(s,modelIdentity)));
     }
     private static List<Map<String,Object>> steps(Map<String,Object> context,String modelIdentity){
-        return RuleEvaluator.maps(context.get("priorSteps")).stream().filter(s->str(s,"type").startsWith("FACT_VALIDATION_")&&current(s,modelIdentity)).toList();
+        return cn.bidcheck.compat.Java8Api.toList(RuleEvaluator.maps(context.get("priorSteps")).stream().filter(s->str(s,"type").startsWith("FACT_VALIDATION_")&&current(s,modelIdentity)));
     }
     private static boolean current(Map<String,Object> step,String modelIdentity){return "COMPLETED".equals(str(step,"status"))&&VERSION.equals(str(step,"schemaVersion"))&&modelIdentity.equals(str(step,"modelIdentity"));}
-    private static Map<String,Object> map(Object value){Map<String,Object> result=new LinkedHashMap<>();if(value instanceof Map<?,?> m)m.forEach((k,v)->result.put(String.valueOf(k),v));return result;}
+    private static Map<String,Object> map(Object value){Map<String,Object> result=new LinkedHashMap<>();if(value instanceof Map<?,?>)((Map<?,?>) (value)).forEach((k,v)->result.put(String.valueOf(k),v));return result;}
 }

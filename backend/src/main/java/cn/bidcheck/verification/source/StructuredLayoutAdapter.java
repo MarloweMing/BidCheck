@@ -10,11 +10,11 @@ import static cn.bidcheck.verification.source.SourceSafety.map;
 final class StructuredLayoutAdapter {
     private StructuredLayoutAdapter(){}
     static List<Map<String,Object>> spans(Document document,Page page,List<String> limitations){
-        if(page.layout()==null)return List.of();
+        if(page.layout()==null)return cn.bidcheck.compat.Java8Api.listOf();
         OcrLayout layout;
         try{layout=page.layout().validated(page.text());}
-        catch(IllegalArgumentException invalid){limitations.add("位置 "+page.number()+" 的OCR结构未通过转录和位置校验，保留文字，不使用表格关系。");return List.of();}
-        if("UNAVAILABLE".equals(layout.status()))return List.of();
+        catch(IllegalArgumentException invalid){limitations.add("位置 "+page.number()+" 的OCR结构未通过转录和位置校验，保留文字，不使用表格关系。");return cn.bidcheck.compat.Java8Api.listOf();}
+        if("UNAVAILABLE".equals(layout.status()))return cn.bidcheck.compat.Java8Api.listOf();
         if(!"COMPLETE".equals(layout.status()))limitations.add("位置 "+page.number()+" 的OCR结构包含补充识别或未能定位的部分；已定位内容仍可追溯，缺少框不表示缺少材料。");
         Map<String,OcrLayout.Frame> frames=new HashMap<>();layout.frames().forEach(frame->frames.put(frame.id(),frame));
         Map<String,Integer> order=new HashMap<>();for(int i=0;i<layout.readingOrder().size();i++)order.put(layout.readingOrder().get(i),i);
@@ -23,8 +23,8 @@ final class StructuredLayoutAdapter {
         for(OcrLayout.TextBox box:layout.textBoxes()){
             Map<String,Object> span=base(document,page,frames.get(box.frameId()),box.id(),"OCR_TEXT_BOX",box.text(),box.bbox(),layout.status());
             span.put("readingOrder",order.get(box.id()));span.put("confidence",box.confidence());span.put("ocrSource",box.source());
-            span.put("sourceFragments",List.of(fragments.get(box.id())));
-            if(box.originalBbox()!=null){var b=box.originalBbox();span.put("originalOcrBox",List.of(b.x(),b.y(),b.x()+b.width(),b.y()+b.height()));span.put("positionRefined",true);}
+            span.put("sourceFragments",cn.bidcheck.compat.Java8Api.listOf(fragments.get(box.id())));
+            if(box.originalBbox()!=null){cn.bidcheck.ocr.OcrLayout.Box b=box.originalBbox();span.put("originalOcrBox",cn.bidcheck.compat.Java8Api.listOf(b.x(), b.y(), b.x()+b.width(), b.y()+b.height()));span.put("positionRefined",true);}
             result.add(span);
         }
         for(OcrLayout.Table table:layout.tables()){
@@ -36,11 +36,11 @@ final class StructuredLayoutAdapter {
                 span.put("rowSpan",cell.rowSpan());span.put("columnSpan",cell.columnSpan());span.put("header",cell.header());
                 boolean leftHeader=!cell.headerCellIds().isEmpty()&&cell.headerCellIds().stream().map(cells::get).allMatch(h->h.row()<=cell.row()&&h.row()+h.rowSpan()>=cell.row()+cell.rowSpan()&&h.column()+h.columnSpan()==cell.column());
                 span.put("tableType",leftHeader?"KEY_VALUE":"COLUMN_RECORD");
-                span.put("headerCellIds",cell.headerCellIds().stream().map(h->id(document,page,frame.id(),h)).toList());
-                String header=String.join(" / ",cell.headerCellIds().stream().map(cells::get).map(OcrLayout.Cell::text).toList());
+                span.put("headerCellIds",cn.bidcheck.compat.Java8Api.toList(cell.headerCellIds().stream().map(h->id(document,page,frame.id(),h))));
+                String header=String.join(" / ",cn.bidcheck.compat.Java8Api.toList(cell.headerCellIds().stream().map(cells::get).map(OcrLayout.Cell::text)));
                 span.put("headerText",header);span.put("columnHeader",header);
-                span.put("blockIds",cell.blockIds().stream().map(b->id(document,page,frame.id(),b)).toList());
-                span.put("sourceFragments",cell.blockIds().stream().map(fragments::get).toList());
+                span.put("blockIds",cn.bidcheck.compat.Java8Api.toList(cell.blockIds().stream().map(b->id(document,page,frame.id(),b))));
+                span.put("sourceFragments",cn.bidcheck.compat.Java8Api.toList(cell.blockIds().stream().map(fragments::get)));
                 // These are structured OCR candidates, not native OOXML cells or proof of document authenticity.
                 span.put("structureTrust","OCR_CANDIDATE");span.put("mergeUnresolved",false);result.add(span);
             }
@@ -65,7 +65,7 @@ final class StructuredLayoutAdapter {
         String id=id(doc,page,frame.id(),localId);boolean physical="PAGE".equals(page.locationType());
         return map("id",id,"spanId",id,"kind",kind,"documentId",doc.id(),"documentHash",doc.sha256(),"documentVersion",doc.version(),
             "physicalPage",physical?page.number():null,"documentBlock",page.number(),"locationType",page.locationType(),"location",page.number(),"printedPage",null,
-            "text",text,"bbox",List.of(box.x(),box.y(),box.x()+box.width(),box.y()+box.height()),"coordinateSpace","OCR_IMAGE_PIXELS_TOP_LEFT",
+            "text",text,"bbox",cn.bidcheck.compat.Java8Api.listOf(box.x(), box.y(), box.x()+box.width(), box.y()+box.height()),"coordinateSpace","OCR_IMAGE_PIXELS_TOP_LEFT",
             "source","OCR_STRUCTURED","frameId",id(doc,page,frame.id(),"frame"),"imageHash",frame.imageHash(),"imageWidth",frame.width(),"imageHeight",frame.height(),
             "imageSourceKind",frame.sourceKind(),"imageSourceIndex",frame.sourceIndex(),"parentWidth",frame.parentWidth(),"parentHeight",frame.parentHeight(),"crop",frame.crop(),"layoutStatus",status);
     }

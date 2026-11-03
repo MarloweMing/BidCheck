@@ -1,4 +1,5 @@
 package cn.bidcheck.ocr;
+import cn.bidcheck.compat.HexFormat;
 
 import java.nio.charset.StandardCharsets;
 import java.security.*;
@@ -10,15 +11,39 @@ import static cn.bidcheck.ocr.GridLayoutAssembler.*;
  * This is additional transcription, not independent verification of native OCR or business facts. */
 public final class LocalOcrGapFiller {
     public static final String VERSION = "local-ocr-empty-cell-fill-2-consensus";
-    private record GridCells(List<Box> cells, Box extent) { }
-    private record Arbitration(List<TextBox> boxes, Set<String> localIds, int count) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class GridCells {
+        private final List<Box> cells;
+        private final Box extent;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private GridCells(@com.fasterxml.jackson.annotation.JsonProperty("cells") List<Box> cells, @com.fasterxml.jackson.annotation.JsonProperty("extent") Box extent) { this.cells = cells; this.extent = extent; }
+        public List<Box> cells() { return cells; }
+        public Box extent() { return extent; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; GridCells that = (GridCells) other; return java.util.Objects.equals(this.cells, that.cells) && java.util.Objects.equals(this.extent, that.extent); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.cells); hash = 31 * hash + java.util.Objects.hashCode(this.extent); return hash; }
+        @Override public String toString() { return "GridCells[" + "cells=" + cells + ", extent=" + extent + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Arbitration {
+        private final List<TextBox> boxes;
+        private final Set<String> localIds;
+        private final int count;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Arbitration(@com.fasterxml.jackson.annotation.JsonProperty("boxes") List<TextBox> boxes, @com.fasterxml.jackson.annotation.JsonProperty("localIds") Set<String> localIds, @com.fasterxml.jackson.annotation.JsonProperty("count") int count) { this.boxes = boxes; this.localIds = localIds; this.count = count; }
+        public List<TextBox> boxes() { return boxes; }
+        public Set<String> localIds() { return localIds; }
+        public int count() { return count; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Arbitration that = (Arbitration) other; return java.util.Objects.equals(this.boxes, that.boxes) && java.util.Objects.equals(this.localIds, that.localIds) && java.util.Objects.equals(this.count, that.count); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.boxes); hash = 31 * hash + java.util.Objects.hashCode(this.localIds); hash = 31 * hash + java.util.Objects.hashCode(this.count); return hash; }
+        @Override public String toString() { return "Arbitration[" + "boxes=" + boxes + ", localIds=" + localIds + ", count=" + count + "]"; }
+ }
 
     /** A rejected local source/grid or no eligible addition leaves the native result unchanged. */
     public OcrResult fill(OcrResult nativeResult, OcrLayout localLayout, List<Grid> grids) {
         Objects.requireNonNull(nativeResult, "nativeResult");
         try {
             if (nativeResult.layout() == null || localLayout == null || grids == null || grids.isEmpty() || grids.size() > 40
-                    || !Set.of("DASHSCOPE", "DASHSCOPE+RAPIDOCR").contains(Objects.toString(nativeResult.provider(), ""))) return nativeResult;
+                    || !cn.bidcheck.compat.Java8Api.setOf("DASHSCOPE", "DASHSCOPE+RAPIDOCR").contains(Objects.toString(nativeResult.provider(), ""))) return nativeResult;
             OcrLayout nativeLayout = nativeResult.layout().validated(nativeResult.text());
             String localText = orderedText(localLayout); localLayout = localLayout.validated(localText);
             if (nativeLayout.frames().size() != 1 || localLayout.frames().size() != 1 || nativeLayout.textBoxes().isEmpty()
@@ -36,7 +61,7 @@ public final class LocalOcrGapFiller {
                 if (intersects(localBoxes.get(i).bbox(),localBoxes.get(j).bbox())) { overlapping.add(localBoxes.get(i).id()); overlapping.add(localBoxes.get(j).id()); }
             Arbitration arbitration = "CELL_CROP_MAPPED".equals(localFrame.sourceKind())
                     ? arbitrate(nativeLayout.textBoxes(),localBoxes,validGrids,competing,overlapping)
-                    : new Arbitration(nativeLayout.textBoxes(),Set.of(),0);
+                    : new Arbitration(nativeLayout.textBoxes(),cn.bidcheck.compat.Java8Api.setOf(),0);
             List<Box> emptyCells = new ArrayList<>();
             for (int i=0;i<validGrids.size();i++) if (!competing.contains(i)) for (Box cell:validGrids.get(i).cells)
                 // Filling cannot exploit space freed by arbitration: original occupied cells remain protected.
@@ -94,12 +119,12 @@ public final class LocalOcrGapFiller {
     private static String orderedText(OcrLayout layout) {
         require(layout.textBoxes().size()<=MAX_BOXES&&layout.readingOrder().size()<=MAX_BOXES);
         Map<String,TextBox> boxes=new HashMap<>();for(TextBox b:layout.textBoxes())if(boxes.putIfAbsent(b.id(),b)!=null)throw new IllegalArgumentException();
-        StringBuilder text=new StringBuilder();for(String id:layout.readingOrder()){String value=Objects.requireNonNull(boxes.get(id)).text();require(value!=null&&value.length()<=10000&&text.length()+value.length()+1<=50000);if(!text.isEmpty())text.append('\n');text.append(value);}return text.toString();
+        StringBuilder text=new StringBuilder();for(String id:layout.readingOrder()){String value=Objects.requireNonNull(boxes.get(id)).text();require(value!=null&&value.length()<=10000&&text.length()+value.length()+1<=50000);if(!(text.length() == 0))text.append('\n');text.append(value);}return text.toString();
     }
     private static List<GridCells> prepare(List<Grid> grids,Frame frame,OcrLayout nativeLayout,String text) {
         List<GridCells> output=new ArrayList<>();int totalCells=0,index=0;
         for(Grid grid:grids) {
-            require(grid!=null && frame.id().equals(grid.frameId()) && Set.of(PIXEL_XYXY,NORMALIZED_1000_XYXY).contains(Objects.toString(grid.coordinateSpace(),"")));
+            require(grid!=null && frame.id().equals(grid.frameId()) && cn.bidcheck.compat.Java8Api.setOf(PIXEL_XYXY, NORMALIZED_1000_XYXY).contains(Objects.toString(grid.coordinateSpace(),"")));
             require(grid.rows()>0&&grid.rows()<=500&&grid.columns()>0&&grid.columns()<=100&&(long)grid.rows()*grid.columns()<=10000);
             require(!grid.cells().isEmpty()&&(totalCells+=grid.cells().size())<=MAX_CELLS);
             List<Box> boxes=new ArrayList<>();List<Cell> cells=new ArrayList<>();Set<Integer> slots=new HashSet<>();int cellIndex=0;
@@ -109,14 +134,14 @@ public final class LocalOcrGapFiller {
                 Box box=pixels(region.box(),grid.coordinateSpace(),frame);
                 require(boxes.stream().noneMatch(previous->intersects(previous,box)));boxes.add(box);
                 for(int row=region.row();row<region.row()+region.rowSpan();row++)for(int col=region.column();col<region.column()+region.columnSpan();col++)require(slots.add(row*grid.columns()+col));
-                cells.add(new Cell("check_c_"+(cellIndex++),region.row(),region.column(),region.rowSpan(),region.columnSpan(),"",box,List.of(),List.of(),false));
+                cells.add(new Cell("check_c_"+(cellIndex++),region.row(),region.column(),region.rowSpan(),region.columnSpan(),"",box,cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(),false));
             }
             require(slots.size()==grid.rows()*grid.columns());
             // Independently reuse strict logical/physical row-column validation; no synthetic text or cell facts are published.
             new OcrLayout(OcrLayout.VERSION,nativeLayout.status(),COORDINATES,nativeLayout.frames(),nativeLayout.textBoxes(),
-                    List.of(new Table("check_t_"+(index++),frame.id(),grid.rows(),grid.columns(),cells)),nativeLayout.readingOrder(),nativeLayout.warnings()).validated(text);
-            double x=boxes.stream().mapToDouble(Box::x).min().orElseThrow(),y=boxes.stream().mapToDouble(Box::y).min().orElseThrow();
-            double right=boxes.stream().mapToDouble(b->b.x()+b.width()).max().orElseThrow(),bottom=boxes.stream().mapToDouble(b->b.y()+b.height()).max().orElseThrow();
+                    cn.bidcheck.compat.Java8Api.listOf(new Table("check_t_"+(index++),frame.id(),grid.rows(),grid.columns(),cells)),nativeLayout.readingOrder(),nativeLayout.warnings()).validated(text);
+            double x=boxes.stream().mapToDouble(Box::x).min().orElseThrow(java.util.NoSuchElementException::new),y=boxes.stream().mapToDouble(Box::y).min().orElseThrow(java.util.NoSuchElementException::new);
+            double right=boxes.stream().mapToDouble(b->b.x()+b.width()).max().orElseThrow(java.util.NoSuchElementException::new),bottom=boxes.stream().mapToDouble(b->b.y()+b.height()).max().orElseThrow(java.util.NoSuchElementException::new);
             output.add(new GridCells(boxes,new Box(x,y,right-x,bottom-y)));
         }
         return output;

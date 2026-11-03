@@ -2,7 +2,7 @@ package cn.bidcheck.ocr;
 
 import com.sun.net.httpserver.HttpServer;
 import java.net.*;
-import java.net.http.HttpClient;
+import cn.bidcheck.compat.http.HttpClient;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
@@ -25,17 +25,17 @@ class OcrTrafficControlTest {
     @AfterEach void close(){if(release!=null)release.countDown();server.stop(0);handlers.shutdownNow();}
     void send(OcrRequestGovernor g,OcrRequestSettings s)throws Exception {g.send(HttpClient.newHttpClient(),endpoint,"test","{}".getBytes(),1024,Duration.ofSeconds(2),s);}
     @Test void tokenBucketPacesRealRequestsEvenWhenConcurrencyIsAvailable()throws Exception {
-        var settings=new OcrRequestSettings(16,1,1,2,600,1,5,100);
-        var governor=OcrRequestGovernor.forService(endpoint,"ocr-rate","test",4,settings);
+        cn.bidcheck.ocr.OcrRequestSettings settings=new OcrRequestSettings(16,1,1,2,600,1,5,100);
+        cn.bidcheck.ocr.OcrRequestGovernor governor=OcrRequestGovernor.forService(endpoint,"ocr-rate","test",4,settings);
         ExecutorService workers=Executors.newFixedThreadPool(3);
         try{List<Future<?>> pending=new ArrayList<>();for(int i=0;i<3;i++)pending.add(workers.submit(()->{try{send(governor,settings);}catch(Exception failure){throw new CompletionException(failure);}}));
-            for(var item:pending)item.get(3,TimeUnit.SECONDS);
+            for(java.util.concurrent.Future<?> item:pending)item.get(3,TimeUnit.SECONDS);
             assertThat(calls.get()).isEqualTo(3);assertThat(TimeUnit.NANOSECONDS.toMillis(arrivals.get(2)-arrivals.get(0))).isGreaterThanOrEqualTo(150);
         }finally{workers.shutdownNow();}
     }
     @Test void circuitStopsTrafficThenAllowsOneRecoveryProbe()throws Exception {
-        var settings=new OcrRequestSettings(16,1,1,2,0,8,2,100);
-        var governor=OcrRequestGovernor.forService(endpoint,"ocr-circuit","test",4,settings);status.set(502);
+        cn.bidcheck.ocr.OcrRequestSettings settings=new OcrRequestSettings(16,1,1,2,0,8,2,100);
+        cn.bidcheck.ocr.OcrRequestGovernor governor=OcrRequestGovernor.forService(endpoint,"ocr-circuit","test",4,settings);status.set(502);
         for(int i=0;i<2;i++)assertThatThrownBy(()->send(governor,settings)).isInstanceOf(OcrFailure.class);
         assertThatThrownBy(()->send(governor,settings)).isInstanceOfSatisfying(OcrFailure.class,e->assertThat(e.code()).isEqualTo("CIRCUIT_OPEN"));
         assertThat(calls.get()).isEqualTo(2);Thread.sleep(130);
@@ -50,15 +50,15 @@ class OcrTrafficControlTest {
     @Test void latePreCircuitSuccessCannotClearOpenCircuitOrConcurrentProbe()throws Exception {
         CountDownLatch oldEntered=new CountDownLatch(2),oldOne=new CountDownLatch(1),oldTwo=new CountDownLatch(1),probeEntered=new CountDownLatch(1),probeRelease=new CountDownLatch(1);
         AtomicInteger actual=new AtomicInteger();
-        server.createContext("/epoch",exchange->{actual.incrementAndGet();String kind=new String(exchange.getRequestBody().readAllBytes());
+        server.createContext("/epoch",exchange->{actual.incrementAndGet();String kind=new String(cn.bidcheck.compat.Java8Api.readAllBytes(exchange.getRequestBody()));
             try{
                 if(kind.startsWith("old")){oldEntered.countDown();(kind.equals("old1")?oldOne:oldTwo).await(3,TimeUnit.SECONDS);}
                 if(kind.equals("probe")){probeEntered.countDown();probeRelease.await(3,TimeUnit.SECONDS);}
                 exchange.sendResponseHeaders(kind.equals("fail")?502:200,2);exchange.getResponseBody().write("{}".getBytes());
             }catch(InterruptedException stopped){Thread.currentThread().interrupt();}finally{exchange.close();}});
-        URI epochEndpoint=endpoint.resolve("/epoch");var settings=new OcrRequestSettings(16,1,1,2,0,8,2,350);
-        var governor=OcrRequestGovernor.forService(epochEndpoint,"ocr-health-epoch","test",4,settings);
-        var client=HttpClient.newHttpClient();ExecutorService workers=Executors.newFixedThreadPool(3);
+        URI epochEndpoint=endpoint.resolve("/epoch");cn.bidcheck.ocr.OcrRequestSettings settings=new OcrRequestSettings(16,1,1,2,0,8,2,350);
+        cn.bidcheck.ocr.OcrRequestGovernor governor=OcrRequestGovernor.forService(epochEndpoint,"ocr-health-epoch","test",4,settings);
+        cn.bidcheck.compat.http.HttpClient client=HttpClient.newHttpClient();ExecutorService workers=Executors.newFixedThreadPool(3);
         java.util.function.Consumer<String> request=kind->{try{governor.send(client,epochEndpoint,"test",kind.getBytes(),1024,Duration.ofSeconds(2),settings);}catch(Exception e){throw new CompletionException(e);}};
         try{
             Future<?> a=workers.submit(()->request.accept("old1")),b=workers.submit(()->request.accept("old2"));assertThat(oldEntered.await(1,TimeUnit.SECONDS)).isTrue();
@@ -74,9 +74,9 @@ class OcrTrafficControlTest {
     }
 
     @Test void treeBudgetCountsEveryActualHttpAttemptInsideProviderRetries()throws Exception {
-        var settings=new OcrRequestSettings(16,3,1,2,0,8,100,100);status.set(502);
-        var governor=OcrRequestGovernor.forService(endpoint,"ocr-tree-budget","test",4,settings);
-        var budget=new OcrRequestGovernor.RequestBudget(2,Duration.ofSeconds(2));
+        cn.bidcheck.ocr.OcrRequestSettings settings=new OcrRequestSettings(16,3,1,2,0,8,100,100);status.set(502);
+        cn.bidcheck.ocr.OcrRequestGovernor governor=OcrRequestGovernor.forService(endpoint,"ocr-tree-budget","test",4,settings);
+        cn.bidcheck.ocr.OcrRequestGovernor.RequestBudget budget=new OcrRequestGovernor.RequestBudget(2,Duration.ofSeconds(2));
         assertThatThrownBy(()->governor.send(HttpClient.newHttpClient(),endpoint,"test","{}".getBytes(),1024,Duration.ofSeconds(1),settings,budget))
             .isInstanceOfSatisfying(OcrFailure.class,e->assertThat(e.code()).isEqualTo("BATCH_BUDGET_EXHAUSTED"));
         assertThat(calls.get()).isEqualTo(2);

@@ -5,7 +5,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HexFormat;
+import cn.bidcheck.compat.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -18,16 +18,29 @@ import java.util.TreeMap;
  * A changed document version/hash, parser fingerprint, scope dimension or extractor version creates
  * a new key and therefore cannot accidentally reuse stale positive or negative evidence.</p>
  */
-public record EvidenceNeedKey(
-        List<DocumentVersion> documents,
-        String subjectKey,
-        String factType,
-        String field,
-        Map<String, String> dimensions,
-        String extractorId,
-        String extractorVersion) {
+@com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public final class EvidenceNeedKey {
+        private final List<DocumentVersion> documents;
+        private final String subjectKey;
+        private final String factType;
+        private final String field;
+        private final Map<String, String> dimensions;
+        private final String extractorId;
+        private final String extractorVersion;
+        public List<DocumentVersion> documents() { return documents; }
+        public String subjectKey() { return subjectKey; }
+        public String factType() { return factType; }
+        public String field() { return field; }
+        public Map<String, String> dimensions() { return dimensions; }
+        public String extractorId() { return extractorId; }
+        public String extractorVersion() { return extractorVersion; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; EvidenceNeedKey that = (EvidenceNeedKey) other; return java.util.Objects.equals(this.documents, that.documents) && java.util.Objects.equals(this.subjectKey, that.subjectKey) && java.util.Objects.equals(this.factType, that.factType) && java.util.Objects.equals(this.field, that.field) && java.util.Objects.equals(this.dimensions, that.dimensions) && java.util.Objects.equals(this.extractorId, that.extractorId) && java.util.Objects.equals(this.extractorVersion, that.extractorVersion); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.documents); hash = 31 * hash + java.util.Objects.hashCode(this.subjectKey); hash = 31 * hash + java.util.Objects.hashCode(this.factType); hash = 31 * hash + java.util.Objects.hashCode(this.field); hash = 31 * hash + java.util.Objects.hashCode(this.dimensions); hash = 31 * hash + java.util.Objects.hashCode(this.extractorId); hash = 31 * hash + java.util.Objects.hashCode(this.extractorVersion); return hash; }
+        @Override public String toString() { return "EvidenceNeedKey[" + "documents=" + documents + ", subjectKey=" + subjectKey + ", factType=" + factType + ", field=" + field + ", dimensions=" + dimensions + ", extractorId=" + extractorId + ", extractorVersion=" + extractorVersion + "]"; }
 
-    public EvidenceNeedKey {
+
+    @com.fasterxml.jackson.annotation.JsonCreator
+        public EvidenceNeedKey(@com.fasterxml.jackson.annotation.JsonProperty("documents") List<DocumentVersion> documents, @com.fasterxml.jackson.annotation.JsonProperty("subjectKey") String subjectKey, @com.fasterxml.jackson.annotation.JsonProperty("factType") String factType, @com.fasterxml.jackson.annotation.JsonProperty("field") String field, @com.fasterxml.jackson.annotation.JsonProperty("dimensions") Map<String, String> dimensions, @com.fasterxml.jackson.annotation.JsonProperty("extractorId") String extractorId, @com.fasterxml.jackson.annotation.JsonProperty("extractorVersion") String extractorVersion) {
         if (documents == null || documents.isEmpty()) {
             throw new IllegalArgumentException("documents are required");
         }
@@ -36,7 +49,7 @@ public record EvidenceNeedKey(
                 .thenComparingLong(DocumentVersion::version)
                 .thenComparing(DocumentVersion::contentHash)
                 .thenComparing(DocumentVersion::parserFingerprint));
-        documents = List.copyOf(sortedDocuments);
+        documents = cn.bidcheck.compat.Java8Api.listCopyOf(sortedDocuments);
         subjectKey = required(subjectKey, "subjectKey");
         factType = required(factType, "factType");
         field = required(field, "field");
@@ -45,10 +58,12 @@ public record EvidenceNeedKey(
             dimensions.forEach((key, value) -> normalizedDimensions.put(
                     required(key, "dimension key"), required(value, "dimension value")));
         }
-        dimensions = Map.copyOf(normalizedDimensions);
+        dimensions = cn.bidcheck.compat.Java8Api.mapCopyOf(normalizedDimensions);
         extractorId = required(extractorId, "extractorId");
         extractorVersion = required(extractorVersion, "extractorVersion");
-    }
+
+            this.documents = documents; this.subjectKey = subjectKey; this.factType = factType; this.field = field; this.dimensions = dimensions; this.extractorId = extractorId; this.extractorVersion = extractorVersion;
+        }
 
     /** Content-addressed id suitable for a database primary key. */
     public String id() {
@@ -90,20 +105,32 @@ public record EvidenceNeedKey(
     }
 
     private static String required(String value, String field) {
-        if (value == null || value.isBlank()) throw new IllegalArgumentException(field + " is required");
+        if (value == null || cn.bidcheck.compat.Java8Api.isBlank(value)) throw new IllegalArgumentException(field + " is required");
         return value.trim();
     }
 
-    public record DocumentVersion(
-            String documentId,
-            long version,
-            String contentHash,
-            String parserFingerprint) {
-        public DocumentVersion {
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public static final class DocumentVersion {
+        private final String documentId;
+        private final long version;
+        private final String contentHash;
+        private final String parserFingerprint;
+        public String documentId() { return documentId; }
+        public long version() { return version; }
+        public String contentHash() { return contentHash; }
+        public String parserFingerprint() { return parserFingerprint; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; DocumentVersion that = (DocumentVersion) other; return java.util.Objects.equals(this.documentId, that.documentId) && java.util.Objects.equals(this.version, that.version) && java.util.Objects.equals(this.contentHash, that.contentHash) && java.util.Objects.equals(this.parserFingerprint, that.parserFingerprint); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.documentId); hash = 31 * hash + java.util.Objects.hashCode(this.version); hash = 31 * hash + java.util.Objects.hashCode(this.contentHash); hash = 31 * hash + java.util.Objects.hashCode(this.parserFingerprint); return hash; }
+        @Override public String toString() { return "DocumentVersion[" + "documentId=" + documentId + ", version=" + version + ", contentHash=" + contentHash + ", parserFingerprint=" + parserFingerprint + "]"; }
+
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public DocumentVersion(@com.fasterxml.jackson.annotation.JsonProperty("documentId") String documentId, @com.fasterxml.jackson.annotation.JsonProperty("version") long version, @com.fasterxml.jackson.annotation.JsonProperty("contentHash") String contentHash, @com.fasterxml.jackson.annotation.JsonProperty("parserFingerprint") String parserFingerprint) {
             documentId = required(documentId, "documentId");
             if (version < 0) throw new IllegalArgumentException("document version must be non-negative");
             contentHash = required(contentHash, "contentHash");
             parserFingerprint = required(parserFingerprint, "parserFingerprint");
+
+            this.documentId = documentId; this.version = version; this.contentHash = contentHash; this.parserFingerprint = parserFingerprint;
         }
     }
 }

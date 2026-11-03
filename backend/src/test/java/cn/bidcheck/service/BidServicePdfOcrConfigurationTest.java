@@ -13,7 +13,7 @@ import static org.mockito.Mockito.mock;
 
 class BidServicePdfOcrConfigurationTest {
     @Test void enabledPdfExposesBothModelsAndBindsPdfSingleAndBudgetIdentities() {
-        var base = service("pdf-a", "single-a", 1000);
+        cn.bidcheck.service.BidService base = service("pdf-a", "single-a", 1000);
         assertTrue(base.ocrEnabled()); assertTrue(base.pdfOcrEnabled());
         assertEquals("pdf-a", base.pdfOcrModel()); assertEquals(10, base.pdfOcrBatchPages()); assertEquals(5, base.pdfOcrConcurrency());
         assertTrue(base.ocrModel().contains("pdf-a")); assertTrue(base.ocrModel().contains("single-a"));

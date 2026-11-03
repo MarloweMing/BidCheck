@@ -123,5 +123,18 @@ final class EvidenceScope {
         }
         return result;
     }
-    private record Proof(String scope, String statement, Evidence source) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Proof {
+        private final String scope;
+        private final String statement;
+        private final Evidence source;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Proof(@com.fasterxml.jackson.annotation.JsonProperty("scope") String scope, @com.fasterxml.jackson.annotation.JsonProperty("statement") String statement, @com.fasterxml.jackson.annotation.JsonProperty("source") Evidence source) { this.scope = scope; this.statement = statement; this.source = source; }
+        public String scope() { return scope; }
+        public String statement() { return statement; }
+        public Evidence source() { return source; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Proof that = (Proof) other; return java.util.Objects.equals(this.scope, that.scope) && java.util.Objects.equals(this.statement, that.statement) && java.util.Objects.equals(this.source, that.source); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.scope); hash = 31 * hash + java.util.Objects.hashCode(this.statement); hash = 31 * hash + java.util.Objects.hashCode(this.source); return hash; }
+        @Override public String toString() { return "Proof[" + "scope=" + scope + ", statement=" + statement + ", source=" + source + "]"; }
+ }
 }

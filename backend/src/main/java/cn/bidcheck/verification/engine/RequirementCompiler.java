@@ -11,7 +11,7 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 /** Compiles a closed expression tree, never executable model-generated code. */
 final class RequirementCompiler {
     private static final Logger log=LoggerFactory.getLogger(RequirementCompiler.class);
-    private static final Set<String> LOGICS=Set.of("ALL","ANY","CONDITIONAL","FOR_EACH");
+    private static final Set<String> LOGICS=cn.bidcheck.compat.Java8Api.setOf("ALL", "ANY", "CONDITIONAL", "FOR_EACH");
     Plan compile(Checkpoint cp,RunSession session)throws IOException {
         long started=System.nanoTime();
         try {
@@ -21,11 +21,11 @@ final class RequirementCompiler {
             Map<String,Long> predicates=new TreeMap<>();
             leaves.forEach(rule->predicates.merge(rule.predicate(),1L,Long::sum));
             Object mapped=plan.requirementScope().get("deterministicCompilation");
-            Map<?,?> coverage=mapped instanceof Map<?,?> map?map:Map.of();
+            Map<?,?> coverage=mapped instanceof Map<?,?>?((Map<?,?>) (mapped)):cn.bidcheck.compat.Java8Api.mapOf();
             Map<String,Long> reasonCounts=new TreeMap<>();
-            if(coverage.get("gaps") instanceof List<?> gaps)for(Object gap:gaps)
-                if(gap instanceof Map<?,?> row)for(String reason:Objects.toString(row.get("reasonCode"),"").split(";"))
-                    if(!reason.isBlank())reasonCounts.merge(reason,1L,Long::sum);
+            if(coverage.get("gaps") instanceof List<?>)for(Object gap:((List<?>) (coverage.get("gaps"))))
+                if(gap instanceof Map<?,?>)for(String reason:Objects.toString(((Map<?,?>) (gap)).get("reasonCode"),"").split(";"))
+                    if(!cn.bidcheck.compat.Java8Api.isBlank(reason))reasonCounts.merge(reason,1L,Long::sum);
             Map<String,Object> diagnostics=linked("version","compilation-diagnostics-1","stage","REQUIREMENT_COMPILATION",
                     "checkpointId",cp.id(),"method",plan.method(),"sourceScope",plan.requirementScope().getOrDefault("status",""),
                     "sourceHash",identity(Objects.toString(cp.source()==null?cp.expected():cp.source().quote(),"")),
@@ -33,7 +33,7 @@ final class RequirementCompiler {
                     "mappingGapReasons",reasonCounts,"durationMs",(System.nanoTime()-started)/1_000_000,
                     "complete",!leaves.isEmpty()&&plan.issues().isEmpty()&&!predicates.containsKey("UNSUPPORTED"));
             Object sourceContext=plan.requirementScope().get("sourceContext");
-            if(sourceContext instanceof Map<?,?> sc&&sc.get("identity") instanceof Map<?,?> identity&&identity.get("sourceRepair") instanceof Map<?,?> repair)diagnostics.put("sourceMapping",repair);
+            if(sourceContext instanceof Map<?,?>&&((Map<?,?>) (sourceContext)).get("identity") instanceof Map<?,?>&&((Map<?,?>) (((Map<?,?>) (sourceContext)).get("identity"))).get("sourceRepair") instanceof Map<?,?>)diagnostics.put("sourceMapping",((Map<?,?>) (((Map<?,?>) (((Map<?,?>) (sourceContext)).get("identity"))).get("sourceRepair"))));
             Map<String,Object> audit=new LinkedHashMap<>(session.compilationAudit);audit.put("compilerDiagnostics",diagnostics);session.compilationAudit=audit;
             // No original text, party/person names, model payloads or credentials in operational logs.
             log.info("bidcheck.stage=REQUIREMENT_COMPILATION runId={} sourceRunId={} scope={} checkpointId={} method={} sourceScope={} sourceMapping={} leaves={} unsupported={} issues={} gapReasons={} elapsedMs={}",
@@ -45,8 +45,8 @@ final class RequirementCompiler {
         }
     }
     private static String safeLog(String value){String safe=Objects.toString(value,"");return safe.matches("[A-Za-z0-9_:.\\-]{1,100}")?safe:identity(safe);}
-    private static Map<String,Object> mappingLog(Object value){Map<String,Object> out=new LinkedHashMap<>();if(value instanceof Map<?,?> map)
-        for(String key:List.of("version","stage","status","reasonCode"))if(map.containsKey(key))out.put(key,safeLog(Objects.toString(map.get(key),"")));return out;}
+    private static Map<String,Object> mappingLog(Object value){Map<String,Object> out=new LinkedHashMap<>();if(value instanceof Map<?,?>)
+        for(String key:cn.bidcheck.compat.Java8Api.listOf("version", "stage", "status", "reasonCode"))if(((Map<?,?>) (value)).containsKey(key))out.put(key,safeLog(Objects.toString(((Map<?,?>) (value)).get(key),"")));return out;}
     private Plan compileInternal(Checkpoint cp,RunSession session)throws IOException {
         String requirement=Objects.toString(cp.expected(),"");String original=str(session.context,"originalRequirement");
         // Confirmed checkpoint metadata is the server-owned business intent.  In particular, a
@@ -58,15 +58,16 @@ final class RequirementCompiler {
         // Global review types without a closed program rule still require complete object/image
         // coverage; model-selected excerpts cannot establish a full-document pass.
         if("FULL_TEXT_REVIEW".equals(cp.type())) {
-            return new Plan("ALL",List.of(),"NATIVE",List.of("全文检查须保留完整覆盖与人工复核，不能将模型抽样结果视为全文通过"));
+            return new Plan("ALL",cn.bidcheck.compat.Java8Api.listOf(),"NATIVE",cn.bidcheck.compat.Java8Api.listOf("全文检查须保留完整覆盖与人工复核，不能将模型抽样结果视为全文通过"));
         }
         RequirementSourceRepair.Resolution resolution=RequirementSourceRepair.resolve(cp,original,session.context);
         RequirementScope.Selection scope=resolution.scope();RequirementSourceContext.Context sourceContext=resolution.context();
-        if(!scope.resolved()){Map<String,Object> metadata=new LinkedHashMap<>(scope.map());metadata.put("sourceContext",sourceContext.map());return new Plan("ALL",List.of(),"SCOPE_UNRESOLVED",List.of(scope.issue()),List.of(),metadata);}
+        if(!scope.resolved()){Map<String,Object> metadata=new LinkedHashMap<>(scope.map());metadata.put("sourceContext",sourceContext.map());return new Plan("ALL",cn.bidcheck.compat.Java8Api.listOf(),"SCOPE_UNRESOLVED",cn.bidcheck.compat.Java8Api.listOf(scope.issue()),cn.bidcheck.compat.Java8Api.listOf(),metadata);}
         boolean focused=Boolean.TRUE.equals(session.context.get("focusedCheck"));
-        Set<String> focusedDomains=focused?new LinkedHashSet<>(ProofVerifier.strings(session.context.get("atomicDomains"))):Set.of();
-        String predicate=switch(Objects.toString(cp.type(),"")){case "VALUE_COMPARE"->"NUMBER";default->"";};
-        if(!predicate.isEmpty()&&!focused){Rule rule=new Rule("O1",cp.title(),predicate,"",Objects.toString(cp.field(),""),Objects.toString(cp.operator(),""),requirement,Objects.toString(cp.unit(),""),Map.of(),scope.obligation(),"",List.of());return new Plan("ALL",List.of(rule),"TYPED_RULE",List.of(),List.of(),scope.map());}
+        Set<String> focusedDomains=focused?new LinkedHashSet<>(ProofVerifier.strings(session.context.get("atomicDomains"))):cn.bidcheck.compat.Java8Api.setOf();
+        String predicate;
+switch (Objects.toString(cp.type(),"")) {case "VALUE_COMPARE":predicate = "NUMBER"; break;default:predicate = ""; break;}
+        if(!predicate.isEmpty()&&!focused){Rule rule=new Rule("O1",cp.title(),predicate,"",Objects.toString(cp.field(),""),Objects.toString(cp.operator(),""),requirement,Objects.toString(cp.unit(),""),cn.bidcheck.compat.Java8Api.mapOf(),scope.obligation(),"",cn.bidcheck.compat.Java8Api.listOf());return new Plan("ALL",cn.bidcheck.compat.Java8Api.listOf(rule),"TYPED_RULE",cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(),scope.map());}
         RequirementReferences.Expansion expansion=RequirementReferences.expand(cp,scope.obligation(),sourceContext,session.context);
         sourceContext=expansion.context();
         // Local recovery revalidates the original tree and IDs; only a fresh compile may
@@ -76,23 +77,23 @@ final class RequirementCompiler {
             Rule verified=focused?focusedRule(sourcePrice,focusedDomains,new RequirementContextBindings(scope.obligation(),"ORIGINAL_REQUIREMENT")):sourcePrice;
             if(!"UNSUPPORTED".equals(verified.predicate())){
                 Map<String,Object> metadata=new LinkedHashMap<>(scope.map());metadata.put("sourceContext",sourceContext.map());metadata.put("tenderConstants",TenderRequirementConstants.extract(scope.obligation()));
-                Plan sourcePlan=new Plan("ALL",List.of(withSourceContext(verified,sourceContext.map())),"SOURCE_COMPILED_PRICE",List.of(),List.of(),metadata);
-                session.compilationAudit=CompilationRecovery.audit(sourcePlan,0,List.of(linked("state","SOURCE_COMPILED_PRICE","networkCalls",0,"sourceHash",identity(scope.obligation()))));
+                Plan sourcePlan=new Plan("ALL",cn.bidcheck.compat.Java8Api.listOf(withSourceContext(verified,sourceContext.map())),"SOURCE_COMPILED_PRICE",cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(),metadata);
+                session.compilationAudit=CompilationRecovery.audit(sourcePlan,0,cn.bidcheck.compat.Java8Api.listOf(linked("state","SOURCE_COMPILED_PRICE","networkCalls",0,"sourceHash",identity(scope.obligation()))));
                 return sourcePlan;
             }
         }
         if(RecoveryReplay.localOnly(session.context)&&!RequirementRepairPolicy.recompile(session.context)){
             JsonNode previous=RecoveryReplay.plan(session.context,session.json);
-            if(previous==null)return new Plan("ALL",List.of(),"RECOVERY_PLAN_MISSING",List.of("补查缺少可重新验证的规则计划，未再次调用模型"));
+            if(previous==null)return new Plan("ALL",cn.bidcheck.compat.Java8Api.listOf(),"RECOVERY_PLAN_MISSING",cn.bidcheck.compat.Java8Api.listOf("补查缺少可重新验证的规则计划，未再次调用模型"));
             Plan parsed=compileResponse(cp,previous,original,focused,focusedDomains,sourceContext,scope);
             Plan replay=new Plan(parsed.logic(),parsed.rules(),"LOCAL_REVALIDATION",parsed.issues(),parsed.policyNotes(),parsed.requirementScope());
-            session.compilationAudit=CompilationRecovery.audit(replay,0,List.of(linked("state","LOCAL_REVALIDATION","networkCalls",0)));
+            session.compilationAudit=CompilationRecovery.audit(replay,0,cn.bidcheck.compat.Java8Api.listOf(linked("state","LOCAL_REVALIDATION","networkCalls",0)));
             return replay;
         }
         String groundedRequirement=RequirementReferences.requirementText(scope.obligation(),sourceContext);
         Plan referenceTimePlan=referenceTimePlan(cp,groundedRequirement,sourceContext,scope);
         if(referenceTimePlan!=null){
-            session.compilationAudit=CompilationRecovery.audit(referenceTimePlan,0,List.of(linked(
+            session.compilationAudit=CompilationRecovery.audit(referenceTimePlan,0,cn.bidcheck.compat.Java8Api.listOf(linked(
                     "state","DETERMINISTIC_REFERENCE_TIME","networkCalls",0,
                     "policy","SERVER_OWNED_RULE")));
             return referenceTimePlan;
@@ -110,19 +111,19 @@ final class RequirementCompiler {
             if(!deterministic.rules().isEmpty())return deterministicPlan;
             Plan plan=fallback(cp);return new Plan(plan.logic(),plan.rules(),plan.method(),plan.issues(),plan.policyNotes(),scope.map());
         }
-        Map<String,Object> input=linked("title",cp.title(),"requirement",groundedRequirement,"originalRequirement",original.isBlank()?"":groundedRequirement,"sourceContext",original,"requirementScope",scope.map(),"reviewedExpected",requirement,"category",cp.category(),"ruleVersion",VERSION,
+        Map<String,Object> input=linked("title",cp.title(),"requirement",groundedRequirement,"originalRequirement",cn.bidcheck.compat.Java8Api.isBlank(original)?"":groundedRequirement,"sourceContext",original,"requirementScope",scope.map(),"reviewedExpected",requirement,"category",cp.category(),"ruleVersion",VERSION,
             "scopeInstructions","只对requirement中的当前义务编译并检查覆盖。sourceContext用于定位标题、主体和定义，不得把相邻独立要求重新加入本项；sourceQuote仍须逐字来自requirement。纯逻辑组合使用predicate=GROUP；有业务含义的谓词必须自身核验，REFERENCE_TIME等辅助条件不能替代证书效期、材料或人数要求。");
         input.put("deterministicCompilerVersion",DeterministicRequirementCompiler.VERSION);
         input.put("deterministicCoverage",deterministic.audit());
-        input.put("lockedRules",List.of());
-        input.put("uncoveredSpans",List.of(linked("sourceQuote",groundedRequirement,"reasonCode","EXPLICIT_LEGACY_MODEL_COMPILER")));
+        input.put("lockedRules",cn.bidcheck.compat.Java8Api.listOf());
+        input.put("uncoveredSpans",cn.bidcheck.compat.Java8Api.listOf(linked("sourceQuote",groundedRequirement,"reasonCode","EXPLICIT_LEGACY_MODEL_COMPILER")));
         input.put("gapOnlyInstructions","该调用仅供显式兼容模式使用。生产检查不会调用模型生成规则；返回值只描述规则，不得给出通过、不通过或业务结论。");
         input.put("compilerPolicyVersion",CompilationRecovery.VERSION);
         input.put("verifiedSourceContext",sourceContext.map());
         input.put("resolvedReferences",expansion.references());
         input.put("referenceInstructions","数字条款引用已由服务器从同一冻结招标文件展开。必须核验展开正文的具体义务；不得把‘符合第X条’编为SECTION/MATERIAL去投标文件寻找。sourceQuote只能来自某一段已提供的原文，不能拼接跨来源句子；各字段引用保留其原文，补充条款按明确增加/替换关系处理。");
         input.put("tenderConstants",TenderRequirementConstants.extract(groundedRequirement));
-        if(focused){input.put("focusedDomains",List.copyOf(focusedDomains));input.put("focusedCheckVersion",session.context.get("focusedCheckVersion"));
+        if(focused){input.put("focusedDomains",cn.bidcheck.compat.Java8Api.listCopyOf(focusedDomains));input.put("focusedCheckVersion",session.context.get("focusedCheckVersion"));
             input.put("checkpointType",cp.type());input.put("checkpointField",cp.field());input.put("checkpointOperator",cp.operator());input.put("checkpointUnit",cp.unit());
             input.put("focusedInstructions","保留当前义务的且、或、条件和逐主体分支，不裁掉复合要求，也不把sourceContext中相邻独立要求塞回。focusedDomains仅为检索提示，不能据此将有支持谓词的子义务变为UNSUPPORTED。材料/声明/字段比较/数值/人员/证书/原图VISUAL/外部EXTERNAL分别编译，由对应执行器完成。提供网址截图与字段一致性不是实时联网查询；只有原文明确要求外部状态时才使用EXTERNAL。普通盖章只编译要求位置有无盖章，不新增真伪鉴定。主体、标段、币种、金额/税口径、证书类别/证号/有效期字段、单位必须引用原文；未知不补默认值。referenceEvent只有原文明确的BID_DEADLINE或OPENING_DATE，不能把开标日替代投标截止日。数值检查保留原比较符、门槛和单位。报价的amountBasis是被比较的投标金额口径，不是门槛名称；例如原文‘含税投标总报价不得超过最高限价500万元’，amountBasis取原文‘投标总报价’，expected为500、unit为万元、taxBasis为含税，不能把amountBasis写成最高限价。sourceQuote应完整包含必要定义与比较句，不只摘最后数字；示例不是当前条款事实。");}
         RequirementArtifact artifact=new RequirementArtifact(session,input,sourceContext);
@@ -131,7 +132,7 @@ final class RequirementCompiler {
         Map<String,Object> shared=artifact.lookup();
         JsonNode sharedRaw=shared.isEmpty()?null:session.json.valueToTree(shared.get("rawResponse"));
         if(sharedRaw!=null){JsonNode merged=CompilationRecovery.normalize(sharedRaw);Plan cached=compileResponse(cp,merged,original,focused,focusedDomains,sourceContext,scope);
-            boolean delayed=shared.get("retryNotBeforeEpochMillis") instanceof Number n&&n.longValue()>artifact.now();
+            boolean delayed=shared.get("retryNotBeforeEpochMillis") instanceof Number&&((Number) (shared.get("retryNotBeforeEpochMillis"))).longValue()>artifact.now();
             if(!"REPAIR_RETRY_PENDING".equals(shared.get("state"))||delayed){
                 // A supposedly valid artifact must still pass the current server validator.
                 if(!"VALIDATED".equals(shared.get("state"))||CompilationRecovery.diagnostics(cached).isEmpty()){
@@ -140,7 +141,7 @@ final class RequirementCompiler {
             }
         }
         JsonNode saved=session.prior("COMPILED_PLAN",session.fingerprint("COMPILED_PLAN",input));
-        if(saved!=null){JsonNode merged=CompilationRecovery.normalize(saved);Plan cached=compileResponse(cp,merged,original,focused,focusedDomains,sourceContext,scope);if(CompilationRecovery.diagnostics(cached).isEmpty()){session.resumedSteps++;session.compilationAudit=CompilationRecovery.audit(cached,0,List.of(linked("state","REUSED_VALIDATED_PLAN")));artifact.publish(merged,cached,false,0);return artifact.identify(cached);}}
+        if(saved!=null){JsonNode merged=CompilationRecovery.normalize(saved);Plan cached=compileResponse(cp,merged,original,focused,focusedDomains,sourceContext,scope);if(CompilationRecovery.diagnostics(cached).isEmpty()){session.resumedSteps++;session.compilationAudit=CompilationRecovery.audit(cached,0,cn.bidcheck.compat.Java8Api.listOf(linked("state","REUSED_VALIDATED_PLAN")));artifact.publish(merged,cached,false,0);return artifact.identify(cached);}}
         JsonNode originalResponse=sharedRaw==null?session.model("COMPILE",input):sharedRaw,root=CompilationRecovery.normalize(originalResponse);
         Plan plan=compileResponse(cp,root,original,focused,focusedDomains,sourceContext,scope);
         List<Map<String,Object>> diagnostics=CompilationRecovery.diagnostics(plan),history=new ArrayList<>();
@@ -177,46 +178,34 @@ final class RequirementCompiler {
         String sourceQuote=cp.source()!=null?Objects.toString(cp.source().quote(),""):original;
         Rule rule=null;Map<String,Object> parameters=new LinkedHashMap<>();
         parameters.put("intentAuthority","CONFIRMED_CHECKPOINT_METADATA");parameters.put("intentType",type);
-        switch(type){
-            case "ENTITY_FIELD_CONSISTENCY" -> {
-                if(!Set.of("projectName","projectNumber","companyName","creditCode","personName","plateNumber").contains(field)||!Set.of("=","==","EQ").contains(operator))return null;
-                parameters.put("comparisonScope",expected.isBlank()?"CURRENT_PROJECT_OCCURRENCES":"CHECKPOINT_EXPECTED_VALUE");
-                rule=new Rule("TYPED-CONSISTENCY",cp.title(),"SAME_FIELD","",field,"=",expected,Objects.toString(cp.unit(),""),parameters,sourceQuote,"",List.of());
-            }
-            case "MATERIAL_EXISTENCE" -> {
-                if(expected.isBlank()||!operator.equalsIgnoreCase("EXISTS"))return null;
+        switch (type) {case "ENTITY_FIELD_CONSISTENCY":{
+                if(!cn.bidcheck.compat.Java8Api.setOf("projectName", "projectNumber", "companyName", "creditCode", "personName", "plateNumber").contains(field)||!cn.bidcheck.compat.Java8Api.setOf("=", "==", "EQ").contains(operator))return null;
+                parameters.put("comparisonScope",cn.bidcheck.compat.Java8Api.isBlank(expected)?"CURRENT_PROJECT_OCCURRENCES":"CHECKPOINT_EXPECTED_VALUE");
+                rule=new Rule("TYPED-CONSISTENCY",cp.title(),"SAME_FIELD","",field,"=",expected,Objects.toString(cp.unit(),""),parameters,sourceQuote,"",cn.bidcheck.compat.Java8Api.listOf());
+            } break;case "MATERIAL_EXISTENCE":{
+                if(cn.bidcheck.compat.Java8Api.isBlank(expected)||!operator.equalsIgnoreCase("EXISTS"))return null;
                 parameters.put("materialIdentity",expected);parameters.put("inventoryEntry",true);
-                rule=new Rule("TYPED-MATERIAL",cp.title(),"MATERIAL","",field.isBlank()?"material":field,"",expected,Objects.toString(cp.unit(),""),parameters,sourceQuote,"",List.of());
-            }
-            case "DATE_VALIDITY" -> {
-                if(!"certificateExpiry".equals(field)||!Set.of(">=",">").contains(operator)||!expected.matches("\\d{4}-\\d{2}-\\d{2}(?:[T ].*)?"))return null;
+                rule=new Rule("TYPED-MATERIAL",cp.title(),"MATERIAL","",cn.bidcheck.compat.Java8Api.isBlank(field)?"material":field,"",expected,Objects.toString(cp.unit(),""),parameters,sourceQuote,"",cn.bidcheck.compat.Java8Api.listOf());
+            } break;case "DATE_VALIDITY":{
+                if(!"certificateExpiry".equals(field)||!cn.bidcheck.compat.Java8Api.setOf(">=", ">").contains(operator)||!expected.matches("\\d{4}-\\d{2}-\\d{2}(?:[T ].*)?"))return null;
                 parameters.put("allApplicableCertificates",true);parameters.put("validityField","有效期");
                 parameters.put("referenceEvent",sourceQuote.contains("开标")&&!sourceQuote.matches("(?s).*(?:投标|递交|提交).{0,12}截止.*")?"OPENING_DATE":"BID_DEADLINE");
-                rule=new Rule("TYPED-CERTIFICATE-VALIDITY",cp.title(),"VALIDITY","",field,operator,expected,Objects.toString(cp.unit(),""),parameters,sourceQuote,"",List.of());
-            }
-            case "FULL_TEXT_REVIEW" -> rule=fullTextRule(cp,field,operator,expected,sourceQuote,parameters);
-            default -> { return null; }
-        }
+                rule=new Rule("TYPED-CERTIFICATE-VALIDITY",cp.title(),"VALIDITY","",field,operator,expected,Objects.toString(cp.unit(),""),parameters,sourceQuote,"",cn.bidcheck.compat.Java8Api.listOf());
+            } break;case "FULL_TEXT_REVIEW":rule=fullTextRule(cp,field,operator,expected,sourceQuote,parameters); break;default:{ return null; }}
         if(rule==null)return null;
         RequirementSourceContext.Context sourceContext=RequirementSourceContext.resolve(cp,original,context);
         Map<String,Object> scope=linked("status","TYPED_CHECKPOINT_INTENT","sourceQuote",sourceQuote,"reviewedExpected",expected,
                 "contextOnly",true,"issue","","intent",linked("type",type,"field",field,"operator",operator,"expected",expected,"unit",Objects.toString(cp.unit(),"")),
                 "sourceContext",sourceContext.map());
-        return new Plan("ALL",List.of(withSourceContext(rule,sourceContext.map())),"TYPED_CHECKPOINT_COMPILED",List.of(),List.of(),scope);
+        return new Plan("ALL",cn.bidcheck.compat.Java8Api.listOf(withSourceContext(rule,sourceContext.map())),"TYPED_CHECKPOINT_COMPILED",cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(),scope);
     }
     private Rule fullTextRule(Checkpoint cp,String field,String operator,String expected,String sourceQuote,Map<String,Object> base){
         if(!"REVIEW".equals(operator))return null;Map<String,Object> p=new LinkedHashMap<>(base);p.put("textScope","全文");
-        List<String> detectors=switch(field){
-            case "amountAccuracy"->List.of("ARITHMETIC_MISMATCH","COMPLEX_AMOUNT_RECONCILIATION");
-            case "missingFields"->List.of("MISSING_FIELD","WRONG_FIELD_VALUE");
-            case "signatureDate"->List.of("INVALID_SIGNING_DATE","UNFILLED_SIGNING_DATE");
-            case "signingAfterOpening"->List.of("SIGNING_AFTER_OPENING");
-            case "typos"->List.of("TYPO","OCR_SUSPECT","PROPER_NOUN_REVIEW");
-            default->List.of();
-        };
+        List<String> detectors;
+switch (field) {case "amountAccuracy":detectors = cn.bidcheck.compat.Java8Api.listOf("ARITHMETIC_MISMATCH", "COMPLEX_AMOUNT_RECONCILIATION"); break;case "missingFields":detectors = cn.bidcheck.compat.Java8Api.listOf("MISSING_FIELD", "WRONG_FIELD_VALUE"); break;case "signatureDate":detectors = cn.bidcheck.compat.Java8Api.listOf("INVALID_SIGNING_DATE", "UNFILLED_SIGNING_DATE"); break;case "signingAfterOpening":detectors = cn.bidcheck.compat.Java8Api.listOf("SIGNING_AFTER_OPENING"); break;case "typos":detectors = cn.bidcheck.compat.Java8Api.listOf("TYPO", "OCR_SUSPECT", "PROPER_NOUN_REVIEW"); break;default:detectors = cn.bidcheck.compat.Java8Api.listOf(); break;}
         if(detectors.isEmpty())return null;p.put("anomalyTypes",detectors);
-        if("typos".equals(field))p.put("typoDictionary",List.of("投标文仵->投标文件","招标文仵->招标文件","授杈委托书->授权委托书","质保其->质保期","营叶执照->营业执照"));
-        return new Rule("TYPED-FULL-TEXT-"+field,cp.title(),"TEXT_ANOMALY","",field,"",expected,Objects.toString(cp.unit(),""),p,sourceQuote,"",List.of());
+        if("typos".equals(field))p.put("typoDictionary",cn.bidcheck.compat.Java8Api.listOf("投标文仵->投标文件", "招标文仵->招标文件", "授杈委托书->授权委托书", "质保其->质保期", "营叶执照->营业执照"));
+        return new Rule("TYPED-FULL-TEXT-"+field,cp.title(),"TEXT_ANOMALY","",field,"",expected,Objects.toString(cp.unit(),""),p,sourceQuote,"",cn.bidcheck.compat.Java8Api.listOf());
     }
     /** Frozen source-bound requirements are compiled once, then validated again on reuse.
      * This artifact contains no bid evidence or conclusion; an unresolved node remains unresolved. */
@@ -224,7 +213,7 @@ final class RequirementCompiler {
                                       RequirementScope.Selection scope,boolean focused,Set<String> domains,RunSession session)throws IOException {
         Map<String,Object> input=linked("type",cp.type(),"field",cp.field(),"operator",cp.operator(),
                 "unit",cp.unit(),"expected",cp.expected(),"requirement",requirement,"sourceContext",source.map(),"scope",scope.map(),
-                "focused",focused,"domains",new TreeSet<>(domains),"externalAdapters",session.context.getOrDefault("externalAdapterBySource",Map.of()),
+                "focused",focused,"domains",new TreeSet<>(domains),"externalAdapters",session.context.getOrDefault("externalAdapterBySource",cn.bidcheck.compat.Java8Api.mapOf()),
                 "requirementRevisions",RequirementRepairPolicy.versions());
         RequirementArtifact artifact=new RequirementArtifact(session,input,source,true);
         try{if(artifact.enabled())artifact.lock.lockInterruptibly();}catch(InterruptedException stopped){Thread.currentThread().interrupt();throw new InterruptedIOException("要求生成已中断");}
@@ -232,24 +221,24 @@ final class RequirementCompiler {
             Map<String,Object> saved=artifact.lookup();
             if(!saved.isEmpty()){
                 Plan parsed=compileResponse(cp,session.json.valueToTree(saved.get("rawResponse")),original,focused,domains,source,scope);
-                Map<String,Object> metadata=new LinkedHashMap<>(parsed.requirementScope());metadata.put("deterministicCompilation",saved.getOrDefault("deterministicCompilation",Map.of()));
+                Map<String,Object> metadata=new LinkedHashMap<>(parsed.requirementScope());metadata.put("deterministicCompilation",saved.getOrDefault("deterministicCompilation",cn.bidcheck.compat.Java8Api.mapOf()));
                 Plan reused=artifact.identify(new Plan(parsed.logic(),parsed.rules(),"DETERMINISTIC_PACKAGE_REUSED",parsed.issues(),parsed.policyNotes(),metadata));
                 if(!"VALIDATED".equals(saved.get("state"))||CompilationRecovery.diagnostics(reused).isEmpty()){
                 artifact.auditReuse(reused,saved);
-                session.record("REQUIREMENT_PACKAGE",Map.of("artifactId",artifact.request.get("artifactId")),linked("state","REUSED_REVALIDATED","businessConclusion",false));
+                session.record("REQUIREMENT_PACKAGE",cn.bidcheck.compat.Java8Api.mapOf("artifactId", artifact.request.get("artifactId")),linked("state","REUSED_REVALIDATED","businessConclusion",false));
                 return reused;
                 }
-                session.record("REQUIREMENT_PACKAGE",Map.of("artifactId",artifact.request.get("artifactId")),linked("state","INVALIDATED_REBUILD","businessConclusion",false));
+                session.record("REQUIREMENT_PACKAGE",cn.bidcheck.compat.Java8Api.mapOf("artifactId", artifact.request.get("artifactId")),linked("state","INVALIDATED_REBUILD","businessConclusion",false));
             }
-            var result=new DeterministicRequirementCompiler(session.json).compile(cp,requirement,source,session.context);
+            cn.bidcheck.verification.engine.DeterministicRequirementCompiler.Result result=new DeterministicRequirementCompiler(session.json).compile(cp,requirement,source,session.context);
             JsonNode raw=result.rootWithUnsupportedGaps();
             Plan parsed=compileResponse(cp,raw,original,focused,domains,source,scope);
             boolean complete=result.complete()&&CompilationRecovery.diagnostics(parsed).isEmpty();
             Plan plan=artifact.identify(result.identify(parsed,complete?"DETERMINISTIC_TEMPLATE_COMPILED":"DETERMINISTIC_TEMPLATE_PARTIAL"));
-            session.compilationAudit=CompilationRecovery.audit(plan,0,List.of(linked("state",complete?"DETERMINISTIC_TEMPLATE_COMPILED":"MODEL_RULE_COMPILATION_DISABLED",
+            session.compilationAudit=CompilationRecovery.audit(plan,0,cn.bidcheck.compat.Java8Api.listOf(linked("state",complete?"DETERMINISTIC_TEMPLATE_COMPILED":"MODEL_RULE_COMPILATION_DISABLED",
                     "networkCalls",0,"compilerVersion",DeterministicRequirementCompiler.VERSION,"coverageDigest",result.digest(),"gapCount",result.gaps().size(),"policy","MODEL_FACT_EXTRACTION_ONLY")));
             artifact.publish(raw,plan,false,0);
-            session.record("REQUIREMENT_PACKAGE",Map.of("artifactId",artifact.request.get("artifactId")),linked("state","CREATED","businessConclusion",false));
+            session.record("REQUIREMENT_PACKAGE",cn.bidcheck.compat.Java8Api.mapOf("artifactId", artifact.request.get("artifactId")),linked("state","CREATED","businessConclusion",false));
             return plan;
         }finally{if(artifact.enabled())artifact.lock.unlock();}
     }
@@ -266,10 +255,10 @@ final class RequirementCompiler {
         if(normalized.matches("(?:参考)?(?:投标|文件递交|投标文件递交|递交|提交)?截止(?:时间|日期|时点)?"))event="BID_DEADLINE";
         else if(normalized.matches("(?:参考)?开标(?:时间|日期|时点)?"))event="OPENING_DATE";
         else return null;
-        Map<String,Object> parameters=Map.of("referenceEvent",event,"inputRole","TENDER_REFERENCE_TIME");
-        Rule rule=new Rule("REFERENCE_TIME_1",cp.title(),"REFERENCE_TIME","",event,"","","",parameters,requirement,"",List.of());
+        Map<String,Object> parameters=cn.bidcheck.compat.Java8Api.mapOf("referenceEvent", event, "inputRole", "TENDER_REFERENCE_TIME");
+        Rule rule=new Rule("REFERENCE_TIME_1",cp.title(),"REFERENCE_TIME","",event,"","","",parameters,requirement,"",cn.bidcheck.compat.Java8Api.listOf());
         Map<String,Object> metadata=new LinkedHashMap<>(scope.map());metadata.put("sourceContext",sourceContext.map());
-        return new Plan("ALL",List.of(withSourceContext(rule,sourceContext.map())),"DETERMINISTIC_REFERENCE_TIME",List.of(),List.of(),metadata);
+        return new Plan("ALL",cn.bidcheck.compat.Java8Api.listOf(withSourceContext(rule,sourceContext.map())),"DETERMINISTIC_REFERENCE_TIME",cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(),metadata);
     }
     /** Deterministic post-processing is also usable for offline replay of a saved compiler response. */
     Plan compileResponse(Checkpoint cp,JsonNode root,String original,boolean focused,Set<String> focusedDomains){
@@ -281,48 +270,49 @@ final class RequirementCompiler {
     Rule agentCondition(JsonNode row,RequirementSourceContext.Context sourceContext,String requirement){
         List<String> issues=new ArrayList<>();
         RequirementContextBindings bindings=new RequirementContextBindings(sourceContext.bindingSource(),"ORIGINAL_REQUIREMENT",sourceContext.sources().size()>1);
-        Rule rule=parse(row,requirement,issues,new HashSet<>(),0,new int[]{0},bindings,List.of(),List.of(),Map.of());
+        Rule rule=parse(row,requirement,issues,new HashSet<>(),0,new int[]{0},bindings,cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.mapOf());
         if(rule==null)return null;
         rule=referenceGrounding(rule,requirement,sourceContext,issues);
         return withSourceContext(rule,sourceContext.map());
     }
     private Plan compileResponse(Checkpoint cp,JsonNode root,String original,boolean focused,Set<String> focusedDomains,RequirementSourceContext.Context sourceContext,RequirementScope.Selection scope){
         root=CompilationRecovery.normalize(root);String requirement=Objects.toString(cp.expected(),"");
-        if(!scope.resolved())return new Plan("ALL",List.of(),"SCOPE_UNRESOLVED",List.of(scope.issue()),List.of(),scope.map());
+        if(!scope.resolved())return new Plan("ALL",cn.bidcheck.compat.Java8Api.listOf(),"SCOPE_UNRESOLVED",cn.bidcheck.compat.Java8Api.listOf(scope.issue()),cn.bidcheck.compat.Java8Api.listOf(),scope.map());
         String groundedRequirement=RequirementReferences.requirementText(scope.obligation(),sourceContext);
         Rule confirmedNumeric=new DeterministicRequirementCompiler(new ObjectMapper()).confirmedDuration(cp,groundedRequirement);
-        RequirementContextBindings bindings=new RequirementContextBindings(original.isBlank()?requirement:sourceContext.bindingSource(),original.isBlank()?"REVIEWED_REQUIREMENT":"ORIGINAL_REQUIREMENT",sourceContext.sources().size()>1,confirmedNumeric);
-        List<String> issues=new ArrayList<>(RequirementReferences.issues(sourceContext));String logic=root.path("logic").asText("ALL");if(!Set.of("ALL","ANY").contains(logic))issues.add("顶层组合不是 ALL 或 ANY");
+        RequirementContextBindings bindings=new RequirementContextBindings(cn.bidcheck.compat.Java8Api.isBlank(original)?requirement:sourceContext.bindingSource(),cn.bidcheck.compat.Java8Api.isBlank(original)?"REVIEWED_REQUIREMENT":"ORIGINAL_REQUIREMENT",sourceContext.sources().size()>1,confirmedNumeric);
+        List<String> issues=new ArrayList<>(RequirementReferences.issues(sourceContext));String logic=root.path("logic").asText("ALL");if(!cn.bidcheck.compat.Java8Api.setOf("ALL", "ANY").contains(logic))issues.add("顶层组合不是 ALL 或 ANY");
         List<Rule> rules=new ArrayList<>();Set<String> ids=new HashSet<>();int[] count={0};
         List<Map<String,Object>> constants=TenderRequirementConstants.extract(groundedRequirement);
-        if(root.path("rules").isArray())for(JsonNode row:root.path("rules")){Rule r=parse(row,groundedRequirement,issues,ids,0,count,bindings,List.of(),"ALL".equals(logic)?constants:List.of(),Map.of());if(r!=null){r=referenceGrounding(r,scope.obligation(),sourceContext,issues);rules.add(focused?focusedRule(r,focusedDomains,bindings):r);}}
+        if(root.path("rules").isArray())for(JsonNode row:root.path("rules")){Rule r=parse(row,groundedRequirement,issues,ids,0,count,bindings,cn.bidcheck.compat.Java8Api.listOf(),"ALL".equals(logic)?constants:cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.mapOf());if(r!=null){r=referenceGrounding(r,scope.obligation(),sourceContext,issues);rules.add(focused?focusedRule(r,focusedDomains,bindings):r);}}
         rules=new ArrayList<>(TenderRequirementConstants.businessRules(rules,logic,constants));
-        if(!sourceContext.sources().isEmpty())rules=new ArrayList<>(rules.stream().map(r->withSourceContext(r,sourceContext.map())).toList());
+        if(!sourceContext.sources().isEmpty())rules=new ArrayList<>(cn.bidcheck.compat.Java8Api.toList(rules.stream().map(r->withSourceContext(r,sourceContext.map()))));
         if(rules.isEmpty())issues.add("未编译出可执行义务");
         String topExpected=RequirementLogic.expected(groundedRequirement,rules);
         if(!topExpected.isEmpty()&&!topExpected.equals(logic))issues.add("TOP_LEVEL_LOGIC_SOURCE:"+topExpected+"；"+RequirementLogic.issue(groundedRequirement,logic,rules));
         issues.addAll(RequirementCoverage.issues(groundedRequirement,rules));
-        String requiredPredicate=switch(Objects.toString(cp.type(),"")){case "DATE_VALIDITY"->"VALIDITY";case "VALUE_COMPARE"->"NUMBER";case "ENTITY_FIELD_CONSISTENCY"->"SAME_FIELD";default->"";};
-        if(!requiredPredicate.isBlank()&&leaves(rules).stream().noneMatch(r->r.predicate().equals(requiredPredicate)||requiredPredicate.equals("NUMBER")&&r.predicate().equals("ENTITY_COUNT")&&EntityCountRequirement.issue(r)==null&&"家".equals(cp.unit())))issues.add("检查项所需业务谓词未保留："+requiredPredicate+"；辅助条件不能代替业务要求");
-        List<Map<String,Object>> policies=new ArrayList<>();if(root.path("policyNotes").isArray())for(JsonNode row:root.path("policyNotes")){String quote=row.path("sourceQuote").asText();if(!quote.isBlank()&&groundedRequirement.contains(quote))policies.add(linked("sourceQuote",quote,"interpretation",row.path("interpretation").asText(),"separatedFromOriginalObligation",!original.isBlank()));}
+        String requiredPredicate;
+switch (Objects.toString(cp.type(),"")) {case "DATE_VALIDITY":requiredPredicate = "VALIDITY"; break;case "VALUE_COMPARE":requiredPredicate = "NUMBER"; break;case "ENTITY_FIELD_CONSISTENCY":requiredPredicate = "SAME_FIELD"; break;default:requiredPredicate = ""; break;}
+        if(!cn.bidcheck.compat.Java8Api.isBlank(requiredPredicate)&&leaves(rules).stream().noneMatch(r->r.predicate().equals(requiredPredicate)||requiredPredicate.equals("NUMBER")&&r.predicate().equals("ENTITY_COUNT")&&EntityCountRequirement.issue(r)==null&&"家".equals(cp.unit())))issues.add("检查项所需业务谓词未保留："+requiredPredicate+"；辅助条件不能代替业务要求");
+        List<Map<String,Object>> policies=new ArrayList<>();if(root.path("policyNotes").isArray())for(JsonNode row:root.path("policyNotes")){String quote=row.path("sourceQuote").asText();if(!cn.bidcheck.compat.Java8Api.isBlank(quote)&&groundedRequirement.contains(quote))policies.add(linked("sourceQuote",quote,"interpretation",row.path("interpretation").asText(),"separatedFromOriginalObligation",!cn.bidcheck.compat.Java8Api.isBlank(original)));}
         Map<String,Object> scopeMetadata=new LinkedHashMap<>(scope.map());scopeMetadata.put("sourceContext",sourceContext.map());scopeMetadata.put("tenderConstants",constants);
-        return new Plan(Set.of("ALL","ANY").contains(logic)?logic:"ALL",rules,"MODEL_COMPILED",issues,policies,scopeMetadata);
+        return new Plan(cn.bidcheck.compat.Java8Api.setOf("ALL", "ANY").contains(logic)?logic:"ALL",rules,"MODEL_COMPILED",issues,policies,scopeMetadata);
     }
     private Rule referenceGrounding(Rule rule,String obligation,RequirementSourceContext.Context context,List<String> issues){
-        List<Rule> children=rule.children().stream().map(c->referenceGrounding(c,obligation,context,issues)).toList();
+        List<Rule> children=cn.bidcheck.compat.Java8Api.toList(rule.children().stream().map(c->referenceGrounding(c,obligation,context,issues)));
         Rule current=new Rule(rule.id(),rule.description(),rule.predicate(),rule.subject(),rule.field(),rule.operator(),rule.expected(),rule.unit(),rule.parameters(),rule.sourceQuote(),rule.logic(),children);
-        if(!rule.sourceQuote().isBlank()&&!RequirementReferences.sourceBound(rule.sourceQuote(),obligation,context))return rejected(current,"义务引用跨越原文来源边界，须逐来源保留证据",issues);
+        if(!cn.bidcheck.compat.Java8Api.isBlank(rule.sourceQuote())&&!RequirementReferences.sourceBound(rule.sourceQuote(),obligation,context))return rejected(current,"义务引用跨越原文来源边界，须逐来源保留证据",issues);
         if(RequirementReferences.referenceOnly(current)&&!SourceRequirementInventory.validatedDependency(current,obligation,context))return rejected(current,"条款引用须执行已展开正文的具体义务，不能当投标章节存在性核验",issues);
         return current;
     }
     private Rule withSourceContext(Rule r,Map<String,Object> sourceContext){Map<String,Object> p=new LinkedHashMap<>(r.parameters());
         // The full original clause lives once on the plan; do not repeat it in every extraction rule.
-        List<?> inherited=sourceContext.get("sources") instanceof List<?> all?all.stream().filter(v->v instanceof Map<?,?> m&&!Set.of("OBLIGATION","REFERENCE_DEPENDENCY").contains(m.get("kind"))).toList():List.of();
+        List<?> inherited=sourceContext.get("sources") instanceof List<?>?cn.bidcheck.compat.Java8Api.toList(((List<?>) (sourceContext.get("sources"))).stream().filter(v->v instanceof Map<?,?>&&!cn.bidcheck.compat.Java8Api.setOf("OBLIGATION", "REFERENCE_DEPENDENCY").contains(((Map<?,?>) (v)).get("kind")))):cn.bidcheck.compat.Java8Api.listOf();
         p.put("requirementSourceContext",linked("version",sourceContext.get("version"),"identity",sourceContext.get("identity"),"sources",inherited));
-        return new Rule(r.id(),r.description(),r.predicate(),r.subject(),r.field(),r.operator(),r.expected(),r.unit(),p,r.sourceQuote(),r.logic(),r.children().stream().map(c->withSourceContext(c,sourceContext)).toList());}
+        return new Rule(r.id(),r.description(),r.predicate(),r.subject(),r.field(),r.operator(),r.expected(),r.unit(),p,r.sourceQuote(),r.logic(),cn.bidcheck.compat.Java8Api.toList(r.children().stream().map(c->withSourceContext(c,sourceContext))));}
     /** Source restrictions apply to every routed capability; routing hints never remove a supported obligation. */
     private Rule focusedRule(Rule rule,Set<String> domains,RequirementContextBindings bindings){
-        List<Rule> children=rule.children().stream().map(child->focusedRule(child,domains,bindings)).toList();
+        List<Rule> children=cn.bidcheck.compat.Java8Api.toList(rule.children().stream().map(child->focusedRule(child,domains,bindings)));
         if(!children.isEmpty()){
             Map<String,Object> parameters=new LinkedHashMap<>(rule.parameters());
             if(RuleObligations.hasOwnPredicate(rule)){
@@ -335,56 +325,56 @@ final class RequirementCompiler {
         String problem=focusedIssue(rule,domains,bindings);
         if(problem==null)return rule;
         Map<String,Object> parameters=new LinkedHashMap<>(rule.parameters());parameters.putIfAbsent("originalPredicate",rule.predicate());parameters.put("focusedScopeIssue",problem);
-        return new Rule(rule.id(),rule.description(),"UNSUPPORTED",rule.subject(),rule.field(),rule.operator(),rule.expected(),rule.unit(),parameters,rule.sourceQuote(),"",List.of());
+        return new Rule(rule.id(),rule.description(),"UNSUPPORTED",rule.subject(),rule.field(),rule.operator(),rule.expected(),rule.unit(),parameters,rule.sourceQuote(),"",cn.bidcheck.compat.Java8Api.listOf());
     }
     private String focusedIssue(Rule rule,Set<String> domains,RequirementContextBindings bindings){
         String predicate=rule.predicate(),quote=rule.sourceQuote();Map<String,Object> parameters=rule.parameters();
-        for(String key:List.of("lot","currency","amountBasis","taxBasis","category","number","validityField","employer")){
+        for(String key:cn.bidcheck.compat.Java8Api.listOf("lot", "currency", "amountBasis", "taxBasis", "category", "number", "validityField", "employer")){
             String value=str(parameters,key);
-            if(!value.isBlank()&&(Set.of("UNKNOWN","UNRESOLVED","CURRENT_PROJECT").contains(value)||!ProofVerifier.contains(quote,value)&&!bindings.bound(rule,key,value)))return "条件参数缺少该原条款直接依据："+key;
+            if(!cn.bidcheck.compat.Java8Api.isBlank(value)&&(cn.bidcheck.compat.Java8Api.setOf("UNKNOWN", "UNRESOLVED", "CURRENT_PROJECT").contains(value)||!ProofVerifier.contains(quote,value)&&!bindings.bound(rule,key,value)))return "条件参数缺少该原条款直接依据："+key;
         }
-        if(!rule.subject().isBlank()&&!ProofVerifier.contains(quote,rule.subject())&&!bindings.bound(rule,"subject",rule.subject()))return "条件主体未对应原条款，不能把模型推测的人员或单位写入要求";
+        if(!cn.bidcheck.compat.Java8Api.isBlank(rule.subject())&&!ProofVerifier.contains(quote,rule.subject())&&!bindings.bound(rule,"subject",rule.subject()))return "条件主体未对应原条款，不能把模型推测的人员或单位写入要求";
         String event=str(parameters,"referenceEvent");
         boolean deadline=quote.matches("(?s).*(?:投标|递交|提交).{0,12}截止.*"),opening=quote.contains("开标");
-        if(!event.isBlank()&&!(event.equals("BID_DEADLINE")&&deadline||event.equals("OPENING_DATE")&&opening))return "参考时点与原条款未明确对应";
-        if(Set.of("VALIDITY","REFERENCE_TIME").contains(predicate)&&opening&&event.isBlank())return "条款明确开标时点但未绑定该时点，不能默认替换为投标截止日";
+        if(!cn.bidcheck.compat.Java8Api.isBlank(event)&&!(event.equals("BID_DEADLINE")&&deadline||event.equals("OPENING_DATE")&&opening))return "参考时点与原条款未明确对应";
+        if(cn.bidcheck.compat.Java8Api.setOf("VALIDITY", "REFERENCE_TIME").contains(predicate)&&opening&&cn.bidcheck.compat.Java8Api.isBlank(event))return "条款明确开标时点但未绑定该时点，不能默认替换为投标截止日";
         return null;
     }
     private Rule parse(JsonNode n,String requirement,List<String> issues,Set<String> ids,int depth,int[] count,RequirementContextBindings bindings,List<RequirementContextBindings.Parent> parents,List<Map<String,Object>> constants,Map<String,Object> inactiveBranch){
         if(depth>4||++count[0]>40){issues.add("单次条款的条件规模或层级超过结构协议限制，未展开条件保留待核");return null;}
         String id=n.path("id").asText("O"+count[0]),quote=n.path("sourceQuote").asText(),predicate=n.path("predicate").asText(),logic=n.path("logic").asText();
-        if(id.isBlank()||id.endsWith("::own")||!ids.add(id)){issues.add("义务标识重复、为空或使用了系统保留后缀");return null;}
+        if(cn.bidcheck.compat.Java8Api.isBlank(id)||id.endsWith("::own")||!ids.add(id)){issues.add("义务标识重复、为空或使用了系统保留后缀");return null;}
         if(predicate.equals("NOOP"))predicate="NOT_APPLICABLE";
-        if(predicate.equals("NOT_APPLICABLE")&&inactiveBranch.isEmpty())return rejected(n,id,quote,List.of(),"不适用节点只能属于有原文依据的条件假分支",issues);
-        if(quote.isBlank()||!requirement.contains(quote))return rejected(n,id,"",List.of(),"规则依据未能逐字对应检查点要求",issues);
+        if(predicate.equals("NOT_APPLICABLE")&&inactiveBranch.isEmpty())return rejected(n,id,quote,cn.bidcheck.compat.Java8Api.listOf(),"不适用节点只能属于有原文依据的条件假分支",issues);
+        if(cn.bidcheck.compat.Java8Api.isBlank(quote)||!requirement.contains(quote))return rejected(n,id,"",cn.bidcheck.compat.Java8Api.listOf(),"规则依据未能逐字对应检查点要求",issues);
         List<RequirementContextBindings.Parent> next=new ArrayList<>(parents);next.add(new RequirementContextBindings.Parent(id,n.path("subject").asText(),quote,logic));
-        boolean pureAll=Set.of("","GROUP").contains(predicate)&&"ALL".equals(logic)&&!constants.isEmpty();
+        boolean pureAll=cn.bidcheck.compat.Java8Api.setOf("", "GROUP").contains(predicate)&&"ALL".equals(logic)&&!constants.isEmpty();
         List<Rule> children=new ArrayList<>();int issuesBeforeChildren=issues.size();
-        if(n.path("children").isArray())for(int childIndex=0;childIndex<n.path("children").size();childIndex++){JsonNode child=n.path("children").get(childIndex);Rule r=parse(child,requirement,issues,ids,depth+1,count,bindings,next,pureAll?constants:List.of(),ConditionalRequirement.inactiveBranch(n,childIndex,requirement));if(r!=null)children.add(r);}
+        if(n.path("children").isArray())for(int childIndex=0;childIndex<n.path("children").size();childIndex++){JsonNode child=n.path("children").get(childIndex);Rule r=parse(child,requirement,issues,ids,depth+1,count,bindings,next,pureAll?constants:cn.bidcheck.compat.Java8Api.listOf(),ConditionalRequirement.inactiveBranch(n,childIndex,requirement));if(r!=null)children.add(r);}
         // Empty source-proven definition containers are removable only along ALL ancestry.
         // Parse errors and alternative/conditional/business branches can never disappear here.
         if(pureAll&&n.path("children").isArray()&&!n.path("children").isEmpty()&&children.isEmpty()&&issues.size()==issuesBeforeChildren)return null;
         if(!children.isEmpty()&&!LOGICS.contains(logic)&&!"SCORE_COUNT".equals(predicate))return rejected(n,id,quote,children,"组合类型无效",issues);
-        if(!children.isEmpty()&&!predicate.isBlank()&&!predicate.equals("GROUP")&&!PREDICATES.contains(predicate))return rejected(n,id,quote,children,"组合包含尚不支持的业务原语",issues);
+        if(!children.isEmpty()&&!cn.bidcheck.compat.Java8Api.isBlank(predicate)&&!predicate.equals("GROUP")&&!PREDICATES.contains(predicate))return rejected(n,id,quote,children,"组合包含尚不支持的业务原语",issues);
         if(children.isEmpty()&&!PREDICATES.contains(predicate))return rejected(n,id,quote,children,"原语尚不支持",issues);
         if("CONDITIONAL".equals(logic)&&children.size()!=3)return rejected(n,id,quote,children,"条件规则缺少完整分支",issues);
         Map<String,Object> params=n.path("parameters").isObject()?new ObjectMapper().convertValue(n.path("parameters"),Map.class):new LinkedHashMap<>();
         params.remove("expectedSourceLogic"); // Only the server's source connector check may authorize a logical repair.
         // Prior server diagnostics are recalculated from the current frozen source, never inherited.
-        for(String diagnostic:List.of("focusedScopeIssue","compilationIssue","requirementSourceVerified","originalPredicate",RequirementPrimitiveSemantics.UNIQUENESS_KEY,"primitiveRepair"))params.remove(diagnostic);
+        for(String diagnostic:cn.bidcheck.compat.Java8Api.listOf("focusedScopeIssue", "compilationIssue", "requirementSourceVerified", "originalPredicate", RequirementPrimitiveSemantics.UNIQUENESS_KEY, "primitiveRepair"))params.remove(diagnostic);
         params.remove("requirementSourceContext");params.remove("obligationIdentity");params.remove("inactiveBranchProof");
         if(predicate.equals("NOT_APPLICABLE"))params.put("inactiveBranchProof",inactiveBranch);
         if(params.values().stream().anyMatch(Objects::isNull))return rejected(n,id,quote,children,"包含空的规则参数",issues);
-        for(String key:List.of("amountMinimum","pointsPerItem","maxScore")){if(params.containsKey(key)&&!ProofVerifier.numberPresent(quote,str(params,key)))return rejected(n,id,quote,children,"数值参数缺少原条款依据："+key,issues);}
+        for(String key:cn.bidcheck.compat.Java8Api.listOf("amountMinimum", "pointsPerItem", "maxScore")){if(params.containsKey(key)&&!ProofVerifier.numberPresent(quote,str(params,key)))return rejected(n,id,quote,children,"数值参数缺少原条款依据："+key,issues);}
         if(logic.equals("FOR_EACH")){List<String> subjects=ProofVerifier.strings(params.get("subjects"));boolean complete=RequirementGrounding.completeSubjects(quote,subjects)&&subjects.stream().allMatch(s->children.stream().anyMatch(c->c.subject().equals(s)));params.put("subjectSetComplete",complete);}
         Rule rule=new Rule(id,n.path("description").asText(quote),predicate,n.path("subject").asText(),n.path("field").asText(),n.path("operator").asText(),n.path("expected").asText(),n.path("unit").asText(),params,quote,logic,children);
         // Source-proven tender inputs are not bidder obligations. Separate them before business
         // grounding: a definition has no bidder tax/subject proof to validate or repair.
         // Only pure ALL ancestry receives constants; alternative/conditional paths stay intact.
         if(TenderRequirementConstants.isDefinition(rule,constants))return null;
-        if(Set.of("","GROUP").contains(predicate)&&Set.of("ALL","ANY").contains(logic)){
+        if(cn.bidcheck.compat.Java8Api.setOf("", "GROUP").contains(predicate)&&cn.bidcheck.compat.Java8Api.setOf("ALL", "ANY").contains(logic)){
             String logicIssue=RequirementLogic.issue(quote,logic,children);
-            if(!logicIssue.isBlank()){Map<String,Object> proof=new LinkedHashMap<>(params);proof.put("expectedSourceLogic",RequirementLogic.expected(quote,children));
+            if(!cn.bidcheck.compat.Java8Api.isBlank(logicIssue)){Map<String,Object> proof=new LinkedHashMap<>(params);proof.put("expectedSourceLogic",RequirementLogic.expected(quote,children));
                 return rejected(new Rule(id,rule.description(),predicate,rule.subject(),rule.field(),rule.operator(),rule.expected(),rule.unit(),proof,quote,logic,children),logicIssue,issues);}
         }
         rule=bindings.bind(rule,parents);
@@ -401,20 +391,20 @@ final class RequirementCompiler {
         String binding=RequirementGrounding.issue(rule,bindings.source(),bindings.confirmedNumeric(rule));return binding==null?rule:rejected(rule,binding,issues);
     }
     private Rule rejected(JsonNode n,String id,String quote,List<Rule> children,String reason,List<String> issues){
-        Map<String,Object> parameters=new LinkedHashMap<>();if(quote.isBlank())parameters.put("unverifiedSourceQuote",n.path("sourceQuote").asText());
+        Map<String,Object> parameters=new LinkedHashMap<>();if(cn.bidcheck.compat.Java8Api.isBlank(quote))parameters.put("unverifiedSourceQuote",n.path("sourceQuote").asText());
         return rejected(new Rule(id,n.path("description").asText("条款尚未可靠解析"),n.path("predicate").asText(),n.path("subject").asText(),n.path("field").asText(),n.path("operator").asText(),n.path("expected").asText(),n.path("unit").asText(),parameters,quote,n.path("logic").asText(),children),reason,issues);
     }
     private Rule rejected(Rule rule,String reason,List<String> issues){
         issues.add(rule.id()+"："+reason);Map<String,Object> parameters=new LinkedHashMap<>(rule.parameters());
-        parameters.put("originalPredicate",rule.predicate());parameters.put("compilationIssue",reason);parameters.put("requirementSourceVerified",!rule.sourceQuote().isBlank());
+        parameters.put("originalPredicate",rule.predicate());parameters.put("compilationIssue",reason);parameters.put("requirementSourceVerified",!cn.bidcheck.compat.Java8Api.isBlank(rule.sourceQuote()));
         return new Rule(rule.id(),rule.description(),"UNSUPPORTED",rule.subject(),rule.field(),rule.operator(),rule.expected(),rule.unit(),parameters,rule.sourceQuote(),rule.logic(),rule.children());
     }
     private Plan fallback(Checkpoint cp){
         String text=Objects.toString(cp.expected(),""),kind="UNSUPPORTED";
         // Only already-typed material presence is compiled offline; compound natural-language policy is not silently reduced.
         if("MATERIAL_EXISTENCE".equals(cp.type())&&!text.matches("(?s).*(?:且|以及|分别|全部|现场|查询|签章|签字|盖章).*"))kind="MATERIAL";
-        Rule rule=new Rule("O1",cp.title(),kind,"",Objects.toString(cp.field(),""),"",text,"",Map.of(),text,"",List.of());
-        return new Plan("ALL",List.of(rule),"NATIVE",kind.equals("UNSUPPORTED")?List.of("结构化规则编译服务未配置，该自然语言条件不能可靠简化"):List.of());
+        Rule rule=new Rule("O1",cp.title(),kind,"",Objects.toString(cp.field(),""),"",text,"",cn.bidcheck.compat.Java8Api.mapOf(),text,"",cn.bidcheck.compat.Java8Api.listOf());
+        return new Plan("ALL",cn.bidcheck.compat.Java8Api.listOf(rule),"NATIVE",kind.equals("UNSUPPORTED")?cn.bidcheck.compat.Java8Api.listOf("结构化规则编译服务未配置，该自然语言条件不能可靠简化"):cn.bidcheck.compat.Java8Api.listOf());
     }
     static List<Rule> leaves(List<Rule> rules){List<Rule> out=new ArrayList<>();for(Rule r:rules){if(r.children().isEmpty()||r.predicate().equals("SCORE_COUNT"))out.add(r);else {if(RuleObligations.hasOwnPredicate(r))out.add(RuleObligations.own(r));out.addAll(leaves(r.children()));}}return out;}
 }

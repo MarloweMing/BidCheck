@@ -17,9 +17,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class DbTransactionRetryTest {
     private JdbcTemplate jdbc;
     private TransactionTemplate tx;
-    private static final Map<String,Object> IDS=Map.of("taskId","task-1","runId","run-1");
+    private static final Map<String,Object> IDS=cn.bidcheck.compat.Java8Api.mapOf("taskId", "task-1", "runId", "run-1");
     @BeforeEach void database(){
-        var source=new DriverManagerDataSource("jdbc:h2:mem:db-retry-"+UUID.randomUUID()+";DB_CLOSE_DELAY=-1","sa","");
+        org.springframework.jdbc.datasource.DriverManagerDataSource source=new DriverManagerDataSource("jdbc:h2:mem:db-retry-"+UUID.randomUUID()+";DB_CLOSE_DELAY=-1","sa","");
         jdbc=new JdbcTemplate(source);tx=new TransactionTemplate(new DataSourceTransactionManager(source));
         jdbc.execute("CREATE TABLE published_receipt(id INT PRIMARY KEY, value_text VARCHAR(40))");
     }
@@ -34,7 +34,7 @@ class DbTransactionRetryTest {
             if(databaseCalls.incrementAndGet()==1)throw failure("40001",1213);
         });
         assertEquals(2,databaseCalls.get());assertEquals(1,modelCalls.get());
-        assertEquals(List.of(TransactionSynchronization.STATUS_ROLLED_BACK,TransactionSynchronization.STATUS_COMMITTED),completions);
+        assertEquals(cn.bidcheck.compat.Java8Api.listOf(TransactionSynchronization.STATUS_ROLLED_BACK, TransactionSynchronization.STATUS_COMMITTED),completions);
         assertEquals(1,jdbc.queryForObject("SELECT COUNT(*) FROM published_receipt",Integer.class));
     }
     @Test void serializableAbortRetriesAtMostThreeTransactions(){
@@ -45,7 +45,7 @@ class DbTransactionRetryTest {
         assertEquals(3,attempts.get());assertEquals(0,jdbc.queryForObject("SELECT COUNT(*) FROM published_receipt",Integer.class));
     }
     @Test void lockWaitTimeoutAndIntegrityErrorsAreNotAssumedToAbortWholeTransaction(){
-        for(RuntimeException failure:List.of(failure("HY000",1205),failure("23000",1062),new IllegalArgumentException("validation"))){
+        for(RuntimeException failure:cn.bidcheck.compat.Java8Api.listOf(failure("HY000",1205), failure("23000",1062), new IllegalArgumentException("validation"))){
             AtomicInteger attempts=new AtomicInteger();assertSame(failure,assertThrows(RuntimeException.class,()->DbTransactionRetry.execute(tx,"PUBLISH",IDS,status->{attempts.incrementAndGet();throw failure;})));
             assertEquals(1,attempts.get());
         }
@@ -57,7 +57,7 @@ class DbTransactionRetryTest {
         })));assertEquals(2,attempts.get());
     }
     @Test void existingOuterTransactionPreventsIndependentRetryEvenWhenRequiresNew(){
-        for(int propagation:List.of(TransactionDefinition.PROPAGATION_REQUIRED,TransactionDefinition.PROPAGATION_REQUIRES_NEW)){
+        for(int propagation:cn.bidcheck.compat.Java8Api.listOf(TransactionDefinition.PROPAGATION_REQUIRED, TransactionDefinition.PROPAGATION_REQUIRES_NEW)){
             TransactionTemplate inner=new TransactionTemplate(tx.getTransactionManager());inner.setPropagationBehavior(propagation);
             AtomicInteger attempts=new AtomicInteger();RuntimeException error=failure("40001",1213);
             assertThrows(RuntimeException.class,()->tx.execute(outer->DbTransactionRetry.execute(inner,"PUBLISH",IDS,status->{attempts.incrementAndGet();throw error;})));

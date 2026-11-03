@@ -22,10 +22,10 @@ class AgentBusinessGroupEvidenceReplayIntegrationTest {
             public String identity(){return "group-replay-compiler";}
             public JsonNode request(String operation,Map<String,Object> input){
                 assertEquals("COMPILE",operation);
-                return json.valueToTree(Map.of("logic","ALL","rules",List.of(BidService.fields(
+                return json.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("logic", "ALL", "rules", cn.bidcheck.compat.Java8Api.listOf(BidService.fields(
                     "id","role","description","项目负责人任职","predicate","PERSON_ROLE","subject","项目负责人",
-                    "field","role","operator","","expected","","unit","","parameters",Map.of(),
-                    "sourceQuote","本项目应配置项目负责人","logic","","children",List.of()))));
+                    "field","role","operator","","expected","","unit","","parameters",cn.bidcheck.compat.Java8Api.mapOf(),
+                    "sourceQuote","本项目应配置项目负责人","logic","","children",cn.bidcheck.compat.Java8Api.listOf()))));
             }
         };
         VerificationEngine engine=new VerificationEngine(compiler,null);
@@ -33,37 +33,37 @@ class AgentBusinessGroupEvidenceReplayIntegrationTest {
             public boolean enabled(){return true;}
             public String identity(){return "group-replay-agent";}
             public Map<String,Object> investigate(Map<String,Object> start,ToolHandler handler,Consumer<Map<String,Object>> events){
-                agentCalls.incrementAndGet();handler.call("search_evidence",Map.of("query","项目负责人"));handler.call("recompute_check",Map.of());
-                return Map.of("status","COMPLETED","requestId","leader-request","modelCalls",1,"toolCalls",2);
+                agentCalls.incrementAndGet();handler.call("search_evidence",cn.bidcheck.compat.Java8Api.mapOf("query", "项目负责人"));handler.call("recompute_check",cn.bidcheck.compat.Java8Api.mapOf());
+                return cn.bidcheck.compat.Java8Api.mapOf("status", "COMPLETED", "requestId", "leader-request", "modelCalls", 1, "toolCalls", 2);
             }
         });
         Document bid=document("hash-bid","本项目人员配置\n项目负责人：测试甲\n拟在本合同任职：项目负责人\n姓名：测试甲");
         Checkpoint leaderCheckpoint=checkpoint("leader"),followerCheckpoint=checkpoint("follower");
-        Map<String,Object> leaderContext=new LinkedHashMap<>(Map.of("allowModelRuleCompilation",true,"recoveryStrategy","TARGETED_EVIDENCE"));
-        Map<String,Object> leaderResult=engine.evaluate(leaderCheckpoint,List.of(bid),null,leaderContext);
+        Map<String,Object> leaderContext=new LinkedHashMap<>(cn.bidcheck.compat.Java8Api.mapOf("allowModelRuleCompilation", true, "recoveryStrategy", "TARGETED_EVIDENCE"));
+        Map<String,Object> leaderResult=engine.evaluate(leaderCheckpoint,cn.bidcheck.compat.Java8Api.listOf(bid),null,leaderContext);
         assertEquals("PASS",leaderResult.get("businessDecision"),leaderResult.toString());assertEquals(1,agentCalls.get());
-        Finding leader=new Finding("leader-finding","run",leaderCheckpoint,new Evaluation("PASS","","",List.of(),0,"AGENT_LED_REVIEW"),
-            Map.of("atomicCheck",Map.of("agentInvestigation",leaderResult.get("agentInvestigation"))));
-        AgentBusinessGroupReuse.Membership membership=new AgentBusinessGroupReuse.Membership("group","leader",List.of("leader","follower"),Map.of());
+        Finding leader=new Finding("leader-finding","run",leaderCheckpoint,new Evaluation("PASS","","",cn.bidcheck.compat.Java8Api.listOf(),0,"AGENT_LED_REVIEW"),
+            cn.bidcheck.compat.Java8Api.mapOf("atomicCheck", cn.bidcheck.compat.Java8Api.mapOf("agentInvestigation", leaderResult.get("agentInvestigation"))));
+        AgentBusinessGroupReuse.Membership membership=new AgentBusinessGroupReuse.Membership("group","leader",cn.bidcheck.compat.Java8Api.listOf("leader", "follower"),cn.bidcheck.compat.Java8Api.mapOf());
         AgentBusinessGroupReuse.EvidenceReceipt receipt=AgentBusinessGroupReuse.evidenceReceipt(membership,"follower",leader,
             maps(leaderResult.get("steps")));
         assertTrue(receipt.reusable(),"leader must publish a source-scoped grounded snapshot");
 
-        Map<String,Object> followerContext=new LinkedHashMap<>(Map.of("allowModelRuleCompilation",true,"priorSteps",List.of()));
+        Map<String,Object> followerContext=new LinkedHashMap<>(cn.bidcheck.compat.Java8Api.mapOf("allowModelRuleCompilation", true, "priorSteps", cn.bidcheck.compat.Java8Api.listOf()));
         assertTrue(AgentBusinessGroupReuse.attach(receipt,followerContext));
         followerContext.put("recoveryStrategy","RECOMPUTE_SHARED_EVIDENCE");followerContext.put("recoveryMode","TARGETED");
         followerContext.put("recoveryModelAllowed",false);
-        Map<String,Object> followerResult=engine.evaluate(followerCheckpoint,List.of(bid),null,followerContext);
+        Map<String,Object> followerResult=engine.evaluate(followerCheckpoint,cn.bidcheck.compat.Java8Api.listOf(bid),null,followerContext);
         assertEquals("PASS",followerResult.get("businessDecision"),followerResult.toString());
-        assertEquals(true,followerResult.get("complete"));assertEquals(Map.of(),followerResult.get("agentInvestigation"));
+        assertEquals(true,followerResult.get("complete"));assertEquals(cn.bidcheck.compat.Java8Api.mapOf(),followerResult.get("agentInvestigation"));
         assertEquals(1,agentCalls.get(),"follower must use the receipt and independently recompute without another Agent call");
 
         Document changed=document("changed-hash","历史项目人员：测试乙");
-        Map<String,Object> staleContext=new LinkedHashMap<>(Map.of("allowModelRuleCompilation",true,"priorSteps",List.of()));
+        Map<String,Object> staleContext=new LinkedHashMap<>(cn.bidcheck.compat.Java8Api.mapOf("allowModelRuleCompilation", true, "priorSteps", cn.bidcheck.compat.Java8Api.listOf()));
         assertTrue(AgentBusinessGroupReuse.attach(receipt,staleContext));
         staleContext.put("recoveryStrategy","RECOMPUTE_SHARED_EVIDENCE");staleContext.put("recoveryMode","TARGETED");
         staleContext.put("recoveryModelAllowed",false);
-        Map<String,Object> stale=engine.evaluate(followerCheckpoint,List.of(changed),null,staleContext);
+        Map<String,Object> stale=engine.evaluate(followerCheckpoint,cn.bidcheck.compat.Java8Api.listOf(changed),null,staleContext);
         assertNotEquals("PASS",stale.get("businessDecision"),"a changed frozen source must invalidate the fanned-out observation");
         assertEquals(1,agentCalls.get());
     }
@@ -71,7 +71,7 @@ class AgentBusinessGroupEvidenceReplayIntegrationTest {
     private Checkpoint checkpoint(String id){return new Checkpoint(id,"项目负责人","资格检查","HIGH","SEMANTIC_RESPONSE","","",
         "本项目应配置项目负责人","",true,true,true,null);}
     private Document document(String hash,String text){return new Document("bid","project","BID","bid.txt",1,hash,"",
-        List.of(new Page(1,text,"PARAGRAPH","TEXT","")),List.of());}
-    @SuppressWarnings("unchecked") private List<Map<String,Object>> maps(Object value){return value instanceof Collection<?> rows
-        ?rows.stream().filter(Map.class::isInstance).map(row->(Map<String,Object>)row).toList():List.of();}
+        cn.bidcheck.compat.Java8Api.listOf(new Page(1,text,"PARAGRAPH","TEXT","")),cn.bidcheck.compat.Java8Api.listOf());}
+    @SuppressWarnings("unchecked") private List<Map<String,Object>> maps(Object value){return value instanceof Collection<?>
+        ?cn.bidcheck.compat.Java8Api.toList(((Collection<?>) (value)).stream().filter(Map.class::isInstance).map(row->(Map<String,Object>)row)):cn.bidcheck.compat.Java8Api.listOf();}
 }

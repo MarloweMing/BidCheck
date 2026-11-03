@@ -52,7 +52,7 @@ class TaskWorkerTest {
         BidService service=mock(BidService.class);RecordMapper mapper=mock(RecordMapper.class);
         ObjectProvider<TaskNotificationPublisher> provider=provider();TaskNotificationPublisher publisher=mock(TaskNotificationPublisher.class);
         when(provider.getIfAvailable()).thenReturn(publisher);when(publisher.publishConfirmed("fallback")).thenReturn(false);
-        TaskRow task=task("fallback");when(mapper.pendingTasks()).thenReturn(List.of(task));
+        TaskRow task=task("fallback");when(mapper.pendingTasks()).thenReturn(cn.bidcheck.compat.Java8Api.listOf(task));
         when(mapper.claimTask(eq("fallback"),anyString(),anyString(),anyLong())).thenReturn(1);when(mapper.task("fallback")).thenReturn(task);
         CountDownLatch executed=new CountDownLatch(1);doAnswer(a->{executed.countDown();return null;}).when(service).execute(task);
         TaskWorker worker=new TaskWorker(service,mapper,provider,120000,10000,0);
@@ -85,7 +85,7 @@ class TaskWorkerTest {
 
     @Test void exhaustedPendingTasksFailWithoutClaimingExecutionCapacity() throws Exception {
         BidService service=mock(BidService.class);RecordMapper mapper=mock(RecordMapper.class);TaskRow task=task("exhausted");task.attempt=3;
-        when(mapper.task(task.id)).thenReturn(task);when(mapper.pendingTasks()).thenReturn(List.of(task));
+        when(mapper.task(task.id)).thenReturn(task);when(mapper.pendingTasks()).thenReturn(cn.bidcheck.compat.Java8Api.listOf(task));
         TaskWorker worker=new TaskWorker(service,mapper,provider(),120000,10000,0);
         try {
             assertThat(worker.tryStart(task.id)).isEqualTo(TaskWorker.Acceptance.NOT_PENDING);
@@ -98,7 +98,7 @@ class TaskWorkerTest {
         BidService service=mock(BidService.class);RecordMapper mapper=mock(RecordMapper.class);TaskRow task=task("notify-error");
         ObjectProvider<TaskNotificationPublisher> provider=provider();TaskNotificationPublisher publisher=mock(TaskNotificationPublisher.class);
         when(provider.getIfAvailable()).thenReturn(publisher);when(publisher.publishConfirmed(task.id)).thenThrow(new IllegalStateException("broker unavailable"));
-        when(mapper.pendingTasks()).thenReturn(List.of(task));when(mapper.task(task.id)).thenReturn(task);
+        when(mapper.pendingTasks()).thenReturn(cn.bidcheck.compat.Java8Api.listOf(task));when(mapper.task(task.id)).thenReturn(task);
         when(mapper.claimTask(eq(task.id),anyString(),anyString(),anyLong())).thenReturn(1);
         CountDownLatch started=new CountDownLatch(1);doAnswer(a->{started.countDown();return null;}).when(service).execute(task);
         TaskWorker worker=new TaskWorker(service,mapper,provider,120000,10000,0);
@@ -132,15 +132,15 @@ class TaskWorkerTest {
         when(mapper.task(task.id)).thenReturn(task);when(mapper.claimTask(eq(task.id),anyString(),anyString(),anyLong())).thenReturn(1);
         java.sql.SQLException sql=new java.sql.SQLException("UPDATE body='SECRET_DOCUMENT' key=SECRET_KEY","HY000",1205);
         doThrow(new IllegalStateException("SQL parameters SECRET_KEY",sql)).when(service).execute(task);
-        var logger=(ch.qos.logback.classic.Logger)org.slf4j.LoggerFactory.getLogger(TaskWorker.class);
-        var appender=new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();appender.start();logger.addAppender(appender);
+        ch.qos.logback.classic.Logger logger=(ch.qos.logback.classic.Logger)org.slf4j.LoggerFactory.getLogger(TaskWorker.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender=new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();appender.start();logger.addAppender(appender);
         TaskWorker worker=new TaskWorker(service,mapper,provider(),120000,10000,0);
         try {
             assertThat(worker.tryStart(task.id)).isEqualTo(TaskWorker.Acceptance.STARTED);
-            var message=org.mockito.ArgumentCaptor.forClass(String.class);
+            org.mockito.ArgumentCaptor<java.lang.String> message=org.mockito.ArgumentCaptor.forClass(String.class);
             verify(service,timeout(2000)).fail(eq(task),message.capture());
             assertThat(message.getValue()).contains("数据库操作超时","诊断编号：taskdiag-").doesNotContain("文件格式","SECRET","UPDATE");
-            var logs=appender.list.stream().filter(event->event.getFormattedMessage().contains("任务安全诊断")).toList();
+            java.util.List<ch.qos.logback.classic.spi.ILoggingEvent> logs=cn.bidcheck.compat.Java8Api.toList(appender.list.stream().filter(event->event.getFormattedMessage().contains("任务安全诊断")));
             assertThat(logs).hasSize(1);assertThat(logs.get(0).getThrowableProxy()).isNull();
             assertThat(logs.get(0).getFormattedMessage()).contains("HY000","1205","DATABASE_TIMEOUT").doesNotContain("SECRET","UPDATE","SQL parameters");
         } finally {worker.stop();logger.detachAppender(appender);appender.stop();}

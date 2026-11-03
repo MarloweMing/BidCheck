@@ -11,11 +11,31 @@ import javax.imageio.stream.MemoryCacheImageInputStream;
 public final class PageClassifier {
     public static final String VERSION = "page-routing-3-person-credentials";
     private PageClassifier() { }
-    public record Decision(String pageType, String parserStrategy, String schema, String priority,
-                           boolean requiresCrossPageContext, String resolutionBucket, boolean independent) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public static final class Decision {
+        private final String pageType;
+        private final String parserStrategy;
+        private final String schema;
+        private final String priority;
+        private final boolean requiresCrossPageContext;
+        private final String resolutionBucket;
+        private final boolean independent;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public Decision(@com.fasterxml.jackson.annotation.JsonProperty("pageType") String pageType, @com.fasterxml.jackson.annotation.JsonProperty("parserStrategy") String parserStrategy, @com.fasterxml.jackson.annotation.JsonProperty("schema") String schema, @com.fasterxml.jackson.annotation.JsonProperty("priority") String priority, @com.fasterxml.jackson.annotation.JsonProperty("requiresCrossPageContext") boolean requiresCrossPageContext, @com.fasterxml.jackson.annotation.JsonProperty("resolutionBucket") String resolutionBucket, @com.fasterxml.jackson.annotation.JsonProperty("independent") boolean independent) { this.pageType = pageType; this.parserStrategy = parserStrategy; this.schema = schema; this.priority = priority; this.requiresCrossPageContext = requiresCrossPageContext; this.resolutionBucket = resolutionBucket; this.independent = independent; }
+        public String pageType() { return pageType; }
+        public String parserStrategy() { return parserStrategy; }
+        public String schema() { return schema; }
+        public String priority() { return priority; }
+        public boolean requiresCrossPageContext() { return requiresCrossPageContext; }
+        public String resolutionBucket() { return resolutionBucket; }
+        public boolean independent() { return independent; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Decision that = (Decision) other; return java.util.Objects.equals(this.pageType, that.pageType) && java.util.Objects.equals(this.parserStrategy, that.parserStrategy) && java.util.Objects.equals(this.schema, that.schema) && java.util.Objects.equals(this.priority, that.priority) && java.util.Objects.equals(this.requiresCrossPageContext, that.requiresCrossPageContext) && java.util.Objects.equals(this.resolutionBucket, that.resolutionBucket) && java.util.Objects.equals(this.independent, that.independent); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.pageType); hash = 31 * hash + java.util.Objects.hashCode(this.parserStrategy); hash = 31 * hash + java.util.Objects.hashCode(this.schema); hash = 31 * hash + java.util.Objects.hashCode(this.priority); hash = 31 * hash + java.util.Objects.hashCode(this.requiresCrossPageContext); hash = 31 * hash + java.util.Objects.hashCode(this.resolutionBucket); hash = 31 * hash + java.util.Objects.hashCode(this.independent); return hash; }
+        @Override public String toString() { return "Decision[" + "pageType=" + pageType + ", parserStrategy=" + parserStrategy + ", schema=" + schema + ", priority=" + priority + ", requiresCrossPageContext=" + requiresCrossPageContext + ", resolutionBucket=" + resolutionBucket + ", independent=" + independent + "]"; }
+ }
 
     public static Decision classify(String nativeText, int imageCount, byte[] image) throws IOException {
-        String text = nativeText == null ? "" : nativeText.strip();
+        String text = nativeText == null ? "" : cn.bidcheck.compat.Java8Api.strip(nativeText);
         Thumbnail pixels = image == null ? new Thumbnail(0, 0, 0, 0, 0, 0) : thumbnail(image);
         String type;
         boolean context = false, independent = false;
@@ -30,22 +50,13 @@ public final class PageClassifier {
         else if (pixels.darkRatio < .55 && pixels.horizontalLines >= 2 && pixels.verticalLines >= 2) { type = "TABLE_PAGE"; context = true; independent = true; }
         else if (image == null && imageCount == 0 && usableNativeText(text)) type = "TEXT_PAGE";
         else if (contains(text, "投标文件封面", "技术标封面", "商务标封面") && text.length() < 250) type = "COVER";
-        else if (text.isBlank() && pixels.colorRatio > .75 && pixels.darkRatio > .7) type = "DECORATION";
-        else if (!text.isBlank() || pixels.darkRatio > .005 && pixels.darkRatio < .55 && pixels.textRows >= 3) type = "SCAN_TEXT_PAGE";
+        else if (cn.bidcheck.compat.Java8Api.isBlank(text) && pixels.colorRatio > .75 && pixels.darkRatio > .7) type = "DECORATION";
+        else if (!cn.bidcheck.compat.Java8Api.isBlank(text) || pixels.darkRatio > .005 && pixels.darkRatio < .55 && pixels.textRows >= 3) type = "SCAN_TEXT_PAGE";
         else type = "UNKNOWN";
-        String schema = switch (type) {
-            case "VEHICLE_LICENSE" -> "VEHICLE_LICENSE_V1";
-            case "DRIVING_LICENSE" -> "DRIVING_LICENSE_V1";
-            case "ID_CARD" -> "ID_CARD_V1";
-            case "PASSPORT" -> "PASSPORT_V1";
-            case "CERTIFICATE" -> "CERTIFICATE_V1";
-            case "SIGNATURE_SEAL" -> "SIGNATURE_SEAL_V1";
-            case "TABLE_PAGE" -> contains(text, "车牌", "车辆", "车架号", "车辆识别代号") ? "VEHICLE_TABLE_V1"
+        String schema;
+switch (type) {case "VEHICLE_LICENSE":schema = "VEHICLE_LICENSE_V1"; break;case "DRIVING_LICENSE":schema = "DRIVING_LICENSE_V1"; break;case "ID_CARD":schema = "ID_CARD_V1"; break;case "PASSPORT":schema = "PASSPORT_V1"; break;case "CERTIFICATE":schema = "CERTIFICATE_V1"; break;case "SIGNATURE_SEAL":schema = "SIGNATURE_SEAL_V1"; break;case "TABLE_PAGE":schema = contains(text, "车牌", "车辆", "车架号", "车辆识别代号") ? "VEHICLE_TABLE_V1"
                     : contains(text, "人员", "姓名", "身份证号", "驾驶证号", "护照号", "参保", "缴费")
-                    || containsIgnoreCase(text,"name", "id number", "license", "licence", "passport") ? "PERSON_TABLE_V1" : "TABLE_V1";
-            case "CONTRACT" -> "CONTRACT_V1";
-            default -> "DOCUMENT_TEXT_V1";
-        };
+                    || containsIgnoreCase(text,"name", "id number", "license", "licence", "passport") ? "PERSON_TABLE_V1" : "TABLE_V1"; break;case "CONTRACT":schema = "CONTRACT_V1"; break;default:schema = "DOCUMENT_TEXT_V1"; break;}
         String strategy = image == null && imageCount == 0 && usableNativeText(text) ? "NATIVE_PARSE"
                 : independent ? "INDEPENDENT_VISUAL" : context ? "OCR_WITH_CONTEXT_CANDIDATE" : "OCR_MICROBATCH";
         String priority = independent ? "HIGH" : type.equals("COVER") || type.equals("DECORATION") ? "LOW" : "NORMAL";
@@ -76,7 +87,7 @@ public final class PageClassifier {
         String lower = text.toLowerCase(Locale.ROOT);
         if (lower.contains("<table") && lower.contains("<tr")) return true;
         // A single tab/pipe can be ordinary prose; require actual rows for an unlabeled table.
-        return text.lines().filter(line -> line.chars().filter(c -> c == '\t').count() >= 2
+        return cn.bidcheck.compat.Java8Extras.lines(text).filter(line -> line.chars().filter(c -> c == '\t').count() >= 2
                 || line.chars().filter(c -> c == '|').count() >= 3).limit(2).count() >= 2;
     }
 
@@ -87,7 +98,7 @@ public final class PageClassifier {
 
     /** Sparse titles are valid native text; only blank or demonstrably broken text needs recovery. */
     public static boolean usableNativeText(String text) {
-        if (text == null || text.isBlank()) return false;
+        if (text == null || cn.bidcheck.compat.Java8Api.isBlank(text)) return false;
         long replacement = text.chars().filter(c -> c == '\uFFFD' || c >= 0xE000 && c <= 0xF8FF).count();
         return replacement == 0 || replacement * 20 < text.codePointCount(0, text.length());
     }
@@ -99,23 +110,45 @@ public final class PageClassifier {
     private static boolean containsIgnoreCase(String value, String... words) {
         return contains(value.toLowerCase(Locale.ROOT), words);
     }
-    private record Thumbnail(int width, int height, double darkRatio, double redRatio, double colorRatio,
-                             int textRows, int horizontalLines, int verticalLines) {
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Thumbnail {
+        private final int width;
+        private final int height;
+        private final double darkRatio;
+        private final double redRatio;
+        private final double colorRatio;
+        private final int textRows;
+        private final int horizontalLines;
+        private final int verticalLines;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Thumbnail(@com.fasterxml.jackson.annotation.JsonProperty("width") int width, @com.fasterxml.jackson.annotation.JsonProperty("height") int height, @com.fasterxml.jackson.annotation.JsonProperty("darkRatio") double darkRatio, @com.fasterxml.jackson.annotation.JsonProperty("redRatio") double redRatio, @com.fasterxml.jackson.annotation.JsonProperty("colorRatio") double colorRatio, @com.fasterxml.jackson.annotation.JsonProperty("textRows") int textRows, @com.fasterxml.jackson.annotation.JsonProperty("horizontalLines") int horizontalLines, @com.fasterxml.jackson.annotation.JsonProperty("verticalLines") int verticalLines) { this.width = width; this.height = height; this.darkRatio = darkRatio; this.redRatio = redRatio; this.colorRatio = colorRatio; this.textRows = textRows; this.horizontalLines = horizontalLines; this.verticalLines = verticalLines; }
+        public int width() { return width; }
+        public int height() { return height; }
+        public double darkRatio() { return darkRatio; }
+        public double redRatio() { return redRatio; }
+        public double colorRatio() { return colorRatio; }
+        public int textRows() { return textRows; }
+        public int horizontalLines() { return horizontalLines; }
+        public int verticalLines() { return verticalLines; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Thumbnail that = (Thumbnail) other; return java.util.Objects.equals(this.width, that.width) && java.util.Objects.equals(this.height, that.height) && java.util.Objects.equals(this.darkRatio, that.darkRatio) && java.util.Objects.equals(this.redRatio, that.redRatio) && java.util.Objects.equals(this.colorRatio, that.colorRatio) && java.util.Objects.equals(this.textRows, that.textRows) && java.util.Objects.equals(this.horizontalLines, that.horizontalLines) && java.util.Objects.equals(this.verticalLines, that.verticalLines); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.width); hash = 31 * hash + java.util.Objects.hashCode(this.height); hash = 31 * hash + java.util.Objects.hashCode(this.darkRatio); hash = 31 * hash + java.util.Objects.hashCode(this.redRatio); hash = 31 * hash + java.util.Objects.hashCode(this.colorRatio); hash = 31 * hash + java.util.Objects.hashCode(this.textRows); hash = 31 * hash + java.util.Objects.hashCode(this.horizontalLines); hash = 31 * hash + java.util.Objects.hashCode(this.verticalLines); return hash; }
+        @Override public String toString() { return "Thumbnail[" + "width=" + width + ", height=" + height + ", darkRatio=" + darkRatio + ", redRatio=" + redRatio + ", colorRatio=" + colorRatio + ", textRows=" + textRows + ", horizontalLines=" + horizontalLines + ", verticalLines=" + verticalLines + "]"; }
+
         Thumbnail(int width, int height, double darkRatio, double redRatio, int horizontalLines, int verticalLines) {
             this(width, height, darkRatio, redRatio, 0, 0, horizontalLines, verticalLines);
         }
     }
     private static Thumbnail thumbnail(byte[] bytes) throws IOException {
-        try (var input = new MemoryCacheImageInputStream(new ByteArrayInputStream(bytes))) {
-            var readers = ImageIO.getImageReaders(input);
+        try (javax.imageio.stream.MemoryCacheImageInputStream input = new MemoryCacheImageInputStream(new ByteArrayInputStream(bytes))) {
+            java.util.Iterator<javax.imageio.ImageReader> readers = ImageIO.getImageReaders(input);
             if (!readers.hasNext()) throw new IOException("Unrecognized classification image");
-            var reader = readers.next(); BufferedImage image = null;
+            javax.imageio.ImageReader reader = readers.next(); BufferedImage image = null;
             try {
                 reader.setInput(input, true, true);
-                if (!java.util.Set.of("png", "jpeg", "jpg").contains(reader.getFormatName().toLowerCase(Locale.ROOT))) throw new IOException("Unsupported classification image");
+                if (!cn.bidcheck.compat.Java8Api.setOf("png", "jpeg", "jpg").contains(reader.getFormatName().toLowerCase(Locale.ROOT))) throw new IOException("Unsupported classification image");
                 int width = reader.getWidth(0), height = reader.getHeight(0);
                 if (width < 1 || height < 1 || (long) width * height > 16_000_000) throw new IOException("Classification image budget exceeded");
-                var parameters = reader.getDefaultReadParam();
+                javax.imageio.ImageReadParam parameters = reader.getDefaultReadParam();
                 int step = Math.max(1, (int) Math.ceil(Math.max(width, height) / 192d));
                 parameters.setSourceSubsampling(step, step, 0, 0); image = reader.read(0, parameters);
                 int w = image.getWidth(), h = image.getHeight(), dark = 0, red = 0, color = 0, horizontal = 0, vertical = 0, textRows = 0;

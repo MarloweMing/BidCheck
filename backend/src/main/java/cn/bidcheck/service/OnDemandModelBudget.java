@@ -22,7 +22,7 @@ final class OnDemandModelBudget {
     boolean reserveConsistency() { return reserve(true); }
     private boolean reserve(boolean consistency) {
         if(Thread.currentThread().isInterrupted()) throw new CancellationException("Check interrupted");
-        return Boolean.TRUE.equals(DbTransactionRetry.execute(tx,consistency?"CONSISTENCY_ATTEMPT_RESERVE":"ATOMIC_ATTEMPT_RESERVE",Map.of("taskId",taskId,"runId",runId),ignored -> {
+        return Boolean.TRUE.equals(DbTransactionRetry.execute(tx,consistency?"CONSISTENCY_ATTEMPT_RESERVE":"ATOMIC_ATTEMPT_RESERVE",cn.bidcheck.compat.Java8Api.mapOf("taskId", taskId, "runId", runId),ignored -> {
             TaskRow current=store.mapper().lockTask(taskId);
             if(current==null||!"RUNNING".equals(current.status)||!project.equals(current.projectId)
                     ||!Objects.equals(owner,current.leaseOwner)||taskAttempt!=current.attempt
@@ -31,14 +31,14 @@ final class OnDemandModelBudget {
             Map<String,Object> run=store.map(store.lock("run",runId).body);
             if(!"RULES_RETRIEVAL".equals(run.get("checkMode"))||!taskId.equals(run.get("taskId"))
                     ||!"RUNNING".equals(run.get("status"))) throw new TaskLeaseLostException(taskId);
-            if(!(run.get("onDemandAttemptsReserved") instanceof Number count)||count.longValue()<0)
+            if(!(run.get("onDemandAttemptsReserved") instanceof Number)||((Number) (run.get("onDemandAttemptsReserved"))).longValue()<0)
                 throw new IllegalStateException("Missing or invalid persisted on-demand reservation count");
             if(consistency) {
-                if(!(run.get("consistencyReviewAttemptsReserved") instanceof Number reserved)
-                    || reserved.longValue()<0) throw new IllegalStateException("Missing consistency review reservation count");
-                run.put("consistencyReviewAttemptsReserved",Math.incrementExact(reserved.longValue()));
+                if(!(run.get("consistencyReviewAttemptsReserved") instanceof Number)
+                    || ((Number) (run.get("consistencyReviewAttemptsReserved"))).longValue()<0) throw new IllegalStateException("Missing consistency review reservation count");
+                run.put("consistencyReviewAttemptsReserved",Math.incrementExact(((Number) (run.get("consistencyReviewAttemptsReserved"))).longValue()));
             }
-            run.put("onDemandAttemptsReserved",Math.incrementExact(count.longValue()));
+            run.put("onDemandAttemptsReserved",Math.incrementExact(((Number) (run.get("onDemandAttemptsReserved"))).longValue()));
             store.save("run",runId,project,Objects.toString(run.get("documentId"),""),run);
             return true;
         }));

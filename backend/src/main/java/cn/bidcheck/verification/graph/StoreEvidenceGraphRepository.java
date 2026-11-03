@@ -15,7 +15,7 @@ public class StoreEvidenceGraphRepository implements EvidenceGraphRepository {
     public StoreEvidenceGraphRepository(Store store){this.store=Objects.requireNonNull(store);}
 
     @Override public Optional<EvidenceGraph.Snapshot> find(String projectId,String revisionId) {
-        if(projectId==null||projectId.isBlank()||revisionId==null||revisionId.isBlank())return Optional.empty();
+        if(projectId==null||cn.bidcheck.compat.Java8Api.isBlank(projectId)||revisionId==null||cn.bidcheck.compat.Java8Api.isBlank(revisionId))return Optional.empty();
         Stored row=store.mapper().get(revisionId);
         if(row==null||!KIND.equals(row.kind)||!projectId.equals(row.projectId)||!revisionId.equals(row.parentId))return Optional.empty();
         EvidenceGraph.Snapshot snapshot=store.decode(row.body,EvidenceGraph.Snapshot.class);

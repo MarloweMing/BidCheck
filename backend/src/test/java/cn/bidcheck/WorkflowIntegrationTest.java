@@ -29,7 +29,7 @@ class WorkflowIntegrationTest {
     @Autowired ObjectMapper json;
     @Autowired RecordMapper mapper;
     JsonNode result(org.springframework.test.web.servlet.ResultActions call) throws Exception { return json.readTree(call.andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8)); }
-    String create(String name) throws Exception { return result(mvc.perform(post("/api/projects").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(java.util.Map.of("name",name,"code","TEST-2026"))))).get("id").asText(); }
+    String create(String name) throws Exception { return result(mvc.perform(post("/api/projects").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(cn.bidcheck.compat.Java8Api.mapOf("name", name, "code", "TEST-2026"))))).get("id").asText(); }
     void complete(String id) {
         await().atMost(Duration.ofSeconds(20)).pollInterval(Duration.ofMillis(150)).until(()-> {
             TaskRow t=mapper.task(id); if("FAILED".equals(t.status)) throw new AssertionError(t.error); return "SUCCEEDED".equals(t.status);

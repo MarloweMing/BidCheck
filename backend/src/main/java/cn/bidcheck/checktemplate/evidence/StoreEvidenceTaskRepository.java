@@ -139,7 +139,7 @@ public final class StoreEvidenceTaskRepository implements EvidenceTaskRepository
     }
 
     private static String requiredId(String value) {
-        if (value == null || value.isBlank()) throw new IllegalArgumentException("taskId is required");
+        if (value == null || cn.bidcheck.compat.Java8Api.isBlank(value)) throw new IllegalArgumentException("taskId is required");
         return value.trim();
     }
 
@@ -149,21 +149,42 @@ public final class StoreEvidenceTaskRepository implements EvidenceTaskRepository
     }
 
     /** Storage DTO adds an explicit discriminator for the sealed Observation interface. */
-    public record PersistedTask(
-            String schemaVersion,
-            String taskId,
-            EvidenceNeedKey key,
-            EvidenceTaskStatus status,
-            long revision,
-            int attempts,
-            int maxAttempts,
-            EvidenceLease lease,
-            Instant nextAttemptAt,
-            PersistedResult result,
-            EvidenceTaskFailure failure,
-            Set<String> subscriberIds,
-            Instant createdAt,
-            Instant updatedAt) {
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public static final class PersistedTask {
+        private final String schemaVersion;
+        private final String taskId;
+        private final EvidenceNeedKey key;
+        private final EvidenceTaskStatus status;
+        private final long revision;
+        private final int attempts;
+        private final int maxAttempts;
+        private final EvidenceLease lease;
+        private final Instant nextAttemptAt;
+        private final PersistedResult result;
+        private final EvidenceTaskFailure failure;
+        private final Set<String> subscriberIds;
+        private final Instant createdAt;
+        private final Instant updatedAt;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public PersistedTask(@com.fasterxml.jackson.annotation.JsonProperty("schemaVersion") String schemaVersion, @com.fasterxml.jackson.annotation.JsonProperty("taskId") String taskId, @com.fasterxml.jackson.annotation.JsonProperty("key") EvidenceNeedKey key, @com.fasterxml.jackson.annotation.JsonProperty("status") EvidenceTaskStatus status, @com.fasterxml.jackson.annotation.JsonProperty("revision") long revision, @com.fasterxml.jackson.annotation.JsonProperty("attempts") int attempts, @com.fasterxml.jackson.annotation.JsonProperty("maxAttempts") int maxAttempts, @com.fasterxml.jackson.annotation.JsonProperty("lease") EvidenceLease lease, @com.fasterxml.jackson.annotation.JsonProperty("nextAttemptAt") Instant nextAttemptAt, @com.fasterxml.jackson.annotation.JsonProperty("result") PersistedResult result, @com.fasterxml.jackson.annotation.JsonProperty("failure") EvidenceTaskFailure failure, @com.fasterxml.jackson.annotation.JsonProperty("subscriberIds") Set<String> subscriberIds, @com.fasterxml.jackson.annotation.JsonProperty("createdAt") Instant createdAt, @com.fasterxml.jackson.annotation.JsonProperty("updatedAt") Instant updatedAt) { this.schemaVersion = schemaVersion; this.taskId = taskId; this.key = key; this.status = status; this.revision = revision; this.attempts = attempts; this.maxAttempts = maxAttempts; this.lease = lease; this.nextAttemptAt = nextAttemptAt; this.result = result; this.failure = failure; this.subscriberIds = subscriberIds; this.createdAt = createdAt; this.updatedAt = updatedAt; }
+        public String schemaVersion() { return schemaVersion; }
+        public String taskId() { return taskId; }
+        public EvidenceNeedKey key() { return key; }
+        public EvidenceTaskStatus status() { return status; }
+        public long revision() { return revision; }
+        public int attempts() { return attempts; }
+        public int maxAttempts() { return maxAttempts; }
+        public EvidenceLease lease() { return lease; }
+        public Instant nextAttemptAt() { return nextAttemptAt; }
+        public PersistedResult result() { return result; }
+        public EvidenceTaskFailure failure() { return failure; }
+        public Set<String> subscriberIds() { return subscriberIds; }
+        public Instant createdAt() { return createdAt; }
+        public Instant updatedAt() { return updatedAt; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; PersistedTask that = (PersistedTask) other; return java.util.Objects.equals(this.schemaVersion, that.schemaVersion) && java.util.Objects.equals(this.taskId, that.taskId) && java.util.Objects.equals(this.key, that.key) && java.util.Objects.equals(this.status, that.status) && java.util.Objects.equals(this.revision, that.revision) && java.util.Objects.equals(this.attempts, that.attempts) && java.util.Objects.equals(this.maxAttempts, that.maxAttempts) && java.util.Objects.equals(this.lease, that.lease) && java.util.Objects.equals(this.nextAttemptAt, that.nextAttemptAt) && java.util.Objects.equals(this.result, that.result) && java.util.Objects.equals(this.failure, that.failure) && java.util.Objects.equals(this.subscriberIds, that.subscriberIds) && java.util.Objects.equals(this.createdAt, that.createdAt) && java.util.Objects.equals(this.updatedAt, that.updatedAt); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.schemaVersion); hash = 31 * hash + java.util.Objects.hashCode(this.taskId); hash = 31 * hash + java.util.Objects.hashCode(this.key); hash = 31 * hash + java.util.Objects.hashCode(this.status); hash = 31 * hash + java.util.Objects.hashCode(this.revision); hash = 31 * hash + java.util.Objects.hashCode(this.attempts); hash = 31 * hash + java.util.Objects.hashCode(this.maxAttempts); hash = 31 * hash + java.util.Objects.hashCode(this.lease); hash = 31 * hash + java.util.Objects.hashCode(this.nextAttemptAt); hash = 31 * hash + java.util.Objects.hashCode(this.result); hash = 31 * hash + java.util.Objects.hashCode(this.failure); hash = 31 * hash + java.util.Objects.hashCode(this.subscriberIds); hash = 31 * hash + java.util.Objects.hashCode(this.createdAt); hash = 31 * hash + java.util.Objects.hashCode(this.updatedAt); return hash; }
+        @Override public String toString() { return "PersistedTask[" + "schemaVersion=" + schemaVersion + ", taskId=" + taskId + ", key=" + key + ", status=" + status + ", revision=" + revision + ", attempts=" + attempts + ", maxAttempts=" + maxAttempts + ", lease=" + lease + ", nextAttemptAt=" + nextAttemptAt + ", result=" + result + ", failure=" + failure + ", subscriberIds=" + subscriberIds + ", createdAt=" + createdAt + ", updatedAt=" + updatedAt + "]"; }
+
 
         static PersistedTask from(EvidenceTask task, ObjectMapper json) {
             return new PersistedTask(SCHEMA, task.taskId(), task.key(), task.status(),
@@ -179,28 +200,51 @@ public final class StoreEvidenceTaskRepository implements EvidenceTaskRepository
         }
     }
 
-    public record PersistedResult(
-            EvidenceExtractionResult.Disposition disposition,
-            List<PersistedObservation> observations,
-            EvidenceScope scope,
-            String message,
-            Map<String, String> diagnostics) {
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public static final class PersistedResult {
+        private final EvidenceExtractionResult.Disposition disposition;
+        private final List<PersistedObservation> observations;
+        private final EvidenceScope scope;
+        private final String message;
+        private final Map<String, String> diagnostics;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public PersistedResult(@com.fasterxml.jackson.annotation.JsonProperty("disposition") EvidenceExtractionResult.Disposition disposition, @com.fasterxml.jackson.annotation.JsonProperty("observations") List<PersistedObservation> observations, @com.fasterxml.jackson.annotation.JsonProperty("scope") EvidenceScope scope, @com.fasterxml.jackson.annotation.JsonProperty("message") String message, @com.fasterxml.jackson.annotation.JsonProperty("diagnostics") Map<String, String> diagnostics) { this.disposition = disposition; this.observations = observations; this.scope = scope; this.message = message; this.diagnostics = diagnostics; }
+        public EvidenceExtractionResult.Disposition disposition() { return disposition; }
+        public List<PersistedObservation> observations() { return observations; }
+        public EvidenceScope scope() { return scope; }
+        public String message() { return message; }
+        public Map<String, String> diagnostics() { return diagnostics; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; PersistedResult that = (PersistedResult) other; return java.util.Objects.equals(this.disposition, that.disposition) && java.util.Objects.equals(this.observations, that.observations) && java.util.Objects.equals(this.scope, that.scope) && java.util.Objects.equals(this.message, that.message) && java.util.Objects.equals(this.diagnostics, that.diagnostics); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.disposition); hash = 31 * hash + java.util.Objects.hashCode(this.observations); hash = 31 * hash + java.util.Objects.hashCode(this.scope); hash = 31 * hash + java.util.Objects.hashCode(this.message); hash = 31 * hash + java.util.Objects.hashCode(this.diagnostics); return hash; }
+        @Override public String toString() { return "PersistedResult[" + "disposition=" + disposition + ", observations=" + observations + ", scope=" + scope + ", message=" + message + ", diagnostics=" + diagnostics + "]"; }
+
 
         static PersistedResult from(EvidenceExtractionResult result, ObjectMapper json) {
             if (result == null) return null;
-            return new PersistedResult(result.disposition(), result.observations().stream()
-                    .map(observation -> PersistedObservation.from(observation, json)).toList(),
+            return new PersistedResult(result.disposition(), cn.bidcheck.compat.Java8Api.toList(result.observations().stream()
+                    .map(observation -> PersistedObservation.from(observation, json))),
                     result.scope(), result.message(), result.diagnostics());
         }
 
         EvidenceExtractionResult toDomain(ObjectMapper json) {
-            List<Observation> decoded = observations == null ? List.of()
-                    : observations.stream().map(observation -> observation.toDomain(json)).toList();
+            List<Observation> decoded = observations == null ? cn.bidcheck.compat.Java8Api.listOf()
+                    : cn.bidcheck.compat.Java8Api.toList(observations.stream().map(observation -> observation.toDomain(json)));
             return new EvidenceExtractionResult(disposition, decoded, scope, message, diagnostics);
         }
     }
 
-    public record PersistedObservation(String type, JsonNode value) {
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public static final class PersistedObservation {
+        private final String type;
+        private final JsonNode value;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public PersistedObservation(@com.fasterxml.jackson.annotation.JsonProperty("type") String type, @com.fasterxml.jackson.annotation.JsonProperty("value") JsonNode value) { this.type = type; this.value = value; }
+        public String type() { return type; }
+        public JsonNode value() { return value; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; PersistedObservation that = (PersistedObservation) other; return java.util.Objects.equals(this.type, that.type) && java.util.Objects.equals(this.value, that.value); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.type); hash = 31 * hash + java.util.Objects.hashCode(this.value); return hash; }
+        @Override public String toString() { return "PersistedObservation[" + "type=" + type + ", value=" + value + "]"; }
+
         static PersistedObservation from(Observation observation, ObjectMapper json) {
             String type;
             if (observation instanceof Observation.MaterialObservation) type = "MATERIAL";
@@ -214,14 +258,8 @@ public final class StoreEvidenceTaskRepository implements EvidenceTaskRepository
 
         Observation toDomain(ObjectMapper json) {
             if (type == null || value == null) throw new IllegalStateException("EVIDENCE_OBSERVATION_CORRUPT");
-            Class<? extends Observation> target = switch (type) {
-                case "MATERIAL" -> Observation.MaterialObservation.class;
-                case "SEAL" -> Observation.SealObservation.class;
-                case "CERTIFICATE" -> Observation.CertificateObservation.class;
-                case "PRICE" -> Observation.PriceObservation.class;
-                case "PERSONNEL" -> Observation.PersonnelObservation.class;
-                default -> throw new IllegalStateException("EVIDENCE_OBSERVATION_TYPE_UNSUPPORTED:" + type);
-            };
+            Class<? extends Observation> target;
+switch (type) {case "MATERIAL":target = Observation.MaterialObservation.class; break;case "SEAL":target = Observation.SealObservation.class; break;case "CERTIFICATE":target = Observation.CertificateObservation.class; break;case "PRICE":target = Observation.PriceObservation.class; break;case "PERSONNEL":target = Observation.PersonnelObservation.class; break;default:throw new IllegalStateException("EVIDENCE_OBSERVATION_TYPE_UNSUPPORTED:" + type);}
             try {
                 return json.treeToValue(value, target);
             } catch (Exception unreadable) {

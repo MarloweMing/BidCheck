@@ -17,11 +17,40 @@ public final class DocumentContextIndex {
     private static final Pattern PERFORMANCE_COLUMNS = Pattern.compile("^(?:序号|编号|项次)\\s+.*(?:合同名称|项目名称|合同编号).*(?:签订时间|签署日期|主要内容|金额|负责人).*");
     private final Map<String,List<Assignment>> assignments;
 
-    private DocumentContextIndex(Map<String,List<Assignment>> assignments) { this.assignments=Map.copyOf(assignments); }
+    private DocumentContextIndex(Map<String,List<Assignment>> assignments) { this.assignments=cn.bidcheck.compat.Java8Api.mapCopyOf(assignments); }
 
-    public record Assignment(String status,String scope,String lot,String sectionId,List<String> sectionPath,
-                             String reason,int sourcePage,int sourceLine,boolean crossPage,List<Evidence> evidences,boolean boundary) {
-        public Assignment { sectionPath=List.copyOf(sectionPath);evidences=List.copyOf(evidences); }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public static final class Assignment {
+        private final String status;
+        private final String scope;
+        private final String lot;
+        private final String sectionId;
+        private final List<String> sectionPath;
+        private final String reason;
+        private final int sourcePage;
+        private final int sourceLine;
+        private final boolean crossPage;
+        private final List<Evidence> evidences;
+        private final boolean boundary;
+        public String status() { return status; }
+        public String scope() { return scope; }
+        public String lot() { return lot; }
+        public String sectionId() { return sectionId; }
+        public List<String> sectionPath() { return sectionPath; }
+        public String reason() { return reason; }
+        public int sourcePage() { return sourcePage; }
+        public int sourceLine() { return sourceLine; }
+        public boolean crossPage() { return crossPage; }
+        public List<Evidence> evidences() { return evidences; }
+        public boolean boundary() { return boundary; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Assignment that = (Assignment) other; return java.util.Objects.equals(this.status, that.status) && java.util.Objects.equals(this.scope, that.scope) && java.util.Objects.equals(this.lot, that.lot) && java.util.Objects.equals(this.sectionId, that.sectionId) && java.util.Objects.equals(this.sectionPath, that.sectionPath) && java.util.Objects.equals(this.reason, that.reason) && java.util.Objects.equals(this.sourcePage, that.sourcePage) && java.util.Objects.equals(this.sourceLine, that.sourceLine) && java.util.Objects.equals(this.crossPage, that.crossPage) && java.util.Objects.equals(this.evidences, that.evidences) && java.util.Objects.equals(this.boundary, that.boundary); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.status); hash = 31 * hash + java.util.Objects.hashCode(this.scope); hash = 31 * hash + java.util.Objects.hashCode(this.lot); hash = 31 * hash + java.util.Objects.hashCode(this.sectionId); hash = 31 * hash + java.util.Objects.hashCode(this.sectionPath); hash = 31 * hash + java.util.Objects.hashCode(this.reason); hash = 31 * hash + java.util.Objects.hashCode(this.sourcePage); hash = 31 * hash + java.util.Objects.hashCode(this.sourceLine); hash = 31 * hash + java.util.Objects.hashCode(this.crossPage); hash = 31 * hash + java.util.Objects.hashCode(this.evidences); hash = 31 * hash + java.util.Objects.hashCode(this.boundary); return hash; }
+        @Override public String toString() { return "Assignment[" + "status=" + status + ", scope=" + scope + ", lot=" + lot + ", sectionId=" + sectionId + ", sectionPath=" + sectionPath + ", reason=" + reason + ", sourcePage=" + sourcePage + ", sourceLine=" + sourceLine + ", crossPage=" + crossPage + ", evidences=" + evidences + ", boundary=" + boundary + "]"; }
+
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public Assignment(@com.fasterxml.jackson.annotation.JsonProperty("status") String status, @com.fasterxml.jackson.annotation.JsonProperty("scope") String scope, @com.fasterxml.jackson.annotation.JsonProperty("lot") String lot, @com.fasterxml.jackson.annotation.JsonProperty("sectionId") String sectionId, @com.fasterxml.jackson.annotation.JsonProperty("sectionPath") List<String> sectionPath, @com.fasterxml.jackson.annotation.JsonProperty("reason") String reason, @com.fasterxml.jackson.annotation.JsonProperty("sourcePage") int sourcePage, @com.fasterxml.jackson.annotation.JsonProperty("sourceLine") int sourceLine, @com.fasterxml.jackson.annotation.JsonProperty("crossPage") boolean crossPage, @com.fasterxml.jackson.annotation.JsonProperty("evidences") List<Evidence> evidences, @com.fasterxml.jackson.annotation.JsonProperty("boundary") boolean boundary) { sectionPath=cn.bidcheck.compat.Java8Api.listCopyOf(sectionPath);evidences=cn.bidcheck.compat.Java8Api.listCopyOf(evidences);
+            this.status = status; this.scope = scope; this.lot = lot; this.sectionId = sectionId; this.sectionPath = sectionPath; this.reason = reason; this.sourcePage = sourcePage; this.sourceLine = sourceLine; this.crossPage = crossPage; this.evidences = evidences; this.boundary = boundary;
+        }
         public Map<String,Object> asMap() {
             Map<String,Object> result=new LinkedHashMap<>();
             result.put("version",VERSION);result.put("status",status);result.put("scope",scope);result.put("lot",lot);
@@ -30,7 +59,32 @@ public final class DocumentContextIndex {
             return result;
         }
     }
-    private record Section(int level,boolean structural,String text,String scope,String lot,String id,Evidence evidence,int line,String reason) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Section {
+        private final int level;
+        private final boolean structural;
+        private final String text;
+        private final String scope;
+        private final String lot;
+        private final String id;
+        private final Evidence evidence;
+        private final int line;
+        private final String reason;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Section(@com.fasterxml.jackson.annotation.JsonProperty("level") int level, @com.fasterxml.jackson.annotation.JsonProperty("structural") boolean structural, @com.fasterxml.jackson.annotation.JsonProperty("text") String text, @com.fasterxml.jackson.annotation.JsonProperty("scope") String scope, @com.fasterxml.jackson.annotation.JsonProperty("lot") String lot, @com.fasterxml.jackson.annotation.JsonProperty("id") String id, @com.fasterxml.jackson.annotation.JsonProperty("evidence") Evidence evidence, @com.fasterxml.jackson.annotation.JsonProperty("line") int line, @com.fasterxml.jackson.annotation.JsonProperty("reason") String reason) { this.level = level; this.structural = structural; this.text = text; this.scope = scope; this.lot = lot; this.id = id; this.evidence = evidence; this.line = line; this.reason = reason; }
+        public int level() { return level; }
+        public boolean structural() { return structural; }
+        public String text() { return text; }
+        public String scope() { return scope; }
+        public String lot() { return lot; }
+        public String id() { return id; }
+        public Evidence evidence() { return evidence; }
+        public int line() { return line; }
+        public String reason() { return reason; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Section that = (Section) other; return java.util.Objects.equals(this.level, that.level) && java.util.Objects.equals(this.structural, that.structural) && java.util.Objects.equals(this.text, that.text) && java.util.Objects.equals(this.scope, that.scope) && java.util.Objects.equals(this.lot, that.lot) && java.util.Objects.equals(this.id, that.id) && java.util.Objects.equals(this.evidence, that.evidence) && java.util.Objects.equals(this.line, that.line) && java.util.Objects.equals(this.reason, that.reason); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.level); hash = 31 * hash + java.util.Objects.hashCode(this.structural); hash = 31 * hash + java.util.Objects.hashCode(this.text); hash = 31 * hash + java.util.Objects.hashCode(this.scope); hash = 31 * hash + java.util.Objects.hashCode(this.lot); hash = 31 * hash + java.util.Objects.hashCode(this.id); hash = 31 * hash + java.util.Objects.hashCode(this.evidence); hash = 31 * hash + java.util.Objects.hashCode(this.line); hash = 31 * hash + java.util.Objects.hashCode(this.reason); return hash; }
+        @Override public String toString() { return "Section[" + "level=" + level + ", structural=" + structural + ", text=" + text + ", scope=" + scope + ", lot=" + lot + ", id=" + id + ", evidence=" + evidence + ", line=" + line + ", reason=" + reason + "]"; }
+ }
 
     public static DocumentContextIndex build(Document document) {
         Objects.requireNonNull(document,"document");
@@ -38,7 +92,7 @@ public final class DocumentContextIndex {
         List<Section> stack=new ArrayList<>();
         String defaultScope="BID".equals(document.role())?"CURRENT_PROJECT":"UNRESOLVED";
         String lastLot="";Page previous=null;boolean barrier=false;
-        for(Page page:document.pages()==null?List.<Page>of():document.pages()) {
+        for(Page page:document.pages()==null?cn.bidcheck.compat.Java8Api.<Page>listOf():document.pages()) {
             if(Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException("上下文扫描已取消");
             if(previous!=null&&(!Objects.equals(previous.locationType(),page.locationType())||page.number()!=previous.number()+1)) {
                 stack.clear();lastLot="";barrier=true;
@@ -46,14 +100,14 @@ public final class DocumentContextIndex {
             String text=Objects.toString(page.text(),"");String[] lines=text.split("\\R",-1);
             List<Assignment> values=new ArrayList<>(lines.length);
             boolean insideTable=false,ocrSupplement=false,insideNativePerformanceTable=false;
-            if(text.isBlank()){stack.clear();lastLot="";barrier=true;}
+            if(cn.bidcheck.compat.Java8Api.isBlank(text)){stack.clear();lastLot="";barrier=true;}
             for(int at=0;at<lines.length;at++) {
-                String line=lines[at],clean=line.strip().replaceFirst("[:：]$","").stripTrailing();
+                String line=lines[at],clean=cn.bidcheck.compat.Java8Api.stripTrailing(cn.bidcheck.compat.Java8Api.strip(line).replaceFirst("[:：]$",""));
                 if(clean.equals("【PDF识别文字】"))ocrSupplement=true;
                 boolean tableLine=insideTable||TableFactSupport.html(line);
                 if(line.matches("(?is).*<table\\b.*"))insideTable=true;
                 if(line.matches("(?is).*</table\\s*>.*"))insideTable=false;
-                String semantic=clean.replaceFirst("^#{1,6}\\s*","").strip();
+                String semantic=cn.bidcheck.compat.Java8Api.strip(clean.replaceFirst("^#{1,6}\\s*",""));
                 // Markdown in appended OCR is transcription formatting, not evidence of document chapter depth.
                 int level=ocrSupplement?ocrNumberedPeerLevel(clean,stack):headingLevel(clean);String classified=classify(semantic);
                 // A visible performance header supplies a page-local table boundary. Wrapped native
@@ -67,15 +121,15 @@ public final class DocumentContextIndex {
                 boolean nativePerformanceCell=insideNativePerformanceTable&&!ocrSupplement&&level==0;
                 boolean navigation=semantic.matches(".*(?:\\.{3,}|…{2,}|·{3,}).*\\d+\\s*$");
                 boolean generatedHeading=ocrSupplement&&semantic.matches("(?i).*(?:图像.{0,8}分析|图片.{0,8}(?:提取|描述|分析)|二维码|QR\\s*(?:Code|码)|信息抽取(?:结果|报告)|文档信息抽取|建议|注意事项|结论|总结|示例|example|recommendation|conclusion|notes?|placeholder|output format).*");
-                boolean heading=!tableLine&&!nativePerformanceCell&&!navigation&&!generatedHeading&&isHeading(clean)&&(level>0||!classified.isBlank()||!lots(clean).isBlank()||!ocrSupplement&&clean.contains("合同"));
+                boolean heading=!tableLine&&!nativePerformanceCell&&!navigation&&!generatedHeading&&isHeading(clean)&&(level>0||!cn.bidcheck.compat.Java8Api.isBlank(classified)||!cn.bidcheck.compat.Java8Api.isBlank(lots(clean))||!ocrSupplement&&clean.contains("合同"));
                 boolean boundary=false;
                 if(heading) {
                     boundary=true;
-                    boolean lotOnlyHeading=classified.isBlank()&&!lots(clean).isBlank();
+                    boolean lotOnlyHeading=cn.bidcheck.compat.Java8Api.isBlank(classified)&&!cn.bidcheck.compat.Java8Api.isBlank(lots(clean));
                     // A list entry beneath an explicit performance heading is not a new top-level
                     // project. Accept only numbered project/contract captions; peer current or
                     // unknown chapter headings still close the prior section normally.
-                    if(classified.isBlank()&&projectCaption(semantic)) {
+                    if(cn.bidcheck.compat.Java8Api.isBlank(classified)&&projectCaption(semantic)) {
                         Section historical=nearest(stack,s->s.scope.equals("HISTORICAL_PROJECT")&&classify(headingText(s.text)).equals("HISTORICAL_PROJECT"));
                         if(historical!=null)level=historical.level+1;
                     }
@@ -94,7 +148,7 @@ public final class DocumentContextIndex {
                     // remain inside an explicitly classified project section without inventing one.
                     if(level==0&&lotOnlyHeading)for(int i=stack.size()-1;i>=0;i--) {
                         Section candidate=stack.get(i);
-                        if(!candidate.scope.equals("UNRESOLVED")&&!classify(candidate.text.replaceFirst("^#{1,6}\\s*","")).isBlank()) {level=candidate.level+1;break;}
+                        if(!candidate.scope.equals("UNRESOLVED")&&!cn.bidcheck.compat.Java8Api.isBlank(classify(candidate.text.replaceFirst("^#{1,6}\\s*","")))) {level=candidate.level+1;break;}
                     }
                     // Unnumbered attachments inside an explicitly numbered historical/template section cannot escape their parent.
                     if(level==0) {
@@ -109,40 +163,40 @@ public final class DocumentContextIndex {
                     String reason="依据章节标题及父章节确定归属";
                     if(parent!=null&&protectedScope(parent.scope)&&!protectedScope(scope)) {
                         scope=parent.scope;reason="继承历史或模板父章节，内部投标函及字段标签不改变所属项目";
-                    } else if(scope.isBlank()) {
+                    } else if(cn.bidcheck.compat.Java8Api.isBlank(scope)) {
                         scope=parent!=null?parent.scope:clean.contains("合同")?"UNRESOLVED":defaultScope;
                         if(parent==null&&lotOnlyHeading){scope="UNRESOLVED";reason="仅有标段来源，缺少明确的项目归属父章节";}
-                        if(parent==null&&level<100&&lots(clean).isBlank()) {scope="UNRESOLVED";reason="同级或上级章节切换，标题未说明项目范围";}
+                        if(parent==null&&level<100&&cn.bidcheck.compat.Java8Api.isBlank(lots(clean))) {scope="UNRESOLVED";reason="同级或上级章节切换，标题未说明项目范围";}
                     }
                     if(scope.equals("UNRESOLVED")&&parent!=null)reason="所属章节已定位，但父章节未明确事实适用项目";
                     String lot=lots(clean);
                     if(clean.matches(".*(?:本项目汇总|项目总计|全部标段).*")){lot="";lastLot="";}
-                    else if(lot.isBlank())lot=parent!=null&&!parent.lot.isBlank()?parent.lot:!lastLot.isBlank()?"UNRESOLVED":"";
-                    if(!lot.isBlank())lastLot=lot;
+                    else if(cn.bidcheck.compat.Java8Api.isBlank(lot))lot=parent!=null&&!cn.bidcheck.compat.Java8Api.isBlank(parent.lot)?parent.lot:!cn.bidcheck.compat.Java8Api.isBlank(lastLot)?"UNRESOLVED":"";
+                    if(!cn.bidcheck.compat.Java8Api.isBlank(lot))lastLot=lot;
                     Evidence source=new Evidence(document.id(),document.name(),page.number(),page.locationType(),line,"p"+page.number()+"-l"+(at+1),0);
                     String id="section-"+UUID.nameUUIDFromBytes((document.id()+"|"+document.version()+"|"+page.locationType()+"|"+page.number()+"|"+(at+1)).getBytes(StandardCharsets.UTF_8));
                     stack.add(new Section(level,structural,clean,scope,lot,id,source,at+1,reason));barrier=false;
                 }
                 if(stack.isEmpty()) {
-                    values.add(new Assignment(barrier||defaultScope.equals("UNRESOLVED")?"UNRESOLVED":"DOCUMENT_DEFAULT",barrier?"UNRESOLVED":defaultScope,"","",List.of(),
-                            barrier?"缺页、空白页或位置类型改变后，尚无新的明确章节依据":"仅依据投标文档角色；尚未定位到明确章节标题",0,0,false,List.of(),boundary));
+                    values.add(new Assignment(barrier||defaultScope.equals("UNRESOLVED")?"UNRESOLVED":"DOCUMENT_DEFAULT",barrier?"UNRESOLVED":defaultScope,"","",cn.bidcheck.compat.Java8Api.listOf(),
+                            barrier?"缺页、空白页或位置类型改变后，尚无新的明确章节依据":"仅依据投标文档角色；尚未定位到明确章节标题",0,0,false,cn.bidcheck.compat.Java8Api.listOf(),boundary));
                 } else {
                     Section section=stack.get(stack.size()-1);
-                    List<Evidence> refs=stack.stream().map(Section::evidence).limit(8).toList();
+                    List<Evidence> refs=cn.bidcheck.compat.Java8Api.toList(stack.stream().map(Section::evidence).limit(8));
                     boolean crossPage=section.evidence.page()!=page.number();
                     String status=section.scope.equals("UNRESOLVED")?"UNRESOLVED":boundary?"EXPLICIT":"INHERITED";
-                    values.add(new Assignment(status,section.scope,section.lot,section.id,stack.stream().map(Section::text).toList(),section.reason,
+                    values.add(new Assignment(status,section.scope,section.lot,section.id,cn.bidcheck.compat.Java8Api.toList(stack.stream().map(Section::text)),section.reason,
                             section.evidence.page(),section.line,crossPage,refs,boundary));
                 }
             }
-            indexed.put(key(page),List.copyOf(values));previous=page;
+            indexed.put(key(page),cn.bidcheck.compat.Java8Api.listCopyOf(values));previous=page;
         }
         return new DocumentContextIndex(indexed);
     }
 
     public Assignment at(Page page,int oneBasedLine) {
-        List<Assignment> lines=assignments.getOrDefault(key(page),List.of());
-        if(oneBasedLine<1||oneBasedLine>lines.size())return new Assignment("UNRESOLVED","UNRESOLVED","","",List.of(),"原文位置无法绑定",0,0,false,List.of(),true);
+        List<Assignment> lines=assignments.getOrDefault(key(page),cn.bidcheck.compat.Java8Api.listOf());
+        if(oneBasedLine<1||oneBasedLine>lines.size())return new Assignment("UNRESOLVED","UNRESOLVED","","",cn.bidcheck.compat.Java8Api.listOf(),"原文位置无法绑定",0,0,false,cn.bidcheck.compat.Java8Api.listOf(),true);
         return lines.get(oneBasedLine-1);
     }
     private static String key(Page page){return page.locationType()+"|"+page.number();}
@@ -174,13 +228,13 @@ public final class DocumentContextIndex {
         }
         return 0;
     }
-    private static String headingText(String value){return value.replaceFirst("^#{1,6}\\s*","").replaceFirst("^(?:\\d+(?:\\.\\d+)*[.、．]?|[一二三四五六七八九十百]+[、．.]|[（(][一二三四五六七八九十百0-9]+[）)])\\s*","").strip();}
+    private static String headingText(String value){return cn.bidcheck.compat.Java8Api.strip(value.replaceFirst("^#{1,6}\\s*","").replaceFirst("^(?:\\d+(?:\\.\\d+)*[.、．]?|[一二三四五六七八九十百]+[、．.]|[（(][一二三四五六七八九十百0-9]+[）)])\\s*",""));}
     private static boolean projectCaption(String text){return text.matches("^\\d+[.、．]\\s*[^:：=|｜<>。；;]{2,95}(?:合同|工程|项目|订单)(?:[（(][^）)]{1,30}[）)])?")
             &&!text.matches(".*(?:应当|应提供|须提供|投标人须|不得|按照|说明|要求|条款|负责人的情况).*");}
     private static boolean protectedScope(String scope){return scope.equals("HISTORICAL_PROJECT")||scope.equals("TEMPLATE");}
     private static String classify(String text){if(text.matches(".*(?:评审索引表|^目录$).*"))return "TEMPLATE";if(TEMPLATE.matcher(text).find())return "TEMPLATE";if(HISTORICAL.matcher(text).find())return "HISTORICAL_PROJECT";if(CURRENT.matcher(text).find())return "CURRENT_PROJECT";return "";}
     private static boolean isHeading(String text){
-        String plain=text.replaceFirst("^#{1,6}\\s*","").strip();
+        String plain=cn.bidcheck.compat.Java8Api.strip(text.replaceFirst("^#{1,6}\\s*",""));
         if(plain.matches("(?i)^(?:[0-9]+(?:\\.[0-9]+)*\\s+)?(?:扫描全能王|CamScanner)(?:\\s+(?:19|20)[0-9]{2})?$"))return false;
         // Flattened native table headers and split value annotations are not chapter boundaries.
         if(PERFORMANCE_COLUMNS.matcher(plain).matches())return false;
@@ -193,7 +247,7 @@ public final class DocumentContextIndex {
         if(plain.matches("(?:人民币|[￥¥])?\\s*[0-9,]+(?:\\.[0-9]+)?\\s*(?:亿元|万元|元|万)?"))return false;
         if(plain.matches("(?:19|20)[0-9]{2}\\s*(?:年|[./-])\\s*[0-9]{1,2}\\s*(?:月|[./-])\\s*[0-9]{1,2}\\s*日?"))return false;
         if(plain.matches(".*[0-9]+[、,][0-9]+[、,][0-9]+.*"))return false;
-        return !text.isBlank()&&text.length()<=100&&!text.matches(".*[:：=|｜\\t<>。；;，,].*");
+        return !cn.bidcheck.compat.Java8Api.isBlank(text)&&text.length()<=100&&!text.matches(".*[:：=|｜\\t<>。；;，,].*");
     }
     private static int headingLevel(String text) {
         Matcher markdown=Pattern.compile("^(#{1,6})\\s+.+").matcher(text);if(markdown.matches())return markdown.group(1).length();

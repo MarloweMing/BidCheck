@@ -24,26 +24,26 @@ class FileParserPdfAnnotationsTest {
         try (PDDocument source = new PDDocument()) {
             PDPage first = new PDPage(new PDRectangle(100, 100)), other = new PDPage(new PDRectangle(100, 100));
             source.addPage(first); source.addPage(other);
-            PDAnnotationLink link = link(first, 0); var destination = new PDPageFitDestination(); destination.setPage(other); link.setDestination(destination);
+            PDAnnotationLink link = link(first, 0); org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageFitDestination destination = new PDPageFitDestination(); destination.setPage(other); link.setDestination(destination);
             PDAnnotationRubberStamp stamp = new PDAnnotationRubberStamp(); stamp.setRectangle(new PDRectangle(50, 50, 25, 25)); stamp.setPage(first);
-            var appearance = appearance(source, java.awt.Color.RED); var dictionary = new PDAppearanceDictionary(); dictionary.setNormalAppearance(appearance); stamp.setAppearance(dictionary);
-            first.setAnnotations(List.of(link, stamp));
+            org.apache.pdfbox.pdmodel.interactive.annotation.PDAppearanceStream appearance = appearance(source, java.awt.Color.RED); org.apache.pdfbox.pdmodel.interactive.annotation.PDAppearanceDictionary dictionary = new PDAppearanceDictionary(); dictionary.setNormalAppearance(appearance); stamp.setAppearance(dictionary);
+            first.setAnnotations(cn.bidcheck.compat.Java8Api.listOf(link, stamp));
             // An unselected page contains a large stream; neither /P nor an internal link may pull it into the packet.
-            var hidden = new org.apache.pdfbox.pdmodel.common.PDStream(source);
+            org.apache.pdfbox.pdmodel.common.PDStream hidden = new org.apache.pdfbox.pdmodel.common.PDStream(source);
             byte[] random = new byte[1_000_000]; new Random(42).nextBytes(random);
             try (OutputStream out = hidden.createOutputStream()) { out.write(random); } other.setContents(hidden);
             byte[] originalAppearance;
-            try (InputStream in = appearance.getCOSObject().createRawInputStream()) { originalAppearance = in.readAllBytes(); }
-            byte[] packet = FileParser.pdfPacket(source, List.of(1), 100_000);
+            try (InputStream in = appearance.getCOSObject().createRawInputStream()) { originalAppearance = cn.bidcheck.compat.Java8Api.readAllBytes(in); }
+            byte[] packet = FileParser.pdfPacket(source, cn.bidcheck.compat.Java8Api.listOf(1), 100_000);
             assertTrue(packet.length < 10_000);
             assertSame(first.getCOSObject(), link.getPage().getCOSObject()); assertFalse(link.getCOSObject().containsKey(COSName.AP));
-            try (InputStream in = appearance.getCOSObject().createRawInputStream()) { assertArrayEquals(originalAppearance, in.readAllBytes()); }
+            try (InputStream in = appearance.getCOSObject().createRawInputStream()) { assertArrayEquals(originalAppearance, cn.bidcheck.compat.Java8Api.readAllBytes(in)); }
             assertSame(other.getCOSObject(), ((PDPageFitDestination) link.getDestination()).getPage().getCOSObject());
             try (PDDocument copied = Loader.loadPDF(packet)) {
-                assertEquals(1, copied.getNumberOfPages()); var annotations = copied.getPage(0).getAnnotations(); assertEquals(2, annotations.size());
-                for (var annotation : annotations) assertSame(copied.getPage(0).getCOSObject(), annotation.getPage().getCOSObject());
+                assertEquals(1, copied.getNumberOfPages()); java.util.List<org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation> annotations = copied.getPage(0).getAnnotations(); assertEquals(2, annotations.size());
+                for (org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation annotation : annotations) assertSame(copied.getPage(0).getCOSObject(), annotation.getPage().getCOSObject());
                 assertEquals("Stamp", annotations.get(1).getSubtype());
-                try (InputStream in = annotations.get(1).getNormalAppearanceStream().getCOSObject().createRawInputStream()) { assertArrayEquals(originalAppearance, in.readAllBytes()); }
+                try (InputStream in = annotations.get(1).getNormalAppearanceStream().getCOSObject().createRawInputStream()) { assertArrayEquals(originalAppearance, cn.bidcheck.compat.Java8Api.readAllBytes(in)); }
             }
         }
     }
@@ -59,7 +59,7 @@ class FileParserPdfAnnotationsTest {
             PDAppearanceDictionary blue = new PDAppearanceDictionary(); blue.setNormalAppearance(appearance(source, java.awt.Color.BLUE)); withAppearance.setAppearance(blue);
             PDAnnotationRubberStamp stamp = new PDAnnotationRubberStamp(); stamp.setRectangle(new PDRectangle(35, 55, 25, 25)); stamp.setPage(page);
             PDAppearanceDictionary green = new PDAppearanceDictionary(); green.setNormalAppearance(appearance(source, java.awt.Color.GREEN)); stamp.setAppearance(green);
-            page.setAnnotations(List.of(invisible, visible, withAppearance, stamp)); source.save(path.toFile());
+            page.setAnnotations(cn.bidcheck.compat.Java8Api.listOf(invisible, visible, withAppearance, stamp)); source.save(path.toFile());
         }
         BufferedImage image = ImageIO.read(new ByteArrayInputStream(new FileParser().renderPdfPage(path, 1)));
         try {
@@ -76,22 +76,22 @@ class FileParserPdfAnnotationsTest {
 
     @Test void authorizedRealPages150And151StaySmallAndRenderAfterPacketCloses() throws Exception {
         String configured = System.getenv("BIDCHECK_REAL_PDF_FIXTURE");
-        Assumptions.assumeTrue(configured != null && !configured.isBlank(), "Optional authorized local PDF fixture");
-        Path path = Path.of(configured); Assumptions.assumeTrue(Files.isRegularFile(path));
+        Assumptions.assumeTrue(configured != null && !cn.bidcheck.compat.Java8Api.isBlank(configured), "Optional authorized local PDF fixture");
+        Path path = java.nio.file.Paths.get(configured); Assumptions.assumeTrue(Files.isRegularFile(path));
         try (PDDocument source = Loader.loadPDF(path.toFile(), IOUtils.createTempFileOnlyStreamCache())) {
             assertEquals(581, source.getNumberOfPages());
             assertEquals(2, source.getPage(149).getAnnotations().size()); assertEquals(1, source.getPage(150).getAnnotations().size());
-            byte[] packet = FileParser.pdfPacket(source, List.of(150, 151, 153, 154, 155, 156, 157, 158, 159, 160), 16L * 1024 * 1024);
+            byte[] packet = FileParser.pdfPacket(source, cn.bidcheck.compat.Java8Api.listOf(150, 151, 153, 154, 155, 156, 157, 158, 159, 160), 16L * 1024 * 1024);
             assertTrue(packet.length < 4_000_000, "Annotation page backlinks must not serialize the 148 MB source document");
             try (PDDocument copied = Loader.loadPDF(packet)) {
                 assertEquals(10, copied.getNumberOfPages());
                 assertEquals(2, copied.getPage(0).getAnnotations().size()); assertEquals(1, copied.getPage(1).getAnnotations().size());
-                for (int i = 0; i < 2; i++) for (var annotation : copied.getPage(i).getAnnotations())
+                for (int i = 0; i < 2; i++) for (org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation annotation : copied.getPage(i).getAnnotations())
                     assertSame(copied.getPage(i).getCOSObject(), annotation.getPage().getCOSObject());
             }
-            for (int p : List.of(150, 151)) {
+            for (int p : cn.bidcheck.compat.Java8Api.listOf(150, 151)) {
                 assertTrue(renderSameDocument(source, p).length > 100_000);
-                for (var annotation : source.getPage(p - 1).getAnnotations()) assertFalse(annotation.getCOSObject().containsKey(COSName.AP));
+                for (org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation annotation : source.getPage(p - 1).getAnnotations()) assertFalse(annotation.getCOSObject().containsKey(COSName.AP));
             }
         }
     }
@@ -106,7 +106,7 @@ class FileParserPdfAnnotationsTest {
         return appearance;
     }
     private static byte[] renderSameDocument(PDDocument source, int page) throws Exception {
-        var method = FileParser.class.getDeclaredMethod("renderPdfPage", PDDocument.class, int.class, boolean.class); method.setAccessible(true);
+        java.lang.reflect.Method method = FileParser.class.getDeclaredMethod("renderPdfPage", PDDocument.class, int.class, boolean.class); method.setAccessible(true);
         try { return (byte[]) method.invoke(null, source, page, true); }
         catch (java.lang.reflect.InvocationTargetException failure) { throw (Exception) failure.getCause(); }
     }

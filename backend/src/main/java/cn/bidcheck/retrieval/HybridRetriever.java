@@ -1,4 +1,7 @@
 package cn.bidcheck.retrieval;
+import cn.bidcheck.compat.HexFormat;
+
+import cn.bidcheck.compat.concurrent.Flow;
 
 import cn.bidcheck.domain.Domain.*;
 import com.fasterxml.jackson.core.*;
@@ -10,7 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.io.*;
 import java.net.URI;
-import java.net.http.*;
+import cn.bidcheck.compat.http.*;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -79,15 +82,15 @@ public class HybridRetriever {
         if (concurrency < 1 || concurrency > 8 || !validBudget(totalBudget) || !validBudget(requestBudget)
                 || !validBudget(preparationBudget)) throw new IllegalArgumentException("RETRIEVAL_BUDGET_INVALID");
         this.requested = enabled;
-        this.key = safe(key).strip(); this.embeddingModel = safe(embeddingModel).strip(); this.rerankModel = safe(rerankModel).strip();
+        this.key = cn.bidcheck.compat.Java8Api.strip(safe(key)); this.embeddingModel = cn.bidcheck.compat.Java8Api.strip(safe(embeddingModel)); this.rerankModel = cn.bidcheck.compat.Java8Api.strip(safe(rerankModel));
         this.embeddingUrl = endpoint(embeddingUrl); this.rerankUrl = endpoint(rerankUrl); this.dimensions = dimensions;
-        this.cacheRoot = Path.of(cacheDirectory).toAbsolutePath().normalize();
+        this.cacheRoot = java.nio.file.Paths.get(cacheDirectory).toAbsolutePath().normalize();
         this.totalBudget = totalBudget; this.requestBudget = requestBudget; this.preparationBudget = preparationBudget;
         this.concurrency = concurrency; this.network = new Semaphore(concurrency, true);
-        this.configurationIssue = this.embeddingUrl == null || this.rerankUrl == null || this.key.isBlank()
+        this.configurationIssue = this.embeddingUrl == null || this.rerankUrl == null || cn.bidcheck.compat.Java8Api.isBlank(this.key)
                 || this.key.length() > 4096 || this.key.contains("\n") || this.key.contains("\r")
-                || this.embeddingModel.isBlank() || this.embeddingModel.length() > 160 || !"qwen3-rerank".equals(this.rerankModel)
-                || !Set.of(64,128,256,512,768,1024,1536,2048).contains(dimensions) ? "CONFIGURATION_INVALID" : "";
+                || cn.bidcheck.compat.Java8Api.isBlank(this.embeddingModel) || this.embeddingModel.length() > 160 || !"qwen3-rerank".equals(this.rerankModel)
+                || !cn.bidcheck.compat.Java8Api.setOf(64, 128, 256, 512, 768, 1024, 1536, 2048).contains(dimensions) ? "CONFIGURATION_INVALID" : "";
         vectorIdentity = hash(POLICY + "\n" + this.embeddingUrl + "\n" + this.embeddingModel + "\n" + dimensions);
         for (int i = 0; i < locks.length; i++) locks[i] = new ReentrantLock();
     }
@@ -130,10 +133,10 @@ public class HybridRetriever {
         Audit audit = new Audit(budget, progress);
         audit.values.put("operation", warming ? "PREPARE" : "SEARCH");
         audit.values.put("embeddingBatchSize", BATCH); audit.values.put("embeddingConcurrency", concurrency);
-        List<Scored> ranked = List.of(); Index index = null; String mode = requested ? "BM25_DEGRADED" : "BM25_DISABLED";
+        List<Scored> ranked = cn.bidcheck.compat.Java8Api.listOf(); Index index = null; String mode = requested ? "BM25_DEGRADED" : "BM25_DISABLED";
         String clippedQuery = clip(query, 2000); audit.values.put("queryTruncated", query.length() > clippedQuery.length());
         try {
-            if (document == null || safe(document.projectId()).isBlank() || safe(document.id()).isBlank() || safe(document.sha256()).isBlank()) throw new Failure("DOCUMENT_SCOPE_MISSING");
+            if (document == null || cn.bidcheck.compat.Java8Api.isBlank(safe(document.projectId())) || cn.bidcheck.compat.Java8Api.isBlank(safe(document.id())) || cn.bidcheck.compat.Java8Api.isBlank(safe(document.sha256()))) throw new Failure("DOCUMENT_SCOPE_MISSING");
             String scope = scope(document);
             ReentrantLock lock = locks[Math.floorMod(scope.hashCode(), locks.length)];
             acquire(lock, audit);
@@ -159,9 +162,9 @@ public class HybridRetriever {
             } finally { lock.unlock(); }
             audit.values.put("indexedChunks", index.vectors.length);
             audit.values.put("denseCoverageComplete", true);
-            if (warming) return finish(index, List.of(), "INDEX_READY", limit, audit);
-            if (clippedQuery.isBlank()) throw new Failure("QUERY_EMPTY");
-            double[] queryVector = vectors(index.scope, List.of(clippedQuery), "query", audit).get(0);
+            if (warming) return finish(index, cn.bidcheck.compat.Java8Api.listOf(), "INDEX_READY", limit, audit);
+            if (cn.bidcheck.compat.Java8Api.isBlank(clippedQuery)) throw new Failure("QUERY_EMPTY");
+            double[] queryVector = vectors(index.scope, cn.bidcheck.compat.Java8Api.listOf(clippedQuery), "query", audit).get(0);
             List<Scored> dense = cosine(index.vectors, queryVector);
             audit.denseRanks = rankMap(dense);
             ranked = fuse(ranked, dense);
@@ -181,9 +184,7 @@ public class HybridRetriever {
         List<Evidence> hits = new ArrayList<>(); List<Map<String,Object>> detail = new ArrayList<>();
         for (Scored scored : ranked.subList(0, Math.min(limit, ranked.size()))) {
             Chunk chunk = index.lexical.chunks.get(scored.index()); hits.add(chunk.evidence());
-            detail.add(Map.of("anchor", chunk.evidence().anchor(), "location", chunk.evidence().page(), "scopeHint", chunk.scopeHint(),
-                    "bm25Rank", audit.lexicalRanks.getOrDefault(scored.index(), 0), "denseRank", audit.denseRanks.getOrDefault(scored.index(), 0),
-                    "rankingScore", scored.score()));
+            detail.add(cn.bidcheck.compat.Java8Api.mapOf("anchor", chunk.evidence().anchor(), "location", chunk.evidence().page(), "scopeHint", chunk.scopeHint(), "bm25Rank", audit.lexicalRanks.getOrDefault(scored.index(), 0), "denseRank", audit.denseRanks.getOrDefault(scored.index(), 0), "rankingScore", scored.score()));
         }
         audit.values.put("mode", mode); audit.values.put("embeddingCalls", audit.embeddingCalls.get()); audit.values.put("rerankCalls", audit.rerankCalls.get());
         audit.values.put("vectorSearchExecuted", !audit.denseRanks.isEmpty());
@@ -215,9 +216,9 @@ public class HybridRetriever {
             audit.memoryHits += index.vectors.length; audit.documentChunks = index.vectors.length;
             audit.completedChunks.set(index.vectors.length); reportProgress(audit); return;
         }
-        List<String> texts = index.lexical.chunks.stream().map(Chunk::searchText).toList();
+        List<String> texts = cn.bidcheck.compat.Java8Api.toList(index.lexical.chunks.stream().map(Chunk::searchText));
         List<double[]> vectors = vectors(index.scope, texts, "document", audit);
-        index.vectors = vectors.toArray(double[][]::new); // Publish only a complete, ordered index.
+        index.vectors = vectors.toArray(new double[0][]); // Publish only a complete, ordered index.
     }
 
     private List<double[]> vectors(String scope, List<String> texts, String type, Audit audit) throws IOException {
@@ -254,7 +255,7 @@ public class HybridRetriever {
             while (next < missing.size() || !pending.isEmpty()) {
                 while (firstFailure == null && next < missing.size() && pending.size() < concurrency) {
                     remaining(audit);
-                    List<Integer> positions = List.copyOf(missing.subList(next, Math.min(next + BATCH, missing.size())));
+                    List<Integer> positions = cn.bidcheck.compat.Java8Api.listCopyOf(missing.subList(next, Math.min(next + BATCH, missing.size())));
                     pending.add(completed.submit(() -> embedBatch(scope, texts, positions, type, audit)));
                     next += positions.size();
                     if (document) audit.submittedBatches++;
@@ -269,8 +270,8 @@ public class HybridRetriever {
                     if (document) audit.completedBatches++;
                 } catch (ExecutionException error) {
                     Throwable cause = error.getCause();
-                    if (cause instanceof InterruptedIOException interrupted) throw interrupted;
-                    Failure failure = cause instanceof Failure known ? known : new Failure("EMBEDDING_RESPONSE_INVALID");
+                    if (cause instanceof InterruptedIOException) throw ((InterruptedIOException) (cause));
+                    Failure failure = cause instanceof Failure ? ((Failure) (cause)) : new Failure("EMBEDDING_RESPONSE_INVALID");
                     audit.failures.computeIfAbsent(failure.code, ignored -> new AtomicInteger()).incrementAndGet();
                     if (firstFailure == null) firstFailure = failure;
                     if (document) audit.failedBatches++;
@@ -291,9 +292,8 @@ public class HybridRetriever {
     }
 
     private EmbeddedBatch embedBatch(String scope, List<String> texts, List<Integer> positions, String type, Audit audit) throws IOException {
-        List<String> batch = positions.stream().map(texts::get).toList();
-        JsonNode response = post(embeddingUrl, Map.of("model", embeddingModel, "input", Map.of("texts", batch),
-                "parameters", Map.of("text_type", type, "dimension", dimensions, "output_type", "dense")), "EMBEDDING", audit);
+        List<String> batch = cn.bidcheck.compat.Java8Api.toList(positions.stream().map(texts::get));
+        JsonNode response = post(embeddingUrl, cn.bidcheck.compat.Java8Api.mapOf("model", embeddingModel, "input", cn.bidcheck.compat.Java8Api.mapOf("texts", batch), "parameters", cn.bidcheck.compat.Java8Api.mapOf("text_type", type, "dimension", dimensions, "output_type", "dense")), "EMBEDDING", audit);
         JsonNode embeddings = response.path("output").path("embeddings");
         if (!embeddings.isArray() || embeddings.size() != batch.size()) throw new Failure("EMBEDDING_COUNT_INVALID");
         double[][] ordered = new double[batch.size()][];
@@ -320,10 +320,9 @@ public class HybridRetriever {
     }
 
     private List<Scored> rerank(String query, Index index, List<Scored> candidates, int limit, Audit audit) throws IOException {
-        List<String> documents = candidates.stream().map(scored -> index.lexical.chunks.get(scored.index()).searchText()).toList();
+        List<String> documents = cn.bidcheck.compat.Java8Api.toList(candidates.stream().map(scored -> index.lexical.chunks.get(scored.index()).searchText()));
         int count = Math.min(limit, documents.size());
-        JsonNode response = post(rerankUrl, Map.of("model", rerankModel, "query", query, "documents", documents, "top_n", count,
-                "instruct", "Retrieve source passages supporting the tender requirement. Preserve current assignments and historical project boundaries; similarity does not verify identity or compliance."), "RERANK", audit);
+        JsonNode response = post(rerankUrl, cn.bidcheck.compat.Java8Api.mapOf("model", rerankModel, "query", query, "documents", documents, "top_n", count, "instruct", "Retrieve source passages supporting the tender requirement. Preserve current assignments and historical project boundaries; similarity does not verify identity or compliance."), "RERANK", audit);
         JsonNode results = response.path("results");
         if (!results.isArray() || results.size() != count) throw new Failure("RERANK_COUNT_INVALID");
         Set<Integer> seen = new HashSet<>(); List<Scored> reranked = new ArrayList<>();
@@ -335,7 +334,7 @@ public class HybridRetriever {
             reranked.add(new Scored(candidates.get(position.intValue()).index(), score.doubleValue()));
         }
         reranked.sort(Comparator.comparingDouble(Scored::score).reversed().thenComparingInt(Scored::index));
-        return List.copyOf(reranked);
+        return cn.bidcheck.compat.Java8Api.listCopyOf(reranked);
     }
 
     private JsonNode post(URI uri, Object body, String stage, Audit audit) throws IOException {
@@ -351,17 +350,17 @@ public class HybridRetriever {
             long budget = Math.min(operationRemaining, requestBudget.toNanos());
             byte[] bytes = json.writeValueAsBytes(body);
             if (bytes.length > 700_000) throw new Failure(stage + "_INPUT_LIMIT");
-            var request = HttpRequest.newBuilder(uri).timeout(Duration.ofNanos(budget)).header("Content-Type", "application/json; charset=utf-8")
+            cn.bidcheck.compat.http.HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofNanos(budget)).header("Content-Type", "application/json; charset=utf-8")
                     .header("Authorization", "Bearer " + key).POST(HttpRequest.BodyPublishers.ofByteArray(bytes)).build();
             started = System.nanoTime(); startedRequest = true;
             audit.peakInFlight.accumulateAndGet(audit.activeRequests.incrementAndGet(), Math::max);
             ("EMBEDDING".equals(stage) ? audit.embeddingCalls : audit.rerankCalls).incrementAndGet();
             pending = client.sendAsync(request, ignored -> new LimitedBody(RESPONSE_LIMIT));
-            var response = pending.get(budget, TimeUnit.NANOSECONDS);
+            cn.bidcheck.compat.http.HttpResponse<byte[]> response = pending.get(budget, TimeUnit.NANOSECONDS);
             if (response.statusCode() != 200) throw new Failure(stage + "_HTTP_" + response.statusCode());
             JsonNode parsed;
             try { parsed = json.readTree(response.body()); } catch (IOException malformed) { throw new Failure(stage + "_RESPONSE_INVALID"); }
-            if (parsed == null || !parsed.isObject() || !parsed.path("code").asText("").isBlank()
+            if (parsed == null || !parsed.isObject() || !cn.bidcheck.compat.Java8Api.isBlank(parsed.path("code").asText(""))
                     || (parsed.has("model") && !parsed.path("model").asText().equals(stage.equals("EMBEDDING") ? embeddingModel : rerankModel))) throw new Failure(stage + "_ENVELOPE_INVALID");
             return parsed;
         } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new InterruptedIOException("检索已中断。"); }
@@ -433,13 +432,13 @@ public class HybridRetriever {
             scores.add(new Scored(i, Math.max(-1, Math.min(1, score))));
         }
         scores.sort(Comparator.comparingDouble(Scored::score).reversed().thenComparingInt(Scored::index));
-        return List.copyOf(scores.subList(0, Math.min(TOP_K,scores.size())));
+        return cn.bidcheck.compat.Java8Api.listCopyOf(scores.subList(0, Math.min(TOP_K,scores.size())));
     }
     static List<Scored> fuse(List<Scored> lexical, List<Scored> dense) {
         Map<Integer,Double> scores = new HashMap<>();
-        for (List<Scored> route : List.of(lexical,dense)) for (int i = 0; i < route.size(); i++) scores.merge(route.get(i).index(),1d/(60+i+1),Double::sum);
-        return scores.entrySet().stream().map(e->new Scored(e.getKey(),e.getValue()))
-                .sorted(Comparator.comparingDouble(Scored::score).reversed().thenComparingInt(Scored::index)).toList();
+        for (List<Scored> route : cn.bidcheck.compat.Java8Api.listOf(lexical, dense)) for (int i = 0; i < route.size(); i++) scores.merge(route.get(i).index(),1d/(60+i+1),Double::sum);
+        return cn.bidcheck.compat.Java8Api.toList(scores.entrySet().stream().map(e->new Scored(e.getKey(),e.getValue()))
+                .sorted(Comparator.comparingDouble(Scored::score).reversed().thenComparingInt(Scored::index)));
     }
     private static Map<Integer,Integer> rankMap(List<Scored> ranked) {
         Map<Integer,Integer> ranks = new HashMap<>(); for(int i=0;i<ranked.size();i++)ranks.put(ranked.get(i).index(),i+1); return ranks;
@@ -452,14 +451,14 @@ public class HybridRetriever {
     private static URI endpoint(String value) {
         try {
             if (value == null || value.length()>2048) return null;
-            URI uri=URI.create(value.strip());
+            URI uri=URI.create(cn.bidcheck.compat.Java8Api.strip(value));
             return uri.getHost()!=null && uri.getUserInfo()==null && uri.getFragment()==null && uri.getQuery()==null
                     && ("https".equalsIgnoreCase(uri.getScheme()) || ("http".equalsIgnoreCase(uri.getScheme()) && "127.0.0.1".equals(uri.getHost()))) ? uri : null;
         } catch (IllegalArgumentException invalid) { return null; }
     }
     private static String scope(Document document) throws InterruptedIOException {
         MessageDigest digest=digest();
-        for (String value : List.of(safe(document.projectId()),safe(document.id()),Integer.toString(document.version()),safe(document.sha256()))) update(digest,value);
+        for (String value : cn.bidcheck.compat.Java8Api.listOf(safe(document.projectId()), safe(document.id()), Integer.toString(document.version()), safe(document.sha256()))) update(digest,value);
         if(document.pages()==null || document.pages().size()>20_000)throw new IllegalArgumentException("DOCUMENT_LIMIT");
         long characters=0;
         for(Page page:document.pages()) { interrupted(); if(page==null)throw new IllegalArgumentException("DOCUMENT_INVALID");
@@ -528,10 +527,21 @@ public class HybridRetriever {
         final AtomicLong requestNanos = new AtomicLong(), queueNanos = new AtomicLong();
         int cacheHits, memoryHits, cacheInvalid, documentChunks, cachedDocumentChunks, totalBatches,
                 submittedBatches, completedBatches, failedBatches, cancelledBatches;
-        Map<Integer,Integer> lexicalRanks=Map.of(),denseRanks=Map.of();
+        Map<Integer,Integer> lexicalRanks=cn.bidcheck.compat.Java8Api.mapOf(),denseRanks=cn.bidcheck.compat.Java8Api.mapOf();
         Audit(Duration budget, Consumer<Map<String,Object>> progress) { this.budget = budget; this.deadline = started + budget.toNanos(); this.progress = progress; }
     }
-    private record EmbeddedBatch(List<Integer> positions, double[][] vectors) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class EmbeddedBatch {
+        private final List<Integer> positions;
+        private final double[][] vectors;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private EmbeddedBatch(@com.fasterxml.jackson.annotation.JsonProperty("positions") List<Integer> positions, @com.fasterxml.jackson.annotation.JsonProperty("vectors") double[][] vectors) { this.positions = positions; this.vectors = vectors; }
+        public List<Integer> positions() { return positions; }
+        public double[][] vectors() { return vectors; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; EmbeddedBatch that = (EmbeddedBatch) other; return java.util.Objects.equals(this.positions, that.positions) && java.util.Objects.equals(this.vectors, that.vectors); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.positions); hash = 31 * hash + java.util.Objects.hashCode(this.vectors); return hash; }
+        @Override public String toString() { return "EmbeddedBatch[" + "positions=" + positions + ", vectors=" + vectors + "]"; }
+ }
     private static final class ProgressFailure extends RuntimeException {
         final RuntimeException original; ProgressFailure(RuntimeException original) { this.original = original; }
     }
@@ -540,7 +550,7 @@ public class HybridRetriever {
         final int limit;final ByteArrayOutputStream bytes=new ByteArrayOutputStream();final CompletableFuture<byte[]> result=new CompletableFuture<>();Flow.Subscription subscription;
         LimitedBody(int limit){this.limit=limit;} public CompletionStage<byte[]> getBody(){return result;}
         public void onSubscribe(Flow.Subscription subscription){this.subscription=subscription;subscription.request(1);}
-        public void onNext(List<ByteBuffer> items){for(ByteBuffer item:items){if((long)bytes.size()+item.remaining()>limit){subscription.cancel();result.completeExceptionally(new IOException("RESPONSE_LIMIT"));return;}byte[] chunk=new byte[item.remaining()];item.get(chunk);bytes.writeBytes(chunk);}subscription.request(1);}
+        public void onNext(List<ByteBuffer> items){for(ByteBuffer item:items){if((long)bytes.size()+item.remaining()>limit){subscription.cancel();result.completeExceptionally(new IOException("RESPONSE_LIMIT"));return;}byte[] chunk=new byte[item.remaining()];item.get(chunk);cn.bidcheck.compat.Java8Extras.writeBytes(bytes, chunk);}subscription.request(1);}
         public void onError(Throwable error){result.completeExceptionally(error);}public void onComplete(){result.complete(bytes.toByteArray());}
     }
 }

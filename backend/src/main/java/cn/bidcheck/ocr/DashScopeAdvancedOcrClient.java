@@ -1,10 +1,11 @@
 package cn.bidcheck.ocr;
+import cn.bidcheck.compat.HexFormat;
 
 import com.fasterxml.jackson.core.*;
 import com.fasterxml.jackson.databind.*;
 import java.io.*;
 import java.net.URI;
-import java.net.http.*;
+import cn.bidcheck.compat.http.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.security.*;
@@ -40,7 +41,7 @@ public final class DashScopeAdvancedOcrClient implements OcrClient {
         this(enabled, url, key, model, data, concurrency, OcrRequestSettings.defaults());
     }
     public DashScopeAdvancedOcrClient(boolean enabled, String url, String key, String model, String data, int concurrency, OcrRequestSettings settings) {
-        this(enabled, url, key, model, Path.of(data).resolve("ocr-advanced-cache"), Duration.ofSeconds(60), false, concurrency, settings);
+        this(enabled, url, key, model, java.nio.file.Paths.get(data).resolve("ocr-advanced-cache"), Duration.ofSeconds(60), false, concurrency, settings);
     }
     /** Local HTTP is available only through this explicit package-private mock seam. */
     DashScopeAdvancedOcrClient(boolean enabled, String url, String key, String model, Path cache,
@@ -53,13 +54,13 @@ public final class DashScopeAdvancedOcrClient implements OcrClient {
         if (timeout == null || timeout.isNegative() || timeout.isZero() || timeout.compareTo(Duration.ofSeconds(60)) > 0)
             throw new IllegalArgumentException("OCR 请求超时必须大于 0 且不超过 60 秒。");
         this.settings = Objects.requireNonNull(settings);
-        this.key = key == null ? "" : key.strip(); this.model = model == null ? "" : model.strip();
+        this.key = key == null ? "" : cn.bidcheck.compat.Java8Api.strip(key); this.model = model == null ? "" : cn.bidcheck.compat.Java8Api.strip(model);
         this.cache = cache.toAbsolutePath().normalize(); this.timeout = timeout;
         URI parsed = null;
-        boolean valid = enabled && !this.key.isBlank() && this.key.length() <= 4096 && !this.key.contains("\n") && !this.key.contains("\r")
+        boolean valid = enabled && !cn.bidcheck.compat.Java8Api.isBlank(this.key) && this.key.length() <= 4096 && !this.key.contains("\n") && !this.key.contains("\r")
                 && this.model.matches("[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}") && url != null && url.length() <= 2048;
         if (valid) try {
-            parsed = URI.create(url.strip());
+            parsed = URI.create(cn.bidcheck.compat.Java8Api.strip(url));
             valid = parsed.getHost() != null && parsed.getRawUserInfo() == null && parsed.getRawQuery() == null && parsed.getRawFragment() == null
                     && !parsed.getPath().contains("/compatible-mode/") && !parsed.getPath().endsWith("/chat/completions")
                     && ("https".equalsIgnoreCase(parsed.getScheme()) || allowLoopbackTest && "http".equalsIgnoreCase(parsed.getScheme()) && "127.0.0.1".equals(parsed.getHost()));
@@ -82,7 +83,7 @@ public final class DashScopeAdvancedOcrClient implements OcrClient {
         OcrResult hit = readCache(path, frame);
         if (hit != null) { interrupted(); governor.cacheHit(); return hit; }
         try {
-            var shared = governor.singleFlight(cacheKey, timeout, () -> recognizeUncached(image, mimeType, path, frame));
+            cn.bidcheck.ocr.OcrRequestGovernor.Shared<cn.bidcheck.ocr.OcrResult> shared = governor.singleFlight(cacheKey, timeout, () -> recognizeUncached(image, mimeType, path, frame));
             OcrResult result = shared.value();
             return shared.reused() ? new OcrResult(result.text(), result.provider(), result.model(), true, result.layout()) : result;
         } catch (AdvancedOcrException controlled) { throw controlled; }
@@ -93,10 +94,7 @@ public final class DashScopeAdvancedOcrClient implements OcrClient {
         try {
             OcrResult hit = readCache(path, frame); if (hit != null) { interrupted(); governor.cacheHit(); return hit; }
             interrupted();
-            var payload = Map.of("model", model, "input", Map.of("messages", List.of(Map.of("role", "user", "content", List.of(
-                    Map.of("image", "data:" + mimeType + ";base64," + Base64.getEncoder().encodeToString(image),
-                            "min_pixels", 3072, "max_pixels", 8388608, "enable_rotate", false))))),
-                    "parameters", Map.of("max_tokens", 8192, "temperature", 0, "ocr_options", Map.of("task", TASK)));
+            java.util.Map<java.lang.String, java.lang.Object> payload = cn.bidcheck.compat.Java8Api.mapOf("model", model, "input", cn.bidcheck.compat.Java8Api.mapOf("messages", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("role", "user", "content", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("image", "data:" + mimeType + ";base64," + Base64.getEncoder().encodeToString(image), "min_pixels", 3072, "max_pixels", 8388608, "enable_rotate", false))))), "parameters", cn.bidcheck.compat.Java8Api.mapOf("max_tokens", 8192, "temperature", 0, "ocr_options", cn.bidcheck.compat.Java8Api.mapOf("task", TASK)));
             byte[] requestBytes = json.writeValueAsBytes(payload); interrupted();
             HttpResponse<byte[]> response = governor.send(client, endpoint, key, requestBytes, MAX_RESPONSE, timeout, settings);
             if (response.headers().firstValue("x-dashscope-partialresponse").map("true"::equalsIgnoreCase).orElse(false)) throw failure("PARTIAL_RESPONSE");
@@ -126,14 +124,14 @@ public final class DashScopeAdvancedOcrClient implements OcrClient {
         for (JsonNode word : words) {
             if (!word.isObject() || !word.path("text").isTextual()) throw failure("INVALID_WORD");
             String value = word.path("text").textValue();
-            if (value.isBlank() || value.length() > 10000 || value.indexOf('\0') >= 0) throw failure("INVALID_WORD");
-            if (!text.isEmpty()) text.append('\n'); text.append(value);
+            if (cn.bidcheck.compat.Java8Api.isBlank(value) || value.length() > 10000 || value.indexOf('\0') >= 0) throw failure("INVALID_WORD");
+            if (!(text.length() == 0)) text.append('\n'); text.append(value);
             if (text.length() > MAX_TEXT) throw failure("TEXT_LIMIT");
             OcrLayout.Box bbox = rectangle(word.path("rotate_rect"), frame.width(), frame.height());
             String id = "w" + (boxes.size() + 1); order.add(id); boxes.add(new OcrLayout.TextBox(id, frame.id(), value, bbox, null, "NATIVE_OCR"));
         }
-        OcrLayout layout = new OcrLayout(OcrLayout.VERSION, "COMPLETE", OcrLayout.COORDINATES, List.of(frame), boxes, List.of(), order,
-                List.of("文字和像素框来自同次原生高精 OCR 响应；旋转框转为轴对齐外包框。仅覆盖返回的文字行，不保证图中所有文字已识别；不提供表格关系或身份、签章核验。"));
+        OcrLayout layout = new OcrLayout(OcrLayout.VERSION, "COMPLETE", OcrLayout.COORDINATES, cn.bidcheck.compat.Java8Api.listOf(frame), boxes, cn.bidcheck.compat.Java8Api.listOf(), order,
+                cn.bidcheck.compat.Java8Api.listOf("文字和像素框来自同次原生高精 OCR 响应；旋转框转为轴对齐外包框。仅覆盖返回的文字行，不保证图中所有文字已识别；不提供表格关系或身份、签章核验。"));
         try { layout = layout.validated(text.toString()); } catch (IllegalArgumentException invalid) { throw failure("INVALID_GEOMETRY"); }
         return new OcrResult(text.toString(), PROVIDER, model, cached, layout);
     }
@@ -156,7 +154,7 @@ public final class DashScopeAdvancedOcrClient implements OcrClient {
     private OcrResult readCache(Path path, OcrLayout.Frame frame) {
         try {
             if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || Files.size(path) > MAX_CACHE) return null;
-            byte[] bytes; try (var in = Files.newInputStream(path)) { bytes = in.readNBytes(MAX_CACHE + 1); } if (bytes.length > MAX_CACHE) return null;
+            byte[] bytes; try (java.io.InputStream in = Files.newInputStream(path)) { bytes = cn.bidcheck.compat.Java8Api.readNBytes(in, MAX_CACHE + 1); } if (bytes.length > MAX_CACHE) return null;
             JsonNode stored = json.readTree(bytes), words = stored.path("words");
             if (!identity.equals(stored.path("identity").asText()) || !frame.imageHash().equals(stored.path("imageHash").asText())
                     || !model.equals(stored.path("model").asText()) || !digest(json.writeValueAsBytes(words)).equals(stored.path("wordsHash").asText())) return null;
@@ -168,10 +166,9 @@ public final class DashScopeAdvancedOcrClient implements OcrClient {
         try {
             // Store only the recognized source lines and their original rectangles, not provider metadata.
             List<Map<String,Object>> rows = new ArrayList<>();
-            for (JsonNode word : words) rows.add(Map.of("text", word.path("text").textValue(), "rotate_rect", word.path("rotate_rect")));
+            for (JsonNode word : words) rows.add(cn.bidcheck.compat.Java8Api.mapOf("text", word.path("text").textValue(), "rotate_rect", word.path("rotate_rect")));
             JsonNode canonicalWords = json.valueToTree(rows);
-            byte[] bytes = json.writeValueAsBytes(Map.of("identity", identity, "imageHash", imageHash, "model", model,
-                    "words", canonicalWords, "wordsHash", digest(json.writeValueAsBytes(canonicalWords))));
+            byte[] bytes = json.writeValueAsBytes(cn.bidcheck.compat.Java8Api.mapOf("identity", identity, "imageHash", imageHash, "model", model, "words", canonicalWords, "wordsHash", digest(json.writeValueAsBytes(canonicalWords))));
             if (bytes.length > MAX_CACHE) return;
             Files.createDirectories(cache); temporary = Files.createTempFile(cache, "advanced-", ".tmp"); Files.write(temporary, bytes);
             Files.move(temporary, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
@@ -179,9 +176,9 @@ public final class DashScopeAdvancedOcrClient implements OcrClient {
         finally { if (temporary != null) try { Files.deleteIfExists(temporary); } catch (IOException ignored) { } }
     }
     private static OcrLayout.Frame frame(byte[] image, String mime) throws IOException {
-        if (image == null || image.length < 8 || image.length > MAX_IMAGE || mime == null || !Set.of("image/png", "image/jpeg").contains(mime)) throw failure("INVALID_IMAGE");
-        try (var input = new MemoryCacheImageInputStream(new ByteArrayInputStream(image))) {
-            var readers = ImageIO.getImageReaders(input); if (!readers.hasNext()) throw failure("INVALID_IMAGE"); var reader = readers.next();
+        if (image == null || image.length < 8 || image.length > MAX_IMAGE || mime == null || !cn.bidcheck.compat.Java8Api.setOf("image/png", "image/jpeg").contains(mime)) throw failure("INVALID_IMAGE");
+        try (javax.imageio.stream.MemoryCacheImageInputStream input = new MemoryCacheImageInputStream(new ByteArrayInputStream(image))) {
+            java.util.Iterator<javax.imageio.ImageReader> readers = ImageIO.getImageReaders(input); if (!readers.hasNext()) throw failure("INVALID_IMAGE"); javax.imageio.ImageReader reader = readers.next();
             try {
                 reader.setInput(input, true, true); String format = reader.getFormatName();
                 if (!("image/png".equals(mime) && "png".equalsIgnoreCase(format)) && !("image/jpeg".equals(mime) && "jpeg".equalsIgnoreCase(format))) throw failure("INVALID_IMAGE");

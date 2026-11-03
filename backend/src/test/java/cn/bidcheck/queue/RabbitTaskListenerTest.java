@@ -16,7 +16,7 @@ class RabbitTaskListenerTest {
         TaskWorker worker=mock(TaskWorker.class);Channel channel=mock(Channel.class);
         when(worker.tryStart(ID)).thenReturn(TaskWorker.Acceptance.STARTED);
         new RabbitTaskListener(worker).accept(message(),channel);
-        var order=inOrder(worker,channel);order.verify(worker).tryStart(ID);order.verify(channel).basicAck(7,false);
+        org.mockito.InOrder order=inOrder(worker,channel);order.verify(worker).tryStart(ID);order.verify(channel).basicAck(7,false);
     }
     @Test void busySignalIsAcknowledgedBecausePendingDbTaskRemainsRecoverable() throws Exception {
         TaskWorker worker=mock(TaskWorker.class);Channel channel=mock(Channel.class);

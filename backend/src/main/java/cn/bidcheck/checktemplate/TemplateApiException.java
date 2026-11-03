@@ -15,7 +15,7 @@ public final class TemplateApiException extends RuntimeException {
     public TemplateApiException(HttpStatus status,String code,String message,boolean retryable,
                                 List<Map<String,Object>> fieldErrors,Integer currentRevision) {
         super(message);this.status=status;this.code=code;this.retryable=retryable;
-        this.fieldErrors=fieldErrors==null?List.of():List.copyOf(fieldErrors);this.currentRevision=currentRevision;
+        this.fieldErrors=fieldErrors==null?cn.bidcheck.compat.Java8Api.listOf():cn.bidcheck.compat.Java8Api.listCopyOf(fieldErrors);this.currentRevision=currentRevision;
     }
     public HttpStatus status(){return status;}
     public String code(){return code;}
@@ -24,7 +24,7 @@ public final class TemplateApiException extends RuntimeException {
     public Integer currentRevision(){return currentRevision;}
 
     public static TemplateApiException conflict(String code,String message,int currentRevision) {
-        return new TemplateApiException(HttpStatus.CONFLICT,code,message,false,List.of(),currentRevision);
+        return new TemplateApiException(HttpStatus.CONFLICT,code,message,false,cn.bidcheck.compat.Java8Api.listOf(),currentRevision);
     }
     public static TemplateApiException invalid(String message,List<Map<String,Object>> fieldErrors) {
         return new TemplateApiException(HttpStatus.BAD_REQUEST,"SPEC_VALIDATION_FAILED",message,false,fieldErrors,null);

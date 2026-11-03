@@ -41,13 +41,13 @@ public final class FactLedgerEvidenceGraphBridge {
                                          Collection<EvidenceNeed> activeNeeds) {
         LinkedHashMap<String,Map<String,Object>> occurrences=new LinkedHashMap<>();
         LinkedHashSet<String> engines=new LinkedHashSet<>();
-        for(String identity:ledgerIdentities==null?List.<String>of():ledgerIdentities){if(identity==null||identity.isBlank()||!engines.add(identity))continue;
+        for(String identity:ledgerIdentities==null?cn.bidcheck.compat.Java8Api.<String>listOf():ledgerIdentities){if(identity==null||cn.bidcheck.compat.Java8Api.isBlank(identity)||!engines.add(identity))continue;
             Map<String,Object> view=ledger.view(projectId,runId,identity,manifest);
-            for(Map<String,Object> occurrence:maps(view.get("occurrences"))){String id=Objects.toString(occurrence.get("occurrenceId"),"");if(!id.isBlank())occurrences.putIfAbsent(id,occurrence);}
+            for(Map<String,Object> occurrence:maps(view.get("occurrences"))){String id=Objects.toString(occurrence.get("occurrenceId"),"");if(!cn.bidcheck.compat.Java8Api.isBlank(id))occurrences.putIfAbsent(id,occurrence);}
         }
-        String graphIdentity="project-evidence|"+String.join("|",engines.stream().sorted().toList());
+        String graphIdentity="project-evidence|"+String.join("|",cn.bidcheck.compat.Java8Api.toList(engines.stream().sorted()));
         Map<String,Object> merged=new LinkedHashMap<>();merged.put("occurrences",new ArrayList<>(occurrences.values()));
-        merged.put("sourceLedgerIdentities",engines.stream().sorted().toList());
+        merged.put("sourceLedgerIdentities",cn.bidcheck.compat.Java8Api.toList(engines.stream().sorted()));
         EvidenceGraph.BuildResult result=graphs.build(projectId,graphIdentity,manifest,merged,previousRevisionId);
         return new RefreshResult(result,EvidenceGraphDependencyAdapter.affectedNeedKeys(activeNeeds,result.changedDependencyKeys()));
     }
@@ -69,15 +69,15 @@ public final class FactLedgerEvidenceGraphBridge {
      */
     public PriorEvidenceReuse reusableCurrentProjectOccurrences(String projectId,String revisionId,
                                                                  List<Document> manifest) {
-        if(projectId==null||projectId.isBlank()||revisionId==null||revisionId.isBlank())
+        if(projectId==null||cn.bidcheck.compat.Java8Api.isBlank(projectId)||revisionId==null||cn.bidcheck.compat.Java8Api.isBlank(revisionId))
             return PriorEvidenceReuse.empty(revisionId,"GRAPH_REVISION_NOT_SELECTED");
-        var found=graphs.find(projectId,revisionId);
-        if(found.isEmpty())return PriorEvidenceReuse.empty(revisionId,"GRAPH_REVISION_NOT_FOUND");
+        java.util.Optional<cn.bidcheck.verification.graph.EvidenceGraph.Snapshot> found=graphs.find(projectId,revisionId);
+        if((!found.isPresent()))return PriorEvidenceReuse.empty(revisionId,"GRAPH_REVISION_NOT_FOUND");
         EvidenceGraph.Snapshot snapshot=found.get();
         if(!EvidenceGraphService.VERSION.equals(snapshot.revision().builderVersion()))
             return PriorEvidenceReuse.empty(revisionId,"GRAPH_BUILDER_VERSION_CHANGED");
         Set<String> currentManifest=new LinkedHashSet<>();
-        for(Document document:manifest==null?List.<Document>of():manifest){
+        for(Document document:manifest==null?cn.bidcheck.compat.Java8Api.<Document>listOf():manifest){
             if(document==null||!projectId.equals(document.projectId()))
                 return PriorEvidenceReuse.empty(revisionId,"GRAPH_MANIFEST_PROJECT_MISMATCH");
             currentManifest.add(document.id()+"@"+document.version()+"@"+document.sha256().toLowerCase());
@@ -87,35 +87,51 @@ public final class FactLedgerEvidenceGraphBridge {
                 .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
         if(currentManifest.isEmpty()||!currentManifest.equals(storedManifest))
             return PriorEvidenceReuse.empty(revisionId,"GRAPH_MANIFEST_CHANGED");
-        List<EvidenceGraph.Relation> eligible=snapshot.relations().stream()
+        List<EvidenceGraph.Relation> eligible=cn.bidcheck.compat.Java8Api.toList(snapshot.relations().stream()
                 .filter(edge->edge.status()==EvidenceGraph.RelationStatus.SUPPORTED)
-                .filter(edge->"CURRENT_PROJECT".equals(edge.scope())).toList();
+                .filter(edge->"CURRENT_PROJECT".equals(edge.scope())));
         Set<String> occurrenceIds=eligible.stream().map(EvidenceGraph.Relation::sourceOccurrenceId)
                 .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
-        List<Map<String,Object>> revalidated=ledger.revalidateOccurrences(projectId,occurrenceIds,manifest).stream()
-                .filter(row->{Object fact=row.get("fact");return fact instanceof Map<?,?> value
-                        &&"CURRENT_PROJECT".equals(Objects.toString(value.get("scope"),""));})
-                .toList();
-        Map<String,Object> audit=Map.of("revisionId",revisionId,"status","REVALIDATED",
-                "graphRelationCount",snapshot.relations().size(),"supportedCurrentRelationCount",eligible.size(),
-                "selectedOccurrenceCount",occurrenceIds.size(),"acceptedOccurrenceCount",revalidated.size(),
-                "candidateEdgesAccepted",0,"historicalEdgesAccepted",0,"unresolvedEdgesAccepted",0,
-                "businessDecisionReused",false);
+        List<Map<String,Object>> revalidated=cn.bidcheck.compat.Java8Api.toList(ledger.revalidateOccurrences(projectId,occurrenceIds,manifest).stream()
+                .filter(row->{Object fact=row.get("fact");return fact instanceof Map<?,?>
+                        &&"CURRENT_PROJECT".equals(Objects.toString(((Map<?,?>) (fact)).get("scope"),""));}));
+        Map<String,Object> audit=cn.bidcheck.compat.Java8Api.mapOf("revisionId", revisionId, "status", "REVALIDATED", "graphRelationCount", snapshot.relations().size(), "supportedCurrentRelationCount", eligible.size(), "selectedOccurrenceCount", occurrenceIds.size(), "acceptedOccurrenceCount", revalidated.size(), "candidateEdgesAccepted", 0, "historicalEdgesAccepted", 0, "unresolvedEdgesAccepted", 0, "businessDecisionReused", false);
         return new PriorEvidenceReuse(revalidated,audit);
     }
 
     /** changedEvidenceNeedKeys can be passed directly to TemplateDependencyGraphService.plan(). */
-    public record RefreshResult(EvidenceGraph.BuildResult graph,Set<String> changedEvidenceNeedKeys) {
-        public RefreshResult {graph=Objects.requireNonNull(graph);changedEvidenceNeedKeys=changedEvidenceNeedKeys==null?Set.of():Set.copyOf(changedEvidenceNeedKeys);}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public static final class RefreshResult {
+        private final EvidenceGraph.BuildResult graph;
+        private final Set<String> changedEvidenceNeedKeys;
+        public EvidenceGraph.BuildResult graph() { return graph; }
+        public Set<String> changedEvidenceNeedKeys() { return changedEvidenceNeedKeys; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; RefreshResult that = (RefreshResult) other; return java.util.Objects.equals(this.graph, that.graph) && java.util.Objects.equals(this.changedEvidenceNeedKeys, that.changedEvidenceNeedKeys); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.graph); hash = 31 * hash + java.util.Objects.hashCode(this.changedEvidenceNeedKeys); return hash; }
+        @Override public String toString() { return "RefreshResult[" + "graph=" + graph + ", changedEvidenceNeedKeys=" + changedEvidenceNeedKeys + "]"; }
+
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public RefreshResult(@com.fasterxml.jackson.annotation.JsonProperty("graph") EvidenceGraph.BuildResult graph, @com.fasterxml.jackson.annotation.JsonProperty("changedEvidenceNeedKeys") Set<String> changedEvidenceNeedKeys) {graph=Objects.requireNonNull(graph);changedEvidenceNeedKeys=changedEvidenceNeedKeys==null?cn.bidcheck.compat.Java8Api.setOf():cn.bidcheck.compat.Java8Api.setCopyOf(changedEvidenceNeedKeys);
+            this.graph = graph; this.changedEvidenceNeedKeys = changedEvidenceNeedKeys;
+        }
     }
 
-    public record PriorEvidenceReuse(List<Map<String,Object>> occurrences,Map<String,Object> audit) {
-        public PriorEvidenceReuse {occurrences=occurrences==null?List.of():List.copyOf(occurrences);audit=audit==null?Map.of():Map.copyOf(audit);}
-        static PriorEvidenceReuse empty(String revisionId,String reason){return new PriorEvidenceReuse(List.of(),Map.of(
-                "revisionId",Objects.toString(revisionId,""),"status","NOT_REUSED","reason",reason,
-                "acceptedOccurrenceCount",0,"candidateEdgesAccepted",0,"historicalEdgesAccepted",0,
-                "unresolvedEdgesAccepted",0,"businessDecisionReused",false));}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public static final class PriorEvidenceReuse {
+        private final List<Map<String,Object>> occurrences;
+        private final Map<String,Object> audit;
+        public List<Map<String,Object>> occurrences() { return occurrences; }
+        public Map<String,Object> audit() { return audit; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; PriorEvidenceReuse that = (PriorEvidenceReuse) other; return java.util.Objects.equals(this.occurrences, that.occurrences) && java.util.Objects.equals(this.audit, that.audit); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.occurrences); hash = 31 * hash + java.util.Objects.hashCode(this.audit); return hash; }
+        @Override public String toString() { return "PriorEvidenceReuse[" + "occurrences=" + occurrences + ", audit=" + audit + "]"; }
+
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public PriorEvidenceReuse(@com.fasterxml.jackson.annotation.JsonProperty("occurrences") List<Map<String,Object>> occurrences, @com.fasterxml.jackson.annotation.JsonProperty("audit") Map<String,Object> audit) {occurrences=occurrences==null?cn.bidcheck.compat.Java8Api.listOf():cn.bidcheck.compat.Java8Api.listCopyOf(occurrences);audit=audit==null?cn.bidcheck.compat.Java8Api.mapOf():cn.bidcheck.compat.Java8Api.mapCopyOf(audit);
+            this.occurrences = occurrences; this.audit = audit;
+        }
+        static PriorEvidenceReuse empty(String revisionId,String reason){return new PriorEvidenceReuse(cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.mapOf("revisionId", Objects.toString(revisionId,""), "status", "NOT_REUSED", "reason", reason, "acceptedOccurrenceCount", 0, "candidateEdgesAccepted", 0, "historicalEdgesAccepted", 0, "unresolvedEdgesAccepted", 0, "businessDecisionReused", false));}
     }
 
-    private static List<Map<String,Object>> maps(Object value){if(!(value instanceof Collection<?> rows))return List.of();List<Map<String,Object>> out=new ArrayList<>();for(Object row:rows)if(row instanceof Map<?,?> map){Map<String,Object> copy=new LinkedHashMap<>();map.forEach((key,item)->copy.put(String.valueOf(key),item));out.add(copy);}return out;}
+    private static List<Map<String,Object>> maps(Object value){if(!(value instanceof Collection<?>))return cn.bidcheck.compat.Java8Api.listOf();List<Map<String,Object>> out=new ArrayList<>();for(Object row:((Collection<?>) (value)))if(row instanceof Map<?,?>){Map<String,Object> copy=new LinkedHashMap<>();((Map<?,?>) (row)).forEach((key,item)->copy.put(String.valueOf(key),item));out.add(copy);}return out;}
 }

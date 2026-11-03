@@ -10,7 +10,18 @@ import java.util.regex.*;
 public final class BidLetterResponseProof {
     private BidLetterResponseProof() {}
     public static final String VERSION="bid-letter-response-1";
-    public record Decision(Evaluation evaluation,Map<String,Object> proof) {}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public static final class Decision {
+        private final Evaluation evaluation;
+        private final Map<String,Object> proof;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public Decision(@com.fasterxml.jackson.annotation.JsonProperty("evaluation") Evaluation evaluation, @com.fasterxml.jackson.annotation.JsonProperty("proof") Map<String,Object> proof) { this.evaluation = evaluation; this.proof = proof; }
+        public Evaluation evaluation() { return evaluation; }
+        public Map<String,Object> proof() { return proof; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Decision that = (Decision) other; return java.util.Objects.equals(this.evaluation, that.evaluation) && java.util.Objects.equals(this.proof, that.proof); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.evaluation); hash = 31 * hash + java.util.Objects.hashCode(this.proof); return hash; }
+        @Override public String toString() { return "Decision[" + "evaluation=" + evaluation + ", proof=" + proof + "]"; }
+}
     private static final Pattern VALIDITY=Pattern.compile("投标有效期(?:为|是|[:：]|\\s|[（(])*([0-9]+)\\s*(天|日历天|日)(?!历?工作)");
     public static Optional<Decision> evaluate(Checkpoint cp,Document bid,Document tender) {
         if(cp==null||bid==null||!cp.enabled()||!cp.confirmed())return Optional.empty();
@@ -32,7 +43,7 @@ public final class BidLetterResponseProof {
                 while(m.find())values.add(m.group(1));
             }
             if(values.isEmpty())continue;
-            actuals.addAll(values);sources.add(evidence);bindings.add(Map.of("page",page.number(),"sourceScope",proof,"values",values));
+            actuals.addAll(values);sources.add(evidence);bindings.add(cn.bidcheck.compat.Java8Api.mapOf("page", page.number(), "sourceScope", proof, "values", values));
         }
         if(actuals.isEmpty())return Optional.empty();
         String target=mode.equals("DURATION_DECLARATION")?"满足":"合格",operator="=";
@@ -52,23 +63,23 @@ public final class BidLetterResponseProof {
         if(actuals.size()!=1)return Optional.of(decision("UNDETERMINED","当前投标函的同一响应字段存在多个取值，需核对版本及适用范围。",sources,mode,bindings,actuals,requirementSources));
         String actual=actuals.iterator().next();boolean passed;
         if(mode.equals("VALIDITY")) {
-            if(!target.matches("[0-9]+")||!Set.of("=",">=","<=",">","<").contains(operator))return Optional.empty();
+            if(!target.matches("[0-9]+")||!cn.bidcheck.compat.Java8Api.setOf("=", ">=", "<=", ">", "<").contains(operator))return Optional.empty();
             int comparison=new BigDecimal(actual).compareTo(new BigDecimal(target));
-            if("SEMANTIC_RESPONSE".equals(cp.type())&&comparison!=0)return Optional.of(decision("UNDETERMINED","投标函与招标原文的有效期天数不同，需先明确本项为最低期限还是固定响应值，不能自行补设比较运算符。",sources,mode,bindings,Set.of(target),requirementSources));
-            passed=switch(operator){case "="->comparison==0;case ">="->comparison>=0;case "<="->comparison<=0;case ">"->comparison>0;default->comparison<0;};
+            if("SEMANTIC_RESPONSE".equals(cp.type())&&comparison!=0)return Optional.of(decision("UNDETERMINED","投标函与招标原文的有效期天数不同，需先明确本项为最低期限还是固定响应值，不能自行补设比较运算符。",sources,mode,bindings,cn.bidcheck.compat.Java8Api.setOf(target),requirementSources));
+            switch (operator) {case "=":passed = comparison==0; break;case ">=":passed = comparison>=0; break;case "<=":passed = comparison<=0; break;case ">":passed = comparison>0; break;default:passed = comparison<0; break;}
         }else passed=actual.equals(target);
         String field=mode.equals("VALIDITY")?"投标有效期":mode.equals("DURATION_DECLARATION")?"工期响应":"质量响应";
-        return Optional.of(decision(passed?"PASS":"FAIL","当前投标函的"+field+"为“"+actual+(mode.equals("VALIDITY")?"天":"")+"”，"+(passed?"满足":"不满足")+"本项明确的格式响应要求"+(mode.equals("VALIDITY")?"（"+operator+" "+target+"天）":"")+"。",sources,mode,bindings,Set.of(target),requirementSources));
+        return Optional.of(decision(passed?"PASS":"FAIL","当前投标函的"+field+"为“"+actual+(mode.equals("VALIDITY")?"天":"")+"”，"+(passed?"满足":"不满足")+"本项明确的格式响应要求"+(mode.equals("VALIDITY")?"（"+operator+" "+target+"天）":"")+"。",sources,mode,bindings,cn.bidcheck.compat.Java8Api.setOf(target),requirementSources));
     }
     private static Decision decision(String status,String reason,List<Evidence> sources,String mode,List<Map<String,Object>> bindings,Set<String> required,List<Evidence> requirementSources) {
-        return new Decision(new Evaluation(status,reason,"PASS".equals(status)?"":"核对所引用投标函及本项要求；本结论不扩展为实际履约或证照证明。",List.copyOf(sources),1,"BID_LETTER_RESPONSE_RULE"),
-            Map.of("policyVersion",VERSION,"mode",mode,"scope","EXPLICIT_RESPONSE_FIELD_ONLY","bindings",bindings,"requiredValues",required,"requirementSources",requirementSources));
+        return new Decision(new Evaluation(status,reason,"PASS".equals(status)?"":"核对所引用投标函及本项要求；本结论不扩展为实际履约或证照证明。",cn.bidcheck.compat.Java8Api.listCopyOf(sources),1,"BID_LETTER_RESPONSE_RULE"),
+            cn.bidcheck.compat.Java8Api.mapOf("policyVersion", VERSION, "mode", mode, "scope", "EXPLICIT_RESPONSE_FIELD_ONLY", "bindings", bindings, "requiredValues", required, "requirementSources", requirementSources));
     }
     private static String mode(Checkpoint cp) {
-        if("VALUE_COMPARE".equals(cp.type())&&"bidValidity".equals(cp.field())&&Set.of("天","日","日历天","DAY").contains(Objects.toString(cp.unit(),"")))return "VALIDITY";
+        if("VALUE_COMPARE".equals(cp.type())&&"bidValidity".equals(cp.field())&&cn.bidcheck.compat.Java8Api.setOf("天", "日", "日历天", "DAY").contains(Objects.toString(cp.unit(),"")))return "VALIDITY";
         if(!"SEMANTIC_RESPONSE".equals(cp.type()))return "";
         String expected=Objects.toString(cp.expected(),"").replaceAll("[\\s。．.（）()，,:：]","");
-        return switch(expected){case "工期满足见投标函"->"DURATION_DECLARATION";case "质量合格见投标函"->"QUALITY_DECLARATION";case "投标有效期满足招标文件规定见投标函"->"VALIDITY";default->"";};
+        switch (expected) {case "工期满足见投标函":return "DURATION_DECLARATION";case "质量合格见投标函":return "QUALITY_DECLARATION";case "投标有效期满足招标文件规定见投标函":return "VALIDITY";default:return "";}
     }
     private static boolean sourceExists(Document doc,Evidence evidence){return doc.id().equals(evidence.documentId())&&doc.pages().stream().anyMatch(p->p.number()==evidence.page()&&p.locationType().equals(evidence.locationType())&&p.text()!=null&&p.text().contains(evidence.quote()));}
 }

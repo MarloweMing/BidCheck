@@ -13,7 +13,18 @@ final class SameFieldSourceOccurrences {
     private static final Pattern RANGE=Pattern.compile("chars:(\\d+)-(\\d+)");
     private SameFieldSourceOccurrences(){}
 
-    record Result(int distinctCount,Map<String,Object> audit){}
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    static final class Result{
+        private final int distinctCount;
+        private final Map<String,Object> audit;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        Result(@com.fasterxml.jackson.annotation.JsonProperty("distinctCount") int distinctCount, @com.fasterxml.jackson.annotation.JsonProperty("audit") Map<String,Object> audit) { this.distinctCount = distinctCount; this.audit = audit; }
+        public int distinctCount() { return distinctCount; }
+        public Map<String,Object> audit() { return audit; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Result that = (Result) other; return java.util.Objects.equals(this.distinctCount, that.distinctCount) && java.util.Objects.equals(this.audit, that.audit); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.distinctCount); hash = 31 * hash + java.util.Objects.hashCode(this.audit); return hash; }
+        @Override public String toString() { return "Result[" + "distinctCount=" + distinctCount + ", audit=" + audit + "]"; }
+}
 
     static Result inspect(List<Fact> facts,EvidenceCorpus corpus){
         Map<String,Occurrence> occurrences=new LinkedHashMap<>();Set<String> unlocated=new LinkedHashSet<>();
@@ -21,7 +32,7 @@ final class SameFieldSourceOccurrences {
             for(String sourceId:fact.sourceIds()){
                 Source source=corpus.byId.get(sourceId);if(source==null)continue;
                 Document document=corpus.documents.stream().filter(d->d.id().equals(source.evidence().documentId())).findFirst().orElse(null);
-                if(document==null||!source.documentHash().isBlank()&&!source.documentHash().equals(document.sha256())
+                if(document==null||!cn.bidcheck.compat.Java8Api.isBlank(source.documentHash())&&!source.documentHash().equals(document.sha256())
                         ||source.documentVersion()>0&&source.documentVersion()!=document.version())continue;
                 Page page=corpus.pages.get(EvidenceCorpus.pageKey(document.id(),source.evidence().page(),source.evidence().locationType()));
                 if(page==null)continue;String text=Objects.toString(page.text(),""),quote=Objects.toString(source.evidence().quote(),"");
@@ -39,12 +50,12 @@ final class SameFieldSourceOccurrences {
             if(!located)unlocated.add(fact.id());
         }
         return new Result(occurrences.size(),linked("version",VERSION,"inputFactCount",facts.size(),"distinctOccurrenceCount",occurrences.size(),
-                "occurrences",occurrences.values().stream().map(Occurrence::audit).toList(),"unlocatedFactIds",new ArrayList<>(unlocated),
+                "occurrences",cn.bidcheck.compat.Java8Api.toList(occurrences.values().stream().map(Occurrence::audit)),"unlocatedFactIds",new ArrayList<>(unlocated),
                 "identityBasis","DOCUMENT_VERSION_LOCATION_AND_EXACT_VALUE_SPAN","fullDocumentCoverageProven",false));
     }
 
     private static int sourceOffset(Source source,String text,String quote){
-        if(quote.isBlank()||source.evidence().anchor().startsWith("image:"))return -1;
+        if(cn.bidcheck.compat.Java8Api.isBlank(quote)||source.evidence().anchor().startsWith("image:"))return -1;
         Matcher range=RANGE.matcher(source.evidence().anchor());
         if(range.matches())try{int start=Integer.parseInt(range.group(1)),end=Integer.parseInt(range.group(2));
             return start>=0&&end>=start&&end<=text.length()&&end-start==quote.length()&&text.regionMatches(start,quote,0,quote.length())?start:-1;
@@ -55,7 +66,7 @@ final class SameFieldSourceOccurrences {
     }
 
     private static List<int[]> spans(String text,String raw){
-        String value=clean(raw);if(value.isBlank()||value.length()>512)return List.of();
+        String value=clean(raw);if(cn.bidcheck.compat.Java8Api.isBlank(value)||value.length()>512)return cn.bidcheck.compat.Java8Api.listOf();
         StringBuilder expression=new StringBuilder();
         if(asciiIdentifier(value.charAt(0)))expression.append("(?<![A-Za-z0-9])");
         for(int i=0;i<value.length();i++){if(i>0)expression.append("\\s*");expression.append(Pattern.quote(value.substring(i,i+1)));}

@@ -21,7 +21,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Deque;
-import java.util.HexFormat;
+import cn.bidcheck.compat.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -44,7 +44,7 @@ import java.util.regex.Pattern;
 public final class ConsistencyModelScanner {
     private static final String VERSION = "consistency-model-scan-4-bounded-recovery";
     private static final String SPLIT_PLAN = "SCANNER_SPLIT_PLAN_V1";
-    private static final Set<String> SCOPES = Set.of("CURRENT_PROJECT", "HISTORICAL_PROJECT", "UNRESOLVED");
+    private static final Set<String> SCOPES = cn.bidcheck.compat.Java8Api.setOf("CURRENT_PROJECT", "HISTORICAL_PROJECT", "UNRESOLVED");
     private static final int MAX_SOURCES_PER_BATCH = 64;
     private static final int MAX_FACTS_PER_RESPONSE = 500;
     private static final int MAX_REQUEST_CHARACTERS = 64_000;
@@ -81,7 +81,18 @@ public final class ConsistencyModelScanner {
     private final int maxRetries;
     private final int maxSplitDepth;
 
-    public record Result(List<Map<String, Object>> facts, Map<String, Object> coverage) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    public static final class Result {
+        private final List<Map<String, Object>> facts;
+        private final Map<String, Object> coverage;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public Result(@com.fasterxml.jackson.annotation.JsonProperty("facts") List<Map<String, Object>> facts, @com.fasterxml.jackson.annotation.JsonProperty("coverage") Map<String, Object> coverage) { this.facts = facts; this.coverage = coverage; }
+        public List<Map<String, Object>> facts() { return facts; }
+        public Map<String, Object> coverage() { return coverage; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Result that = (Result) other; return java.util.Objects.equals(this.facts, that.facts) && java.util.Objects.equals(this.coverage, that.coverage); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.facts); hash = 31 * hash + java.util.Objects.hashCode(this.coverage); return hash; }
+        @Override public String toString() { return "Result[" + "facts=" + facts + ", coverage=" + coverage + "]"; }
+ }
 
     /** A caller-owned, task-fenced cache. A reservation counts an attempt even if the model fails. */
     public interface BatchCache {
@@ -141,7 +152,7 @@ public final class ConsistencyModelScanner {
     }
 
     public Result scan(Document document, Consumer<String> progress, BatchCache cache) {
-        return scan(document, List.of(), progress, cache);
+        return scan(document, cn.bidcheck.compat.Java8Api.listOf(), progress, cache);
     }
 
     public Result scan(Document document, List<Map<String,Object>> requirementHints, Consumer<String> progress, BatchCache cache) {
@@ -151,12 +162,12 @@ public final class ConsistencyModelScanner {
         Consumer<String> observer = progress == null ? ignored -> { } : progress;
         List<Location> locations = new ArrayList<>();
         List<Chunk> chunks = new ArrayList<>();
-        List<Page> pages = document.pages() == null ? List.of() : document.pages();
+        List<Page> pages = document.pages() == null ? cn.bidcheck.compat.Java8Api.listOf() : document.pages();
         for (int i = 0; i < pages.size(); i++) {
             Page page = pages.get(i);
             Location location = new Location(i, page);
             locations.add(location);
-            if (location.text.isBlank()) continue;
+            if (cn.bidcheck.compat.Java8Api.isBlank(location.text)) continue;
             int chunkLength = Math.min(CHUNK_CHARACTERS, maxBatchCharacters);
             // Normal pages/Word blocks remain whole. Only long sources are split, with original offsets.
             if (location.text.length() <= maxBatchCharacters) {
@@ -177,9 +188,52 @@ public final class ConsistencyModelScanner {
         return new ScanSession(document, hints, observer, cache, locations, chunks).run();
     }
 
-    private record Batch(List<Chunk> chunks, Map<String,Object> input, String key, int depth, int retry, long readyAt) { }
-    private record Reply(JsonNode response, Exception failure, long elapsedMillis) { }
-    private record Flight(Batch batch, int sequence) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Batch {
+        private final List<Chunk> chunks;
+        private final Map<String,Object> input;
+        private final String key;
+        private final int depth;
+        private final int retry;
+        private final long readyAt;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Batch(@com.fasterxml.jackson.annotation.JsonProperty("chunks") List<Chunk> chunks, @com.fasterxml.jackson.annotation.JsonProperty("input") Map<String,Object> input, @com.fasterxml.jackson.annotation.JsonProperty("key") String key, @com.fasterxml.jackson.annotation.JsonProperty("depth") int depth, @com.fasterxml.jackson.annotation.JsonProperty("retry") int retry, @com.fasterxml.jackson.annotation.JsonProperty("readyAt") long readyAt) { this.chunks = chunks; this.input = input; this.key = key; this.depth = depth; this.retry = retry; this.readyAt = readyAt; }
+        public List<Chunk> chunks() { return chunks; }
+        public Map<String,Object> input() { return input; }
+        public String key() { return key; }
+        public int depth() { return depth; }
+        public int retry() { return retry; }
+        public long readyAt() { return readyAt; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Batch that = (Batch) other; return java.util.Objects.equals(this.chunks, that.chunks) && java.util.Objects.equals(this.input, that.input) && java.util.Objects.equals(this.key, that.key) && java.util.Objects.equals(this.depth, that.depth) && java.util.Objects.equals(this.retry, that.retry) && java.util.Objects.equals(this.readyAt, that.readyAt); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.chunks); hash = 31 * hash + java.util.Objects.hashCode(this.input); hash = 31 * hash + java.util.Objects.hashCode(this.key); hash = 31 * hash + java.util.Objects.hashCode(this.depth); hash = 31 * hash + java.util.Objects.hashCode(this.retry); hash = 31 * hash + java.util.Objects.hashCode(this.readyAt); return hash; }
+        @Override public String toString() { return "Batch[" + "chunks=" + chunks + ", input=" + input + ", key=" + key + ", depth=" + depth + ", retry=" + retry + ", readyAt=" + readyAt + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Reply {
+        private final JsonNode response;
+        private final Exception failure;
+        private final long elapsedMillis;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Reply(@com.fasterxml.jackson.annotation.JsonProperty("response") JsonNode response, @com.fasterxml.jackson.annotation.JsonProperty("failure") Exception failure, @com.fasterxml.jackson.annotation.JsonProperty("elapsedMillis") long elapsedMillis) { this.response = response; this.failure = failure; this.elapsedMillis = elapsedMillis; }
+        public JsonNode response() { return response; }
+        public Exception failure() { return failure; }
+        public long elapsedMillis() { return elapsedMillis; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Reply that = (Reply) other; return java.util.Objects.equals(this.response, that.response) && java.util.Objects.equals(this.failure, that.failure) && java.util.Objects.equals(this.elapsedMillis, that.elapsedMillis); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.response); hash = 31 * hash + java.util.Objects.hashCode(this.failure); hash = 31 * hash + java.util.Objects.hashCode(this.elapsedMillis); return hash; }
+        @Override public String toString() { return "Reply[" + "response=" + response + ", failure=" + failure + ", elapsedMillis=" + elapsedMillis + "]"; }
+ }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class Flight {
+        private final Batch batch;
+        private final int sequence;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private Flight(@com.fasterxml.jackson.annotation.JsonProperty("batch") Batch batch, @com.fasterxml.jackson.annotation.JsonProperty("sequence") int sequence) { this.batch = batch; this.sequence = sequence; }
+        public Batch batch() { return batch; }
+        public int sequence() { return sequence; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Flight that = (Flight) other; return java.util.Objects.equals(this.batch, that.batch) && java.util.Objects.equals(this.sequence, that.sequence); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.batch); hash = 31 * hash + java.util.Objects.hashCode(this.sequence); return hash; }
+        @Override public String toString() { return "Flight[" + "batch=" + batch + ", sequence=" + sequence + "]"; }
+ }
 
     /** Only the transport runs on workers. Cache, persistent budget, lease/heartbeat and
      * evidence publication stay on the caller's thread, including during retries. */
@@ -206,7 +260,7 @@ public final class ConsistencyModelScanner {
         Result run() {
             if (!enabled()) reasons.add("MODEL_DISABLED");
             if (chunks.isEmpty()) reasons.add("NO_READABLE_TEXT");
-            if (locations.stream().anyMatch(location -> location.text.isBlank())) reasons.add("UNREADABLE_LOCATIONS");
+            if (locations.stream().anyMatch(location -> cn.bidcheck.compat.Java8Api.isBlank(location.text))) reasons.add("UNREADABLE_LOCATIONS");
             if (enabled()) prepare();
             ExecutorService workers = Executors.newFixedThreadPool(concurrency, action -> {
                 Thread thread = new Thread(action, "consistency-model-request"); thread.setDaemon(true); return thread;
@@ -275,9 +329,9 @@ public final class ConsistencyModelScanner {
             result.put("maxRetries", maxRetries); result.put("maxSplitDepth", maxSplitDepth);
             result.put("retryRequests", retried); result.put("splitBatches", split); result.put("reusedSplitPlans", reusedPlans);
             result.put("validResponseBatches", validResponses); result.put("recoveredResponseBatches", recoveredResponses);
-            result.put("failedAttempts", failedAttempts); result.put("requestDiagnostics", List.copyOf(diagnostics));
+            result.put("failedAttempts", failedAttempts); result.put("requestDiagnostics", cn.bidcheck.compat.Java8Api.listCopyOf(diagnostics));
             result.put("coverageDefinition", "SCANNED 表示该文本片段获得符合协议的响应；不等同于事实全部通过来源校验，更不证明全文业务一致或图像已核实。");
-            return new Result(List.copyOf(facts), Map.copyOf(result));
+            return new Result(cn.bidcheck.compat.Java8Api.listCopyOf(facts), cn.bidcheck.compat.Java8Api.mapCopyOf(result));
         }
 
         void prepare() {
@@ -299,13 +353,13 @@ public final class ConsistencyModelScanner {
             }
         }
 
-        String requestJson(List<Chunk> group) { return canonical(Map.of("operation", "EXTRACT", "input", input(group, hints.values()))); }
+        String requestJson(List<Chunk> group) { return canonical(cn.bidcheck.compat.Java8Api.mapOf("operation", "EXTRACT", "input", input(group, hints.values()))); }
         Batch batch(List<Chunk> group, int depth) {
             String key=digest(identity()+"\n"+document.id()+"\n"+document.sha256()+"\n"+document.version()+"\n"+requestJson(group));
-            return new Batch(List.copyOf(group), input(group, hints.values()), key, depth, 0, 0);
+            return new Batch(cn.bidcheck.compat.Java8Api.listCopyOf(group), input(group, hints.values()), key, depth, 0, 0);
         }
         Batch readyBatch() {
-            var iterator=pending.iterator(); long now=System.nanoTime();
+            java.util.Iterator<cn.bidcheck.consistency.ConsistencyModelScanner.Batch> iterator=pending.iterator(); long now=System.nanoTime();
             while (iterator.hasNext()) { Batch batch=iterator.next(); if (batch.readyAt()<=now) { iterator.remove(); return batch; } }
             return null;
         }
@@ -319,19 +373,19 @@ public final class ConsistencyModelScanner {
             Reply reply;
             try { reply=completed.get(); }
             catch (ExecutionException failure) {
-                if (failure.getCause() instanceof Error fatal) throw fatal;
+                if (failure.getCause() instanceof Error) throw ((Error) (failure.getCause()));
                 throw new IllegalStateException("全文扫描执行异常");
             }
             Exception failure=reply.failure(); Batch batch=flight.batch();
-            if (failure instanceof TaskLeaseLostException lost) throw lost;
-            if (failure instanceof CancellationException cancelled) throw cancelled;
+            if (failure instanceof TaskLeaseLostException) throw ((TaskLeaseLostException) (failure));
+            if (failure instanceof CancellationException) throw ((CancellationException) (failure));
             if (failure instanceof InterruptedIOException) {
                 mark(batch, "INTERRUPTED", "INTERRUPTED"); Thread.currentThread().interrupt(); interrupted=true; return;
             }
             boolean valid=failure==null && validResponse(reply.response());
             String code="VALID_RESPONSE"; int httpStatus=0; boolean retryable=true, splittable=true;
-            if (failure instanceof VerificationModelClient.ModelRequestException typed) {
-                code=typed.code(); httpStatus=typed.httpStatus(); retryable=typed.retryable(); splittable=typed.splittable();
+            if (failure instanceof VerificationModelClient.ModelRequestException) {
+                code=((VerificationModelClient.ModelRequestException) (failure)).code(); httpStatus=((VerificationModelClient.ModelRequestException) (failure)).httpStatus(); retryable=((VerificationModelClient.ModelRequestException) (failure)).retryable(); splittable=((VerificationModelClient.ModelRequestException) (failure)).splittable();
             } else if (failure!=null) {
                 code=failure instanceof IOException ? "TRANSPORT_FAILURE" : "CLIENT_FAILURE";
                 retryable=failure instanceof IOException; splittable=retryable;
@@ -339,10 +393,10 @@ public final class ConsistencyModelScanner {
             Map<String,Object> diagnostic=new LinkedHashMap<>();
             diagnostic.put("sequence", flight.sequence()); diagnostic.put("retry", batch.retry()); diagnostic.put("splitDepth", batch.depth());
             diagnostic.put("sourceCount", batch.chunks().size()); diagnostic.put("sourceCharacters", batch.chunks().stream().mapToInt(Chunk::length).sum());
-            diagnostic.put("locations", batch.chunks().stream().map(c -> Map.of("page", c.location.page.number(), "startOffset", c.start, "endOffset", c.end)).toList());
+            diagnostic.put("locations", cn.bidcheck.compat.Java8Api.toList(batch.chunks().stream().map(c -> cn.bidcheck.compat.Java8Api.mapOf("page", c.location.page.number(), "startOffset", c.start, "endOffset", c.end))));
             diagnostic.put("elapsedMillis", reply.elapsedMillis()); diagnostic.put("outcome", code);
             if (httpStatus>0) diagnostic.put("httpStatus", httpStatus);
-            diagnostics.add(Map.copyOf(diagnostic));
+            diagnostics.add(cn.bidcheck.compat.Java8Api.mapCopyOf(diagnostic));
             if (valid) {
                 // Invalid protocol output is never cached as a reusable success.
                 cache.save(batch.key(), reply.response()); validResponses++;
@@ -366,14 +420,14 @@ public final class ConsistencyModelScanner {
             } else {
                 Chunk original=group.get(0); int index=chunks.indexOf(original);
                 if (original.length()<=512 || index<0) return false;
-                if (persist) cache.save(parent.key(), JSON.valueToTree(Map.of("scannerRecovery", SPLIT_PLAN)));
+                if (persist) cache.save(parent.key(), JSON.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("scannerRecovery", SPLIT_PLAN)));
                 if (!splitOversizedChunk(chunks, index)) return false;
-                left=List.of(chunks.get(index)); right=List.of(chunks.get(index+1));
+                left=cn.bidcheck.compat.Java8Api.listOf(chunks.get(index)); right=cn.bidcheck.compat.Java8Api.listOf(chunks.get(index+1));
                 pending.addFirst(batch(right, parent.depth()+1)); pending.addFirst(batch(left, parent.depth()+1));
                 if (persist) split++;
                 return true;
             }
-            if (persist) cache.save(parent.key(), JSON.valueToTree(Map.of("scannerRecovery", SPLIT_PLAN)));
+            if (persist) cache.save(parent.key(), JSON.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("scannerRecovery", SPLIT_PLAN)));
             pending.addFirst(batch(right, parent.depth()+1)); pending.addFirst(batch(left, parent.depth()+1));
             if (persist) split++;
             return true;
@@ -422,7 +476,7 @@ public final class ConsistencyModelScanner {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("task", "FULL_TEXT_CONSISTENCY"); result.put("instructions", INSTRUCTIONS);
         result.put("fields", ConsistencyCatalog.fields()); result.put("catalog", catalogForModel());
-        result.put("categories", ConsistencyCatalog.categories()); result.put("dimensionKeys", ConsistencyCatalog.DIMENSION_KEYS.stream().sorted().toList());
+        result.put("categories", ConsistencyCatalog.categories()); result.put("dimensionKeys", cn.bidcheck.compat.Java8Api.toList(ConsistencyCatalog.DIMENSION_KEYS.stream().sorted()));
         result.put("requirementHints", hints); result.put("sources", sources);
         return result;
     }
@@ -432,36 +486,36 @@ public final class ConsistencyModelScanner {
         String field = string(candidate, "field", 80), rawValue = string(candidate, "rawValue", 2_000);
         Map<String,Object> definition = ConsistencyCatalog.definition(field);
         JsonNode sourceIds = candidate.path("sourceIds");
-        if (definition.isEmpty() || rawValue.isBlank() || !sourceIds.isArray() || sourceIds.size() != 1 || !sourceIds.get(0).isTextual()
+        if (definition.isEmpty() || cn.bidcheck.compat.Java8Api.isBlank(rawValue) || !sourceIds.isArray() || sourceIds.size() != 1 || !sourceIds.get(0).isTextual()
                 || (candidate.has("kind") && !"FIELD".equals(string(candidate, "kind", 20)))) return null;
         Chunk chunk = sources.get(sourceIds.get(0).textValue());
         if (chunk == null) return null;
         JsonNode attributes = candidate.path("attributes");
         String quote = string(attributes, "quote", 6_000);
-        if (quote.isBlank()) quote = string(candidate, "quote", 6_000);
+        if (cn.bidcheck.compat.Java8Api.isBlank(quote)) quote = string(candidate, "quote", 6_000);
         // Explicit quotation is mandatory: existence of a matching value somewhere on the page is insufficient.
-        if (quote.isBlank() || !quote.contains(rawValue) || !chunk.text().contains(quote)) return null;
+        if (cn.bidcheck.compat.Java8Api.isBlank(quote) || !quote.contains(rawValue) || !chunk.text().contains(quote)) return null;
         String context = string(attributes, "contextQuote", 4_000);
         // Sharing a source is insufficient: an unrelated current-project heading cannot identify a historical value.
-        if (context.isBlank() || !context.contains(quote) || !chunk.text().contains(context)) context = "";
+        if (cn.bidcheck.compat.Java8Api.isBlank(context) || !context.contains(quote) || !chunk.text().contains(context)) context = "";
         String proposedScope = string(candidate, "scope", 40);
         String scope = SCOPES.contains(proposedScope) ? proposedScope : "UNRESOLVED";
-        if (scope.equals("CURRENT_PROJECT") && (context.isBlank() || !CURRENT.matcher(context).find() || HISTORICAL.matcher(context).find())) scope = "UNRESOLVED";
-        if (scope.equals("HISTORICAL_PROJECT") && (context.isBlank() || !HISTORICAL.matcher(context).find())) scope = "UNRESOLVED";
+        if (scope.equals("CURRENT_PROJECT") && (cn.bidcheck.compat.Java8Api.isBlank(context) || !CURRENT.matcher(context).find() || HISTORICAL.matcher(context).find())) scope = "UNRESOLVED";
+        if (scope.equals("HISTORICAL_PROJECT") && (cn.bidcheck.compat.Java8Api.isBlank(context) || !HISTORICAL.matcher(context).find())) scope = "UNRESOLVED";
         // The context already contains quote. Concatenating them could accidentally validate
         // an invented attribute spanning the artificial join between two source strings.
-        String supported = context.isBlank() ? quote : context;
+        String supported = cn.bidcheck.compat.Java8Api.isBlank(context) ? quote : context;
         List<String> dropped = new ArrayList<>();
         String fieldLabel = groundedAttribute(candidate, "fieldLabel", 80, supported, dropped, "fieldLabel");
         String category = Objects.toString(definition.get("categoryId"), "");
         if (field.equals("custom")) {
             category = string(candidate, "categoryId", 80);
-            if (fieldLabel.isBlank() || !fieldLabel.matches("(?s).*[\\p{L}\\p{N}].*") || !ConsistencyCatalog.categories().contains(category)) return null;
+            if (cn.bidcheck.compat.Java8Api.isBlank(fieldLabel) || !fieldLabel.matches("(?s).*[\\p{L}\\p{N}].*") || !ConsistencyCatalog.categories().contains(category)) return null;
         }
         String subject = groundedAttribute(candidate, "subject", 200, supported, dropped, "subject");
         String lot = groundedAttribute(attributes, "lot", 200, supported, dropped, "lot");
         String basis = groundedAttribute(attributes, "basis", 200, supported, dropped, "basis");
-        if (basis.isBlank()) basis = groundedAttribute(candidate, "basis", 200, supported, dropped, "basis");
+        if (cn.bidcheck.compat.Java8Api.isBlank(basis)) basis = groundedAttribute(candidate, "basis", 200, supported, dropped, "basis");
         String time = groundedAttribute(attributes, "time", 200, supported, dropped, "time");
         Map<String,Object> dimensions = new LinkedHashMap<>();
         JsonNode proposedDimensions = attributes.path("dimensions");
@@ -469,11 +523,11 @@ public final class ConsistencyModelScanner {
             proposedDimensions.fieldNames().forEachRemaining(key -> {
                 if (!ConsistencyCatalog.DIMENSION_KEYS.contains(key)) { if (!dropped.contains("dimensions.unknown")) dropped.add("dimensions.unknown"); return; }
                 String value = groundedAttribute(proposedDimensions, key, 200, supported, dropped, "dimensions." + key);
-                if (!value.isBlank()) dimensions.put(key, value);
+                if (!cn.bidcheck.compat.Java8Api.isBlank(value)) dimensions.put(key, value);
             });
         } else if (!proposedDimensions.isMissingNode() && !proposedDimensions.isNull()) dropped.add("dimensions");
         // If the same quotation appears twice, bind the occurrence inside its actual context.
-        int relativeOffset = context.isBlank() ? chunk.text().indexOf(quote)
+        int relativeOffset = cn.bidcheck.compat.Java8Api.isBlank(context) ? chunk.text().indexOf(quote)
                 : chunk.text().indexOf(context) + context.indexOf(quote);
         int offset = chunk.start + relativeOffset;
         int line = 1;
@@ -486,29 +540,42 @@ public final class ConsistencyModelScanner {
                 + ":" + offset + ":" + field + ":" + rawValue + ":" + quote + ":" + category + ":" + fieldLabel
                 + ":" + subject + ":" + scope + ":" + lot + ":" + basis + ":" + time + ":" + canonical(dimensions)));
         fact.put("field", field); fact.put("subject", subject); fact.put("scope", scope);
-        fact.put("categoryId", category); fact.put("fieldLabel", fieldLabel); fact.put("dimensions", Map.copyOf(dimensions));
+        fact.put("categoryId", category); fact.put("fieldLabel", fieldLabel); fact.put("dimensions", cn.bidcheck.compat.Java8Api.mapCopyOf(dimensions));
         fact.put("lot", lot); fact.put("basis", basis); fact.put("time", time);
         fact.put("rawValue", rawValue); fact.put("value", rawValue); fact.put("evidence", evidence);
         fact.put("extractionMethod", "MODEL_FULL_TEXT"); fact.put("contextVerified", false);
         fact.put("grounding", "EXACT_QUOTE"); fact.put("contextQuote", context);
-        fact.put("droppedContextAttributes", List.copyOf(dropped));
+        fact.put("droppedContextAttributes", cn.bidcheck.compat.Java8Api.listCopyOf(dropped));
         fact.put("sourceOffset", offset); fact.put("sourceEndOffset", offset + quote.length());
-        return Map.copyOf(fact);
+        return cn.bidcheck.compat.Java8Api.mapCopyOf(fact);
     }
 
     private static List<Map<String,Object>> catalogForModel() {
-        return ConsistencyCatalog.definitions().stream().map(definition -> {
+        return cn.bidcheck.compat.Java8Api.toList(ConsistencyCatalog.definitions().stream().map(definition -> {
             Map<String,Object> entry = new LinkedHashMap<>();
-            for (String key : List.of("id", "title", "categoryId", "valueType", "subjectMode"))
+            for (String key : cn.bidcheck.compat.Java8Api.listOf("id", "title", "categoryId", "valueType", "subjectMode"))
                 if (definition.containsKey(key)) entry.put(key, definition.get(key));
-            return Map.copyOf(entry);
-        }).toList();
+            return cn.bidcheck.compat.Java8Api.mapCopyOf(entry);
+        }));
     }
 
-    private record HintSelection(List<Map<String,Object>> values, int provided, boolean truncated) { }
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    private static final class HintSelection {
+        private final List<Map<String,Object>> values;
+        private final int provided;
+        private final boolean truncated;
+        @com.fasterxml.jackson.annotation.JsonCreator
+        private HintSelection(@com.fasterxml.jackson.annotation.JsonProperty("values") List<Map<String,Object>> values, @com.fasterxml.jackson.annotation.JsonProperty("provided") int provided, @com.fasterxml.jackson.annotation.JsonProperty("truncated") boolean truncated) { this.values = values; this.provided = provided; this.truncated = truncated; }
+        public List<Map<String,Object>> values() { return values; }
+        public int provided() { return provided; }
+        public boolean truncated() { return truncated; }
+        @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; HintSelection that = (HintSelection) other; return java.util.Objects.equals(this.values, that.values) && java.util.Objects.equals(this.provided, that.provided) && java.util.Objects.equals(this.truncated, that.truncated); }
+        @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.values); hash = 31 * hash + java.util.Objects.hashCode(this.provided); hash = 31 * hash + java.util.Objects.hashCode(this.truncated); return hash; }
+        @Override public String toString() { return "HintSelection[" + "values=" + values + ", provided=" + provided + ", truncated=" + truncated + "]"; }
+ }
 
     private static HintSelection selectHints(List<Map<String,Object>> candidates) {
-        if (candidates == null || candidates.isEmpty()) return new HintSelection(List.of(), 0, false);
+        if (candidates == null || candidates.isEmpty()) return new HintSelection(cn.bidcheck.compat.Java8Api.listOf(), 0, false);
         List<Map<String,Object>> hints = new ArrayList<>();
         int characters = 0;
         boolean truncated = candidates.size() > MAX_REQUIREMENT_HINTS;
@@ -516,23 +583,24 @@ public final class ConsistencyModelScanner {
             if (hints.size() >= MAX_REQUIREMENT_HINTS) break;
             if (candidate == null) { truncated = true; continue; }
             Map<String,Object> hint = new LinkedHashMap<>();
-            for (String key : List.of("title", "field", "expected")) {
+            for (String key : cn.bidcheck.compat.Java8Api.listOf("title", "field", "expected")) {
                 int limit = key.equals("title") ? 160 : key.equals("field") ? 80 : 400;
                 Object raw = candidate.get(key);
                 if (raw == null) continue;
-                if (!(raw instanceof String value)) { truncated = true; continue; }
+                if (!(raw instanceof String)) { truncated = true; continue; }
+                String value = (String) raw;
                 if (value.length() > limit) {
                     int end = Character.isHighSurrogate(value.charAt(limit - 1)) ? limit - 1 : limit;
                     value = value.substring(0, end); truncated = true;
                 }
-                if (!value.isBlank()) hint.put(key, value);
+                if (!cn.bidcheck.compat.Java8Api.isBlank(value)) hint.put(key, value);
             }
             if (hint.isEmpty()) { truncated = true; continue; }
             int length = canonical(hint).length();
             if (characters + length > MAX_HINT_CHARACTERS) { truncated = true; break; }
-            characters += length; hints.add(Map.copyOf(hint));
+            characters += length; hints.add(cn.bidcheck.compat.Java8Api.mapCopyOf(hint));
         }
-        return new HintSelection(List.copyOf(hints), candidates.size(), truncated);
+        return new HintSelection(cn.bidcheck.compat.Java8Api.listCopyOf(hints), candidates.size(), truncated);
     }
 
     private static boolean splitOversizedChunk(List<Chunk> chunks, int index) {
@@ -554,8 +622,8 @@ public final class ConsistencyModelScanner {
     private static String groundedAttribute(JsonNode node, String key, int limit, String source, List<String> dropped, String name) {
         JsonNode proposed = node.path(key);
         String value = string(node, key, limit);
-        if (!value.isBlank() && source.contains(value)) return value;
-        if (!proposed.isMissingNode() && !proposed.isNull() && !(proposed.isTextual() && proposed.textValue().isBlank()) && !dropped.contains(name)) dropped.add(name);
+        if (!cn.bidcheck.compat.Java8Api.isBlank(value) && source.contains(value)) return value;
+        if (!proposed.isMissingNode() && !proposed.isNull() && !(proposed.isTextual() && cn.bidcheck.compat.Java8Api.isBlank(proposed.textValue())) && !dropped.contains(name)) dropped.add(name);
         return "";
     }
 
@@ -580,7 +648,7 @@ public final class ConsistencyModelScanner {
             totalCharacters += location.text.length(); scannedCharacters += covered;
             Set<String> issues = new LinkedHashSet<>();
             pageChunks.stream().filter(chunk -> !chunk.state.equals("SCANNED")).forEach(chunk -> issues.add(chunk.state));
-            if (location.text.isBlank()) issues.add("NO_READABLE_TEXT");
+            if (cn.bidcheck.compat.Java8Api.isBlank(location.text)) issues.add("NO_READABLE_TEXT");
             if (pageChunks.stream().anyMatch(chunk -> chunk.groundingReview)) issues.add("SOURCE_GROUNDING_REVIEW");
             if (pageChunks.stream().anyMatch(chunk -> chunk.contextReview)) issues.add("CONTEXT_ATTRIBUTES_REVIEW");
             Map<String, Object> detail = new LinkedHashMap<>();
@@ -591,17 +659,17 @@ public final class ConsistencyModelScanner {
             detail.put("contextReviewChunks", pageChunks.stream().filter(chunk -> chunk.contextReview).count());
             detail.put("totalChunks", pageChunks.size()); detail.put("scannedChunks", scanned);
             detail.put("totalCharacters", location.text.length()); detail.put("scannedCharacters", covered);
-            detail.put("reasons", List.copyOf(issues));
-            detail.put("unscannedRanges", pageChunks.stream().filter(chunk -> !chunk.state.equals("SCANNED"))
-                    .map(chunk -> Map.of("startOffset", chunk.start, "endOffset", chunk.end, "reason", chunk.state, "failureCode", chunk.failureCode)).toList());
+            detail.put("reasons", cn.bidcheck.compat.Java8Api.listCopyOf(issues));
+            detail.put("unscannedRanges", cn.bidcheck.compat.Java8Api.toList(pageChunks.stream().filter(chunk -> !chunk.state.equals("SCANNED"))
+                    .map(chunk -> cn.bidcheck.compat.Java8Api.mapOf("startOffset", chunk.start, "endOffset", chunk.end, "reason", chunk.state, "failureCode", chunk.failureCode))));
             details.add(detail);
         }
         int scanned = successful(chunks);
-        int failed = (int) chunks.stream().filter(chunk -> Set.of("MODEL_REQUEST_FAILED", "INVALID_RESPONSE", "INPUT_INVALID", "INPUT_BUDGET", "INTERRUPTED").contains(chunk.state)).count();
+        int failed = (int) chunks.stream().filter(chunk -> cn.bidcheck.compat.Java8Api.setOf("MODEL_REQUEST_FAILED", "INVALID_RESPONSE", "INPUT_INVALID", "INPUT_BUDGET", "INTERRUPTED").contains(chunk.state)).count();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("enabled", enabled()); result.put("modelIdentity", identity()); result.put("coverageKind", "TEXT_SCAN_ONLY");
         result.put("complete", enabled() && !chunks.isEmpty() && scannedPages == locations.size() && rejected == 0 && !reasons.contains("FACT_BUDGET"));
-        result.put("conclusive", false); result.put("reason", reason(reasons)); result.put("reasons", List.copyOf(reasons));
+        result.put("conclusive", false); result.put("reason", reason(reasons)); result.put("reasons", cn.bidcheck.compat.Java8Api.listCopyOf(reasons));
         result.put("totalPages", locations.size()); result.put("scannedPages", scannedPages); result.put("partialPages", partialPages);
         result.put("unscannedPages", locations.size() - scannedPages - partialPages);
         result.put("totalChunks", chunks.size()); result.put("scannedChunks", scanned); result.put("failedChunks", failed);
@@ -612,18 +680,10 @@ public final class ConsistencyModelScanner {
         result.put("acceptedFacts", accepted); result.put("rejectedFacts", rejected);
         boolean protocolComplete=enabled() && !chunks.isEmpty() && scannedPages==locations.size() && !reasons.contains("FACT_BUDGET");
         result.put("protocolScannedChunks", scanned); result.put("protocolComplete", protocolComplete);
-        result.put("evidenceValidatedCoverage", Map.of(
-                "quoteGroundingComplete", protocolComplete && rejected==0,
-                "contextGroundingComplete", protocolComplete && rejected==0 && chunks.stream().noneMatch(chunk -> chunk.contextReview),
-                "chunksWithoutRejectedAssertions", chunks.stream().filter(chunk -> chunk.state.equals("SCANNED") && !chunk.groundingReview).count(),
-                "sourceGroundingReviewChunks", chunks.stream().filter(chunk -> chunk.groundingReview).count(),
-                "sourceGroundingReviewPages", locations.stream().filter(location -> location.chunks.stream().anyMatch(chunk -> chunk.groundingReview)).count(),
-                "contextReviewChunks", chunks.stream().filter(chunk -> chunk.contextReview).count(),
-                "rejectedFacts", rejected,
-                "definition", "与协议扫描覆盖分开：没有被拒绝的模型断言不代表事实提取穷尽、业务一致或原图已核实。"));
+        result.put("evidenceValidatedCoverage", cn.bidcheck.compat.Java8Api.mapOf("quoteGroundingComplete", protocolComplete && rejected==0, "contextGroundingComplete", protocolComplete && rejected==0 && chunks.stream().noneMatch(chunk -> chunk.contextReview), "chunksWithoutRejectedAssertions", chunks.stream().filter(chunk -> chunk.state.equals("SCANNED") && !chunk.groundingReview).count(), "sourceGroundingReviewChunks", chunks.stream().filter(chunk -> chunk.groundingReview).count(), "sourceGroundingReviewPages", locations.stream().filter(location -> location.chunks.stream().anyMatch(chunk -> chunk.groundingReview)).count(), "contextReviewChunks", chunks.stream().filter(chunk -> chunk.contextReview).count(), "rejectedFacts", rejected, "definition", "与协议扫描覆盖分开：没有被拒绝的模型断言不代表事实提取穷尽、业务一致或原图已核实。"));
         result.put("maxCalls", unlimitedCalls?-1:maxCalls); result.put("modelCallsUnlimited", unlimitedCalls); result.put("maxFacts", maxFacts); result.put("maxBatchCharacters", maxBatchCharacters);
-        result.put("locations", List.copyOf(details));
-        return Map.copyOf(result);
+        result.put("locations", cn.bidcheck.compat.Java8Api.listCopyOf(details));
+        return cn.bidcheck.compat.Java8Api.mapCopyOf(result);
     }
 
     private static String reason(Set<String> reasons) {

@@ -34,7 +34,7 @@ public class DemoService {
         service.startRun(pid,bd.id()); return project;
     }
     private Document add(String pid,String role,String name,String text) throws IOException {
-        String id=Store.id(); Files.writeString(service.stagePath(id),text,StandardCharsets.UTF_8);
+        String id=Store.id(); cn.bidcheck.compat.Java8Api.writeString(service.stagePath(id), text, StandardCharsets.UTF_8);
         service.commitFile(id);
         ParsedDocument parsed=new FileParser().parse(service.committedPath(id,BidService.hash(text)),name);
         Document d=new Document(id,pid,role,name,1,BidService.hash(text),BidService.now(),parsed.pages(),parsed.warnings());

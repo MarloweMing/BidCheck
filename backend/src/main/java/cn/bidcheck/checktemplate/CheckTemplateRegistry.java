@@ -33,7 +33,7 @@ public final class CheckTemplateRegistry {
                     .orElseThrow(() -> new IllegalStateException("Evaluator is not allowed: " + item.evaluatorId()));
             loaded.put(key, evaluator);
         }
-        this.templates = Map.copyOf(loaded);
+        this.templates = cn.bidcheck.compat.Java8Api.mapCopyOf(loaded);
         this.identity = buildIdentity(this.templates);
     }
 
@@ -45,8 +45,8 @@ public final class CheckTemplateRegistry {
     }
 
     public List<TemplateMetadata> metadata() {
-        return templates.values().stream().map(CheckTemplate::metadata)
-                .sorted(java.util.Comparator.comparing(TemplateMetadata::id).thenComparing(TemplateMetadata::version)).toList();
+        return cn.bidcheck.compat.Java8Api.toList(templates.values().stream().map(CheckTemplate::metadata)
+                .sorted(java.util.Comparator.comparing(TemplateMetadata::id).thenComparing(TemplateMetadata::version)));
     }
 
     /**
@@ -65,13 +65,13 @@ public final class CheckTemplateRegistry {
             errors.add(new ValidationResult.ValidationError("verificationMode", "VERIFICATION_MODE_UNSUPPORTED",
                     "该模板只能使用核验方式 " + expectedMode + "；外部查询和专业判断不能伪装成文件自动核验"));
         }
-        errors.addAll(spec.subjectSelector().validationErrors().stream()
-                .map(message -> new ValidationResult.ValidationError("subjectSelector", "INVALID_SUBJECT", message)).toList());
+        errors.addAll(cn.bidcheck.compat.Java8Api.toList(spec.subjectSelector().validationErrors().stream()
+                .map(message -> new ValidationResult.ValidationError("subjectSelector", "INVALID_SUBJECT", message))));
         if (spec.requirementRefs().isEmpty()) {
             errors.add(new ValidationResult.ValidationError("requirementRefs", "REQUIREMENT_SOURCE_REQUIRED", "检查要求必须保留招标原文来源"));
         }
         if (spec.applicability().state() == TemplateTypes.ApplicabilityState.DOES_NOT_APPLY) {
-            if (spec.applicability().reason().isBlank()) errors.add(new ValidationResult.ValidationError("applicability.reason", "NON_APPLICABILITY_REASON_REQUIRED", "不适用必须说明原文依据"));
+            if (cn.bidcheck.compat.Java8Api.isBlank(spec.applicability().reason())) errors.add(new ValidationResult.ValidationError("applicability.reason", "NON_APPLICABILITY_REASON_REQUIRED", "不适用必须说明原文依据"));
             if (spec.applicability().sources().isEmpty()) errors.add(new ValidationResult.ValidationError("applicability.sources", "NON_APPLICABILITY_SOURCE_REQUIRED", "不适用必须引用明确来源"));
         }
         if (spec.applicability().state() == TemplateTypes.ApplicabilityState.UNKNOWN) {
@@ -82,7 +82,7 @@ public final class CheckTemplateRegistry {
             errors.add(new ValidationResult.ValidationError("sourceCoverage.state", "SOURCE_COVERAGE_INCOMPLETE", "必须确认主体、例外和要求原文均已覆盖后才能发布模板"));
         }
         Object unsupported=spec.sourceCoverage().get("unsupportedFragments");
-        if (unsupported instanceof java.util.Collection<?> values && !values.isEmpty()) {
+        if (unsupported instanceof java.util.Collection<?> && !((java.util.Collection<?>) (unsupported)).isEmpty()) {
             errors.add(new ValidationResult.ValidationError("sourceCoverage.unsupportedFragments", "SOURCE_FRAGMENT_UNSUPPORTED", "仍有未映射的要求片段，不能发布确定性模板"));
         }
         Map<String,ParameterBinding> bindings=new LinkedHashMap<>();
@@ -116,7 +116,7 @@ public final class CheckTemplateRegistry {
     }
 
     private static String buildIdentity(Map<String,CheckTemplate> templates) {
-        List<Map<String,Object>> definitions=templates.values().stream()
+        List<Map<String,Object>> definitions=cn.bidcheck.compat.Java8Api.toList(templates.values().stream()
                 .sorted(java.util.Comparator.comparing(CheckTemplate::id).thenComparing(CheckTemplate::version))
                 .map(template->{
                     Map<String,Object> definition=new LinkedHashMap<>();
@@ -125,13 +125,9 @@ public final class CheckTemplateRegistry {
                     definition.put("evaluatorId",template.metadata().evaluatorId());
                     definition.put("evaluatorClass",template.getClass().getName());
                     definition.put("evaluatorBinary",TemplateIdentity.classFingerprint(template.getClass()));
-                    return Map.copyOf(definition);
-                }).toList();
-        return TemplateIdentity.digest(IDENTITY_VERSION,Map.of(
-                "templates",definitions,
-                "factoryBinary",TemplateIdentity.classFingerprint(CoreTemplateEvaluators.class),
-                "validationBinary",TemplateIdentity.classFingerprint(CheckTemplateRegistry.class),
-                "schemaValidatorBinary",TemplateIdentity.classFingerprint(ParameterSchema.class)));
+                    return cn.bidcheck.compat.Java8Api.mapCopyOf(definition);
+                }));
+        return TemplateIdentity.digest(IDENTITY_VERSION,cn.bidcheck.compat.Java8Api.mapOf("templates", definitions, "factoryBinary", TemplateIdentity.classFingerprint(CoreTemplateEvaluators.class), "validationBinary", TemplateIdentity.classFingerprint(CheckTemplateRegistry.class), "schemaValidatorBinary", TemplateIdentity.classFingerprint(ParameterSchema.class)));
     }
 
     private static String key(String id, String version) { return id.trim() + "@" + version.trim(); }

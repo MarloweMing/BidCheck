@@ -43,7 +43,7 @@ class FullTextConsistencyIntegrationTest {
         service.execute(task);return store.map(task.inputJson).get("documentId").toString();
     }
     String project()throws Exception {
-        String id=service.createProject(Map.of("name","一致性回归项目")).get("id").toString();
+        String id=service.createProject(cn.bidcheck.compat.Java8Api.mapOf("name", "一致性回归项目")).get("id").toString();
         String tender=parsed(id,"TENDER","项目名称：一致性回归项目\n项目编号：ZB-2026\n开标时间：2026年11月5日\n投标文件的企业名称、金额、开标时间与关键岗位人员应全文一致。");
         service.execute(service.extract(id,tender));
         for(Checkpoint cp:(List<Checkpoint>)service.detail(id).get("checkpoints"))
@@ -68,7 +68,7 @@ class FullTextConsistencyIntegrationTest {
         assertThat(ConsistencyRunSupport.summary(report,store).evidences()).hasSizeGreaterThanOrEqualTo(8);
         List<Finding> findings=(List<Finding>)payload.get("results");
         for(Map<String,Object> group:groups) {
-            Finding finding=findings.stream().filter(f->f.id().equals(group.get("findingId"))).findFirst().orElseThrow();
+            Finding finding=findings.stream().filter(f->f.id().equals(group.get("findingId"))).findFirst().orElseThrow(java.util.NoSuchElementException::new);
             assertThat(finding.evaluation().evidences()).hasSizeGreaterThanOrEqualTo(2);
             assertThat(finding.evaluation().evidences()).allSatisfy(e->{assertThat(e.documentId()).isEqualTo(bid);assertThat(service.document(bid).pages().stream().anyMatch(p->p.text().contains(e.quote()))).isTrue();});
         }
@@ -77,7 +77,7 @@ class FullTextConsistencyIntegrationTest {
         String findingId=groups.get(0).get("findingId").toString(),runId=report.get("runId").toString();
         mvc.perform(post("/api/results/"+findingId+"/review").contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"WARNING\",\"reviewer\":\"回归测试\",\"note\":\"保留原文差异，待核定\"}")).andExpect(status().isOk());
         assertThat(ConsistencyRunSupport.maps(service.run(runId,false).get("reviews"))).hasSize(1);
-        var exported=json.readTree(reports.generate(runId,"json").bytes());
+        com.fasterxml.jackson.databind.JsonNode exported=json.readTree(reports.generate(runId,"json").bytes());
         assertThat(exported.path("consistency").path("groups").size()).isEqualTo(groups.size());
         assertThat(new String(reports.generate(runId,"html").bytes(),StandardCharsets.UTF_8)).contains("全文一致性扫描范围","保留原文差异，待核定");
         String frozen=store.encode(report);
@@ -91,7 +91,7 @@ class FullTextConsistencyIntegrationTest {
         String project=project(),bid=parsed(project,"BID","投标人名称：甲有限公司");
         Document original=service.document(bid);
         store.save("document",bid,project,"",new Document(bid,project,"BID",original.name(),original.version(),original.sha256(),original.createdAt(),
-                List.of(new Page(1,"投标人名称：甲有限公司","PAGE","PDFBOX",null),new Page(2,"","PAGE","PDFBOX","[OCR未完成] 扫描件无法读取")),List.of("[OCR未完成] 扫描件无法读取")));
+                cn.bidcheck.compat.Java8Api.listOf(new Page(1,"投标人名称：甲有限公司","PAGE","PDFBOX",null), new Page(2,"","PAGE","PDFBOX","[OCR未完成] 扫描件无法读取")),cn.bidcheck.compat.Java8Api.listOf("[OCR未完成] 扫描件无法读取")));
         Map<String,Object> payload=run(project,bid),report=ConsistencyRunSupport.map(payload.get("consistency")),coverage=ConsistencyRunSupport.map(report.get("coverage"));
         assertThat(((Number)coverage.get("pagesUnparsed")).intValue()).isGreaterThan(0);
         assertThat(ConsistencyRunSupport.map(coverage.get("model"))).containsEntry("enabled",false);
@@ -100,10 +100,10 @@ class FullTextConsistencyIntegrationTest {
 
     @Test void fullTextCheckpointSelectsUnlabelledImagesWithinBudget() {
         Checkpoint cp=new Checkpoint("c","全文一致性","全文信息检查","HIGH","FULL_TEXT_REVIEW","fullTextConsistency","REVIEW","","",true,true,true,null);
-        assertThat(ExtractionPlan.fromCheckpoints(List.of(cp)).mode()).isEqualTo(ExtractionPlan.Mode.FULL);
-        assertThat(ExtractionPlan.fromCheckpoints(List.of(cp)).maxSelectedImages()).isEqualTo(ExtractionPlan.DEFAULT_SELECTED_IMAGES);
+        assertThat(ExtractionPlan.fromCheckpoints(cn.bidcheck.compat.Java8Api.listOf(cp)).mode()).isEqualTo(ExtractionPlan.Mode.FULL);
+        assertThat(ExtractionPlan.fromCheckpoints(cn.bidcheck.compat.Java8Api.listOf(cp)).maxSelectedImages()).isEqualTo(ExtractionPlan.DEFAULT_SELECTED_IMAGES);
         Checkpoint disabled=new Checkpoint("c",cp.title(),cp.category(),cp.severity(),cp.type(),cp.field(),cp.operator(),"","",true,true,false,null);
-        assertThat(ExtractionPlan.fromCheckpoints(List.of(disabled)).mode()).isEqualTo(ExtractionPlan.Mode.NATIVE_ONLY);
+        assertThat(ExtractionPlan.fromCheckpoints(cn.bidcheck.compat.Java8Api.listOf(disabled)).mode()).isEqualTo(ExtractionPlan.Mode.NATIVE_ONLY);
     }
 
     @Test void keepsUnlimitedAttemptAuditAndSuccessfulBatchesAcrossRetryCacheInstances()throws Exception {
@@ -134,7 +134,7 @@ class FullTextConsistencyIntegrationTest {
         String project=project(),bid=parsed(project,"BID","投标人名称\t投标总报价（万元）\n甲有限公司\t100\n乙有限公司\t120");
         Map<String,Object> report=ConsistencyRunSupport.map(run(project,bid).get("consistency"));
         assertThat(ConsistencyRunSupport.maps(report.get("groups"))).hasSizeGreaterThanOrEqualTo(2);
-        Map<String,Object> snapshot=ledger.view(project,report.get("runId").toString(),report.get("engineIdentity").toString(),List.of(service.document(bid)));
+        Map<String,Object> snapshot=ledger.view(project,report.get("runId").toString(),report.get("engineIdentity").toString(),cn.bidcheck.compat.Java8Api.listOf(service.document(bid)));
         assertThat(ConsistencyRunSupport.maps(snapshot.get("occurrences"))).allSatisfy(occurrence->{
             assertThat(ConsistencyRunSupport.maps(occurrence.get("sourceRefs"))).anySatisfy(source->assertThat(source.get("quote").toString()).contains("投标总报价（万元）"));
         });
@@ -143,12 +143,12 @@ class FullTextConsistencyIntegrationTest {
     @Test void legacyIdentityCardsUseSameScopeInsteadOfReintroducingHistoricalConflicts()throws Exception {
         String project=project();
         for(Checkpoint cp:(List<Checkpoint>)service.detail(project).get("checkpoints"))
-            if("ENTITY_FIELD_CONSISTENCY".equals(cp.type())&&Set.of("companyName","personName").contains(cp.field())&&(cp.expected()==null||cp.expected().isBlank()))
+            if("ENTITY_FIELD_CONSISTENCY".equals(cp.type())&&cn.bidcheck.compat.Java8Api.setOf("companyName", "personName").contains(cp.field())&&(cp.expected()==null||cn.bidcheck.compat.Java8Api.isBlank(cp.expected())))
                 service.updateCheckpoint(cp.id(),new Checkpoint(cp.id(),cp.title(),cp.category(),cp.severity(),cp.type(),cp.field(),cp.operator(),cp.expected(),cp.unit(),cp.required(),true,true,cp.source()));
         String bid=parsed(project,"BID","投标函\n投标人名称：甲公司\n项目经理：张三\n历史合同业绩\n投标人名称：乙公司\n项目经理：李四");
         Map<String,Object> payload=run(project,bid);
         assertThat(ConsistencyRunSupport.maps(ConsistencyRunSupport.map(payload.get("consistency")).get("groups"))).isEmpty();
-        assertThat(((List<Finding>)payload.get("results")).stream().filter(f->"ENTITY_FIELD_CONSISTENCY".equals(f.checkpoint().type())).toList())
+        assertThat(cn.bidcheck.compat.Java8Api.toList(((List<Finding>)payload.get("results")).stream().filter(f->"ENTITY_FIELD_CONSISTENCY".equals(f.checkpoint().type()))))
                 .hasSize(2).allSatisfy(f->{assertThat(f.evaluation().method()).contains("FULL_TEXT_SCOPED_IDENTITY");assertThat(f.evaluation().status()).isEqualTo("UNDETERMINED");});
     }
 
@@ -169,13 +169,13 @@ class FullTextConsistencyIntegrationTest {
             assertThat((List<String>)g.get("occurrenceIds")).allMatch(ids::contains);
             assertThat(ConsistencyRunSupport.evidences(store,g.get("evidences"))).allSatisfy(e->assertThat(service.document(bid).pages().stream().anyMatch(p->p.text().contains(e.quote()))).isTrue());
         });
-        Map<String,Object> snapshot=ledger.view(project,report.get("runId").toString(),report.get("engineIdentity").toString(),List.of(service.document(bid)));
+        Map<String,Object> snapshot=ledger.view(project,report.get("runId").toString(),report.get("engineIdentity").toString(),cn.bidcheck.compat.Java8Api.listOf(service.document(bid)));
         assertThat(ConsistencyRunSupport.maps(snapshot.get("occurrences"))).anySatisfy(o->{
             assertThat(o.get("field")).isEqualTo("productModel");
             assertThat(ConsistencyRunSupport.map(o.get("attributes"))).containsEntry("categoryId","product");
             assertThat(ConsistencyRunSupport.map(ConsistencyRunSupport.map(o.get("attributes")).get("dimensions"))).containsEntry("object","服务器A");
         });
-        String runId=report.get("runId").toString(),findingId=groups.stream().filter(g->"ARITHMETIC".equals(g.get("relationType"))).findFirst().orElseThrow().get("findingId").toString();
+        String runId=report.get("runId").toString(),findingId=groups.stream().filter(g->"ARITHMETIC".equals(g.get("relationType"))).findFirst().orElseThrow(java.util.NoSuchElementException::new).get("findingId").toString();
         mvc.perform(post("/api/results/"+findingId+"/review").contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"WARNING\",\"reviewer\":\"验收\",\"note\":\"核对同行乘算原文\"}")).andExpect(status().isOk());
         String html=new String(reports.generate(runId,"html").bytes(),StandardCharsets.UTF_8),csv=new String(reports.generate(runId,"csv").bytes(),StandardCharsets.UTF_8);
         assertThat(html).contains("检查目录与实际识别范围（18 类）","计算关系","时间关系","比较前提","核对同行乘算原文");
@@ -191,7 +191,7 @@ class FullTextConsistencyIntegrationTest {
         assertThat(groups).noneMatch(g->"CONFLICT".equals(g.get("status")));
         List<Finding> findings=(List<Finding>)payload.get("results");
         for(Map<String,Object> group:groups)if("EVIDENCE_INSUFFICIENT".equals(group.get("status")))
-            assertThat(findings.stream().filter(f->f.id().equals(group.get("findingId"))).findFirst().orElseThrow().evaluation().status()).isEqualTo("UNDETERMINED");
+            assertThat(findings.stream().filter(f->f.id().equals(group.get("findingId"))).findFirst().orElseThrow(java.util.NoSuchElementException::new).evaluation().status()).isEqualTo("UNDETERMINED");
         assertThat(ConsistencyRunSupport.summary(report,store).reason()).contains("比较证据不足");
         assertThat(new String(reports.generate(report.get("runId").toString(),"html").bytes(),StandardCharsets.UTF_8)).contains("不能据此认定事实冲突或材料不存在");
     }
@@ -200,18 +200,18 @@ class FullTextConsistencyIntegrationTest {
         String project=project(),first="本项目业务数据库；备份副本数：3份",second="本项目业务数据库；备份副本数：2份";
         String bid=parsed(project,"BID",first+"\n"+second);
         List<Map<String,Object>> inputs=new ArrayList<>();
-        var gateway=new cn.bidcheck.verification.engine.ModelGateway(){
+        cn.bidcheck.verification.engine.ModelGateway gateway=new cn.bidcheck.verification.engine.ModelGateway(){
             public boolean enabled(){return true;}
             public String identity(){return "offline-custom-consistency-integration";}
             public com.fasterxml.jackson.databind.JsonNode request(String operation,Map<String,Object> input){
                 inputs.add(input);String source=ConsistencyRunSupport.maps(input.get("sources")).get(0).get("id").toString();
                 List<Map<String,Object>> facts=new ArrayList<>();
-                for(String quote:List.of(first,second))facts.add(BidService.fields("kind","FIELD","field","custom","fieldLabel","备份副本数","categoryId","solution",
-                        "subject","业务数据库","scope","CURRENT_PROJECT","rawValue",quote.contains("3份")?"3份":"2份","sourceIds",List.of(source),
-                        "attributes",BidService.fields("quote",quote,"contextQuote",quote,"dimensions",Map.of("object","业务数据库"))));
+                for(String quote:cn.bidcheck.compat.Java8Api.listOf(first, second))facts.add(BidService.fields("kind","FIELD","field","custom","fieldLabel","备份副本数","categoryId","solution",
+                        "subject","业务数据库","scope","CURRENT_PROJECT","rawValue",quote.contains("3份")?"3份":"2份","sourceIds",cn.bidcheck.compat.Java8Api.listOf(source),
+                        "attributes",BidService.fields("quote",quote,"contextQuote",quote,"dimensions",cn.bidcheck.compat.Java8Api.mapOf("object", "业务数据库"))));
                 facts.add(BidService.fields("kind","FIELD","field","custom","fieldLabel","不存在的字段标签","categoryId","solution","scope","CURRENT_PROJECT",
-                        "rawValue","3份","sourceIds",List.of(source),"attributes",Map.of("quote",first,"contextQuote",first)));
-                return json.valueToTree(Map.of("facts",facts));
+                        "rawValue","3份","sourceIds",cn.bidcheck.compat.Java8Api.listOf(source),"attributes",cn.bidcheck.compat.Java8Api.mapOf("quote", first, "contextQuote", first)));
+                return json.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("facts", facts));
             }
         };
         Object original=ReflectionTestUtils.getField(service,"consistencyScanner");

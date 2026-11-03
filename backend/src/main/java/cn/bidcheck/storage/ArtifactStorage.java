@@ -26,7 +26,7 @@ public interface ArtifactStorage {
                     digest.update(buffer, 0, length);
                 }
             }
-            byte[] expected = java.util.HexFormat.of().parseHex(expectedSha256);
+            byte[] expected = cn.bidcheck.compat.HexFormat.of().parseHex(expectedSha256);
             if (!java.security.MessageDigest.isEqual(expected, digest.digest())) throw new IOException("原始文件 SHA-256 与已登记证据不一致，已拒绝解析和下载，请核对存储数据。");
             return path;
         } catch (java.security.NoSuchAlgorithmException impossible) {

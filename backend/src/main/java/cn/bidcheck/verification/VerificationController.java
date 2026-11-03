@@ -21,12 +21,12 @@ public class VerificationController {
     @GetMapping("/verification-runs/{id}") public Object detail(@PathVariable String id) {return service.detail(id);}
     @GetMapping("/verification-runs/{id}/facts") public Object facts(@PathVariable String id) {return service.facts(id);}
     @GetMapping("/verification-runs/{id}/obligations") public Object obligations(@PathVariable String id) {
-        return VerificationService.maps(service.detail(id).get("results")).stream().flatMap(r->VerificationService.maps(r.get("obligations")).stream()
-            .map(o->{Map<String,Object> copy=new LinkedHashMap<>(o);copy.put("checkpointId",r.get("checkpointId"));copy.put("checkpointTitle",r.get("title"));return copy;})).toList();
+        return cn.bidcheck.compat.Java8Api.toList(VerificationService.maps(service.detail(id).get("results")).stream().flatMap(r->VerificationService.maps(r.get("obligations")).stream()
+            .map(o->{Map<String,Object> copy=new LinkedHashMap<>(o);copy.put("checkpointId",r.get("checkpointId"));copy.put("checkpointTitle",r.get("title"));return copy;})));
     }
     @GetMapping("/verification-runs/{id}/gaps") public Object gaps(@PathVariable String id) {
-        return VerificationService.maps(service.detail(id).get("results")).stream().flatMap(r->VerificationService.maps(r.get("gaps")).stream()
-            .map(g->{Map<String,Object> copy=new LinkedHashMap<>(g);copy.put("checkpointId",r.get("checkpointId"));copy.put("checkpointTitle",r.get("title"));return copy;})).toList();
+        return cn.bidcheck.compat.Java8Api.toList(VerificationService.maps(service.detail(id).get("results")).stream().flatMap(r->VerificationService.maps(r.get("gaps")).stream()
+            .map(g->{Map<String,Object> copy=new LinkedHashMap<>(g);copy.put("checkpointId",r.get("checkpointId"));copy.put("checkpointTitle",r.get("title"));return copy;})));
     }
     @GetMapping("/verification-runs/{id}/obligations/{checkpoint}/proof")
     public Object proof(@PathVariable String id,@PathVariable String checkpoint) {return service.proof(id,checkpoint);}
@@ -41,7 +41,7 @@ public class VerificationController {
     public Object external(@PathVariable String project,@RequestBody Map<String,Object> body) {return service.external(project,body);}
     @GetMapping("/documents/{id}/layout") public Object layout(@PathVariable String id) throws IOException {return service.layout(id);}
     @GetMapping("/verification-runs/{id}/report") public ResponseEntity<byte[]> report(@PathVariable String id,@RequestParam(defaultValue="html") String format) {
-        var report=reports.generate(id,format);
+        cn.bidcheck.service.ReportService.Report report=reports.generate(id,format);
         return ResponseEntity.ok().contentType(MediaType.parseMediaType(report.contentType()))
             .header(HttpHeaders.CONTENT_DISPOSITION,ContentDisposition.attachment().filename("BidCheck-Automation-"+id+"."+format,StandardCharsets.UTF_8).build().toString()).body(report.bytes());
     }

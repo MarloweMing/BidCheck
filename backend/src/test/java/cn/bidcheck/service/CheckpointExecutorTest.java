@@ -44,7 +44,7 @@ class CheckpointExecutorTest {
             assertEquals(3,started.get(),"No fourth task before the first result is consumed");
             assertTrue(consumed.isEmpty(),"Later completions must wait for index zero");
             releaseFirst.countDown();result.get(5,TimeUnit.SECONDS);
-            assertEquals(List.of(0,1,2,3,4,5,6),consumed);assertTrue(peak.get()<=3);
+            assertEquals(cn.bidcheck.compat.Java8Api.listOf(0, 1, 2, 3, 4, 5, 6),consumed);assertTrue(peak.get()<=3);
         } finally { releaseFirst.countDown();callers.shutdownNow();executor.shutdown(); }
     }
 
