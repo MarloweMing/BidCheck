@@ -41,7 +41,8 @@ final class JavaAgentRunner {
         +"被服务器关闭或阻塞的目标只能在相关规则或证据版本改变后重试，不得改写字段名、事实类型或说明绕过。一个目标无进展不代表其他目标已审查。"
         +"系统超时、外部服务失败、等待外部核验或待客户确认均不代表材料缺失或不符合。"
         +"允许submit_candidate_fact提出kind=INFERRED的有原文推断；attributes.inference须有claim、reasoning、confidence、risks、evidence:[{sourceId,quote}]，attributes.proposedFact满足实际字段合同。自报置信度不授权通过。"
-        +"NEEDS_CONFIRMATION表示等待客户确认，不能反复改写同一推断。按服务器允许的修复动作处理；不能编造数据、身份证号、页码、主体关系或日期。";
+        +"NEEDS_CONFIRMATION表示等待客户确认，不能反复改写同一推断。按服务器允许的修复动作处理；不能编造数据、身份证号、页码、主体关系或日期。"
+        +ContractSubmissionGuidance.SYSTEM;
 
     private final ObjectMapper json=new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
         .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
@@ -78,7 +79,7 @@ final class JavaAgentRunner {
         host=callbacks;start=copyMap(input);context=mapValue(start.get("context"));requestId=text(start.get("requestId"));
         String workflow=text(context.get("workflowPolicy"));review="AGENT_LED_REVIEW_V1".equals(workflow);typed=review||"TARGET_FACTS_V1".equals(workflow);
         try{
-            for(Object value:list(start.get("tools"))){Map<String,Object> definition=mapValue(value);String name=text(definition.get("name"));Map<String,Object> schema=mapValue(definition.get("parameters"));
+            for(Object value:list(start.get("tools"))){Map<String,Object> definition=ContractSubmissionGuidance.describe(mapValue(value));String name=text(definition.get("name"));Map<String,Object> schema=mapValue(definition.get("parameters"));
                 try{JavaToolSchema.validateSchema(schema);}catch(IllegalArgumentException invalid){throw new Failure("INVALID_TOOL_SCHEMA");}
                 if(!(definition.get("description") instanceof String)||text(definition.get("description")).length()>8000)throw new Failure("INVALID_TOOL_DESCRIPTION");definitions.put(name,definition);}
             contracts=copyList(context.get("allowedFactContracts"));sync(context,"",new LinkedHashMap<String,Object>());restoreLedger();
