@@ -8,6 +8,8 @@ public final class RecoveryFailureRouting {
     /** A rejected typed fact is not evidence that OCR failed. Keep the repair causal. */
     public static String candidateAction(String code){
         if(code==null)return "CORRECT_CANDIDATE";
+        if ("CONTRACT_IDENTITY_UNPROVEN".equals(code) || "CONTRACT_IDENTITY_CONFLICT".equals(code))
+            return "CORRECT_CONTRACT_IDENTITY_FIELDS";
         if(cn.bidcheck.compat.Java8Api.setOf("OCR_TEXT_UNREADABLE", "SOURCE_IMAGE_REQUIRED", "VISUAL_FIELD_UNREADABLE").contains(code))return "VERIFY_SOURCE_PAGES";
         if(requirement(code))return "REPAIR_REQUIREMENT";
         if(relationship(code)||cn.bidcheck.compat.Java8Api.setOf("PERSON_ROLE_BINDING_INVALID", "CERTIFICATE_SUBJECT_FIELD_BINDING_INVALID").contains(code))return "RESOLVE_SUBJECT_FIRST";

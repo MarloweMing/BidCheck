@@ -9,13 +9,63 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 final class VisualMarkReview {
     private VisualMarkReview() {}
 
-    static String outcome(Map<String,Object> observation){
-        String status=str(observation,"readability");if(!"NOT_OBSERVED".equals(status))return status;
-        // A provider can report NOT_OBSERVED because the image is blurred or truncated.
-        // Such a receipt completes the attempt but never proves an empty signing position.
-        boolean uncertain=VisualObservationPolicy.assess(observation).constraints().stream().anyMatch(c->cn.bidcheck.compat.Java8Api.setOf(VisualObservationPolicy.Kind.VALUE_UNREADABLE, VisualObservationPolicy.Kind.LABEL_UNPROVEN, VisualObservationPolicy.Kind.UNCLASSIFIED_RESTRICTION).contains(c.kind()));
-        if(uncertain||ProofVerifier.strings(observation.get("modelLimitations")).stream().anyMatch(s->s.matches("(?s).*(?:裁剪|裁断|范围不全|画面不全|超出(?:图片|图像|画面|送检)).*")))return "UNREADABLE";
+    static String outcome(Map<String,Object> observation) {
+        String status = str(observation, "readability");
+        if (!"NOT_OBSERVED".equals(status)) return status;
+        boolean explicitAbsence = explicitlyEmptyMark(observation);
+        // A completed negative attempt is not proof of absence when the actual image is
+        // unclear, incomplete or subject to an unexplained restriction.
+        boolean uncertain = VisualObservationPolicy.assess(observation).constraints().stream()
+            .anyMatch(constraint -> {
+                boolean blocksNegative = cn.bidcheck.compat.Java8Api.setOf(
+                    VisualObservationPolicy.Kind.VALUE_UNREADABLE,
+                    VisualObservationPolicy.Kind.LABEL_UNPROVEN,
+                    VisualObservationPolicy.Kind.UNCLASSIFIED_RESTRICTION).contains(constraint.kind());
+                return blocksNegative && !(explicitAbsence
+                    && emptyMarkDisclaimer(constraint, str(observation, "label")));
+            });
+        if (uncertain || ProofVerifier.strings(observation.get("modelLimitations")).stream()
+                .anyMatch(note -> note.matches(
+                    "(?s).*(?:裁剪|裁断|范围不全|画面不全|超出(?:图片|图像|画面|送检)).*"))) {
+            return "UNREADABLE";
+        }
         return status;
+    }
+
+    /** Applies only to a typed, empty negative result. It cannot admit a positive field. */
+    private static boolean explicitlyEmptyMark(Map<String,Object> observation) {
+        if (!cn.bidcheck.compat.Java8Api.setOf("SIGNATURE", "SEAL").contains(str(observation, "type"))
+                || !str(observation, "value").isEmpty()
+                || !str(observation, "observedValue").isEmpty()) return false;
+        List<String> notes = ProofVerifier.strings(observation.get("modelLimitations"));
+        String text = String.join("\n", notes);
+        // Even an otherwise explicit blank statement cannot explain away physical uncertainty.
+        if (text.matches("(?s).*(?:模糊|不清|不详|未完全清晰|遮挡|裁切|裁剪|裁断"
+                + "|范围不全|画面不全|分辨率|反光|褪色|无法辨|不能辨|难以辨"
+                + "|超出(?:图片|图像|画面|送检)).*")) return false;
+        return text.matches("(?s).*(?:未(?:观察到|见)(?:任何|实际|可见)?(?:手写)?"
+                + "(?:签名|签字|印章|公章|签章)|无任何手写(?:内容|签名|签字)"
+                + "|(?:签字|签名|盖章)(?:处|栏|位置)[^。；;\\n]{0,12}空白).*");
+    }
+
+    private static boolean emptyMarkDisclaimer(VisualObservationPolicy.Constraint constraint,
+            String label) {
+        String note = constraint.message();
+        if (constraint.kind() == VisualObservationPolicy.Kind.VALUE_UNREADABLE) {
+            // An unfilled printed line is different from a mark that exists but is unreadable.
+            String slot = "['‘’“”]?[（(]?(?:签字|签名|盖章|签章|印章)[）)]?"
+                + "[：:]?[_＿—\\s-]*['‘’“”]?";
+            String field = "(?:签字|签名|盖章|签章|印章)(?:栏|位置|字段)";
+            return note.matches("(?:" + slot + "|" + field + ")(?:为|是)印刷占位符"
+                + "[，,]?非实际(?:签名|签字|印章|签章)(?:痕迹)?");
+        }
+        if (constraint.kind() != VisualObservationPolicy.Kind.UNCLASSIFIED_RESTRICTION
+                || label.isEmpty()) return false;
+        String named = "['‘’“”]?" + java.util.regex.Pattern.quote(label) + "['‘’“”]?";
+        // With explicit absence, inability to identify a signer is not image unreadability.
+        // Any additional or unknown restriction fails this exact, closed language pattern.
+        return note.matches("无法确认(?:是否由" + named + "签署(?:或他人代签)?|"
+            + named + "是否(?:已)?签署|是否(?:已)?签署(?:或由谁签署)?)");
     }
 
     static List<String> reviewedSubjects(Map<String,Object> observation,String type,List<String> subjects,List<Source> relevant){

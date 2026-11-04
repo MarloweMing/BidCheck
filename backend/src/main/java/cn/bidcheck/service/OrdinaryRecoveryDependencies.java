@@ -58,6 +58,8 @@ public final class OrdinaryRecoveryDependencies {
             value.putAll(fields("id",id,"version",VERSION,"runId",run,"checkpointId",finding.checkpoint().id(),"findingId",finding.id(),
                 "observedRevision",number(dependency.get("observedRevision")),"scheduledRevision",number(previous.get("scheduledRevision")),"active",true));
             value.put("scheduledEvidenceKeys",previous.getOrDefault("scheduledEvidenceKeys",cn.bidcheck.compat.Java8Api.listOf()));
+            value.put("observedEvidenceKeys", observedEvidenceKeys(dependency, "inputs"));
+            value.put("observedBidderProjectionKeys", observedEvidenceKeys(dependency, "bidderProjectionInputs"));
             store.save("ordinary_recovery_binding",id,project,run,value);
         }
         if(previousSet.get("bindingIds") instanceof Collection<?>)for(Object raw:((Collection<?>) (previousSet.get("bindingIds")))){String id=String.valueOf(raw);if(current.contains(id))continue;
@@ -95,12 +97,24 @@ public final class OrdinaryRecoveryDependencies {
             Set<String> targets=new TreeSet<>(),eventIds=new TreeSet<>(),sourceIds=new TreeSet<>(),evidenceKeys=new TreeSet<>();long revision=0;
             for(Map<String,Object> binding:bindings){
                 Set<String> seen=new TreeSet<>(stringList(binding.get("scheduledEvidenceKeys")));
+                Set<String> observed = new TreeSet<>(stringList(binding.get("observedEvidenceKeys")));
+                Set<String> projected = new TreeSet<>(stringList(binding.get("observedBidderProjectionKeys")));
                 long floor=Math.max(number(binding.get("observedRevision")),number(binding.get("scheduledRevision"))),latest=floor;
                 for(Map<String,Object> event:events){long eventRevision=number(event.get("revision"));
                     if(eventRevision<=floor||checkpoint.equals(text(event,"producerCheckpointId")))continue;
                     List<Map<String,Object>> matching=cn.bidcheck.compat.Java8Api.toList(maps(event.get("changes")).stream().filter(change->matches(binding,change)&&(!"SUCCEEDED".equals(text(job,"status"))||possibleConflict(binding,change))));if(matching.isEmpty())continue;
                     boolean novel=false;
-                    for(Map<String,Object> change:matching){String key=RecoveryEvidenceIdentity.key(change);if(!seen.add(key))continue;novel=true;evidenceKeys.add(key);
+                    for(Map<String,Object> change:matching){String key=RecoveryEvidenceIdentity.key(change);
+                        if (!seen.add(key)) continue;
+                        String observedKey = observedKey(change);
+                        String unchanged = observed.contains(observedKey) ? "EXACT_OBSERVED_FACT"
+                            : projected.contains(observedKey) ? "UNCHANGED_BIDDER_PROJECTION" : "";
+                        if (!unchanged.isEmpty()) {
+                            LOG.info("bidcheck.recovery_observed_input runId={} checkpointId={} obligationId={} eventId={} semanticEvidenceKey={} reason={}",
+                                run, checkpoint, text(binding,"obligationId"), text(event,"id"), key, unchanged);
+                            continue;
+                        }
+                        novel=true;evidenceKeys.add(key);
                         for(Map<String,Object> source:maps(change.get("sources")))if(!cn.bidcheck.compat.Java8Api.isBlank(text(source,"id")))sourceIds.add(text(source,"id"));
                         if(map(change.get("fact")).get("sourceIds") instanceof Collection<?>)((Collection<?>) (map(change.get("fact")).get("sourceIds"))).forEach(ref->{if(!cn.bidcheck.compat.Java8Api.isBlank(Objects.toString(ref,"")))sourceIds.add(String.valueOf(ref));});}
                     latest=Math.max(latest,eventRevision);if(!novel)continue;
@@ -137,6 +151,56 @@ public final class OrdinaryRecoveryDependencies {
         }
         return scheduled;
     }
+    /** Only the engine's current rule receipt may seed observed input identity. Legacy reports
+     * and candidate/model metadata retain the previous conservative scheduling behavior. */
+    private static List<String> observedEvidenceKeys(Map<String,Object> dependency, String inputField) {
+        Map<String,Object> receipt = map(dependency.get("observedEvidence"));
+        if (!"server-observed-evidence-1".equals(text(receipt,"version"))
+                || !"CURRENT_SERVER_PROOF".equals(text(receipt,"authority"))
+                || !Boolean.FALSE.equals(receipt.get("businessProof"))
+                || !text(dependency,"obligationId").equals(text(receipt,"obligationId"))
+                || !text(dependency,"observationKey").equals(text(receipt,"observationKey"))) return Collections.emptyList();
+        if ("bidderProjectionInputs".equals(inputField)) {
+            Map<String,Object> target = map(dependency.get("target"));
+            Set<String> allowedParameters = new HashSet<>(Arrays.asList("amountBasis", "taxBasis", "currency", "sourceCompilation"));
+            if (!"NUMBER".equals(text(target,"predicate"))
+                    || !Arrays.asList("投标人", "投标单位").contains(text(target,"subject"))
+                    || !allowedParameters.containsAll(map(target.get("parameters")).keySet())) return Collections.emptyList();
+        }
+        Set<String> keys = new TreeSet<>();
+        for (Map<String,Object> input : maps(receipt.get(inputField))) {
+            if (!"FACT".equals(text(input,"recordType")) || !usable(input) || !matches(dependency,input)) continue;
+            List<Map<String,Object>> sources = maps(input.get("sources"));
+            Set<String> refs = new HashSet<>();
+            boolean complete = true;
+            for (Map<String,Object> source : sources) {
+                Map<String,Object> evidence = map(source.get("evidence"));
+                if (text(source,"id").isEmpty() || text(source,"documentHash").isEmpty()
+                        || !(source.get("documentVersion") instanceof Number)
+                        || number(source.get("documentVersion")) < 1 || text(source,"parserFingerprint").isEmpty()
+                        || text(evidence,"documentId").isEmpty() || text(evidence,"locationType").isEmpty()
+                        || number(evidence.get("page")) < 1 || text(evidence,"quote").isEmpty()) {
+                    complete = false;
+                    break;
+                }
+                refs.add(text(source,"id"));
+            }
+            List<String> factSources = stringList(map(input.get("fact")).get("sourceIds"));
+            if (complete && !factSources.isEmpty() && refs.containsAll(factSources))
+                keys.add(observedKey(input));
+        }
+        return new ArrayList<>(keys);
+    }
+    private static String observedKey(Map<String,Object> input) {
+        // Global event identity intentionally ignores presentation text. An observation receipt
+        // is stricter: changed source text must never borrow a prior rule's seen input.
+        List<String> originals = new ArrayList<>();
+        for (Map<String,Object> source : maps(input.get("sources")))
+            originals.add(text(source,"id") + "\n" + text(map(source.get("evidence")),"quote"));
+        Collections.sort(originals);
+        return RecoveryEvidenceIdentity.key(input) + ":" + hash(RecoveryEvidenceIdentity.canonical(originals));
+    }
+
     private static boolean possibleConflict(Map<String,Object> binding,Map<String,Object> change){
         Map<String,Object> fact=map(change.get("fact"));
         if(fact.isEmpty()||"MATERIAL".equals(text(fact,"kind")))return false;
@@ -158,6 +222,14 @@ public final class OrdinaryRecoveryDependencies {
             &&(cn.bidcheck.compat.Java8Api.isBlank(text(binding,"modelIdentity"))||text(binding,"modelIdentity").equals(text(change,"modelIdentity")));
         Map<String,Object> target=map(binding.get("target")),fact=map(change.get("fact"));
         if(target.isEmpty()||fact.isEmpty())return false;
+        String contractReason = cn.bidcheck.verification.engine.DeclaredContractRelevance.schedulingReason(
+            binding, fact, maps(change.get("sources")));
+        if (!"POSSIBLY_RELEVANT".equals(contractReason)) {
+            LOG.info("bidcheck.recovery_contract_relevance runId={} checkpointId={} obligationId={} sourceIds={} reason={}",
+                text(binding, "runId"), text(binding, "checkpointId"), text(binding, "obligationId"),
+                fact.get("sourceIds"), contractReason);
+        }
+        if ("DIFFERENT_CONTRACT_OUTSIDE_DECLARED_ROW".equals(contractReason)) return false;
         // RuleEvaluator.months only evaluates CURRENT_PROJECT records. A known historical
         // payroll record cannot alter this obligation, even when its person name matches.
         if ("MONTHS".equals(text(target, "predicate")) && "MONTHS".equals(text(fact, "kind"))

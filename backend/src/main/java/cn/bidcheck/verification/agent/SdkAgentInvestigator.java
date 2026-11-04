@@ -387,6 +387,29 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
             if(!state.equals(current))entry.put("workerState",state);
             if(((Map<?,?>) (value)).get("visited") instanceof Boolean)entry.put("visited",((Map<?,?>) (value)).get("visited"));
             for(String key:cn.bidcheck.compat.Java8Api.listOf("noEvidenceProgressRounds", "maxNoEvidenceProgressRounds", "acceptedFactCount", "closedTargetCount", "navigationCount"))if(((Map<?,?>) (value)).containsKey(key))entry.put(key,nonnegative(((Map<?,?>) (value)).get(key)));
+            // Only the current request's Runner counter survives this diagnostic boundary.
+            Map<?,?> diagnostic = (Map<?,?>) value;
+            // Presence is sticky: malformed new diagnostics must never become legacy authority.
+            for (String field : cn.bidcheck.compat.Java8Api.listOf("noNewFactCounterVersion", "noNewFactRequestId",
+                    "noNewFactModelRounds", "noNewFactStopReason")) {
+                if (diagnostic.containsKey(field)) entry.put("noNewFactCounterVersion", "INVALID");
+            }
+            if ("java-agent-target-rounds-1".equals(diagnostic.get("noNewFactCounterVersion"))
+                    && requestId.equals(diagnostic.get("noNewFactRequestId"))
+                    && diagnostic.get("noNewFactModelRounds") instanceof Number
+                    && diagnostic.get("noNewFactStopReason") instanceof String) {
+                Number rawRounds = (Number) diagnostic.get("noNewFactModelRounds");
+                long rounds = rawRounds.longValue();
+                String reason = Objects.toString(diagnostic.get("noNewFactStopReason"), "");
+                if (rounds >= 0 && rawRounds.doubleValue() == (double) rounds
+                        && rounds <= receipts.observedModels.get()
+                        && (reason.isEmpty() && rounds < 3 || "THREE_ROUNDS_NO_NEW_FACT".equals(reason) && rounds >= 3)) {
+                    entry.put("noNewFactCounterVersion", "java-agent-target-rounds-1");
+                    entry.put("noNewFactRequestId", requestId);
+                    entry.put("noNewFactModelRounds", rounds);
+                    entry.put("noNewFactStopReason", reason);
+                }
+            }
             if(!receipts.closedTargets.contains(target))entry.put("closedTargetCount",0L);
             String failure=receipts.failureEventId(((Map<?,?>) (value)).get("firstFailureEventId"),requestId);if(!cn.bidcheck.compat.Java8Api.isBlank(failure))entry.put("firstFailureEventId",failure);
             String operation=Objects.toString(((Map<?,?>) (value)).get("lastOperationKey"),"");if(operation.matches("[a-f0-9]{64}"))entry.put("lastOperationKey",operation);

@@ -257,11 +257,12 @@ class FileParserPdfOcrTest {
 
     @Test void durableCompletionFailureCancelsOtherRequestsAndNeverStartsFallback() throws Exception {
         Path source = pdf("cancel.pdf", 60, cn.bidcheck.compat.Java8Api.setOf());
-        CountDownLatch started = new CountDownLatch(5), cancelled = new CountDownLatch(4);
+        CountDownLatch started = new CountDownLatch(5), cancellable = new CountDownLatch(4), cancelled = new CountDownLatch(4);
         PdfClient client = new PdfClient((bytes, pages) -> {
             started.countDown(); await(started);
-            if (pages.get(0) == 1) return success(pages);
-            try { new CountDownLatch(1).await(30, TimeUnit.SECONDS); throw new AssertionError("request was not cancelled"); }
+            if (pages.get(0) == 1) { await(cancellable); return success(pages); }
+            // Count cancellation only after every peer has entered the interruption handler.
+            try { cancellable.countDown(); new CountDownLatch(1).await(30, TimeUnit.SECONDS); throw new AssertionError("request was not cancelled"); }
             catch (InterruptedException stopped) { cancelled.countDown(); Thread.currentThread().interrupt(); throw new InterruptedIOException(); }
         });
         SingleClient single = new SingleClient(); IOException lost = new IOException("save failed");

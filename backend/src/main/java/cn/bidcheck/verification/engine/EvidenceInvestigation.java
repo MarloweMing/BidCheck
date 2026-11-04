@@ -27,6 +27,14 @@ final class EvidenceInvestigation {
         final List<Map<String,Object>> rejected;final Map<String,Source> disclosed=new LinkedHashMap<>();
         final Map<String,Source> navigation=new LinkedHashMap<>();
         private final Set<String> actuallyReadSourceIds = new LinkedHashSet<>();
+        private final Map<String, Set<String>> contractBodyReads = new LinkedHashMap<>();
+        private final Set<String> attemptedTargets = new LinkedHashSet<>();
+        private final Map<String, Set<String>> targetBodyReads = new LinkedHashMap<>();
+        private final Map<String, Set<String>> targetReadPages = new LinkedHashMap<>();
+        private final Map<String, BitSet> tableReadRows = new LinkedHashMap<>();
+        private final Map<String, Integer> tableRowTotals = new LinkedHashMap<>();
+        private final Map<String, Source> tableReadSources = new LinkedHashMap<>();
+        private final Map<String, Set<String>> restoredContractReads = new LinkedHashMap<>();
         final Set<String> incompleteReads;final List<Map<String,Object>> visualRequests=new ArrayList<>();
         RecoveryCoverageDependencies coverageDependencies;
         RuleEvaluator evaluator;Decision decision;int accepted;
@@ -96,7 +104,7 @@ final class EvidenceInvestigation {
         Host(Checkpoint cp,Plan plan,List<Rule> rules,EvidenceCorpus corpus,Map<String,Fact> facts,Map<String,Object> ctx,
              SharedFactReuse shared,RunSession session,HybridRetriever retriever,List<Map<String,Object>> rejected,Set<String> incompleteReads){
             this.cp=cp;this.plan=plan;this.rules=AgentInvestigationScope.withIdentityPrerequisites(rules);this.corpus=corpus;this.facts=facts;this.ctx=ctx;this.shared=shared;
-            this.session=session;this.retriever=retriever;this.rejected=rejected;this.incompleteReads=cn.bidcheck.compat.Java8Api.setCopyOf(incompleteReads);recompute();
+            this.session=session;this.retriever=retriever;this.rejected=rejected;this.incompleteReads=cn.bidcheck.compat.Java8Api.setCopyOf(incompleteReads);recompute();restoreContractReads();
         }
         /** The model receives the complete server-authored tree for navigation only.  The
          * executable target list remains a separate host-issued receipt, so an ANY or
@@ -203,6 +211,13 @@ final class EvidenceInvestigation {
                 result=linked("status","FAILED","error","HOST_TOOL_FAILED");
             }
             result=new LinkedHashMap<>(result);
+            String requestedTarget = str(args, "targetObligationId");
+            if (!"FAILED".equals(str(result, "status")) && rules.stream().anyMatch(rule -> rule.id().equals(requestedTarget))) {
+                attemptedTargets.add(requestedTarget);
+                recordTargetRead(name, args, result);
+                Map<String,Object> coverage = contractReadCoverage(requestedTarget);
+                if (!coverage.isEmpty()) result.put("contractReadCoverage", coverage);
+            }
             if(cn.bidcheck.compat.Java8Api.setOf("search_evidence", "read_section", "read_table_record", "submit_candidate_fact").contains(name)&&(!ProofVerifier.strings(result.get("acceptedFactIds")).isEmpty()||Boolean.TRUE.equals(result.get("layoutChanged"))||"NEEDS_CONFIRMATION".equals(result.get("status")))){
                 Map<String,Object> receipt=recomputeWithRequiredReads();receipt.put("kind","HOST_RULE_RECOMPUTE");result.put("computationReceipt",receipt);
                 session.record("AGENT_LOCAL_RECOMPUTE",cn.bidcheck.compat.Java8Api.mapOf("trigger", name),receipt);
@@ -282,8 +297,222 @@ final class EvidenceInvestigation {
                 session.record("AGENT_DECLARED_CONTRACT_RANGE",args,linked("targetRows",declaration,"sourceIds",cn.bidcheck.compat.Java8Api.toList(found.stream().map(Source::id))));
             }
             // Preserve ranked page representatives; read_section handles oversized page continuations.
-            return expose(found,8);
+            Map<String,Object> result = expose(found,8);
+            Map<String,Object> packet = contractPacketNavigation(str(args, "targetObligationId"));
+            if (!packet.isEmpty()) result.put("contractPacketNavigation", packet);
+            replayContractBodies(str(args, "targetObligationId"), result);
+            return result;
         }
+
+        private void restoreContractReads() {
+            for (Rule rule : rules) {
+                List<Map<String,Object>> rows = contractNavigationRows(rule.id(), "");
+                if (rows.size() != 1) continue;
+                Set<String> restored = ContractBodyReadReplay.restore(session, rule.id(), rows.get(0), corpus);
+                Set<String> allowed = new LinkedHashSet<>();
+                for (Source source : contractPacketSources(rule.id())) if (restored.contains(source.id())) {
+                    allowed.add(source.id());
+                    navigation.put(source.id(), source);
+                }
+                if (!allowed.isEmpty()) {
+                    contractBodyReads.put(rule.id(), new LinkedHashSet<>(allowed));
+                    restoredContractReads.put(rule.id(), allowed);
+                    session.record("AGENT_CONTRACT_BODY_RESTORED", linked("targetObligationId", rule.id()),
+                        linked("sourceIds", new ArrayList<>(allowed), "sourceIdentityRevalidated", true, "businessProof", false));
+                }
+            }
+        }
+
+        private void replayContractBodies(String target, Map<String,Object> result) {
+            Set<String> restored = restoredContractReads.getOrDefault(target, Collections.emptySet());
+            if (restored.isEmpty()) return;
+            List<Map<String,Object>> bodies = new ArrayList<>(RuleEvaluator.maps(result.get("sources")));
+            Set<String> returned = new LinkedHashSet<>(ProofVerifier.strings(result.get("sourceIds")));
+            int chars = 0;
+            for (String id : returned) { Source source=corpus.byId.get(id); if(source!=null) chars+=source.evidence().quote().length(); }
+            List<String> replayed = new ArrayList<>();
+            List<Map<String,Object>> deferred = new ArrayList<>();
+            for (Source source : contractPacketSources(target)) if (restored.contains(source.id())) {
+                if (!returned.contains(source.id())) {
+                    if (chars + source.evidence().quote().length() > 32000) {
+                        String label = source.opening();
+                        if (label == null || label.isEmpty()) label = "Original page " + source.evidence().page();
+                        if (label.length() > 160) label = label.substring(0, 160);
+                        deferred.add(linked("sourceId", source.id(), "documentId", source.evidence().documentId(),
+                            "documentHash", source.documentHash(), "documentVersion", source.documentVersion(),
+                            "locationType", source.evidence().locationType(), "location", source.evidence().page(),
+                            "label", label, "navigationOnly", true, "readRequired", true));
+                        continue;
+                    }
+                    bodies.addAll(corpus.inputs(Collections.singletonList(source)));
+                    returned.add(source.id());
+                    chars += source.evidence().quote().length();
+                }
+                disclosed.put(source.id(), source);
+                actuallyReadSourceIds.add(source.id());
+                replayed.add(source.id());
+            }
+            result.put("sources", bodies);
+            result.put("sourceIds", new ArrayList<>(returned));
+            result.put("contractReadReplay", linked("authority", "CURRENT_SERVER_PROOF", "targetObligationId", target,
+                "serverPlanRevision", serverPlanRevision(), "reusedBodySourceIds", replayed,
+                "availableOriginalSourceIds", new ArrayList<>(restored), "deferredOriginalSources", deferred,
+                "remainingBodiesRequireReadSection", true, "businessProof", false));
+        }
+
+        private List<Source> contractPacketSources(String target) {
+            List<Map<String,Object>> rows = contractNavigationRows(target, "");
+            if (rows.size() != 1) return Collections.emptyList();
+            Map<String,Object> row = rows.get(0);
+            List<Source> selected = new ArrayList<>();
+            for (Source source : corpus.all) {
+                if (!source.id().startsWith("V") && DeclaredPerformanceRows.contains(row, source)
+                        && !DeclaredPerformanceRows.inventoryContains(row, source)) selected.add(source);
+            }
+            selected.sort(Comparator.comparingInt((Source source) -> source.evidence().page()));
+            return selected;
+        }
+
+        private Map<String,Object> contractReadCoverage(String target) {
+            List<Map<String,Object>> rows = contractNavigationRows(target, "");
+            if (rows.size() != 1) return Collections.emptyMap();
+            Map<String,Object> row = rows.get(0);
+            boolean scoped = row.get("proofPageStart") instanceof Number && row.get("proofPageEnd") instanceof Number;
+            Set<String> read = contractBodyReads.getOrDefault(target, Collections.emptySet());
+            SortedSet<Integer> available = new TreeSet<>(), pending = new TreeSet<>(), missing = new TreeSet<>();
+            List<String> readIds = new ArrayList<>();
+            for (Source source : contractPacketSources(target)) {
+                int page = source.evidence().page();
+                available.add(page);
+                if (read.contains(source.id())) readIds.add(source.id()); else pending.add(page);
+            }
+            if (scoped) {
+                long first = RunSession.number(row.get("proofPageStart"), -1);
+                long last = RunSession.number(row.get("proofPageEnd"), -1);
+                // A malformed or oversized declaration cannot create an unbounded enumeration.
+                if (first < 1 || last < first || last - first > 10000) scoped = false;
+                else for (long page = first; page <= last; page++) if (!available.contains((int) page)) missing.add((int) page);
+            }
+            return linked("targetObligationId", target, "documentId", row.get("documentId"),
+                "documentHash", row.get("documentHash"), "documentVersion", row.get("documentVersion"),
+                "scopeAvailable", scoped, "availablePages", new ArrayList<>(available), "pendingPages", new ArrayList<>(pending),
+                "missingSourcePages", new ArrayList<>(missing), "readSourceIds", readIds,
+                "complete", scoped && !available.isEmpty() && pending.isEmpty() && missing.isEmpty(),
+                "businessProof", false, "authority", "CURRENT_SERVER_PROOF");
+        }
+
+        private Map<String,Object> contractPacketNavigation(String target) {
+            Map<String,Object> coverage = contractReadCoverage(target);
+            if (coverage.isEmpty()) return Collections.emptyMap();
+            Set<String> read = contractBodyReads.getOrDefault(target, Collections.emptySet());
+            Map<Integer,Source> pages = new LinkedHashMap<>();
+            for (Source source : contractPacketSources(target)) {
+                if (!read.contains(source.id())) pages.putIfAbsent(source.evidence().page(), source);
+            }
+            List<Map<String,Object>> refs = new ArrayList<>();
+            for (Source source : pages.values()) {
+                navigation.putIfAbsent(source.id(), source);
+                refs.add(linked("sourceId", source.id(), "documentId", source.evidence().documentId(),
+                    "documentHash", source.documentHash(), "documentVersion", source.documentVersion(),
+                    "locationType", source.evidence().locationType(), "location", source.evidence().page(), "navigationOnly", true));
+            }
+            Map<String,Object> receipt = linked("authority", "CURRENT_SERVER_PROOF", "targetObligationId", target,
+                "serverPlanRevision", serverPlanRevision(), "sources", refs, "coverage", coverage, "businessProof", false);
+            session.record("AGENT_CONTRACT_PACKET_NAVIGATION", linked("targetObligationId", target), receipt);
+            return receipt;
+        }
+
+        private String readPageKey(Source source) {
+            return EvidenceCorpus.pageKey(source.evidence().documentId(), source.evidence().page(), source.evidence().locationType());
+        }
+
+        /** Records only bodies and table rows returned by this host, never model metadata. */
+        private void recordTargetRead(String tool, Map<String,Object> args, Map<String,Object> result) {
+            if (!cn.bidcheck.compat.Java8Api.setOf("search_evidence", "read_section", "read_table_record").contains(tool)
+                    || !cn.bidcheck.compat.Java8Api.setOf("COMPLETED", "NO_RECORD").contains(str(result, "status"))) return;
+            String target = str(args, "targetObligationId");
+            Source selected = corpus.byId.get(str(args, "sourceId"));
+            Set<String> pages = targetReadPages.computeIfAbsent(target, ignored -> new LinkedHashSet<>());
+            Set<String> reads = targetBodyReads.computeIfAbsent(target, ignored -> new LinkedHashSet<>());
+            if (selected != null) pages.add(readPageKey(selected));
+            // NO_RECORD exposes an id for navigation but does not return original text.
+            if ("COMPLETED".equals(str(result, "status"))) {
+                for (String id : ProofVerifier.strings(result.get("sourceIds"))) {
+                    Source source = corpus.byId.get(id);
+                    if (source != null) { reads.add(id); pages.add(readPageKey(source)); }
+                }
+                // Ranked results omitted by the host's page/character limit remain concrete reads.
+                for (Map<String,Object> omitted : RuleEvaluator.maps(result.get("omitted"))) {
+                    Source source = corpus.byId.get(str(omitted, "sourceId"));
+                    if (source != null) pages.add(readPageKey(source));
+                }
+            }
+            if (!"read_table_record".equals(tool) || selected == null || !"COMPLETED".equals(str(result, "status"))) return;
+            String key = target + "|" + readPageKey(selected);
+            int offset = RunSession.number(args.get("rowOffset"), 0);
+            int count = RuleEvaluator.maps(result.get("rows")).size();
+            BitSet rows = tableReadRows.computeIfAbsent(key, ignored -> new BitSet());
+            rows.set(offset, offset + count);
+            tableReadSources.put(key, selected);
+            if (!Boolean.TRUE.equals(result.get("partial"))) tableRowTotals.put(key, offset + count);
+        }
+
+        private List<Map<String,Object>> pendingTargetReads(String target) {
+            List<Map<String,Object>> pending = new ArrayList<>();
+            Set<String> reads = new LinkedHashSet<>(targetBodyReads.getOrDefault(target, Collections.emptySet()));
+            // Validated persisted contract reads retain coverage; this does not grant citation.
+            reads.addAll(contractBodyReads.getOrDefault(target, Collections.emptySet()));
+            Set<String> pages = targetReadPages.getOrDefault(target, Collections.emptySet());
+            for (String page : pages) {
+                Source next = corpus.all.stream().filter(source -> page.equals(readPageKey(source))
+                    && !source.id().startsWith("V") && !reads.contains(source.id())).findFirst().orElse(null);
+                if (next != null) pending.add(linked("action", "READ_SECTION_CONTINUATION", "sourceId", next.id(),
+                    "documentId", next.evidence().documentId(), "page", next.evidence().page()));
+            }
+            for (Map.Entry<String, Source> entry : tableReadSources.entrySet()) {
+                String key = entry.getKey();
+                if (!key.equals(target + "|" + readPageKey(entry.getValue()))) continue;
+                int next = tableReadRows.get(key).nextClearBit(0);
+                Integer total = tableRowTotals.get(key);
+                if (total == null || next < total) pending.add(linked("action", "READ_TABLE_CONTINUATION",
+                    "sourceId", entry.getValue().id(), "rowOffset", next));
+            }
+            for (String id : incompleteReads) {
+                Source source = corpus.byId.get(id);
+                boolean complete = source != null && pages.contains(readPageKey(source))
+                    && corpus.all.stream().filter(item -> readPageKey(source).equals(readPageKey(item))
+                        && !item.id().startsWith("V")).allMatch(item -> reads.contains(item.id()));
+                if (!complete) pending.add(linked("action", "INITIAL_INCOMPLETE_READ", "sourceId", id));
+            }
+            return pending;
+        }
+
+        private Map<String,Object> serverTargetInputConsumption(Map<String,Object> audit) {
+            List<Map<String,Object>> targets = new ArrayList<>();
+            boolean normalStop = cn.bidcheck.compat.Java8Api.setOf("NO_PROGRESS", "EVIDENCE_UPDATED").contains(str(audit, "status"))
+                && cn.bidcheck.compat.Java8Api.setOf("REPEATED_ACTION_WITHOUT_NEW_EVIDENCE", "SEMANTIC_REJECTION_WITHOUT_NEW_EVIDENCE").contains(str(audit, "code"))
+                && RunSession.number(audit.get("failedToolCount"), -1) == 0;
+            for (Map<String,Object> work : workflowStates()) {
+                String target = str(work, "targetObligationId");
+                Map<String,Object> coverage = contractReadCoverage(target);
+                List<Map<String,Object>> pendingReads = pendingTargetReads(target);
+                boolean readComplete = pendingReads.isEmpty() && (coverage.isEmpty() || Boolean.TRUE.equals(coverage.get("complete")));
+                boolean terminal = Boolean.TRUE.equals(work.get("terminalForRevision"))
+                    && Boolean.TRUE.equals(work.get("targetExhaustedForRevision"))
+                    && work.get("remainingRepairActions") instanceof Collection<?> && ((Collection<?>) work.get("remainingRepairActions")).isEmpty();
+                boolean consumed = normalStop && attemptedTargets.contains(target) && terminal && readComplete;
+                targets.add(linked("targetObligationId", target, "evidenceRevision", work.get("evidenceRevision"),
+                    "terminalForRevision", terminal, "remainingRepairActions", work.get("remainingRepairActions"),
+                    "repairActionOrigin", work.get("repairActionOrigin"), "pendingReadActions", pendingReads,
+                    "readCoverageComplete", readComplete, "readCoverage", coverage, "consumed", consumed, "businessProof", false));
+                if (!coverage.isEmpty()) LOG.info("bidcheck.agent_contract_read_coverage runId={} checkpointId={} requestId={} targetId={} availablePages={} pendingPages={} missingSourcePages={} complete={} terminalForRevision={} inputConsumed={}",
+                    diagnostic(ctx.get("sourceRunId")), diagnostic(cp.id()), diagnostic(investigationRequestId), diagnostic(target),
+                    coverage.get("availablePages"), coverage.get("pendingPages"), coverage.get("missingSourcePages"), readComplete, terminal, consumed);
+            }
+            return linked("version", "server-target-input-consumption-1", "authority", "CURRENT_SERVER_PROOF",
+                "repairActionOriginVersion", "host-repair-action-origin-1", "requestId", investigationRequestId, "serverPlanRevision", serverPlanRevision(), "targets", targets, "businessProof", false);
+        }
+
         private List<Map<String,Object>> contractNavigationRows(String id,String query){
             if(evaluator==null)return Collections.emptyList();
             for(Rule rule:rules)if(rule.id().equals(id)&&("CONTRACT".equals(rule.predicate())||"PERFORMANCE_CONTRACTS".equals(str(rule.parameters(),"sourceScoringMode")))){
@@ -341,6 +570,16 @@ final class EvidenceInvestigation {
             Map<String,Object> result=expose(document.subList(at,document.size()),12);int count=ProofVerifier.strings(result.get("sourceIds")).size();
             if(at+count<document.size()){Source next=document.get(at+count);navigation.put(next.id(),next);result.put("nextSourceId",next.id());}
             if(at>0){Source previous=document.get(Math.max(0,at-12));navigation.put(previous.id(),previous);result.put("previousSourceId",previous.id());}
+            if (!rows.isEmpty()) {
+                Set<String> read = contractBodyReads.computeIfAbsent(str(args, "targetObligationId"), ignored -> new LinkedHashSet<>());
+                for (String id : ProofVerifier.strings(result.get("sourceIds"))) {
+                    Source source = corpus.byId.get(id);
+                    if (source != null && rows.stream().anyMatch(row -> DeclaredPerformanceRows.contains(row, source)
+                            && !DeclaredPerformanceRows.inventoryContains(row, source))) read.add(id);
+                }
+                ContractBodyReadReplay.record(session, str(args, "targetObligationId"), rows.get(0), corpus,
+                    ProofVerifier.strings(result.get("sourceIds")), result);
+            }
             return result;
         }
         /** A coarse cached category is navigation, never qualification proof. Re-read only
@@ -436,7 +675,93 @@ final class EvidenceInvestigation {
             visible.forEach(item -> actuallyReadSourceIds.add(item.id()));
             return linked("status","COMPLETED","rows",rows.subList(offset,end),"sources",corpus.inputs(visible),"partial",end<rows.size(),"nextRowOffset",end<rows.size()?end:-1,"sourceIds",cn.bidcheck.compat.Java8Api.toList(visible.stream().map(Source::id)),"sourceTextPartial",!unread.isEmpty(),"unreadSourceIds",unread,"layoutChanged",known.size()>before,"pageLayoutAudit",layoutAudit);
         }
-        private Map<String,Object> submit(Map<String,Object> args){
+        private Map<String,Object> submit(Map<String,Object> args) {
+            if (!args.containsKey("submissionMode")) return submitOne(args);
+            if (!"CONTRACT_FIELDS".equals(str(args, "submissionMode"))
+                    || !(args.get("fact") instanceof Map<?,?>)
+                    || !"CONTRACT".equals(str((Map<String,Object>) args.get("fact"), "kind"))
+                    || !(args.get("contractFields") instanceof List<?>)
+                    || ((List<?>) args.get("contractFields")).isEmpty()
+                    || ((List<?>) args.get("contractFields")).size() > 12) {
+                return linked("status", "REJECTED", "acceptedFactIds", Collections.emptyList(),
+                    "rejections", Collections.singletonList(linked("code", "CONTRACT_ATOMIC_FIELDS_INVALID")),
+                    "partialAdoption", false, "businessProof", false);
+            }
+            Map<String,Object> original = new LinkedHashMap<>((Map<String,Object>) args.get("fact"));
+            Map<String,Object> result = new LinkedHashMap<>(submitOne(args, false));
+            Set<String> acceptedIds = new LinkedHashSet<>(ProofVerifier.strings(result.get("acceptedFactIds")));
+            List<Map<String,Object>> issues = new ArrayList<>(RuleEvaluator.maps(result.get("rejections")));
+            List<Map<String,Object>> fieldResults = new ArrayList<>();
+            int index = 0;
+            for (Object raw : (List<?>) args.get("contractFields")) {
+                Map<String,Object> rawAtom = raw instanceof Map<?,?>
+                    ? new LinkedHashMap<>((Map<String,Object>) raw) : new LinkedHashMap<>();
+                Map<String,Source> readSources = new LinkedHashMap<>();
+                for (String sourceId : ProofVerifier.strings(rawAtom.get("sourceIds")))
+                    if (actuallyReadSourceIds.contains(sourceId) && disclosed.containsKey(sourceId)
+                            && corpus.byId.containsKey(sourceId)) readSources.put(sourceId, corpus.byId.get(sourceId));
+                Map<String,Object> atom = ContractCandidateFields.normalizeAtomic(rawAtom, readSources);
+                boolean normalizedFromRaw = !Objects.equals(rawAtom.get("attributes"), atom.get("attributes"));
+                String issue = ContractCandidateFields.atomicIssue(atom);
+                if (issue == null && ProofVerifier.strings(atom.get("sourceIds")).stream()
+                        .anyMatch(id -> !actuallyReadSourceIds.contains(id))) issue = "SOURCE_NOT_ACTUALLY_READ";
+                List<Source> atomSources = cn.bidcheck.compat.Java8Api.toList(ProofVerifier.strings(atom.get("sourceIds")).stream()
+                    .map(corpus.byId::get).filter(Objects::nonNull));
+                if (issue == null && "signedDate".equals(str(atom, "field"))
+                        && atomSources.stream().anyMatch(source -> ProofVerifier.contains(source.evidence().quote(), str(atom, "rawValue")))
+                        && !ContractRecordBindings.signingDate(str((Map<String,Object>) atom.get("attributes"), "signedDate"), atomSources))
+                    issue = "CONTRACT_SIGNING_DATE_ROLE_UNPROVEN";
+                Map<String,Object> fieldResult;
+                if (issue != null) {
+                    Map<String,Object> rejectedField = linked("code", issue, "fieldIndex", index,
+                        "field", str(atom, "field"), "fieldPath", "/contractFields/" + index,
+                        "sourceIds", atom.get("sourceIds"));
+                    rejected.add(rejectedField);
+                    fieldResult = linked("status", "REJECTED", "acceptedFactIds", Collections.emptyList(),
+                        "rejections", Collections.singletonList(rejectedField));
+                } else {
+                    atom.put("kind", "CONTRACT");
+                    atom.put("subject", str(original, "subject"));
+                    atom.put("scope", original.getOrDefault("scope", "UNRESOLVED"));
+                    Map<String,Object> fieldArgs = linked("targetObligationId", args.get("targetObligationId"),
+                        "fact", atom);
+                    fieldResult = submitOne(fieldArgs, false);
+                }
+                acceptedIds.addAll(ProofVerifier.strings(fieldResult.get("acceptedFactIds")));
+                issues.addAll(RuleEvaluator.maps(fieldResult.get("rejections")));
+                fieldResults.add(linked("fieldIndex", index++, "field", atom.get("field"),
+                    "rawValue", atom.get("rawValue"), "sourceIds", atom.get("sourceIds"),
+                    "normalization", linked("version", "contract-atomic-raw-scalar-1", "fromReadRawValue", normalizedFromRaw, "businessProof", false),
+                    "acceptedFactIds", fieldResult.get("acceptedFactIds"), "rejections", fieldResult.get("rejections")));
+            }
+            result.put("status", issues.isEmpty() ? "COMPLETED" : "REJECTED");
+            result.put("acceptedFactIds", new ArrayList<>(acceptedIds));
+            result.put("rejections", issues);
+            result.put("partialAdoption", !acceptedIds.isEmpty() && !issues.isEmpty());
+            result.put("fieldResults", fieldResults);
+            result.remove("semanticWorkItems");
+            result.remove("rejectionEvidenceRevision");
+            result.put("recoveryActions", cn.bidcheck.compat.Java8Api.toList(issues.stream().map(issue -> RecoveryFailureRouting.candidateAction(str(issue, "code"))).distinct()));
+            result.put("correctionHints", cn.bidcheck.compat.Java8Api.toList(issues.stream().map(Host::correctionHint).distinct()));
+            result.put("rejectionPath", issues.isEmpty() ? "" : identity(JSON.valueToTree(linked("target", args.get("targetObligationId"), "issues", issues)).toString()));
+            result.put("businessProof", false);
+            result.put("correctable", !issues.isEmpty());
+            return result;
+        }
+
+        private ProofVerifier contractVerifier(String targetId) {
+            List<Map<String,Object>> rows = contractNavigationRows(targetId, "");
+            boolean exactRow = rules.stream().anyMatch(rule -> rule.id().equals(targetId)
+                && rule.parameters().containsKey("declaredPerformanceRow"));
+            ContractRecordBindings binding = exactRow && rows.size() == 1
+                ? new ContractRecordBindings(rows.get(0), corpus.byId, actuallyReadSourceIds) : null;
+            return new ProofVerifier(corpus.byId, binding);
+        }
+
+        private Map<String,Object> submitOne(Map<String,Object> args) {
+            return submitOne(args, true);
+        }
+        private Map<String,Object> submitOne(Map<String,Object> args, boolean observeWork){
             active();
             String targetId=str(args,"targetObligationId");
             if(targetWorkflow&&(cn.bidcheck.compat.Java8Api.isBlank(targetId)||rules.stream().noneMatch(r->r.id().equals(targetId))))return linked("status","REJECTED","error","INVALID_TARGET_RECEIPT","correctable",true,"reason","候选必须使用宿主签发的 targetObligationId。请从 allowedTargetObligationIds 原样选择，不能自行改写。","fieldPath","/targetObligationId","recoveryActions",cn.bidcheck.compat.Java8Api.listOf("USE_ALLOWED_TARGET_OBLIGATION_ID"),"allowedTargetObligationIds",cn.bidcheck.compat.Java8Api.toList(rules.stream().map(Rule::id)));
@@ -445,7 +770,7 @@ final class EvidenceInvestigation {
             Map<String,Object> candidate=normalizeCandidate(JSON.convertValue(args.get("fact"),Map.class));
             if("INFERRED".equals(str(candidate,"kind"))){Map<String,Object> receipt=InferenceClaims.submit(candidate,selectedRules.get(0),corpus,disclosed,facts,ctx,shared,session);accepted+=ProofVerifier.strings(receipt.get("acceptedFactIds")).size();return receipt;}
             Map<String,Object> subjectIssue=AgentInvestigationScope.candidateSubjectIssue(candidate,selectedRules);
-            ProofVerifier.Verified checked=subjectIssue.isEmpty()?new ProofVerifier(corpus.byId).verify(JSON.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("facts", cn.bidcheck.compat.Java8Api.listOf(candidate))),new ArrayList<>(disclosed.values()),RuleEvaluator.maps(ctx.get("_validatedLayoutCells"))):new ProofVerifier.Verified(cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(subjectIssue));
+            ProofVerifier.Verified checked=subjectIssue.isEmpty()?contractVerifier(targetId).verify(JSON.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("facts", cn.bidcheck.compat.Java8Api.listOf(candidate))),new ArrayList<>(disclosed.values()),RuleEvaluator.maps(ctx.get("_validatedLayoutCells"))):new ProofVerifier.Verified(cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(subjectIssue));
             List<Map<String,Object>> validationIssues=new ArrayList<>(checked.rejected());
             active();List<Fact> added=new ArrayList<>();for(Fact fact:checked.facts()){
                 List<Map<String,Object>> rowScope=contractNavigationRows(targetId,"");
@@ -470,7 +795,7 @@ final class EvidenceInvestigation {
             List<Map<String,Object>> correctionHints=cn.bidcheck.compat.Java8Api.toList(validationIssues.stream().map(EvidenceInvestigation.Host::correctionHint).distinct());
             String path=validationIssues.isEmpty()?"":identity(JSON.valueToTree(linked("targets",affectedIds,"kind",str(candidate,"kind"),"subject",str(candidate,"subject"),"field",str(candidate,"field"),"sources",cn.bidcheck.compat.Java8Api.toList(ProofVerifier.strings(candidate.get("sourceIds")).stream().sorted()),"codes",cn.bidcheck.compat.Java8Api.toList(validationIssues.stream().map(v->str(v,"code")).sorted()))).toString());
             List<Map<String,Object>> workItems=new ArrayList<>();
-            if(targetWorkflow)for(Rule target:affected)workItems.add(validationIssues.isEmpty()?workflow.state(target,entity(target),evidenceRevision(cn.bidcheck.compat.Java8Api.listOf(target),null)):workflow.observe(target,entity(target),evidenceRevision(cn.bidcheck.compat.Java8Api.listOf(target),null),validationIssues));
+            if(targetWorkflow)for(Rule target:affected)workItems.add(validationIssues.isEmpty()||!observeWork?workflow.state(target,entity(target),evidenceRevision(cn.bidcheck.compat.Java8Api.listOf(target),null)):workflow.observe(target,entity(target),evidenceRevision(cn.bidcheck.compat.Java8Api.listOf(target),null),validationIssues));
             session.record("AGENT_FACT_VALIDATION",cn.bidcheck.compat.Java8Api.mapOf("sourceIds", disclosed.keySet()),linked("facts",added,"rejected",validationIssues,"candidateDiagnostic",candidateDiagnostic(candidate),"recoveryActions",actions,"rejectionPath",path,"targetEvidenceRevision",evidenceRevision(),"fullFieldRead",false,"targetObligationIds",cn.bidcheck.compat.Java8Api.toList(rules.stream().map(Rule::id)),
                 "targetId",targetWorkflow?targetId:"","semanticWorkItems",cn.bidcheck.compat.Java8Api.toList(workItems.stream().limit(64).map(item->linked("workKey",item.get("workKey"),"targetObligationId",item.get("targetObligationId"),"evidenceRevision",item.get("evidenceRevision"),
                     "predicate",item.get("predicate"),"entityRecordIdHash",identity(Objects.toString(item.get("entityRecordId"),"")),"failureFamily",item.get("failureFamily"),"terminalForRevision",item.get("terminalForRevision"),
@@ -479,20 +804,37 @@ final class EvidenceInvestigation {
             return linked("status",validationIssues.isEmpty()?"COMPLETED":"REJECTED","acceptedFactIds",cn.bidcheck.compat.Java8Api.toList(added.stream().map(Fact::id)),"rejections",validationIssues,"businessProof",false,
                 "recoverable",true,"correctable",!validationIssues.isEmpty(),"error",validationIssues.stream().anyMatch(v->"FACT_OUTSIDE_TARGET".equals(str(v,"code")))?"FACT_OUTSIDE_TARGET":"","expectedFactContracts",contracts(),"recoveryActions",actions,"correctionHints",correctionHints,"rejectionPath",path,"targetEvidenceRevision",evidenceRevision(),"rejectionEvidenceRevision",rejectionRevision,"affectedTargetObligationIds",affectedIds,"semanticWorkItems",workItems);
         }
-        private static Map<String,Object> normalizeCandidate(Map<String,Object> supplied){
+        private Map<String,Object> normalizeCandidate(Map<String,Object> supplied){
             Map<String,Object> candidate=new LinkedHashMap<>(supplied);
             for(String field:cn.bidcheck.compat.Java8Api.listOf("subject", "unit", "basis"))candidate.putIfAbsent(field,"");
             candidate.putIfAbsent("scope","UNRESOLVED");candidate.putIfAbsent("attributes",cn.bidcheck.compat.Java8Api.mapOf());
             if(!candidate.containsKey("value"))candidate.put("value",str(candidate,"rawValue"));
-            return candidate;
+            Map<String,Source> readSources = new LinkedHashMap<>();
+            for (String sourceId : ProofVerifier.strings(candidate.get("sourceIds"))) {
+                Source current = corpus.byId.get(sourceId);
+                if (current != null && disclosed.containsKey(sourceId) && actuallyReadSourceIds.contains(sourceId)) {
+                    readSources.put(sourceId, current);
+                }
+            }
+            return ContractCandidateFields.normalize(candidate, readSources);
         }
         private static Map<String,Object> correctionHint(Map<String,Object> issue){
             String code=str(issue,"code"),path;
+            if ("CONTRACT_ATOMIC_FIELDS_INVALID".equals(code)) {
+                return linked("code", code, "fieldPath", issue.getOrDefault("fieldPath", "/contractFields"),
+                    "action", "CORRECT_ATOMIC_FIELD_SHAPE", "field", str(issue, "field"),
+                    "instruction", "逐项检查 field/rawValue/sourceIds/attributes；仅提交当前字段及合同身份属性。已读原文中的完整单值可补本字段缺失的重复属性，但不能覆盖已提供的矛盾值。金额仍须提供原文 amountBasis/unit，日期须完整且明确为签订日期；不能为修复格式而重新猜测取值。");
+            }
+            if ("CONTRACT_IDENTITY_UNPROVEN".equals(code) || "CONTRACT_IDENTITY_CONFLICT".equals(code)) {
+                return linked("code", code, "fieldPath", "/fact/attributes",
+                    "action", "CORRECT_CONTRACT_IDENTITY_FIELDS",
+                    "instruction", "从当前合同已读原文填写 attributes.contractName 或 attributes.contractNumber。单字段可用 field=contractName/contractNumber，rawValue 必须逐字匹配同一来源。不得覆盖冲突身份、拼接不同合同或仅修改公司 subject；金额、日期和签约主体仍需分别证明。");
+            }
 switch (code) {case "RAW_VALUE_UNGROUNDED":path = "/fact/rawValue"; break;case "SOURCE_REFERENCE_INVALID":case "SOURCE_NOT_DISCLOSED":case "SOURCE_NOT_CURRENT":path = "/fact/sourceIds"; break;case "SUBJECT_UNBOUND":case "PERSON_SUBJECT_UNBOUND":case "RELATION_ENDPOINT_UNGROUNDED":path = "/fact/subject"; break;case "FACT_OUTSIDE_TARGET":path = "/targetObligationId"; break;default:path = "/fact"; break;}
             String action;
 switch (code) {case "RAW_VALUE_UNGROUNDED":action = "READ_SOURCE_THEN_COPY_EXACT_RAW_VALUE"; break;case "SOURCE_REFERENCE_INVALID":case "SOURCE_NOT_DISCLOSED":case "SOURCE_NOT_CURRENT":action = "READ_SOURCE_BEFORE_SUBMIT"; break;case "SUBJECT_UNBOUND":case "PERSON_SUBJECT_UNBOUND":case "RELATION_ENDPOINT_UNGROUNDED":action = "SUBMIT_SOURCE_GROUNDED_RELATION_FIRST"; break;case "FACT_OUTSIDE_TARGET":action = "USE_MATCHING_TARGET_AND_CONTRACT"; break;default:action = RecoveryFailureRouting.candidateAction(code); break;}
             String instruction;
-switch (code) {case "RAW_VALUE_UNGROUNDED":instruction = "先调用 read_section 或 read_table_record，再把返回原文中连续出现的文字逐字复制到 rawValue；sourceIds 只引用该次已读来源。"; break;case "SOURCE_REFERENCE_INVALID":case "SOURCE_NOT_DISCLOSED":case "SOURCE_NOT_CURRENT":instruction = "先读取来源取得当前会话回执，再提交候选事实。"; break;case "SUBJECT_UNBOUND":case "PERSON_SUBJECT_UNBOUND":case "RELATION_ENDPOINT_UNGROUNDED":instruction = "先从同一来源提交人员/单位/岗位关系，关系两端必须同时出现在引文中。"; break;case "FACT_OUTSIDE_TARGET":instruction = "依据 allowedFactContracts 选择与事实字段匹配的 targetObligationId；不要把其他事项材料提交到当前目标。"; break;default:instruction = "按照 recoveryActions 和 expectedFactContracts 修正字段后再提交；不要仅改写说明。"; break;}
+switch (code) {case "RAW_VALUE_UNGROUNDED":instruction = "先调用 read_section 或 read_table_record，再把返回原文中连续出现的文字逐字复制到 rawValue；sourceIds 只引用该次已读来源。"; break;case "SOURCE_REFERENCE_INVALID":case "SOURCE_NOT_DISCLOSED":case "SOURCE_NOT_CURRENT":instruction = "先读取来源取得当前会话回执，再提交候选事实。"; break;case "SUBJECT_UNBOUND":case "PERSON_SUBJECT_UNBOUND":case "RELATION_ENDPOINT_UNGROUNDED":instruction = "先从同一来源提交人员/单位/岗位关系，关系两端必须同时出现在引文中。"; break;case "FACT_OUTSIDE_TARGET":instruction = "依据 allowedFactContracts 选择与事实字段匹配的 targetObligationId；不要把其他事项材料提交到当前目标。"; break;default:instruction = "按照 recoveryActions 和 expectedFactContracts 修正字段后再提交；不要仅改写说明。CONTRACT 可显式使用 submissionMode=CONTRACT_FIELDS 和 contractFields 逐字段提交，每项独立提供 field/rawValue/sourceIds/attributes；原整包拒绝保留。"; break;}
             return linked("code",code,"fieldPath",path,"action",action,"instruction",instruction);
         }
         private static Map<String,Object> candidateDiagnostic(Map<String,Object> candidate){
@@ -635,6 +977,7 @@ switch (code) {case "RAW_VALUE_UNGROUNDED":instruction = "先调用 read_section
             else if(confirmation.contains(str(row,"targetObligationId"))){current.put("workerState",row.get("state"));current.put("state","NEEDS_CONFIRMATION");current.put("resumeTrigger","USER_CONFIRMATION_OR_RELEVANT_EVIDENCE_CHANGED");current.put("businessProof",false);}
             return current;
         })));
+        audit.remove("firstRoundTextWork");
         if(!host.ctx.containsKey("recoveryStrategy")&&host.accepted==0&&host.incompleteReads.isEmpty()&&"NO_PROGRESS".equals(str(audit,"status"))
                 &&!str(host.ctx,"agentAdmissionKey").isEmpty()&&host.visualRequests.isEmpty()&&!remaining.isEmpty()
                 &&confirmation.isEmpty()&&RuleEvaluator.maps(finalReceipt.get("gaps")).stream().noneMatch(g->{
@@ -642,10 +985,16 @@ switch (code) {case "RAW_VALUE_UNGROUNDED":instruction = "先调用 read_section
                 })){
             Set<String> exhausted=new HashSet<>(ProofVerifier.strings(audit.get("exhaustedTargetObligationIds")));
             List<String> closedTextPaths=exhaustedTextPaths(exhausted,remaining,host.workflowStates());
+            closedTextPaths.removeIf(target -> {
+                Map<String,Object> coverage = host.contractReadCoverage(target);
+                return !coverage.isEmpty() && !Boolean.TRUE.equals(coverage.get("complete"));
+            });
             if(!closedTextPaths.isEmpty())audit.put("firstRoundTextWork",linked("version","first-round-consumed-text-1","key",str(host.ctx,"agentAdmissionKey"),
                 "targets",closedTextPaths,"requestId",audit.get("requestId"),"businessProof",false));
         }
         audit.put("remainingGapCount",host.decision.gaps().size());audit.put("targetRemainingGapCount",RuleEvaluator.maps(finalReceipt.get("gaps")).size());audit.put("targetObligationIds",cn.bidcheck.compat.Java8Api.toList(host.rules.stream().map(Rule::id)));audit.put("targetCheckCompleted",finalReceipt.get("targetCheckCompleted"));
+        // This receipt is rebuilt from host-owned reads/work state, never copied from a model result.
+        audit.put("serverTargetInputConsumption", host.serverTargetInputConsumption(audit));
         audit.put("elapsedMs",(System.nanoTime()-start)/1_000_000);audit.put("businessCheckCompleted",finalReceipt.get("businessCheckCompleted"));
         host.session.record("AGENT_INVESTIGATION",cn.bidcheck.compat.Java8Api.mapOf("checkpointId", host.cp.id(), "serverPlanRevision", host.serverPlanRevision()),audit);
         LOG.info("bidcheck.agent_result runId={} checkpointId={} requestId={} status={} errorCode={} modelCalls={} toolCalls={} acceptedFacts={} remainingGaps={} durationMs={} remainingTargets={} exhaustedTargets={} firstFailureEventId={}",
@@ -659,7 +1008,7 @@ switch (code) {case "RAW_VALUE_UNGROUNDED":instruction = "先调用 read_section
         Set<String> factKinds=new TreeSet<>(ProofVerifier.KINDS);factKinds.add("INFERRED");properties.put("kind",cn.bidcheck.compat.Java8Api.mapOf("type", "string", "enum", factKinds));properties.put("scope",cn.bidcheck.compat.Java8Api.mapOf("type", "string", "enum", cn.bidcheck.compat.Java8Api.listOf("CURRENT_PROJECT", "HISTORICAL_PROJECT", "UNRESOLVED")));
         properties.put("sourceIds",cn.bidcheck.compat.Java8Api.mapOf("type", "array", "items", string, "minItems", 1, "maxItems", 12));properties.put("attributes",cn.bidcheck.compat.Java8Api.mapOf("type", "object", "additionalProperties", true));
         Map<String,Object> fact=object(properties,cn.bidcheck.compat.Java8Api.listOf("kind", "field", "rawValue", "sourceIds"));
-        return cn.bidcheck.compat.Java8Api.listOf(tool("search_evidence","用当前目标的主体、字段、数值、日期、证书、合同或材料名称混合检索冻结投标文件，返回可引用sourceId。",cn.bidcheck.compat.Java8Api.mapOf("query", string),cn.bidcheck.compat.Java8Api.listOf("query")), tool("read_section","读取sourceId所在原页的完整记录；超长原页partial时用nextSourceId继续，仅在同页分页。下一业务记录请定向检索，不顺序遍历全文件。引用前须核对文书、项目、主体及历史/当前范围。",cn.bidcheck.compat.Java8Api.mapOf("sourceId", string),cn.bidcheck.compat.Java8Api.listOf("sourceId")), tool("read_table_record","读取sourceId对应冻结原文的结构化表格行列关系；rowOffset 可省略，默认从0开始，partial时按nextRowOffset继续。",cn.bidcheck.compat.Java8Api.mapOf("sourceId", string, "rowOffset", cn.bidcheck.compat.Java8Api.mapOf("type", "integer", "minimum", 0)),cn.bidcheck.compat.Java8Api.listOf("sourceId")), tool("inspect_page_region","复用已有原图观察；不存在时登记原图补查请求，PENDING不是识别完成。",cn.bidcheck.compat.Java8Api.mapOf("sourceId", string, "field", string),cn.bidcheck.compat.Java8Api.listOf("sourceId", "field")), tool("query_external","复用当前检查已保存的可信外部记录。未执行新网络查询；缺记录交由外部核验队列。",cn.bidcheck.compat.Java8Api.mapOf("subject", string),cn.bidcheck.compat.Java8Api.listOf("subject")), tool("submit_candidate_fact","提交一个原文事实，由服务器验证。按 allowedFactContracts 选择 kind、主体和字段；例如 NUMBER 提交金额/数量，CONTRACT 提交合同记录，PERSON_ROLE 提交岗位与姓名，CERTIFICATE 提交持证主体及证书字段，RELATION 在attributes.object中提交关系终点。rawValue必须是原文，sourceIds必须已读取。subject/value/unit/basis/scope/attributes 可省略，由服务器规范化。可用 kind=INFERRED 提出推断，attributes.inference 填 claim、reasoning、confidence、risks、evidence:[{sourceId,quote}]，attributes.proposedFact 填原事实合同对应的 kind、subject、field、rawValue、value、scope、attributes。引用必须已读取且逐字存在；推断值可不逐字存在，等待用户确认不代表通过。不得更改规则。",cn.bidcheck.compat.Java8Api.mapOf("fact", fact),cn.bidcheck.compat.Java8Api.listOf("fact")), tool("recompute_check","用已接受事实重算原条件树，返回剩余缺口。只有此程序回执可表示业务核验完成。",cn.bidcheck.compat.Java8Api.mapOf(),cn.bidcheck.compat.Java8Api.listOf()));
+        return cn.bidcheck.compat.Java8Api.listOf(tool("search_evidence","用当前目标的主体、字段、数值、日期、证书、合同或材料名称混合检索冻结投标文件，返回可引用sourceId。",cn.bidcheck.compat.Java8Api.mapOf("query", string),cn.bidcheck.compat.Java8Api.listOf("query")), tool("read_section","读取sourceId所在原页的完整记录；超长原页partial时用nextSourceId继续，仅在同页分页。下一业务记录请定向检索，不顺序遍历全文件。引用前须核对文书、项目、主体及历史/当前范围。",cn.bidcheck.compat.Java8Api.mapOf("sourceId", string),cn.bidcheck.compat.Java8Api.listOf("sourceId")), tool("read_table_record","读取sourceId对应冻结原文的结构化表格行列关系；rowOffset 可省略，默认从0开始，partial时按nextRowOffset继续。",cn.bidcheck.compat.Java8Api.mapOf("sourceId", string, "rowOffset", cn.bidcheck.compat.Java8Api.mapOf("type", "integer", "minimum", 0)),cn.bidcheck.compat.Java8Api.listOf("sourceId")), tool("inspect_page_region","复用已有原图观察；不存在时登记原图补查请求，PENDING不是识别完成。",cn.bidcheck.compat.Java8Api.mapOf("sourceId", string, "field", string),cn.bidcheck.compat.Java8Api.listOf("sourceId", "field")), tool("query_external","复用当前检查已保存的可信外部记录。未执行新网络查询；缺记录交由外部核验队列。",cn.bidcheck.compat.Java8Api.mapOf("subject", string),cn.bidcheck.compat.Java8Api.listOf("subject")), tool("submit_candidate_fact","提交一个原文事实，由服务器验证。按 allowedFactContracts 选择 kind、主体和字段；例如 NUMBER 提交金额/数量，CONTRACT 提交合同记录，PERSON_ROLE 提交岗位与姓名，CERTIFICATE 提交持证主体及证书字段，RELATION 在attributes.object中提交关系终点。rawValue必须是原文，sourceIds必须已读取。subject/value/unit/basis/scope 可省略，由服务器规范化。CONTRACT 的 attributes 至少含 contractName 或 contractNumber。单字段 field 支持 contractName/CONTRACT_NAME/合同名称、contractNumber/CONTRACT_NUMBER/合同编号；仅在一份已读来源逐字落地且无多合同歧义时补缺失身份属性，不覆盖已有属性。其他合同属性按原文填写 party/person/personRole/signedDate/amount/amountBasis/unit/taxBasis，身份事实不等于完整业绩证明。显式 submissionMode=CONTRACT_FIELDS 可同时提供 contractFields 数组，每项 field/rawValue/sourceIds/attributes 独立核验，属性仅含合同身份及该字段（amount需amountBasis/unit，可含taxBasis）。原fact仍独立校验且拒绝保留，部分采信不等于完整合同。可用 kind=INFERRED 提出推断，attributes.inference 填 claim、reasoning、confidence、risks、evidence:[{sourceId,quote}]，attributes.proposedFact 填原事实合同对应的 kind、subject、field、rawValue、value、scope、attributes。引用必须已读取且逐字存在；推断值可不逐字存在，等待用户确认不代表通过。不得更改规则。",linked("fact", fact, "submissionMode", linked("type", "string", "enum", Collections.singletonList("CONTRACT_FIELDS")), "contractFields", linked("type", "array", "minItems", 1, "maxItems", 12, "items", object(linked("field", string, "rawValue", string, "sourceIds", properties.get("sourceIds"), "attributes", properties.get("attributes")), cn.bidcheck.compat.Java8Api.listOf("field", "rawValue", "sourceIds", "attributes")))),cn.bidcheck.compat.Java8Api.listOf("fact")), tool("recompute_check","用已接受事实重算原条件树，返回剩余缺口。只有此程序回执可表示业务核验完成。",cn.bidcheck.compat.Java8Api.mapOf(),cn.bidcheck.compat.Java8Api.listOf()));
     }
     static List<Map<String,Object>> tools(List<Rule> rules){
         List<Map<String,Object>> result=new ArrayList<>();

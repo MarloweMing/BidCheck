@@ -187,6 +187,7 @@ final class EvidenceCorpus {
                 continue;
             }
             result.addAll(NativeCertificateFacts.extract(r,s));
+            result.addAll(PersonnelNameConsistency.nativeAppointments(r,s));
             for(String selector:AgentRuleSubjects.selectors(r))if(PersonnelRoles.personRole(selector))result.addAll(DocumentSubjectScope.nativeAppointments(s,selector));
             if(cn.bidcheck.compat.Java8Api.setOf("SECTION", "MATERIAL").contains(r.predicate())){String name=!cn.bidcheck.compat.Java8Api.isBlank(r.expected())?r.expected():r.field();if(name.length()>80||name.length()<2||!cn.bidcheck.compat.Java8Api.isBlank(r.subject()))continue;
                 int at=text.indexOf(name);if(at<0)continue;int line=text.lastIndexOf('\n',at)+1,end=text.indexOf('\n',at);if(end<0)end=text.length();String heading=cn.bidcheck.compat.Java8Api.strip(text.substring(line,end));
@@ -323,7 +324,7 @@ switch (r.field()) {case "projectName":label = "项目名称"; break;case "proje
         if(scope==null||cn.bidcheck.compat.Java8Api.isBlank(scope))return new ScopeSources(cn.bidcheck.compat.Java8Api.listOf(),false,false,"检查范围未明确");
         ScopeSources best=null;
         for(Document document:documents){EvidenceCorpus local=new EvidenceCorpus(cn.bidcheck.compat.Java8Api.listOf(document));SectionCoverage.Extent extent=SectionCoverage.locate(scope,local);if(extent.sources().isEmpty())continue;
-            List<Source> mapped=cn.bidcheck.compat.Java8Api.toList(extent.sources().stream().map(Source::id).map(byId::get).filter(Objects::nonNull).filter(this::currentSource));if(mapped.isEmpty())continue;
+            List<Source> mapped=cn.bidcheck.compat.Java8Api.toList(extent.bodySources().stream().filter(view->byId.containsKey(view.id())).filter(this::currentSource));if(mapped.isEmpty())continue;
             ScopeSources candidate=new ScopeSources(mapped,true,extent.complete()&&documentsComplete(mapped),extent.reason());if(candidate.complete())return candidate;if(best==null)best=candidate;
         }
         if(best!=null)return best;
@@ -351,6 +352,19 @@ switch (r.field()) {case "projectName":label = "项目名称"; break;case "proje
     private static Source dimensionSource(List<Source> sources,String dimension,List<String> dimensions){for(Source source:sources){String text=source.evidence().quote();for(String line:text.split("\\R")){if(!contains(line,dimension))continue;long listed=dimensions.stream().filter(value->contains(line,value)).count();String remainder=clean(line).replace(clean(dimension),"");if(listed>1&&remainder.length()<35)continue;if(remainder.length()>=24)return source;}
             int at=text.indexOf(dimension);if(at>=0){int end=Math.min(text.length(),at+dimension.length()+360);String following=text.substring(at+dimension.length(),end);String[] lines=following.split("\\R",-1);StringBuilder body=new StringBuilder();for(int i=0;i<Math.min(lines.length,7);i++){String line=cn.bidcheck.compat.Java8Api.strip(lines[i]);if(i>0&&SectionCoverage.level(line)>0)break;body.append(line);}if(clean(body.toString()).length()>=30)return source;}}
         return null;}
-    private static Fact programFact(Rule rule,Source source,String kind,String field,String raw,String value,Map<String,Object> attributes){Map<String,Object> audit=new LinkedHashMap<>(attributes);audit.put("derivedBy","SERVER_PROGRAM_RULE");audit.put("ruleId",rule.id());return new Fact("N"+identity(rule.id()+source.id()+kind+field+raw+attributes).substring(0,20),kind,rule.subject(),field,raw,value,"","PROGRAM_RULE","CURRENT_PROJECT",cn.bidcheck.compat.Java8Api.listOf(source.id()),cn.bidcheck.compat.Java8Api.mapCopyOf(audit));}
+    private static Fact programFact(Rule rule, Source source, String kind, String field,
+            String raw, String value, Map<String,Object> attributes) {
+        Map<String,Object> audit = new LinkedHashMap<>(attributes);
+        audit.put("derivedBy", "SERVER_PROGRAM_RULE");
+        audit.put("ruleId", rule.id());
+        // This is a text-range view of the original source, never a replacement OCR result.
+        audit.put("sourceView", linked("sourceId", source.id(), "documentId", source.evidence().documentId(),
+            "documentHash", source.documentHash(), "documentVersion", source.documentVersion(),
+            "page", source.evidence().page(), "locationType", source.evidence().locationType(),
+            "anchor", source.evidence().anchor(), "viewKind", "BOUNDED_TEXT_SCOPE"));
+        return new Fact("N" + identity(rule.id() + source.id() + kind + field + raw + attributes).substring(0, 20),
+            kind, rule.subject(), field, raw, value, "", "PROGRAM_RULE", "CURRENT_PROJECT",
+            cn.bidcheck.compat.Java8Api.listOf(source.id()), cn.bidcheck.compat.Java8Api.mapCopyOf(audit));
+    }
     private static boolean contains(String text,String expected){return !cn.bidcheck.compat.Java8Api.isBlank(clean(expected))&&clean(text).contains(clean(expected));}
 }

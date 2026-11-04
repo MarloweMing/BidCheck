@@ -4,7 +4,7 @@ import cn.bidcheck.domain.Domain.Evidence;
 import java.util.*;
 
 final class VerificationTypes {
-    static final String VERSION="verification-engine-2.31-java-strict-ticket-revision-6";
+    static final String VERSION="verification-engine-2.31-java-strict-ticket-revision-9";
     static final Set<String> PREDICATES=cn.bidcheck.compat.Java8Api.setOf("MATERIAL", "DECLARATION", "SECTION", "PERSON_ROLE", "PERSON_COUNT", "ENTITY_COUNT", "NOT_APPLICABLE", "CERTIFICATE", "VALIDITY", "MONTHS", "RELATION", "NUMBER", "SAME_FIELD", "PRICE_RECONCILE", "DATE_RELATION", "CONTRACT", "SCORE_COUNT", "TEXT_ANOMALY", "QUALITY_ADVISORY", "QUALITY", "EXTERNAL", "VISUAL", "REFERENCE_TIME", "INPUT", "UNSUPPORTED");
     @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
     static final class Rule {

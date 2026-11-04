@@ -135,12 +135,16 @@ final class JavaAgentRunner {
                 addedFacts.removeAll(beforeAccepted);
                 Set<String> addedClosures = new LinkedHashSet<>(closed());
                 addedClosures.removeAll(beforeClosed);
-                if(!addedFacts.isEmpty()||!addedClosures.isEmpty())fruitlessByScope.remove(turnScope);
+                if(!addedFacts.isEmpty()||!addedClosures.isEmpty()){
+                    fruitlessByScope.remove(turnScope);
+                    recordNoNewFactRounds(turnTarget, 0);
+                }
                 // Restoring an evicted body is a local projection of an earlier tool read.
                 // Let the model consume it once; the transport call ceiling still applies.
                 else if(typed&&targets().contains(turnTarget)&&attemptedTargetsInBatch.contains(turnTarget)
                         &&turnScope.equals(scope(turnTarget))&&!restoredEvictedText&&!waiting()){
                     int count=fruitlessByScope.merge(turnScope,1,Integer::sum);
+                    recordNoNewFactRounds(turnTarget, count);
                     if(count>=3){
                         emit("no_evidence_progress",map("targetObligationId",turnTarget,"reason","THREE_ROUNDS_NO_NEW_FACT","attemptForTargetGap",count));
                         if(remaining().size()<=1)return finish("REPEATED_ACTION_WITHOUT_NEW_EVIDENCE");
@@ -233,6 +237,7 @@ final class JavaAgentRunner {
         Map<String,Object> after=host.state();Set<String> accepted=new LinkedHashSet<>(strings(after.get("acceptedFactIds")));accepted.removeAll(strings(before.get("acceptedFactIds")));Set<String> newlyClosed=new LinkedHashSet<>(strings(after.get("completedTargetObligationIds")));newlyClosed.removeAll(strings(before.get("completedTargetObligationIds")));
         boolean proof=!accepted.isEmpty()||!newlyClosed.isEmpty()||!Objects.equals(before.get("targetEvidenceRevisions"),after.get("targetEvidenceRevisions"))||!Objects.equals(before.get("targetCheckCompleted"),after.get("targetCheckCompleted"));
         int newSources=0;boolean newRows=false;for(Object value:list(result.get("sources"))){Map<String,Object> source=mapValue(value);String id=text(source.containsKey("id")?source.get("id"):source.get("sourceId"));if(!id.isEmpty()){sourceCatalog.put(id,sourceMetadata(source));sourceTargets.computeIfAbsent(id,k->new LinkedHashSet<String>()).add(target);}if(seenSourceBodies.add(hash(source)))newSources++;}
+        rememberDeferredContractNavigation(target, result);
         if(result.get("rows") instanceof List&&!list(result.get("rows")).isEmpty())newRows=semanticOutcomes.add("rows:"+hash(result.get("rows")));
         if(proof){epoch++;entry.put("acceptedFactCount",number(entry.get("acceptedFactCount"))+accepted.size());entry.put("closedTargetCount",number(entry.get("closedTargetCount"))+newlyClosed.size());entry.put("noEvidenceProgressRounds",0);entry.put("state",closed().contains(target)?"PROVEN":"RUNNING");emit("target_proof_progress",map("targetObligationId",target,"acceptedFactDelta",accepted.size(),"closedTargetDelta",newlyClosed.size(),"stateAfter",entry.get("state")));}
         if(newSources>0||newRows){entry.put("navigationCount",number(entry.get("navigationCount"))+1);emit("target_navigation_progress",map("targetId",target,"newSourceCount",newSources,"newTableRecord",newRows));}
@@ -341,6 +346,15 @@ final class JavaAgentRunner {
         }
         return pages;
     }
+    /** Mirrors the existing per-scope stop counter without changing navigation/proof accounting. */
+    private void recordNoNewFactRounds(String target, int rounds) {
+        Map<String,Object> row = entry(target);
+        row.put("noNewFactCounterVersion", "java-agent-target-rounds-1");
+        row.put("noNewFactRequestId", requestId);
+        row.put("noNewFactModelRounds", rounds);
+        if (rounds > 0) row.put("visited", true);
+        row.put("noNewFactStopReason", rounds >= 3 ? "THREE_ROUNDS_NO_NEW_FACT" : "");
+    }
     private void restoreLedger(){for(Object raw:list(context.get("targetProgressLedger"))){Map<String,Object> saved=mapValue(raw);String target=text(saved.get("targetObligationId"));if(targets().contains(target)&&scope(target).equals(saved.get("progressScope"))){progress.put(target,copyMap(saved));maxNoProgress=Math.max(maxNoProgress,number(saved.get("noEvidenceProgressRounds")));}}}
     private String noteNoProgress(String name,Map<String,Object> args,String reason,String event,Map<String,Object> extra)throws Exception{Map<String,Object> entry=entry(scopeTarget(args));long count=number(entry.get("noEvidenceProgressRounds"))+1;entry.put("noEvidenceProgressRounds",count);entry.put("maxNoEvidenceProgressRounds",Math.max(number(entry.get("maxNoEvidenceProgressRounds")),count));maxNoProgress=Math.max(maxNoProgress,count);entry.put("visited",true);entry.put("rejectionCode",reason);entry.put("lastOperationKey",operation(name,args));Map<String,Object> fields=map("tool",name,"reason",reason,"targetObligationId",entry.get("targetObligationId"),"attemptForTargetGap",count,"operationKey",entry.get("lastOperationKey"),"ruleVersion",entry.get("ruleVersion"),"relevantEvidenceRevision",entry.get("relevantEvidenceRevision"));fields.putAll(extra);String id=emit(event,fields);if(event.equals("tool_arguments_rejected")){if(firstFailure.isEmpty())firstFailure=id;if(text(entry.get("firstFailureEventId")).isEmpty())entry.put("firstFailureEventId",id);}return id;}
     private Map<String,Object> entry(String target){String scope=scope(target);Map<String,Object> entry=progress.get(target);if(entry==null||!scope.equals(entry.get("progressScope"))){entry=map("targetObligationId",target,"progressScope",scope,"ruleVersion",ruleVersion(),"relevantEvidenceRevision",target.equals("DOCUMENT_DISCOVERY")?hash(sourceRevisions):revisions.getOrDefault(target,"UNOBSERVED"),"state","UNVISITED","visited",false,"noEvidenceProgressRounds",0,"maxNoEvidenceProgressRounds",0,"acceptedFactCount",0,"closedTargetCount",0,"navigationCount",0,"firstFailureEventId","");progress.put(target,entry);}else for(String counter:set("noEvidenceProgressRounds","maxNoEvidenceProgressRounds","acceptedFactCount","closedTargetCount","navigationCount"))entry.putIfAbsent(counter,0);return entry;}
@@ -386,6 +400,28 @@ final class JavaAgentRunner {
         return false;
     }
 
+    private void rememberDeferredContractNavigation(String target, Map<String,Object> result) {
+        Map<String,Object> replay = mapValue(result.get("contractReadReplay"));
+        Map<String,Object> row = declaredContractRow(target);
+        if (row.isEmpty() || !"CURRENT_SERVER_PROOF".equals(replay.get("authority"))
+                || !target.equals(replay.get("targetObligationId"))
+                || !Objects.equals(context.get("serverPlanRevision"), replay.get("serverPlanRevision"))) return;
+        for (Object value : list(replay.get("deferredOriginalSources"))) {
+            Map<String,Object> reference = mapValue(value);
+            if (!Boolean.TRUE.equals(reference.get("navigationOnly")) || !Boolean.TRUE.equals(reference.get("readRequired"))
+                    || !withinContractPacket(row, reference) || !Objects.equals(row.get("documentHash"), reference.get("documentHash"))
+                    || number(row.get("documentVersion")) != number(reference.get("documentVersion"))) continue;
+            String id = text(reference.get("sourceId"));
+            if (id.isEmpty()) continue;
+            // Keep navigation after the tool batch leaves context, without counting it as a body read.
+            Map<String,Object> navigation = sourceMetadata(reference);
+            navigation.put("navigationOnly", true);
+            navigation.put("readRequired", true);
+            sourceCatalog.putIfAbsent(id, navigation);
+            sourceTargets.computeIfAbsent(id, ignored -> new LinkedHashSet<String>()).add(target);
+        }
+    }
+
     private void primeContractTarget(String target) throws Exception {
         Map<String,Object> row = declaredContractRow(target);
         if (!typed || row.isEmpty() || !remaining().contains(target) || !definitions.containsKey("search_evidence")
@@ -412,6 +448,37 @@ final class JavaAgentRunner {
             String sourceId = text(omitted.get("sourceId"));
             if (!sourceId.isEmpty() && withinContractPages(row, page)) {
                 pageSources.putIfAbsent(text(row.get("documentId")) + ":" + page, sourceId);
+            }
+        }
+        Map<String,Object> navigation = mapValue(result.get("contractPacketNavigation"));
+        if ("CURRENT_SERVER_PROOF".equals(navigation.get("authority"))
+                && target.equals(navigation.get("targetObligationId"))
+                && Objects.equals(context.get("serverPlanRevision"), navigation.get("serverPlanRevision"))) {
+            Map<String,Object> coverage = mapValue(navigation.get("coverage"));
+            boolean currentCoverage = "CURRENT_SERVER_PROOF".equals(coverage.get("authority"))
+                && Boolean.FALSE.equals(coverage.get("businessProof")) && target.equals(coverage.get("targetObligationId"))
+                && Objects.equals(row.get("documentId"), coverage.get("documentId"))
+                && Objects.equals(row.get("documentHash"), coverage.get("documentHash"))
+                && number(row.get("documentVersion")) == number(coverage.get("documentVersion"))
+                && coverage.get("readSourceIds") instanceof Collection<?> && coverage.get("pendingPages") instanceof Collection<?>;
+            if (currentCoverage) {
+                Set<String> pendingPages = new LinkedHashSet<>();
+                for (Object page : list(coverage.get("pendingPages"))) if (withinContractPages(row, number(page)))
+                    pendingPages.add(text(row.get("documentId")) + ":" + number(page));
+                pageSources.keySet().retainAll(pendingPages);
+            }
+            for (Object raw : list(navigation.get("sources"))) {
+                Map<String,Object> reference = mapValue(raw);
+                if (!Boolean.TRUE.equals(reference.get("navigationOnly")) || !withinContractPacket(row, reference)
+                        || !Objects.equals(row.get("documentHash"), reference.get("documentHash"))
+                        || number(row.get("documentVersion")) != number(reference.get("documentVersion"))) continue;
+                String sourceId = text(reference.get("sourceId"));
+                if (!sourceId.isEmpty()) {
+                    // The host's pending reference is the first unread chunk, including a partial page.
+                    // Already-read originals remain in the search result/body cache for the new model.
+                    if (currentCoverage) pageSources.put(sourcePageKey(reference), sourceId);
+                    else pageSources.putIfAbsent(sourcePageKey(reference), sourceId);
+                }
             }
         }
         Set<String> readSources = new LinkedHashSet<>();

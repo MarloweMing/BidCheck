@@ -63,20 +63,23 @@ public final class RecoveryTargets {
             }
             boolean capable = false;
             boolean requirementSourceMissing = false;
+            boolean readPrerequisiteMissing = false;
             for (Rule rule : selected) {
                 if (AgentInvestigationScope.kinds(rule).isEmpty()) continue;
                 Map<String,Object> condition = conditions.getOrDefault(
                     parents.getOrDefault(rule.id(), rule.id()), Collections.emptyMap());
                 Object proof = condition.get("proof");
-                if (proof instanceof Map<?,?> && AgentInvestigationScope.awaitingRequirementSource(
+                if (proof instanceof Map<?,?> && CompoundBusinessRequirements.awaitingMembership(rule, (Map<String,Object>) proof)) {
+                    readPrerequisiteMissing = true;
+                } else if (proof instanceof Map<?,?> && AgentInvestigationScope.awaitingRequirementSource(
                         (Map<String,Object>) proof)) {
                     requirementSourceMissing = true;
                 } else {
                     capable = true;
                 }
             }
-            if (!capable) result.put(target, requirementSourceMissing
-                ? "REQUIREMENT_SOURCE_INPUT_REQUIRED" : "NO_EXECUTABLE_EVIDENCE_TARGET");
+            if (!capable) result.put(target, readPrerequisiteMissing ? "EVIDENCE_READ_PREREQUISITE_REQUIRED"
+                : requirementSourceMissing ? "REQUIREMENT_SOURCE_INPUT_REQUIRED" : "NO_EXECUTABLE_EVIDENCE_TARGET");
         }
         return result;
     }

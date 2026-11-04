@@ -216,7 +216,9 @@ final class RuleEvaluator {
         List<Evidence> evidence=new ArrayList<>(combined.evidences());links.stream().flatMap(f->f.sourceIds().stream()).map(corpus.byId::get).filter(Objects::nonNull).map(Source::evidence).forEach(evidence::add);
         return new Decision(r.id(),r.description(),combined.status(),combined.reason(),cn.bidcheck.compat.Java8Api.toList(evidence.stream().distinct()),combined.gaps(),proof);
     }
-    List<Fact> match(Rule r){Set<String> kinds;
+    List<Fact> match(Rule r){
+        if (PersonnelNameConsistency.applies(r)) return cn.bidcheck.compat.Java8Api.toList(facts.stream().filter(PersonnelNameConsistency::relevant));
+        Set<String> kinds;
 switch (r.predicate()) {case "VALIDITY":kinds = cn.bidcheck.compat.Java8Api.setOf("DATE_RANGE", "CERTIFICATE"); break;case "SAME_FIELD":kinds = cn.bidcheck.compat.Java8Api.setOf("FIELD", "NUMBER", "CERTIFICATE"); break;case "PRICE_RECONCILE":kinds = cn.bidcheck.compat.Java8Api.setOf("NUMBER", "FIELD"); break;case "DATE_RELATION":kinds = cn.bidcheck.compat.Java8Api.setOf("FIELD"); break;default:kinds = cn.bidcheck.compat.Java8Api.setOf(r.predicate()); break;}
         Set<String> subjects=new LinkedHashSet<>(resolvedSubjects(r));if(r.predicate().equals("PERSON_ROLE")&&!cn.bidcheck.compat.Java8Api.isBlank(r.subject()))subjects.add(r.subject());
         if(!cn.bidcheck.compat.Java8Api.isBlank(r.subject())&&subjects.isEmpty())return cn.bidcheck.compat.Java8Api.listOf();
@@ -385,7 +387,10 @@ switch (r.predicate()) {case "VALIDITY":kinds = cn.bidcheck.compat.Java8Api.setO
         boolean agrees=values.size()==1&&values.contains(rule.expected());
         return new Decision(rule.id(),rule.description(),agrees?"PASS":"FAIL",agrees?"当前投标文件的明确编号字段与招标编号一致":"当前投标文件的明确编号字段存在差异",new ArrayList<>(new LinkedHashSet<>(evidence)),Collections.emptyList(),linked("field",rule.field(),"values",values,"expected",rule.expected()));
     }
-    Decision sameField(Rule r,List<Fact> matched){return PriceUniquenessScope.guard(r,sameFieldComparison(r,matched));}
+    Decision sameField(Rule r,List<Fact> matched){
+        if (PersonnelNameConsistency.applies(r)) return PersonnelNameConsistency.evaluate(r,this);
+        return PriceUniquenessScope.guard(r,sameFieldComparison(r,matched));
+    }
     private Decision sameFieldComparison(Rule r,List<Fact> matched){
         if("creditCode".equals(r.field())&&!Boolean.TRUE.equals(r.parameters().get("companyScopedComparison"))){
             List<Fact> current=cn.bidcheck.compat.Java8Api.toList(matched.stream().filter(f->f.scope().equals("CURRENT_PROJECT")));

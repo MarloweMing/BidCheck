@@ -10,8 +10,10 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 /** Extracted facts are candidates until their typed values and local source binding have been checked. */
 final class ProofVerifier {
     private final Map<String,Source> trustedCorpus;
+    private final ContractRecordBindings contractBindings;
     ProofVerifier(){this(cn.bidcheck.compat.Java8Api.mapOf());}
-    ProofVerifier(Map<String,Source> trustedCorpus){this.trustedCorpus=trustedCorpus;}
+    ProofVerifier(Map<String,Source> trustedCorpus){this(trustedCorpus,null);}
+    ProofVerifier(Map<String,Source> trustedCorpus,ContractRecordBindings contractBindings){this.trustedCorpus=trustedCorpus;this.contractBindings=contractBindings;}
     static final Set<String> KINDS=cn.bidcheck.compat.Java8Api.setOf("MATERIAL", "DECLARATION", "SECTION", "PERSON_ROLE", "CERTIFICATE", "DATE_RANGE", "MONTHS", "RELATION", "NUMBER", "CONTRACT", "FIELD");
     @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
     static final class Verified{
@@ -97,13 +99,17 @@ final class ProofVerifier {
             if(!bound)return "CERTIFICATE_SUBJECT_FIELD_BINDING_INVALID";
         }else if(f.kind().equals("CONTRACT")){
             String name=str(f.attributes(),"contractName"),number=str(f.attributes(),"contractNumber");if(cn.bidcheck.compat.Java8Api.isBlank(name)&&cn.bidcheck.compat.Java8Api.isBlank(number))return "CONTRACT_IDENTITY_UNPROVEN";
-            for(String key:cn.bidcheck.compat.Java8Api.listOf("contractName", "contractNumber", "party", "person", "personRole")){String v=str(f.attributes(),key);if(!cn.bidcheck.compat.Java8Api.isBlank(v)&&!contains(text,v))return "CONTRACT_ATTRIBUTE_UNGROUNDED";}
+            String identityConflict = ContractCandidateFields.conflict(f);
+            if (identityConflict != null) return identityConflict;
+            for(String key:cn.bidcheck.compat.Java8Api.listOf("contractName", "contractNumber", "party", "person", "personRole")){String v=str(f.attributes(),key);if(!cn.bidcheck.compat.Java8Api.isBlank(v)&&!("contractName".equals(key)?ContractCandidateFields.containsTitle(text,v):contains(text,v)))return "CONTRACT_ATTRIBUTE_UNGROUNDED";}
             // Each cross-page source must carry contract identity; proximity alone cannot merge two contracts.
-            if(refs.size()>1&&refs.stream().anyMatch(s->!(contains(s.evidence().quote(),name)||contains(s.evidence().quote(),number))))return "CONTRACT_PAGE_LINK_UNPROVEN";
+            boolean requiresRecordBinding=refs.size()>1&&refs.stream().anyMatch(s->!(ContractCandidateFields.containsTitle(s.evidence().quote(),name)||contains(s.evidence().quote(),number)));
+            if(requiresRecordBinding&&(contractBindings==null||!contractBindings.matches(f,refs)))return "CONTRACT_PAGE_LINK_UNPROVEN";
             String amount=str(f.attributes(),"amount"),basis=str(f.attributes(),"amountBasis");if(!cn.bidcheck.compat.Java8Api.isBlank(amount)&&(!numberPresent(text,amount)||cn.bidcheck.compat.Java8Api.isBlank(basis)||refs.stream().noneMatch(s->near(s.evidence().quote(),basis,amount))))return "CONTRACT_AMOUNT_BASIS_UNPROVEN";
             if(!cn.bidcheck.compat.Java8Api.isBlank(amount)&&(cn.bidcheck.compat.Java8Api.isBlank(str(f.attributes(),"unit"))||refs.stream().noneMatch(s->near(s.evidence().quote(),basis,amount)&&unitBound(numericContext(s.evidence().quote(),basis,amount),amount,str(f.attributes(),"unit")))))return "CONTRACT_AMOUNT_UNIT_UNPROVEN";
             String tax=str(f.attributes(),"taxBasis");if(!cn.bidcheck.compat.Java8Api.isBlank(tax)&&!taxBound(text,basis,amount,tax))return "CONTRACT_TAX_BASIS_UNPROVEN";
             String signed=str(f.attributes(),"signedDate");if(!datePresent(text,signed))return "CONTRACT_DATE_UNGROUNDED";
+            if(requiresRecordBinding&&!signed.isEmpty()&&!ContractRecordBindings.signingDate(signed,refs))return "CONTRACT_SIGNING_DATE_ROLE_UNPROVEN";
         }else if(!cn.bidcheck.compat.Java8Api.setOf("MATERIAL", "DECLARATION", "SECTION").contains(f.kind())&&!cn.bidcheck.compat.Java8Api.isBlank(f.value())&&!contains(text,f.value()))return "VALUE_UNGROUNDED";
         return null;
     }

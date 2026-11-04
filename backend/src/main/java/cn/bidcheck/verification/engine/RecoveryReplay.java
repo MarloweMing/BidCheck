@@ -42,13 +42,16 @@ final class RecoveryReplay {
         return cn.bidcheck.compat.Java8Api.toList(ids.stream().map(corpus.byId::get).filter(Objects::nonNull));
     }
     static ProofVerifier.Verified facts(Map<String,Object> context,List<Source> sources,List<Map<String,Object>> layout,String modelIdentity){
+        return facts(context,sources,layout,modelIdentity,new ProofVerifier());
+    }
+    private static ProofVerifier.Verified facts(Map<String,Object> context,List<Source> sources,List<Map<String,Object>> layout,String modelIdentity,ProofVerifier verifier){
         ObjectMapper json=new ObjectMapper();Map<String,Fact> accepted=new LinkedHashMap<>();List<Map<String,Object>> rejected=new ArrayList<>();
         Set<String> available=new HashSet<>(cn.bidcheck.compat.Java8Api.toList(sources.stream().map(Source::id)));
         for(Map<String,Object> step:steps(context,modelIdentity)){
             Map<String,Object> output=map(step.get("output"));List<String> refs=ProofVerifier.strings(output.get("sourceIds"));
             if(refs.isEmpty()||!available.containsAll(refs))continue;
             List<Source> sent=cn.bidcheck.compat.Java8Api.toList(sources.stream().filter(s->refs.contains(s.id())));
-            ProofVerifier.Verified verified=new ProofVerifier().verify(json.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("facts", RuleEvaluator.maps(output.get("facts")))),sent,layout);
+            ProofVerifier.Verified verified=verifier.verify(json.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("facts", RuleEvaluator.maps(output.get("facts")))),sent,layout);
             verified.facts().stream().map(SharedFactReuse::canonical).forEach(f->accepted.put(f.id(),f));rejected.addAll(verified.rejected());
         }
         return new ProofVerifier.Verified(cn.bidcheck.compat.Java8Api.listCopyOf(accepted.values()),cn.bidcheck.compat.Java8Api.listCopyOf(rejected));
@@ -61,7 +64,11 @@ final class RecoveryReplay {
             "sources",cn.bidcheck.compat.Java8Api.toList(ids.stream().map(corpus.byId::get).filter(Objects::nonNull).map(s->sourceMetadata(corpus,s))),"businessProof",false);
     }
     static ProofVerifier.Verified facts(Map<String,Object> context,EvidenceCorpus corpus,List<Source> sources,List<Map<String,Object>> layout,String modelIdentity){
-        ProofVerifier.Verified legacy=facts(context,sources,layout,modelIdentity);
+        return facts(context,corpus,sources,layout,modelIdentity,Collections.emptyList());
+    }
+    static ProofVerifier.Verified facts(Map<String,Object> context,EvidenceCorpus corpus,List<Source> sources,List<Map<String,Object>> layout,String modelIdentity,List<Rule> currentRules){
+        ProofVerifier verifier=ContractRecordBindings.verifier(corpus,currentRules,sources);
+        ProofVerifier.Verified legacy=facts(context,sources,layout,modelIdentity,verifier);
         Map<String,Fact> accepted=new LinkedHashMap<>();legacy.facts().forEach(f->accepted.put(f.id(),f));
         List<Map<String,Object>> rejected=new ArrayList<>(legacy.rejected());Set<String> available=new HashSet<>(cn.bidcheck.compat.Java8Api.toList(sources.stream().map(Source::id)));
         for(Map<String,Object> step:snapshots(context,modelIdentity)){
@@ -76,7 +83,7 @@ final class RecoveryReplay {
                     rejected.add(linked("code","RECOVERY_SOURCE_REVISION_MISMATCH","sourceIds",refs));continue;
                 }
                 List<Source> sent=cn.bidcheck.compat.Java8Api.toList(refs.stream().map(corpus.byId::get));
-                ProofVerifier.Verified verified=new ProofVerifier(corpus.byId).verify(JSON.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("facts", cn.bidcheck.compat.Java8Api.listOf(raw))),sent,layout);
+                ProofVerifier.Verified verified=verifier.verify(JSON.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("facts", cn.bidcheck.compat.Java8Api.listOf(raw))),sent,layout);
                 rejected.addAll(verified.rejected());for(Fact observed:verified.facts()){
                     if("SECTION".equals(observed.kind())){Map<String,Object> attrs=new LinkedHashMap<>(observed.attributes());attrs.put("fullSectionRead",SectionCoverage.covered(observed,corpus,sources));
                         observed=new Fact(observed.id(),observed.kind(),observed.subject(),observed.field(),observed.rawValue(),observed.value(),observed.unit(),observed.basis(),observed.scope(),observed.sourceIds(),attrs);}
@@ -86,7 +93,7 @@ final class RecoveryReplay {
         }
         return new ProofVerifier.Verified(cn.bidcheck.compat.Java8Api.listCopyOf(accepted.values()),cn.bidcheck.compat.Java8Api.listCopyOf(rejected));
     }
-    private static Map<String,Object> sourceMetadata(EvidenceCorpus corpus,Source source){
+    static Map<String,Object> sourceMetadata(EvidenceCorpus corpus,Source source){
         cn.bidcheck.domain.Domain.Document document=corpus.documents.stream().filter(d->d.id().equals(source.evidence().documentId())).findFirst().orElse(null);
         if(document==null)return cn.bidcheck.compat.Java8Api.mapOf();
         cn.bidcheck.domain.Domain.Page page=corpus.pages.get(EvidenceCorpus.pageKey(document.id(),source.evidence().page(),source.evidence().locationType()));
@@ -94,7 +101,7 @@ final class RecoveryReplay {
             "documentVersion",String.valueOf(document.version()),"parserFingerprint",page==null?"":SharedFactReuse.parserFingerprint(page),
             "sourceFingerprint",identity(JSON.valueToTree(source).toString()));
     }
-    private static boolean sourceMatches(EvidenceCorpus corpus,Map<String,Object> saved){
+    static boolean sourceMatches(EvidenceCorpus corpus,Map<String,Object> saved){
         Source current=corpus.byId.get(str(saved,"id"));return current!=null&&sourceMetadata(corpus,current).equals(saved);
     }
     private static List<Map<String,Object>> snapshots(Map<String,Object> context,String modelIdentity){

@@ -84,6 +84,18 @@ final class SourceScoringRules {
     /** Typed read obligations are not independent business conclusions. They expose
      * the dependencies of a scoring formula to the existing fact lookup/extractor. */
     static List<Rule> evidenceRules(Rule rule){
+        if(CompoundBusinessRequirements.applies(rule))return CompoundBusinessRequirements.evidenceRules(rule);
+        if (programOnly(rule) && issue(rule) == null) {
+            Map<String,Object> parameters = linked("scoringParentRuleId", rule.id(),
+                "readPurpose", "SCORE_BODY_DEPENDENCY", "sourceScoringReadVersion", VERSION,
+                "programBodyRead", true, "materialType", rule.parameters().get("materialType"),
+                "dimensions", rule.parameters().get("dimensions"));
+            if (rule.parameters().containsKey("requirementSourceContext"))
+                parameters.put("requirementSourceContext", rule.parameters().get("requirementSourceContext"));
+            return Collections.singletonList(new Rule(rule.id() + "-READ-BODY", rule.description() + "正文范围",
+                "SECTION", "", "body", "", str(rule.parameters(), "materialType"), "", parameters,
+                rule.sourceQuote(), "", Collections.emptyList()));
+        }
         if(applies(rule)&&SourcePerformanceScore.MODE.equals(str(rule.parameters(),"sourceScoringMode")))return SourcePerformanceScore.evidenceRules(rule);
         if(applies(rule)&&SourceExtraPersonnelScore.MODE.equals(str(rule.parameters(),"sourceScoringMode")))return SourceExtraPersonnelScore.evidenceRules(rule);
         if(!applies(rule)||!"TITLE_TIER".equals(str(rule.parameters(),"sourceScoringMode")))return cn.bidcheck.compat.Java8Api.listOf(rule);
@@ -102,12 +114,29 @@ final class SourceScoringRules {
     static Map<String,String> readParents(List<Rule> roots,List<Rule> reads){
         Map<String,Rule> supplied=new HashMap<>();reads.forEach(r->supplied.put(r.id(),r));Map<String,String> parents=new LinkedHashMap<>();
         for(Rule root:roots){
-            if(applies(root)&&cn.bidcheck.compat.Java8Api.setOf("TITLE_TIER", SourcePerformanceScore.MODE, SourceExtraPersonnelScore.MODE).contains(str(root.parameters(),"sourceScoringMode"))&&issue(root)==null)
+            if(CompoundBusinessRequirements.applies(root))
+                for(Rule read:CompoundBusinessRequirements.evidenceRules(root))
+                    if(CompoundBusinessRequirements.isRead(read)&&read.equals(supplied.get(read.id())))parents.put(read.id(),root.id());
+            if(applies(root)&&cn.bidcheck.compat.Java8Api.setOf("TITLE_TIER", SourcePerformanceScore.MODE, SourceExtraPersonnelScore.MODE, "PLAN_COMPLETENESS", "SUBJECTIVE_RUBRIC").contains(str(root.parameters(),"sourceScoringMode"))&&issue(root)==null)
                 for(Rule read:evidenceRules(root))if(read.equals(supplied.get(read.id())))parents.put(read.id(),root.id());
             parents.putAll(readParents(root.children(),reads));
         }
         return cn.bidcheck.compat.Java8Api.mapCopyOf(parents);
     }
+    /** A regenerated read can close body acquisition, never the score or quality grade. */
+    static Decision bodyReadDecision(Rule read, Decision parent, RuleEvaluator evaluator) {
+        if (parent == null || !Boolean.TRUE.equals(read.parameters().get("programBodyRead"))
+                || !VERSION.equals(read.parameters().get("sourceScoringReadVersion"))
+                || !parent.id().equals(str(read.parameters(), "scoringParentRuleId"))) return parent;
+        EvidenceCorpus.ProgramScan scan = evaluator.corpus.qualityAdvisoryScan(read);
+        Map<String,Object> proof = linked("businessProof", false, "bodyReadComplete", scan.coverageComplete(),
+            "parentRuleId", parent.id(), "sourceIds", scan.sourceIds(), "scopeLocated", scan.scopeLocated(),
+            "sourceViews", sourceViews(scan));
+        if (!scan.scopeLocated() || !scan.coverageComplete())
+            return evaluator.unknown(read, "SCORE_BODY_COVERAGE_REQUIRED", scan.reason(), scan.facts(), proof);
+        return evaluator.pass(read, "已按当前来源扫描完整材料正文；评分及质量档次仍由父条件独立核验", scan.facts(), proof);
+    }
+
     static Decision evaluate(Rule rule,RuleEvaluator evaluator){
         String invalid=issue(rule);if(invalid!=null)return evaluator.unknown(rule,"SCORING_FORMULA_REQUIRED",invalid,cn.bidcheck.compat.Java8Api.listOf());
         switch (str(rule.parameters(),"sourceScoringMode")) {case "PLAN_COMPLETENESS":return completeness(rule,evaluator);case "SUBJECTIVE_RUBRIC":return rubric(rule,evaluator);case "TITLE_TIER":return title(rule,evaluator);case SourcePerformanceScore.MODE:return SourcePerformanceScore.evaluate(rule,evaluator);case SourceExtraPersonnelScore.MODE:return SourceExtraPersonnelScore.evaluate(rule,evaluator);default:return evaluator.unknown(rule,"SCORING_FORMULA_REQUIRED","来源计分模式尚未支持",cn.bidcheck.compat.Java8Api.listOf());}
@@ -237,5 +266,9 @@ final class SourceScoringRules {
     private static boolean itemCovered(String item,List<String> covered){return covered.containsAll(dimensions(cn.bidcheck.compat.Java8Api.listOf(item)));}
     private static Map<String,Object> baseProof(Rule rule,EvidenceCorpus.ProgramScan scan){return linked("executor",VERSION,"decisionBasis","PROGRAM_STRUCTURAL_COVERAGE","decisionScope",rule.parameters().get("decisionScope"),
             "materialType",rule.parameters().get("materialType"),"coveredDimensions",scan.covered(),"missingDimensions",scan.missing(),
-            "coverageComplete",scan.coverageComplete(),"scannedSourceIds",scan.sourceIds());}
+            "coverageComplete",scan.coverageComplete(),"scannedSourceIds",scan.sourceIds(),"sourceViews",sourceViews(scan));}
+    private static List<Object> sourceViews(EvidenceCorpus.ProgramScan scan) {
+        return cn.bidcheck.compat.Java8Api.toList(scan.facts().stream()
+            .map(fact -> fact.attributes().get("sourceView")).filter(Objects::nonNull).distinct());
+    }
 }

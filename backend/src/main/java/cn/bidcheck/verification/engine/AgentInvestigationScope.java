@@ -21,7 +21,9 @@ final class AgentInvestigationScope {
     }
     private static Decision currentDecision(Rule rule,String id,RuleEvaluator evaluator){
         Decision decision=Boolean.TRUE.equals(rule.parameters().get("identityPrerequisite"))?evaluator.evaluate(rule):evaluator.decisions.get(id);
-        return SourcePerformanceScore.readDecision(rule,decision,evaluator);
+        if(CompoundBusinessRequirements.isRead(rule))return CompoundBusinessRequirements.readDecision(rule,decision);
+        return SourceScoringRules.bodyReadDecision(rule,
+            SourcePerformanceScore.readDecision(rule,decision,evaluator),evaluator);
     }
     private static boolean prerequisiteCovered(Rule rule,Set<String> covered){
         List<String> parents=ProofVerifier.strings(rule.parameters().get("prerequisiteFor"));
@@ -30,6 +32,8 @@ final class AgentInvestigationScope {
 
     static boolean requiresEvidence(Decision decision){
         if(closed(decision))return false;
+        if(decision!=null&&"COMPOUND_EVIDENCE_READ".equals(str(decision.proof(),"decisionScope"))
+                &&Boolean.TRUE.equals(decision.proof().get("awaitingReadPrerequisite")))return false;
         if(decision!=null&&awaitingRequirementSource(decision.proof()))return false;
         if(decision==null||decision.gaps().isEmpty())return true;
         for(Gap gap:decision.gaps())if(!Arrays.asList("CURRENT_TAXPAYER_PROOF_REQUIRED","VISUAL_MARK_UNREADABLE",
@@ -165,6 +169,7 @@ final class AgentInvestigationScope {
                     "RELATION",linked("subject","原文关系的起点主体","object","原文关系的终点主体","identityPrerequisiteMayUseRole",true)),
                 "identityPrerequisiteKinds",selector?AgentRuleSubjects.collective(r.subject())||PersonnelRoles.personRole(r.subject())?cn.bidcheck.compat.Java8Api.listOf("PERSON_ROLE", "RELATION"):cn.bidcheck.compat.Java8Api.listOf("RELATION"):cn.bidcheck.compat.Java8Api.listOf());
             contract.putAll(binding);
+            if (kinds(r).contains("CONTRACT")) contract.put("contractFactFields", ContractCandidateFields.contract());
             return contract;
         }));
     }
@@ -208,7 +213,11 @@ final class AgentInvestigationScope {
         for(String key:cn.bidcheck.compat.Java8Api.listOf("structureProof", "documentScopeEvidence", "documentScope"))attrs.remove(key);
         Map<String,Object> out=SharedFactReuse.value(fact);out.put("id",fact.id());out.put("attributes",attrs);return out;
     }
-    static Set<String> kinds(Rule r){if(RegistrationEmployerProof.applies(r))return cn.bidcheck.compat.Java8Api.setOf("PERSON_ROLE", "RELATION", "CERTIFICATE");switch (r.predicate()) {case "PERSON_COUNT":case "ENTITY_COUNT":return cn.bidcheck.compat.Java8Api.setOf("PERSON_ROLE", "RELATION");case "VALIDITY":return cn.bidcheck.compat.Java8Api.setOf("DATE_RANGE", "CERTIFICATE");case "SAME_FIELD":return cn.bidcheck.compat.Java8Api.setOf("FIELD", "NUMBER", "CERTIFICATE");case "PRICE_RECONCILE":return cn.bidcheck.compat.Java8Api.setOf("NUMBER", "FIELD");case "DATE_RELATION":case "VISUAL":return cn.bidcheck.compat.Java8Api.setOf("FIELD");case "SCORE_COUNT":return cn.bidcheck.compat.Java8Api.setOf("CONTRACT");default:return ProofVerifier.KINDS.contains(r.predicate())?cn.bidcheck.compat.Java8Api.setOf(r.predicate()):cn.bidcheck.compat.Java8Api.setOf();}}
+    static Set<String> kinds(Rule r){
+        if (PersonnelNameConsistency.applies(r)) return cn.bidcheck.compat.Java8Api.setOf("PERSON_ROLE", "FIELD");
+        if (SourceScoringRules.programOnly(r) && SourceScoringRules.issue(r) == null)
+            return cn.bidcheck.compat.Java8Api.setOf("SECTION");
+        if(RegistrationEmployerProof.applies(r))return cn.bidcheck.compat.Java8Api.setOf("PERSON_ROLE", "RELATION", "CERTIFICATE");switch (r.predicate()) {case "PERSON_COUNT":case "ENTITY_COUNT":return cn.bidcheck.compat.Java8Api.setOf("PERSON_ROLE", "RELATION");case "VALIDITY":return cn.bidcheck.compat.Java8Api.setOf("DATE_RANGE", "CERTIFICATE");case "SAME_FIELD":return cn.bidcheck.compat.Java8Api.setOf("FIELD", "NUMBER", "CERTIFICATE");case "PRICE_RECONCILE":return cn.bidcheck.compat.Java8Api.setOf("NUMBER", "FIELD");case "DATE_RELATION":case "VISUAL":return cn.bidcheck.compat.Java8Api.setOf("FIELD");case "SCORE_COUNT":return cn.bidcheck.compat.Java8Api.setOf("CONTRACT");default:return ProofVerifier.KINDS.contains(r.predicate())?cn.bidcheck.compat.Java8Api.setOf(r.predicate()):cn.bidcheck.compat.Java8Api.setOf();}}
     private static Set<String> relationFields(Rule r){Set<String> fields=new LinkedHashSet<>();
         if(RegistrationEmployerProof.applies(r))return cn.bidcheck.compat.Java8Api.setOf("聘用", "受聘", "任职于", "就职于", "供职于", "劳动关系", "用人单位", "雇佣", "所属单位");
         if(r.predicate().equals("RELATION")){if(!cn.bidcheck.compat.Java8Api.isBlank(r.field()))fields.add(r.field());fields.addAll(ProofVerifier.strings(r.parameters().get("path")));}
@@ -216,6 +225,18 @@ final class AgentInvestigationScope {
     }
     static boolean relevant(Fact f,List<Rule> rules,Collection<Fact> facts,EvidenceCorpus corpus){
         for(Rule r:rules){
+            if (PersonnelNameConsistency.applies(r)) {
+                if (PersonnelNameConsistency.relevant(f)) return true;
+                continue;
+            }
+            List<Map<String,Object>> sourceIdentities = new ArrayList<>();
+            for (String id : f.sourceIds()) {
+                Source source = corpus.byId.get(id);
+                if (source != null) sourceIdentities.add(linked("id", id, "documentId", source.evidence().documentId(),
+                    "documentHash", source.documentHash(), "documentVersion", source.documentVersion(), "location", source.evidence().page()));
+            }
+            if (!DeclaredContractRelevance.possiblyRelevant(linked("predicate", r.predicate(), "parameters", r.parameters()),
+                    SharedFactReuse.value(f), sourceIdentities)) continue;
             // Identity links are prerequisites, never substitutes for the requested certificate or relationship.
             Set<String> selectors=new LinkedHashSet<>(AgentRuleSubjects.selectors(r));selectors.add(str(r.parameters(),"employer"));
             if(r.predicate().equals("RELATION"))selectors.add(cn.bidcheck.compat.Java8Api.isBlank(r.expected())?str(r.parameters(),"object"):r.expected());

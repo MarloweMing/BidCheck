@@ -111,6 +111,9 @@ final class SharedFactReuse {
             metadata.put(source.id(),linked("id",source.id(),"evidence",source.evidence(),"projectId",doc.projectId(),"documentHash",doc.sha256(),"documentVersion",doc.version(),"parserFingerprint",parserFingerprint(page)));
         }
     }
+    Map<String,Map<String,Object>> sourceMetadata() {
+        return Collections.unmodifiableMap(metadata);
+    }
     static String parserFingerprint(Page page){return cn.bidcheck.verification.facts.FactLedgerService.parserFingerprint(page);}
     static Map<String,Object> value(Fact f){return linked("kind",f.kind(),"subject",f.subject(),"field",f.field(),"rawValue",f.rawValue(),"value",f.value(),"unit",f.unit(),"basis",f.basis(),"scope",f.scope(),"sourceIds",f.sourceIds(),"attributes",f.attributes());}
     private static Object ordered(Object value){if(value instanceof Map<?,?>){Map<String,Object> out=new TreeMap<>();((Map<?,?>) (value)).forEach((k,v)->out.put(k.toString(),ordered(v)));return out;}if(value instanceof List<?>)return cn.bidcheck.compat.Java8Api.toList(((List<?>) (value)).stream().map(SharedFactReuse::ordered));return value;}
@@ -248,6 +251,7 @@ final class SharedFactReuse {
             markLookupTruncation(omitted.stream().anyMatch(row->row.get("fact") instanceof Map<?,?>),omitted.stream().anyMatch(row->!RuleEvaluator.maps(row.get("fieldCoverage")).isEmpty()),detail);}
         Map<String,Fact> accepted=new LinkedHashMap<>(),acceptedByOccurrence=new HashMap<>();Map<String,Set<String>> acceptedByBatch=new HashMap<>();Map<String,Map<String,Fact>> acceptedFactsByBatch=new HashMap<>();Map<String,Map<String,Object>> batchReceipts=new HashMap<>();Map<String,FieldCandidate> completeFields=new LinkedHashMap<>(),pendingFields=new LinkedHashMap<>();
         List<Map<String,Object>> candidateAudit=new ArrayList<>();int metadataEntries=0,fieldOnlyEntries=0;
+        ProofVerifier batchVerifier = ContractRecordBindings.verifier(corpus, rules, candidates);
         // Facts and field reads have independent capacities. A full fact result must not discard
         // READ_NOT_FOUND receipts or receipt dependencies returned after those facts.
         for(Map<String,Object> entry:entries.subList(0,completePageSet?entries.size():Math.min(entries.size(),LIMIT*8))){
@@ -271,7 +275,7 @@ final class SharedFactReuse {
             List<Map<String,Object>> sourceFailures=new ArrayList<>();for(String ref:refs){String reason=sourceMismatchReason(ref,provided.get(ref));if(!cn.bidcheck.compat.Java8Api.isBlank(reason))sourceFailures.add(linked("sourceId",ref,"code",reason));}
             if(!sourceFailures.isEmpty()){rejectedFacts++;auditCandidate(candidateAudit,entry,"REJECTED","SOURCE_MANIFEST_MISMATCH",sourceFailures,"");continue;}
             // Re-read current original text and current table bindings. Persisted PASS/verified flags have no authority.
-            ProofVerifier.Verified verified=new ProofVerifier(corpus.byId).verify(json.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("facts", cn.bidcheck.compat.Java8Api.listOf(((Map<?,?>) (entry.get("fact")))))),candidates,layout);
+            ProofVerifier.Verified verified=batchVerifier.verify(json.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("facts", cn.bidcheck.compat.Java8Api.listOf(((Map<?,?>) (entry.get("fact")))))),candidates,layout);
             if(verified.facts().size()!=1||!verified.rejected().isEmpty()){rejectedFacts++;auditCandidate(candidateAudit,entry,"REJECTED","PROOF_VERIFICATION_FAILED",verified.rejected(),"");continue;}
             Fact fact=canonical(verified.facts().get(0));if(!shareable(fact)){rejectedFacts++;auditCandidate(candidateAudit,entry,"REJECTED","CANONICAL_FACT_NOT_SHAREABLE",cn.bidcheck.compat.Java8Api.listOf(),fact.id());continue;}
             if("MATERIAL".equals(kind)&&rules.stream().filter(r->"MATERIAL".equals(r.predicate())).noneMatch(r->FieldCoverage.matches(observationTarget(r),value(fact)))){
@@ -511,7 +515,8 @@ final class SharedFactReuse {
         publish(facts,new ArrayList<>(scope.values()),rules,layout,completeExtraction,origin,cn.bidcheck.compat.Java8Api.listOf());
     }
     @SuppressWarnings("unchecked") void publish(List<Fact> facts,List<Source> candidates,List<Rule> rules,List<Map<String,Object>> layout,boolean completeExtraction,String origin,List<Map<String,Object>> rejections){
-        List<Fact> valid=new ArrayList<>();for(Fact f:facts){if(!shareable(f))continue;ProofVerifier.Verified check=new ProofVerifier(corpus.byId).verify(json.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("facts", cn.bidcheck.compat.Java8Api.listOf(value(f)))),candidates,layout);if(check.facts().size()==1&&check.rejected().isEmpty())valid.add(canonical(check.facts().get(0)));}
+        ProofVerifier batchVerifier = ContractRecordBindings.verifier(corpus, rules, candidates);
+        List<Fact> valid=new ArrayList<>();for(Fact f:facts){if(!shareable(f))continue;ProofVerifier.Verified check=batchVerifier.verify(json.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("facts", cn.bidcheck.compat.Java8Api.listOf(value(f)))),candidates,layout);if(check.facts().size()==1&&check.rejected().isEmpty())valid.add(canonical(check.facts().get(0)));}
         // Native facts carry no model read-completion receipt. Once this checkpoint has durably
         // recorded the same immutable fact, changing retrieval targets does not require republishing it.
         if("NATIVE".equals(origin))valid.removeIf(f->nativePublished.contains(f.id()));

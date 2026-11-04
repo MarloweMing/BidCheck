@@ -11,11 +11,21 @@ final class SectionCoverage {
     @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
     static final class Extent{
         private final List<Source> sources;
+        @com.fasterxml.jackson.annotation.JsonIgnore
+        private final List<Source> bodySources;
         private final boolean complete;
         private final String reason;
         @com.fasterxml.jackson.annotation.JsonCreator
-        Extent(@com.fasterxml.jackson.annotation.JsonProperty("sources") List<Source> sources, @com.fasterxml.jackson.annotation.JsonProperty("complete") boolean complete, @com.fasterxml.jackson.annotation.JsonProperty("reason") String reason) { this.sources = sources; this.complete = complete; this.reason = reason; }
+        Extent(@com.fasterxml.jackson.annotation.JsonProperty("sources") List<Source> sources, @com.fasterxml.jackson.annotation.JsonProperty("complete") boolean complete, @com.fasterxml.jackson.annotation.JsonProperty("reason") String reason) { this.sources = sources; this.bodySources = sources; this.complete = complete; this.reason = reason; }
         public List<Source> sources() { return sources; }
+        /** Internal bounded view; never inserted into corpus.byId or published as a new OCR source. */
+        List<Source> bodySources() { return bodySources; }
+        Extent(List<Source> sources, List<Source> bodySources, boolean complete, String reason) {
+            this.sources = sources;
+            this.bodySources = bodySources;
+            this.complete = complete;
+            this.reason = reason;
+        }
         public boolean complete() { return complete; }
         public String reason() { return reason; }
         @Override public boolean equals(Object other) { if (this == other) return true; if (other == null || getClass() != other.getClass()) return false; Extent that = (Extent) other; return java.util.Objects.equals(this.sources, that.sources) && java.util.Objects.equals(this.complete, that.complete) && java.util.Objects.equals(this.reason, that.reason); }
@@ -56,14 +66,84 @@ final class SectionCoverage {
         if(title==null||title.length()<2||title.length()>80)return new Extent(cn.bidcheck.compat.Java8Api.listOf(),false,"章节名未明确");
         for(Document doc:corpus.documents){if(!"BID".equals(doc.role()))continue;List<Line> lines=new ArrayList<>();for(Page p:doc.pages()){String t=Objects.toString(p.text(),"");int start=0;for(String line:t.split("\n",-1)){lines.add(new Line(p,start,Math.min(t.length(),start+line.length()+1),line));start+=line.length()+1;}}
             for(int i=0;i<lines.size();i++){Line heading=lines.get(i);String h=cn.bidcheck.compat.Java8Api.strip(heading.text());int level=level(h);if(level<1||!MaterialTitleAliases.matches(title,h)||!MaterialTitleAliases.navigation(title)&&corpus.all.stream().anyMatch(s->s.evidence().documentId().equals(doc.id())&&s.evidence().page()==heading.page().number()&&s.index()))continue;
-                int end=lines.size();for(int j=i+1;j<lines.size();j++){int next=level(cn.bidcheck.compat.Java8Api.strip(lines.get(j).text()));if(next>0&&next<=level){end=j;break;}}
+                int end=lines.size();
+                int nestedChineseChapter = 0;
+                for(int j=i+1;j<lines.size();j++) {
+                    String nextText = cn.bidcheck.compat.Java8Api.strip(lines.get(j).text());
+                    if (!MaterialTitleAliases.volume(nextText).isEmpty()) {
+                        end = j;
+                        break;
+                    }
+                    // A decimal material subsection may restart its internal chapters at one.
+                    // A top-level numeric heading does not prove that a following chapter is its child.
+                    int chapter = chineseChapter(nextText);
+                    if (numericHeading(h).length > 1 && chapter == nestedChineseChapter + 1) {
+                        nestedChineseChapter = chapter;
+                        continue;
+                    }
+                    int next = level(nextText);
+                    if (next > 0 && next <= level && endsSection(h, nextText, nestedChineseChapter)) {
+                        end=j;
+                        break;
+                    }
+                }
                 List<Source> needed=new ArrayList<>();int chars=0;for(int j=i;j<end;j++){Line line=lines.get(j);chars+=clean(line.text()).length();for(Source s:corpus.all){if(s.id().startsWith("V")||!s.evidence().documentId().equals(doc.id())||s.evidence().page()!=line.page().number()||!s.evidence().locationType().equals(line.page().locationType()))continue;int[] range=range(s);if(range[0]<line.end()&&range[1]>line.start()&&!needed.contains(s))needed.add(s);}}
-                if(chars<80)return new Extent(needed,false,"章节正文过短或仅标题");
-                if(doc.warnings()!=null&&doc.warnings().stream().anyMatch(w->w.contains("[OCR未完成]")&&doc.pages().stream().noneMatch(p->p.warning()!=null&&!cn.bidcheck.compat.Java8Api.isBlank(p.warning())&&w.endsWith(p.warning()))))return new Extent(needed,false,"文档有未能归属具体位置的图像未识别，无法确认章节覆盖完整");
-                if(lines.subList(i,end).stream().anyMatch(line->line.page().warning()!=null&&line.page().warning().contains("[OCR未完成]")))return new Extent(needed,false,"章节区间含未识别的图像内容，原生文字展开不代表章节完整读取");
-                return new Extent(needed,!needed.isEmpty(),"原文章节区间已展开至同级/父级标题或文档末尾");
+                List<Source> body = boundedSources(needed, lines.subList(i, end));
+                if(chars<80)return new Extent(needed,body,false,"章节正文过短或仅标题");
+                if(doc.warnings()!=null&&doc.warnings().stream().anyMatch(w->w.contains("[OCR未完成]")&&doc.pages().stream().noneMatch(p->p.warning()!=null&&!cn.bidcheck.compat.Java8Api.isBlank(p.warning())&&w.endsWith(p.warning()))))return new Extent(needed,body,false,"文档有未能归属具体位置的图像未识别，无法确认章节覆盖完整");
+                if(lines.subList(i,end).stream().anyMatch(line->line.page().warning()!=null&&line.page().warning().contains("[OCR未完成]")))return new Extent(needed,body,false,"章节区间含未识别的图像内容，原生文字展开不代表章节完整读取");
+                return new Extent(needed,body,!needed.isEmpty(),"原文章节区间已展开至同级/父级标题或文档末尾");
             }
         }return new Extent(cn.bidcheck.compat.Java8Api.listOf(),false,"尚未定位带明确层级的章节正文起点");}
+    private static String[] numericHeading(String text) {
+        Matcher matcher = Pattern.compile("^(\\d+(?:[.．]\\d+)*)(?:[、.．\\s]+)([^.．].*)").matcher(text);
+        return matcher.matches() && text.length() < 100 ? matcher.group(1).split("[.．]") : new String[0];
+    }
+
+    private static int chineseChapter(String heading) {
+        Matcher matcher = Pattern.compile("^第([一二三四五六七八九十百0-9]+)章.*").matcher(heading);
+        if (!matcher.matches()) return 0;
+        java.math.BigDecimal number = RequirementGrounding.number(matcher.group(1));
+        return number == null ? 0 : number.intValue();
+    }
+
+    private static boolean endsSection(String heading, String next, int nestedChineseChapter) {
+        String[] outer = numericHeading(heading);
+        if (outer.length == 0 || nestedChineseChapter == 0) return true;
+        // An explicit section below the current Chinese chapter is a child, not an outer peer.
+        if (next.matches("^第[一二三四五六七八九十百0-9]+节.*")) return false;
+        String[] candidate = numericHeading(next);
+        if (candidate.length == 0) return true;
+        // Only numbering tied to the current explicit chapter can restart. An unrelated 5.1
+        // after chapter one, or any peer in the material's own 4.x namespace, ends the range.
+        return !(candidate.length > 1 && candidate[0].equals(Integer.toString(nestedChineseChapter))
+            && !candidate[0].equals(outer[0]));
+    }
+
+    private static List<Source> boundedSources(List<Source> sources, List<Line> lines) {
+        List<Source> result = new ArrayList<>();
+        for (Source source : sources) {
+            int start = Integer.MAX_VALUE, end = -1;
+            for (Line line : lines) {
+                if (line.page().number() != source.evidence().page()
+                        || !line.page().locationType().equals(source.evidence().locationType())) continue;
+                start = Math.min(start, line.start());
+                end = Math.max(end, line.end());
+            }
+            int[] anchor = range(source);
+            int from = Math.max(start, anchor[0]), to = Math.min(end, anchor[1]);
+            if (anchor[0] < 0 || from >= to) continue;
+            String quote = source.evidence().quote().substring(from - anchor[0], to - anchor[0]);
+            cn.bidcheck.domain.Domain.Evidence original = source.evidence();
+            cn.bidcheck.domain.Domain.Evidence view = new cn.bidcheck.domain.Domain.Evidence(original.documentId(),
+                original.documentName(), original.page(), original.locationType(), quote,
+                "chars:" + from + "-" + to, original.confidence());
+            result.add(new Source(source.id(), view, source.opening(), source.index(), source.historical(),
+                source.documentHash(), source.documentVersion(), source.scopeContext()));
+        }
+        return result;
+    }
+
     static boolean covered(Fact fact,EvidenceCorpus corpus,List<Source> selected){
         if(fact.sourceIds()==null||fact.sourceIds().isEmpty())return false;Set<String> documents=new HashSet<>();
         for(String id:fact.sourceIds()){Source source=corpus.byId.get(id);if(source==null)return false;documents.add(source.evidence().documentId());}
