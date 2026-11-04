@@ -98,7 +98,7 @@ public final class OrdinaryRecoveryDependencies {
                 long floor=Math.max(number(binding.get("observedRevision")),number(binding.get("scheduledRevision"))),latest=floor;
                 for(Map<String,Object> event:events){long eventRevision=number(event.get("revision"));
                     if(eventRevision<=floor||checkpoint.equals(text(event,"producerCheckpointId")))continue;
-                    List<Map<String,Object>> matching=cn.bidcheck.compat.Java8Api.toList(maps(event.get("changes")).stream().filter(change->matches(binding,change)));if(matching.isEmpty())continue;
+                    List<Map<String,Object>> matching=cn.bidcheck.compat.Java8Api.toList(maps(event.get("changes")).stream().filter(change->matches(binding,change)&&(!"SUCCEEDED".equals(text(job,"status"))||possibleConflict(binding,change))));if(matching.isEmpty())continue;
                     boolean novel=false;
                     for(Map<String,Object> change:matching){String key=RecoveryEvidenceIdentity.key(change);if(!seen.add(key))continue;novel=true;evidenceKeys.add(key);
                         for(Map<String,Object> source:maps(change.get("sources")))if(!cn.bidcheck.compat.Java8Api.isBlank(text(source,"id")))sourceIds.add(text(source,"id"));
@@ -137,12 +137,31 @@ public final class OrdinaryRecoveryDependencies {
         }
         return scheduled;
     }
+    private static boolean possibleConflict(Map<String,Object> binding,Map<String,Object> change){
+        Map<String,Object> fact=map(change.get("fact"));
+        if(fact.isEmpty()||"MATERIAL".equals(text(fact,"kind")))return false;
+        if(!binding.containsKey("observedValues")){
+            // Legacy proofs have no comparison values. Revalidate only an explicitly bound scalar field.
+            Map<String,Object> target=map(binding.get("target"));
+            return "FIELD".equals(text(fact,"kind"))&&!text(target,"subject").isEmpty()&&text(target,"subject").equals(text(fact,"subject"))&&text(target,"field").equals(text(fact,"field"));
+        }
+        for(Map<String,Object> prior:maps(binding.get("observedValues"))){
+            if(text(prior,"subject").isEmpty()||text(fact,"value").isEmpty()||text(prior,"value").equals(text(fact,"value")))continue;
+            if(Arrays.asList("subject","field","unit","scope","basis","kind").stream().allMatch(k->text(prior,k).equals(text(fact,k)))
+                &&text(prior,"lot").equals(text(map(fact.get("attributes")),"lot")))return true;
+        }
+        return false;
+    }
     static boolean matches(Map<String,Object> binding,Map<String,Object> change){
         if(!usable(change))return false;
         if("FIELD_OBSERVATION".equals(text(change,"recordType")))return !cn.bidcheck.compat.Java8Api.isBlank(text(binding,"observationKey"))&&text(binding,"observationKey").equals(text(change,"observationKey"))
             &&(cn.bidcheck.compat.Java8Api.isBlank(text(binding,"modelIdentity"))||text(binding,"modelIdentity").equals(text(change,"modelIdentity")));
         Map<String,Object> target=map(binding.get("target")),fact=map(change.get("fact"));
         if(target.isEmpty()||fact.isEmpty())return false;
+        // RuleEvaluator.months only evaluates CURRENT_PROJECT records. A known historical
+        // payroll record cannot alter this obligation, even when its person name matches.
+        if ("MONTHS".equals(text(target, "predicate")) && "MONTHS".equals(text(fact, "kind"))
+                && "HISTORICAL_PROJECT".equals(text(fact, "scope"))) return false;
         if(FieldCoverage.matches(target,fact)||relationshipPrerequisite(binding,target,fact))return true;
         // The stored role-to-entity binding is a scheduling dependency, never a fresh proof.
         // The complete subject relationship is validated again by the executor before verdicts.

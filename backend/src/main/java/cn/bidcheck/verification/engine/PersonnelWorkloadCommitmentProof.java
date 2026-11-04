@@ -24,6 +24,43 @@ final class PersonnelWorkloadCommitmentProof {
         &&str(r.parameters(),"deterministicFamily").equals("SOURCE_AUTHORIZED_COMMITMENT")
         &&clean(r.expected()).contains("承接项目")&&clean(r.expected()).contains("最大数量");}
 
+    /** Source-local candidates only. The existing evaluator independently verifies the
+     * tender subject set, current bidder, project, document scope and conflicting wording. */
+    static List<Fact> nativeResponses(Rule rule,EvidenceCorpus corpus){
+        List<Fact> result=new ArrayList<>();
+        if(!applies(rule))return result;
+        Rule party=new Rule(rule.id()+":issuer","当前投标人","RELATION","投标人","名称","","","",Collections.emptyMap(),"","",Collections.emptyList());
+        Set<String> bidders=new HashSet<>(DomainBindings.subjects("投标人",EnterpriseSubjectBindings.extract(Collections.singletonList(party),corpus.all),corpus));
+        if(bidders.isEmpty())return result;
+        Map<String,DocumentScopeProof.Resolver> resolvers=new HashMap<>();
+        for(Source source:corpus.all){
+            if(source.index()||source.historical()||source.scopeContext().blocked()||!source.opening().contains("人员承诺书"))continue;
+            Optional<Document> doc=corpus.documents.stream().filter(d->d.id().equals(source.evidence().documentId())&&"BID".equals(d.role())).findFirst();
+            if(!doc.isPresent())continue;
+            Document document=doc.get();
+            if(!Boolean.TRUE.equals(resolvers.computeIfAbsent(document.id(),ignored->DocumentScopeProof.forDocument(document)).currentEvidence(source.evidence()).get("verifiedCurrent")))continue;
+            String original=source.evidence().quote(),compact=clean(original);
+            Matcher assertion=RESPONSE.matcher(compact),issuer=ISSUER.matcher(original);
+            if(!assertion.find())continue;
+            int begin=assertion.start(),end=assertion.end();String literal=assertion.group();
+            if(assertion.find()||UNSAFE.matcher(compact).find()||!issuer.find())continue;
+            String company=issuer.group(1);
+            if(issuer.find()||!bidders.contains(company))continue;
+            Matcher character=Pattern.compile("\\S").matcher(original);int start=-1,stop=-1;
+            for(int n=0;character.find();n++){
+                if(n==begin)start=character.start();
+                if(n==end-1){stop=character.end();break;}
+            }
+            if(start<0||stop<=start)continue;
+            String raw=original.substring(start,stop);if(!clean(raw).equals(literal))continue;
+            Fact fact=new Fact("N"+identity(source.id()+"|"+VERSION+"|"+raw).substring(0,20),
+                    "DECLARATION",company,rule.field(),raw,raw,"",rule.field(),"CURRENT_PROJECT",Collections.singletonList(source.id()),
+                    linked("documentType","人员承诺书","proofScope","WRITTEN_RESPONSE","sourceStart",start,"sourceEnd",stop));
+            if(new ProofVerifier().issue(fact,corpus.byId)==null)result.add(fact);
+        }
+        return result;
+    }
+
     static Decision evaluate(Rule r,List<Fact> matched,RuleEvaluator evaluator){
         Binding binding=binding(r,evaluator);Matcher requirement=REQUIREMENT.matcher(clean(r.expected()));
         if(binding==null||!requirement.matches()||!clean(r.sourceQuote()).replaceAll("[。；;]$","").equals(clean(r.expected()).replaceAll("[。；;]$","")))

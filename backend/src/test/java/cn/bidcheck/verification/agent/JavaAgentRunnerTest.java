@@ -10,6 +10,28 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 
 class JavaAgentRunnerTest {
+    @Test void threeFruitlessRoundsCloseOnlyActiveInvestigationAndContinueOtherTarget()throws Exception{
+        Map<String,Object> context=typedContext();context.put("targetObligationIds",Arrays.asList("A","B"));context.put("targetEvidenceRevisions",map("A","v1","B","v1"));
+        AtomicInteger turns=new AtomicInteger();List<String> visited=new ArrayList<>();
+        SdkAgentInvestigator agent=bridge((r,t)->{int turn=turns.incrementAndGet();String target=turn<=3?"A":"B";return response(call("search"+turn,"search_evidence",map("query","query"+turn,"targetObligationId",target)));});
+        Map<String,Object> result=agent.investigate(start(context,tool("search_evidence",map("query",schema(),"targetObligationId",schema()),"query","targetObligationId")),(n,a)->{String target=String.valueOf(a.get("targetObligationId"));visited.add(target);return map("sources",Collections.singletonList(map("id","same-page","documentId","synthetic-doc","page",7,"locationType","PAGE","text","合成原文")));},e->{});
+        assertEquals(Arrays.asList("A","A","A","B","B","B"),visited,"One repeated target must not stop the unvisited target");
+        assertEquals(6,turns.get());assertEquals(Collections.emptyList(),result.get("completedTargetObligationIds"));
+    }
+    @Test void samePageChangedQueryIsDuplicateButNewPageIsNot()throws Exception{
+        AtomicInteger turns=new AtomicInteger(),calls=new AtomicInteger();
+        Map<String,Object> result=bridge((r,t)->turns.incrementAndGet()<=3?response(call("q"+turns.get(),"search_evidence",map("query","word"+turns.get()))):response()).investigate(
+            start(map(),tool("search_evidence",map("query",schema()),"query")),(n,a)->{int call=calls.incrementAndGet();return map("sources",Collections.singletonList(map("id","chunk"+call,"documentId","synthetic-doc","locationType","PAGE","page",call<3?7:8,"text","synthetic body")));},e->{});
+        assertEquals(3,calls.get());assertEquals(1L,result.get("duplicateCallsAvoided"));
+    }
+    @Test void callerCancellationRetainsTheAlreadyStartedModelCount()throws Exception{
+        CountDownLatch requested=new CountDownLatch(1);AtomicReference<Map<String,Object>> receipt=new AtomicReference<>();
+        SdkAgentInvestigator agent=bridge((request,timeout)->{requested.countDown();Thread.sleep(5000);return response();});
+        Thread caller=new Thread(()->receipt.set(agent.investigate(start(map(),tool("search_evidence",map())),(name,args)->map(),event->{})));
+        try{caller.start();assertTrue(requested.await(2,TimeUnit.SECONDS));caller.interrupt();caller.join(2000);assertFalse(caller.isAlive());
+            assertNotNull(receipt.get());assertEquals("HOST_CANCELLED",receipt.get().get("errorCode"));assertEquals(1L,receipt.get().get("modelCalls"));assertEquals(0L,receipt.get().get("toolCalls"));assertEquals("OBSERVED_STARTED_EVENTS",receipt.get().get("countBasis"));
+        }finally{caller.interrupt();caller.join(2000);}
+    }
     @TempDir Path temp;
     private static final String BASE="https://dashscope.aliyuncs.com/compatible-mode/v1",KEY="native-agent-synthetic-key";
     private final ObjectMapper json=new ObjectMapper();
@@ -19,6 +41,20 @@ class JavaAgentRunnerTest {
     private Map<String,Object> call(String id,String name,Map<String,Object> args)throws Exception{return map("id",id,"type","function","function",map("name",name,"arguments",json.writeValueAsString(args)));}
     private Map<String,Object> response(Map<String,Object>...calls){return map("choices",Collections.singletonList(map("message",map("role","assistant","content","模型自称全部通过，不可信","tool_calls",Arrays.asList(calls)))),"usage",map("prompt_tokens",12,"completion_tokens",3));}
     private Map<String,Object> schema(){return map("type","string");}
+    @Test void hostDeadlineKeepsStartedModelAndToolCounts() {
+        AtomicInteger calls=new AtomicInteger();
+        JavaAgentRunner.ModelTransport model=(request,timeout)->{
+            if(calls.incrementAndGet()==1)return response(call("first","search_evidence",map("query","模拟证据")));
+            Thread.sleep(4000);
+            return response();
+        };
+        SdkAgentInvestigator agent=new SdkAgentInvestigator(true,BASE,KEY,"synthetic",1,1,null,model);
+        Map<String,Object> result=agent.investigate(start(map(),tool("search_evidence",map("query",schema()),"query")),
+            (name,args)->map("sources",Collections.emptyList()),event->{});
+        assertEquals("INVESTIGATION_TIMEOUT",result.get("errorCode"),result.toString());
+        assertEquals(2L,((Number)result.get("modelCalls")).longValue());
+        assertEquals(1L,((Number)result.get("toolCalls")).longValue());
+    }
     @Test void javaLoopUsesOnlyHostFactsAndCompletion()throws Exception{
         AtomicInteger modelCalls=new AtomicInteger();List<String> tools=new ArrayList<>();List<Map<String,Object>> events=new ArrayList<>();
         SdkAgentInvestigator agent=bridge((request,timeout)->modelCalls.getAndIncrement()==0?response(call("one","submit_candidate_fact",map("quote","原文"))):response(call("two","recompute_check",map())));

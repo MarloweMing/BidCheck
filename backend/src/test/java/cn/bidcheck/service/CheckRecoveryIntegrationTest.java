@@ -105,6 +105,24 @@ class CheckRecoveryIntegrationTest {
         assertEquals("RECOVERY_PENDING",queued.evaluation().method());assertEquals("UNDETERMINED",queued.evaluation().status());
         assertEquals("PASS",store.get("finding",originallyPassed.id(),Finding.class).evaluation().status());
     }
+    @Test void aNewIdentityDecisionDoesNotEnqueueAnUnrelatedIncompleteMaterialCheck()throws Exception{
+        Map<String,Object> parent=frozenParent();String project=BidService.text(parent,"projectId"),id=BidService.text(parent,"id");
+        Document bid=service.document(BidService.text(parent,"documentId")),tender=service.document(BidService.text(parent,"tenderDocumentId"));
+        parent.put("resolutionPolicyIdentity",service.resolutionPolicyIdentity());store.save("run",id,project,bid.id(),parent);
+        List<Finding> previous=store.list("finding",project,id,Finding.class);
+        Finding target=previous.stream().filter(f->"PASS".equals(f.evaluation().status())).findFirst().get();
+        Finding other=previous.stream().filter(f->"UNDETERMINED".equals(f.evaluation().status())).findFirst().get();
+        String card="decision-"+id;
+        store.save("inference_decided",card,project,bid.id(),BidService.fields("id",card,"engineClaimId","claim","checkpointId",target.checkpoint().id(),
+            "projectId",project,"documentId",bid.id(),"documentHash",bid.sha256(),"documentVersion",bid.version(),"tenderDocumentId",tender.id(),"tenderHash",tender.sha256(),"status","CONFIRMED","revision",1));
+        Map<String,Object> child=service.recoverRun(project,id);
+        assertEquals(true,child.get("changedInputsOnlyRecovery"));
+        assertEquals(Collections.singletonList(target.checkpoint().id()),child.get("recoveryCheckpointIds"));
+        Finding inherited=store.get("finding",BidService.stableId(child.get("id")+":"+other.checkpoint().id()),Finding.class);
+        assertEquals(other.evaluation(),inherited.evaluation());
+        assertNull(store.mapper().get(CheckResolution.jobId(BidService.text(child,"id"),other.checkpoint().id())));
+    }
+
     @Test void childRecoveryReadsPersistedGroupDeltasInsteadOfTheParentsCompleteSnapshot()throws Exception{
         Map<String,Object> parent=frozenParent();String p=BidService.text(parent,"projectId"),parentId=BidService.text(parent,"id");
         Finding pending=store.list("finding",p,parentId,Finding.class).stream().filter(CheckResolution::unresolved).findFirst().orElseThrow(java.util.NoSuchElementException::new);

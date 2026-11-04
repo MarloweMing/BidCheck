@@ -6,7 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import static cn.bidcheck.verification.engine.VerificationTypes.*;
 
 /** Cited hypotheses are separate from extracted facts. Only verified normalizations bypass human review. */
-final class InferenceClaims {
+public final class InferenceClaims {
     private static final ObjectMapper JSON=new ObjectMapper();
     private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(InferenceClaims.class);
     static final String POLICY="cited-inference-2-programmatic-candidates";
@@ -33,7 +33,7 @@ final class InferenceClaims {
         @Override public String toString() { return "HumanConfirmation[" + "claimId=" + claimId + ", actor=" + actor + ", decidedAt=" + decidedAt + ", policy=" + policy + ", targetId=" + targetId + ", targetFingerprint=" + targetFingerprint + "]"; }
 }
     static boolean humanConfirmed(Fact fact){return fact.attributes().get("humanConfirmation") instanceof HumanConfirmation;}
-    private static Map<String,Object> businessAttributes(Object raw){Map<String,Object> result=new LinkedHashMap<>();if(raw instanceof Map<?,?>)for(String key:cn.bidcheck.compat.Java8Api.listOf("person", "employer", "object", "number", "numberField", "category", "grade", "profession", "validFrom", "validTo", "validityField", "field", "start", "end", "months", "month", "amount", "currency", "taxBasis", "amountBasis", "contractNumber", "contractName", "party", "personRole", "signedDate", "completedDate", "issueDate", "quantity", "days", "period", "taxRate", "project", "lot", "unit", "role", "value", "documentId", "inventoryPage", "inventoryRow", "contractSourceIds", "originalAmount", "sourceFactId", "sourceContractFactId", "observedBasis", "targetAmountBasis")){
+    private static Map<String,Object> businessAttributes(Object raw){Map<String,Object> result=new LinkedHashMap<>();if(raw instanceof Map<?,?>)for(String key:cn.bidcheck.compat.Java8Api.listOf("person", "employer", "object", "number", "numberField", "category", "grade", "profession", "validFrom", "validTo", "validityField", "field", "start", "end", "months", "month", "amount", "currency", "taxBasis", "amountBasis", "contractNumber", "contractName", "party", "personRole", "signedDate", "completedDate", "issueDate", "quantity", "days", "period", "taxRate", "project", "lot", "unit", "role", "value", "documentId", "inventoryPage", "inventoryRow", "contractSourceIds", "originalAmount", "sourceFactId", "sourceContractFactId", "observedBasis", "targetAmountBasis", "rowIdentity")){
         Object value=((Map<?,?>) (raw)).get(key);if(value instanceof String||value instanceof Number||value instanceof Boolean||value instanceof List<?>&&((List<?>) (value)).stream().allMatch(v->v instanceof String||v instanceof Number))result.put(key,value);
     }return result;}
     private static double normalizationThreshold(Map<String,Object> context){try{double threshold=Double.parseDouble(Objects.toString(context.getOrDefault("inferenceNormalizationMinConfidence","0.9")));return Double.isFinite(threshold)&&threshold>=0.9&&threshold<=1?threshold:Double.POSITIVE_INFINITY;}catch(RuntimeException ex){return Double.POSITIVE_INFINITY;}}
@@ -68,7 +68,11 @@ final class InferenceClaims {
             &&cn.bidcheck.compat.Java8Api.setOf("CONTRACT", "SCORE_COUNT", "SAME_FIELD").contains(target.predicate())
             &&!cn.bidcheck.compat.Java8Api.isBlank(str(businessAttributes(candidate.get("attributes")),"object"))
             &&(!str(candidate,"field").equals("CONTRACT_RECORD_MATCH")||sourceIds.stream().distinct().count()>1);
-        if(!contractEdge&&!AgentInvestigationScope.candidateSubjectIssue(candidate,cn.bidcheck.compat.Java8Api.listOf(target)).isEmpty())return reject("FACT_OUTSIDE_TARGET");
+        boolean paymentEdge=programmatic&&PaymentRequirementProof.applies(target)&&"RELATION".equals(str(candidate,"kind"))&&
+            "PAYMENT_PROJECT_ALIAS".equals(str(candidate,"field"))&&sourceIds.stream().distinct().count()==2&&
+            citations.stream().anyMatch(c->str(c,"quote").equals(str(candidate,"subject")))&&citations.stream().anyMatch(c->clean(str(c,"quote")).equals(str(candidate,"value")));
+        boolean qualificationEdge=programmatic&&!str(target.parameters(),"qualificationChoiceFingerprint").isEmpty()&&"RELATION".equals(str(candidate,"kind"))&&"QUALIFICATION_ROW_NUMBER".equals(str(candidate,"field"))&&sourceIds.stream().distinct().count()>=2&&!str(businessAttributes(candidate.get("attributes")),"rowIdentity").isEmpty()&&citations.stream().anyMatch(c->str(c,"quote").contains(str(candidate,"value")));
+        if(!qualificationEdge&&!paymentEdge&&!contractEdge&&!AgentInvestigationScope.candidateSubjectIssue(candidate,cn.bidcheck.compat.Java8Api.listOf(target)).isEmpty())return reject("FACT_OUTSIDE_TARGET");
         Fact proposedFact=new Fact("candidate",str(candidate,"kind"),str(candidate,"subject"),str(candidate,"field"),str(candidate,"rawValue"),str(candidate,"value"),str(candidate,"unit"),str(candidate,"basis"),str(candidate,"scope"),sourceIds,businessAttributes(candidate.get("attributes")));
         boolean identityEdge=proposedFact.kind().equals("RELATION")&&cn.bidcheck.compat.Java8Api.setOf("同一人", "SAME_PERSON", "身份对应").contains(proposedFact.field())
             &&!cn.bidcheck.compat.Java8Api.isBlank(SubjectIdentity.person(proposedFact))&&!DomainBindings.role(str(proposedFact.attributes(),"object"))&&!cn.bidcheck.compat.Java8Api.isBlank(str(proposedFact.attributes(),"object"))
@@ -78,9 +82,9 @@ final class InferenceClaims {
             &&!cn.bidcheck.compat.Java8Api.isBlank(SubjectIdentity.person(proposedFact))&&str(proposedFact.attributes(),"object").matches(".*(?:公司|集团|事务所|合作社|合伙企业)$")&&proposedFact.scope().equals("CURRENT_PROJECT")
             &&(target.subject().equals(proposedFact.subject())||AgentRuleSubjects.subjects(target,facts.values(),corpus).contains(proposedFact.subject()))
             &&citations.stream().anyMatch(c->str(c,"quote").contains(proposedFact.subject()))&&citations.stream().anyMatch(c->str(c,"quote").contains(str(proposedFact.attributes(),"object")));
-        if(!identityEdge&&!employerEdge&&!contractEdge&&!AgentInvestigationScope.relevant(proposedFact,cn.bidcheck.compat.Java8Api.listOf(target),facts.values(),corpus))return reject("FACT_OUTSIDE_TARGET");
+        if(!qualificationEdge&&!identityEdge&&!employerEdge&&!paymentEdge&&!contractEdge&&!AgentInvestigationScope.relevant(proposedFact,cn.bidcheck.compat.Java8Api.listOf(target),facts.values(),corpus))return reject("FACT_OUTSIDE_TARGET");
         // Confidence is only descriptive. The allow-list is a deterministic normalization with a normal provenance check.
-        boolean grade=confidence>=normalizationThreshold(context)&&"GRADE_NORMALIZATION".equals(str(inference,"type"))&&"CERTIFICATE".equals(str(candidate,"kind"))
+        boolean grade=confidence>=normalizationThreshold(context)&&str(candidate,"rawValue").matches(".*[壹贰叁肆]级.*")&&"CERTIFICATE".equals(str(candidate,"kind"))
             &&grade(str(candidate,"rawValue")).equals(grade(str(candidate,"value")))&&!str(candidate,"rawValue").equals(str(candidate,"value"));
         if(grade){
             cn.bidcheck.verification.engine.ProofVerifier.Verified verified=new ProofVerifier(corpus.byId).verify(JSON.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("facts", cn.bidcheck.compat.Java8Api.listOf(candidate))),new ArrayList<>(disclosed.values()),RuleEvaluator.maps(context.get("_validatedLayoutCells")));
@@ -90,19 +94,53 @@ final class InferenceClaims {
                 audit(context,session,"INFERENCE_NORMALIZATION",cn.bidcheck.compat.Java8Api.mapOf("targetId", target.id()),receipt);return receipt;}
         }
         String id=identity(POLICY+target.id()+JSON.valueToTree(candidate)+JSON.valueToTree(evidence));
+        String checkpoint=str(context,"inferenceCheckpointId");
+        if(identityEdge&&!checkpoint.isEmpty()){
+            TreeSet<String> pair=new TreeSet<>(sourceIds);
+            // An identity decision is confined to the same persons, immutable sources and checkpoint.
+            id=identity(POLICY+JSON.valueToTree(Arrays.asList(checkpoint,proposedFact.subject(),str(proposedFact.attributes(),"object"),pair)));
+        }
+        String rowKey=qualificationEdge?qualificationKey(checkpoint,candidate,evidence):"";
+        if(!rowKey.isEmpty())id=rowKey;
+        cn.bidcheck.domain.Domain.Document titleDocument=null;
+        if(identityEdge&&"MASKED_PERSON_IDENTITY".equals(str(inference,"type")))titleDocument=corpus.documents.stream()
+            .filter(d->d.id().equals(str(evidence.get(0),"documentId"))).findFirst().orElse(null);
+        String nameCell=MaskedTitleQueryIdentity.key(checkpoint,candidate,evidence,titleDocument);
+        if(!nameCell.isEmpty())id=nameCell;
+        final String claimKey=id;
         if(context.get("inferenceDecisionsLookup") instanceof Supplier<?>)for(Map<String,Object> previous:RuleEvaluator.maps(((Supplier<?>) (context.get("inferenceDecisionsLookup"))).get())){
-            if(id.equals(str(previous,"engineClaimId"))&&"REJECTED".equals(str(previous,"status")))return linked("status","REJECTED","error","INFERENCE_PREVIOUSLY_REJECTED","acceptedFactIds",cn.bidcheck.compat.Java8Api.listOf(),"confirmationId",previous.get("id"),"reason","同一原文与推断已由用户否定；只有相关证据或事实内容改变后才可重新提出。","businessProof",false);
-            if(id.equals(str(previous,"engineClaimId"))&&"CONFIRMED".equals(str(previous,"status")))return linked("status","COMPLETED","acceptedFactIds",cn.bidcheck.compat.Java8Api.listOf(),"confirmationId",previous.get("id"),"reason","该推断已在本轮冻结的确认快照中；复用已有确认事实，只处理剩余业务缺口。","businessProof",false);
+            boolean sameDecision=id.equals(str(previous,"engineClaimId"))||!rowKey.isEmpty()&&rowKey.equals(qualificationKey(
+                str(previous,"checkpointId"),JSON.convertValue(previous.getOrDefault("proposedFact",Collections.emptyMap()),Map.class),RuleEvaluator.maps(previous.get("evidences"))));
+            if(!sameDecision&&!nameCell.isEmpty()&&"MASKED_PERSON_IDENTITY".equals(str(previous,"inferenceType")))
+                sameDecision=nameCell.equals(MaskedTitleQueryIdentity.key(str(previous,"checkpointId"),
+                    JSON.convertValue(previous.get("proposedFact"),Map.class),RuleEvaluator.maps(previous.get("evidences")),titleDocument));
+            if(sameDecision&&"REJECTED".equals(str(previous,"status")))return linked("status","REJECTED","error","INFERENCE_PREVIOUSLY_REJECTED","acceptedFactIds",cn.bidcheck.compat.Java8Api.listOf(),"confirmationId",previous.get("id"),"reason","同一原文与推断已由用户否定；只有相关证据或事实内容改变后才可重新提出。","businessProof",false);
+            if(sameDecision&&"CONFIRMED".equals(str(previous,"status")))return linked("status","COMPLETED","acceptedFactIds",cn.bidcheck.compat.Java8Api.listOf(),"confirmationId",previous.get("id"),"reason","该推断已在本轮冻结的确认快照中；复用已有确认事实，只处理剩余业务缺口。","businessProof",false);
         }
         Map<String,Object> record=linked("id",id,"targetId",target.id(),"targetFingerprint",identity(JSON.valueToTree(target).toString()),"claim",claim,"reasoning",reason,
             "confidence",confidence,"risks",ProofVerifier.strings(inference.get("risks")),"evidences",evidence,"proposedFact",candidate,"status","NEEDS_CONFIRMATION","revision",0,"policy",POLICY,
             "requirement",target.sourceQuote(),"targetDescription",target.description(),"origin",programmatic?ProgrammaticInferenceCandidates.VERSION:"AGENT_INFERRED","inferenceType",str(inference,"type"),"unresolvedGapCodes",ProofVerifier.strings(inference.get("unresolvedGapCodes")));
         List<Map<String,Object>> pending=(List<Map<String,Object>>)context.computeIfAbsent("inferredFacts",key->new ArrayList<Map<String,Object>>());
-        if(pending.stream().noneMatch(r->id.equals(str(r,"id"))))pending.add(record);
+        if(pending.stream().noneMatch(r->claimKey.equals(str(r,"id"))&&target.id().equals(str(r,"targetId"))))pending.add(record);
         if(context.get("inferencePublisher") instanceof Consumer<?>)((Consumer<Map<String,Object>>)((Consumer<?>) (context.get("inferencePublisher")))).accept(record);
         audit(context,session,"INFERENCE_PENDING_CONFIRMATION",cn.bidcheck.compat.Java8Api.mapOf("targetId", target.id(), "claimId", id),record);
         return linked("status","NEEDS_CONFIRMATION","acceptedFactIds",cn.bidcheck.compat.Java8Api.listOf(),"confirmationId",id,"businessProof",false,"pendingConfirmation",record,
             "nextAction","已保存有原文依据的推断，等待用户确认；不得把它当作已采纳事实或重复改写提交。");
+    }
+    /** A user identifies this exact immutable query row with one certificate. URL, screenshot, grade
+     * and validity remain separate business obligations, each retaining its own source checks. */
+    public static String qualificationKey(String checkpoint,Map<String,Object> fact,List<Map<String,Object>> evidence){
+        if(checkpoint.isEmpty()||!"RELATION".equals(str(fact,"kind"))||!"QUALIFICATION_ROW_NUMBER".equals(str(fact,"field"))
+                ||!(fact.get("attributes") instanceof Map)||str(fact,"subject").isEmpty()||str(fact,"value").isEmpty())return "";
+        String row=Objects.toString(((Map<?,?>)fact.get("attributes")).get("rowIdentity"),"");
+        if(!row.matches("[0-9a-f]{64}"))return "";
+        TreeSet<String> sources=new TreeSet<>();
+        for(Map<String,Object> e:evidence){
+            String id=str(e,"sourceId"),hash=str(e,"documentHash"),document=str(e,"documentId");
+            int version=RunSession.number(e.get("documentVersion"),-1);if(id.isEmpty()||hash.isEmpty()||document.isEmpty()||version<1)return "";
+            sources.add(JSON.valueToTree(Arrays.asList(document,hash,version,id)).toString());
+        }
+        return sources.size()<2?"":identity(POLICY+JSON.valueToTree(Arrays.asList(checkpoint,"QUALIFICATION_ROW_NUMBER",str(fact,"subject"),str(fact,"value"),row,sources)));
     }
     private static String grade(String s){return clean(s).replace("壹","一").replace("贰","二").replace("叁","三").replace("肆","四");}
     private static Map<String,Object> reject(String code){return linked("status","REJECTED","error",code,"correctable",true,"acceptedFactIds",cn.bidcheck.compat.Java8Api.listOf(),"recoveryActions",cn.bidcheck.compat.Java8Api.listOf("READ_SOURCE_AND_SUBMIT_CITED_TYPED_INFERENCE"));}
@@ -136,13 +174,17 @@ final class InferenceClaims {
         List<Map<String,Object>> claims=cn.bidcheck.compat.Java8Api.toList(RuleEvaluator.maps(context.get("inferredFacts")).stream().filter(c->rule.id().equals(str(c,"targetId"))));
         if(claims.isEmpty())return decision;
         Map<String,Object> proof=new LinkedHashMap<>(decision.proof());proof.put("inferredFacts",claims);
+        List<String> claimIds=cn.bidcheck.compat.Java8Api.toList(claims.stream().map(c->str(c,"id")).distinct());
+        proof.put("pendingConfirmationIds",claimIds);
+        proof.put("pendingConfirmationCount",claimIds.size());
         // A proposal cannot erase a failed request, an uncompiled obligation, or another missing field.
         boolean numeric=claims.stream().map(c->c.get("proposedFact")).filter(Map.class::isInstance).map(c->JSON.convertValue(c,Map.class)).anyMatch(c->"NUMBER".equals(str(c,"kind"))&&!cn.bidcheck.compat.Java8Api.isBlank(str(c,"basis"))&&!cn.bidcheck.compat.Java8Api.isBlank(str(c,"unit")));
         boolean semanticOnly=!decision.gaps().isEmpty()&&decision.gaps().stream().allMatch(g->numeric&&cn.bidcheck.compat.Java8Api.setOf("NUMERIC_BASIS_REQUIRED", "PRICE_DIMENSIONS_REQUIRED", "PRICE_SCOPE_AMBIGUOUS").contains(g.code())||cn.bidcheck.compat.Java8Api.setOf("PERSON_ROLE_REQUIRED", "PERSON_IDENTITY_REQUIRED", "PERSON_IDENTITY_UNPROVEN", "PERSON_IDENTITY_AMBIGUOUS", "SUBJECT_IDENTITY_UNPROVEN", "RELATION_REQUIRED", "RELATION_UNCONFIRMED", "CONFLICTING_EVIDENCE", "PERSON_APPOINTMENT_REQUIRED", "PERSON_APPOINTMENT_UNCONFIRMED", "SOCIAL_EMPLOYER_CONFIRMATION_REQUIRED", "CERTIFICATE_SUBJECT_REQUIRED", "CERTIFICATE_IDENTITY_REQUIRED", "IDENTITY_REQUIRED", "PERSONNEL_BINDING_REQUIRED", "CURRENT_APPOINTMENT_REQUIRED", "APPOINTMENT_EMPLOYER_REQUIRED", "SUBJECT_RELATION_UNPROVEN", "RELATION_TARGET_UNPROVEN", "EMPLOYMENT_RELATION_REQUIRED", "ENTITY_IDENTITY_AMBIGUOUS", "SUBJECT_IDENTITY_CONFLICT").contains(g.code()));
         boolean coveredProgrammatic=!ProgrammaticInferenceCandidates.technical(decision)&&Boolean.TRUE.equals(decision.proof().get("confirmationCoversAllGaps"))
             &&decision.gaps().stream().allMatch(g->claims.stream().anyMatch(c->ProgrammaticInferenceCandidates.VERSION.equals(str(c,"origin"))&&ProofVerifier.strings(c.get("unresolvedGapCodes")).contains(g.code())));
         if(!semanticOnly&&!coveredProgrammatic)return new Decision(decision.id(),decision.description(),decision.status(),decision.reason(),decision.evidences(),decision.gaps(),proof);
-        return new Decision(decision.id(),decision.description(),"NEEDS_CONFIRMATION","已找到相关原文，存在需要确认的推断关系。",decision.evidences(),cn.bidcheck.compat.Java8Api.listOf(new Gap("INFERENCE_CONFIRMATION_REQUIRED","请确认有原文依据的推断后重新计算。","确认或否定推断关系","USER_CONFIRMATION")),proof);
+        proof.put("confirmationOnlyGapCodes",cn.bidcheck.compat.Java8Api.toList(decision.gaps().stream().map(Gap::code).distinct()));
+        return new Decision(decision.id(),decision.description(),"UNDETERMINED",decision.reason(),decision.evidences(),decision.gaps(),proof);
     }
     /** A confirmed scope fills only unknown dimensions on the exact same numerical occurrence.
      * Original facts stay in the run ledger; conflicting values/dimensions are never hidden. */

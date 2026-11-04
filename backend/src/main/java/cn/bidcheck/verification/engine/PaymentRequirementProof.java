@@ -67,7 +67,36 @@ final class PaymentRequirementProof {
         String expectedProject=clean(project);boolean projectSource=!cn.bidcheck.compat.Java8Api.isBlank(expectedProject)&&doc.pages().stream().limit(15).map(Page::text).map(VerificationTypes::clean).anyMatch(p->p.contains(expectedProject));
         // Exact current project spelling is executable; an unexplained abbreviation is a missing
         // alias relation, not a proven foreign project and never an automatic pass.
-        compare(checks,missing,deviations,"凭证项目对应",projectSource&&!cn.bidcheck.compat.Java8Api.isBlank(purpose)&&clean(purpose).contains(clean(project))?true:null,purpose,project);
+        boolean sameProject=projectSource&&!clean(purpose).isEmpty()&&clean(purpose).contains(expectedProject);
+        if(projectSource&&!sameProject&&!clean(purpose).isEmpty()){
+            StringBuilder spelling=new StringBuilder();
+            for(int offset=0;offset<expectedProject.length();offset++){
+                if(offset>0)spelling.append("[\\s\\p{Z}]*");
+                spelling.append(Pattern.quote(expectedProject.substring(offset,offset+1)));
+            }
+            Pattern printedProject=Pattern.compile(spelling.toString());
+            Source cover=null;String coverQuote="";
+            for(Source source:e.corpus.all){
+                if(!source.evidence().documentId().equals(receipt.evidence().documentId())||source.evidence().page()>5||
+                    source.index()||source.historical()||source.scopeContext().blocked())continue;
+                Matcher literal=printedProject.matcher(source.evidence().quote());
+                if(literal.find()){cover=source;coverQuote=literal.group();break;}
+            }
+            if(cover!=null){
+                List<String> ids=Arrays.asList(receipt.id(),cover.id());
+                sameProject=e.facts.stream().anyMatch(f->InferenceClaims.humanConfirmed(f)&&"RELATION".equals(f.kind())&&"PAYMENT_PROJECT_ALIAS".equals(f.field())&&
+                    purpose.equals(f.subject())&&expectedProject.equals(f.value())&&f.sourceIds().containsAll(ids));
+                if(!sameProject){
+                    List<Map<String,Object>> refs=Arrays.asList(linked("sourceId",receipt.id(),"quote",purpose),linked("sourceId",cover.id(),"quote",coverQuote));
+                    Map<String,Object> proposed=linked("kind","RELATION","subject",purpose,"field","PAYMENT_PROJECT_ALIAS","value",expectedProject,"rawValue",purpose,
+                        "scope","UNRESOLVED","basis","PAYMENT_RECEIPT_PURPOSE","attributes",linked("object",expectedProject));
+                    proof.put("confirmationCandidates",Collections.singletonList(linked("type","PAYMENT_PROJECT_ALIAS","targetId",r.id(),
+                        "claim","请确认回单用途“"+purpose+"”是否指向本次招标项目","reasoning","已定位回单用途和项目全称，两处文字不能直接相等比较。",
+                        "confidence",0.5,"risks",Collections.singletonList("尚未确认简称对应"),"evidence",refs,"proposedFact",proposed)));
+                }
+            }
+        }
+        compare(checks,missing,deviations,"凭证项目对应",sameProject?true:null,purpose,project);
         if(methods.contains("标段")){
             Set<String> lots=new LinkedHashSet<>();for(Page p:cn.bidcheck.compat.Java8Api.toList(doc.pages().stream().limit(30))){String lot=label(p.text(),"标段号|标段编号");if(!cn.bidcheck.compat.Java8Api.isBlank(lot))lots.add(clean(lot));}
             boolean noLots=doc.pages().stream().anyMatch(p->clean(p.text()).matches("(?s).*(?:本项目|本次招标)(?:不划分|未划分|不分)标段.*"));

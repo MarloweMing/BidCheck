@@ -12,11 +12,12 @@ import java.util.regex.*;
 
 /** Source-bound whole-document occurrences. A completed scan never asserts that all facts were recognized. */
 public final class ConsistencyEngine {
-    public static final String VERSION = "consistency-8-source-bound-context-recovery";
+    public static final String VERSION = "consistency-9-enterprise-bound-legal-representatives";
     private static final Set<String> FIELDS = cn.bidcheck.compat.Java8Api.setOf("companyName", "totalPrice", "openingTime", "personName", "personRole");
     private static final String ROLES = "项目负责人|项目经理|技术负责人|授权代表|被授权人|法定代表人|安全负责人|质量负责人|财务负责人";
     private static final String SEPARATOR = "[\\s:：=|｜]+";
     private static final Pattern COMPANY = Pattern.compile("((?:投标人|投标单位|响应人|响应单位|供应商)(?:名称)?|企业名称|公司名称)" + SEPARATOR + "([^|｜\\t;；。]+)");
+    private static final Pattern ENTITY_SUFFIX = Pattern.compile("(?:有限责任公司|股份有限公司|有限公司|集团有限公司|集团公司|公司|合作社|事务所)");
     private static final Pattern PRICE = Pattern.compile("((?:投标总报价|投标报价|报价总额|报价合计|总报价|投标总价|报价总价|总价)(?:[（(](?:含税|不含税|税前|税后|元|万元|亿元)[）)])?)\\s*(?:[:：=|｜]|为|人民币|含税|不含税|税前|税后|\\s)+\\s*((?:人民币|[￥¥])?\\s*[0-9]+(?:,[0-9]{3})*(?:\\.[0-9]+)?\\s*(?:亿元|万元|元|万)?)");
     private static final Pattern OPENING = Pattern.compile("开标(?:日期|时间)" + SEPARATOR + "([^|｜\\t;；。]+)");
     private static final Pattern PERSON = Pattern.compile("(" + ROLES + ")(?:姓名)?" + SEPARATOR + "([\\p{IsHan}·]{2,12})");
@@ -115,6 +116,7 @@ public final class ConsistencyEngine {
                 "limitations", cn.bidcheck.compat.Java8Api.listOf("已扫描可提取文字及已有 OCR 转录；扫描完成不等于全部事实均已识别。", "仅比较可对齐的主体、标段和口径；历史业绩、第三方、未知范围及失效版本不会自动判定为本次投标冲突。", "简称、更名、多人岗位、文件更正及图像识别差异需结合原文复核；没有差异组不代表全文通过。"));
         report=mergePersonCredentials(mergeExpanded(report, new ExpandedConsistencyEngine().scan(document, supplementalFacts,contextIndex,tableIndex)),
                 new PersonCredentialConsistency().scan(document));
+        scopeLegalRepresentativeGroups(document,report);
         ConsistencyRunSupport.map(report.get("coverage")).put("tableRelations",tableIndex.summary());
         attachContextSummary(document,contextIndex,report);
         return report;
@@ -339,12 +341,26 @@ switch (text(generic,"field")) {case "certificateNumber":personField = "personCe
         }
     }
 
+    private static boolean previousRoleOrCredential(Located source){
+        String page=Objects.toString(source.page().text(),"");
+        String[] lines=page.split("\\R");int end=Math.min(lines.length,Math.max(0,source.line()));
+        boolean history=false;
+        for(int i=0;i<end;i++){
+            String line=lines[i].replaceFirst("^\\s*[#*]+\\s*","").trim();
+            if(line.matches(".*(?:主要工作经历|工作履历|参加过的类似项目|曾任职务).*")
+                    ||line.replace(" ","").matches("^(?:中华人民共和国|建筑施工企业|建筑施工企业主要负责人|建筑施工企业项目负责人|建筑业企业|一级建造师|二级建造师)?(?:安全生产考核合格证(?:书)?|资格证书|执业注册证书|注册证书|职称证书|施工许可证|证书查询)(?:[（(].*|\\s*)$"))history=true;
+            if(line.matches(".*(?:拟在本合同任职|本项目人员配置|拟派项目组人员|项目管理机构组成表).*"))history=false;
+        }
+        return history;
+    }
+
     private Map<String,Object> add(List<Map<String,Object>> out, Located located, String field, String subject,
                                    String raw, String strength, String reason, String suppliedUnit) {
         if (raw == null || cn.bidcheck.compat.Java8Api.isBlank(raw) || raw.length() > 500 || PLACEHOLDER.matcher(raw.trim()).matches() || !located.text().contains(raw) || out.size() >= MAX_OCCURRENCES) return null;
         // Flattened tables may place a company or another column heading after a role.
         // These are extraction candidates, not person/company facts; keep the source page intact.
         if (field.equals("personName") && !validPerson(raw.trim())) return null;
+        if ((field.equals("personName") || field.equals("personRole")) && previousRoleOrCredential(located)) return null;
         if (field.equals("companyName") && raw.trim().matches("人员类型|证书类型|证书类别|证书编号|查询结果|序号")) return null;
         if (located.text().length() > 10000) {
             int at = located.text().indexOf(raw);
@@ -522,6 +538,75 @@ switch (text(generic,"field")) {case "certificateNumber":personField = "personCe
                     "values", cn.bidcheck.compat.Java8Api.toList(items.stream().map(o -> o.get("value")).distinct())));
         }
         return groups;
+    }
+
+    /** Legal representatives belong to an enterprise, not to one global PERSON_NAME bucket.
+     * Rebuild this single field after all native and source-reviewed occurrences have merged. */
+    @SuppressWarnings("unchecked")
+    private void scopeLegalRepresentativeGroups(Document document,Map<String,Object> report){
+        List<Map<String,Object>> occurrences=ConsistencyRunSupport.maps(report.get("occurrences"));
+        List<Map<String,Object>> groups=new ArrayList<>(ConsistencyRunSupport.maps(report.get("groups")));
+        List<Map<String,Object>> stableParents=new ArrayList<>();for(Map<String,Object> group:groups)if("personName".equals(text(group,"field"))&&"法定代表人".equals(text(group,"subject")))stableParents.add(group);
+        groups.removeIf(g->"personName".equals(text(g,"field"))&&"法定代表人".equals(text(g,"subject")));
+        Map<String,List<Map<String,Object>>> buckets=new LinkedHashMap<>();
+        for(Map<String,Object> occurrence:occurrences){
+            if(!"personName".equals(text(occurrence,"field"))||!"法定代表人".equals(text(occurrence,"subject"))||!eligible(occurrence))continue;
+            Evidence evidence=evidence(occurrence.get("evidence"));if(evidence==null)continue;
+            Page page=document.pages().stream().filter(p->p.number()==evidence.page()&&Objects.equals(p.locationType(),evidence.locationType())).findFirst().orElse(null);
+            if(page==null)continue;
+            String entity=legalRepresentativeEntity(page);
+            // An unresolved entity is isolated to its original page; it never compares against a
+            // different enterprise merely because both rows say “法定代表人”.
+            if(cn.bidcheck.compat.Java8Api.isBlank(entity))entity="UNRESOLVED:"+document.id()+":"+page.number()+":"+page.locationType()+":"+text(occurrence,"id");
+            occurrence.put("organizationScope",entity);
+            buckets.computeIfAbsent(entity+"|"+text(occurrence,"scope")+"|"+text(occurrence,"lot")+"|"+text(occurrence,"revision"),k->new ArrayList<>()).add(occurrence);
+        }
+        Map<String,List<Map<String,Object>>> comparisons=new LinkedHashMap<>();
+        for(Map.Entry<String,List<Map<String,Object>>> entry:buckets.entrySet())for(Map<String,Object> result:compare(entry.getValue())){
+            String key=legalRepresentativeBucketKey(result);Map<String,Object> scoped=new LinkedHashMap<>(result);scoped.put("organizationScope",text(entry.getValue().get(0),"organizationScope"));comparisons.computeIfAbsent(key,k->new ArrayList<>()).add(scoped);
+        }
+        for(Map<String,Object> parent:stableParents){
+            String key=legalRepresentativeBucketKey(parent);List<Map<String,Object>> detail=comparisons.getOrDefault(key,Collections.emptyList());Map<String,Object> stable=new LinkedHashMap<>(parent);
+            stable.put("organizationComparisons",detail);if(detail.isEmpty()){
+                List<Map<String,Object>> unresolved=legalRepresentativeOccurrences(occurrences,parent,true);
+                stable.put("status","EVIDENCE_INSUFFICIENT");stable.put("title",title("personName")+"缺少比较依据");stable.put("reason","法定代表人所属企业尚未形成可验证的同企业关系，已保留原文事实并按原检查项待核；不同企业或归属不明的数据不互比。");
+                stable.put("values",Collections.emptyList());stable.put("evidences",cn.bidcheck.compat.Java8Api.toList(unresolved.stream().map(o->o.get("evidence")).distinct()));stable.put("occurrenceIds",cn.bidcheck.compat.Java8Api.toList(unresolved.stream().map(o->o.get("id")).distinct()));stable.put("unresolvedOccurrences",unresolved.stream().map(o->map("occurrenceId",o.get("id"),"value",o.get("value"),"organizationScope",o.get("organizationScope"),"evidence",o.get("evidence"))).collect(java.util.stream.Collectors.toList()));
+            }else{
+                stable.put("status",detail.stream().anyMatch(g->"CONFLICT".equals(g.get("status")))?"CONFLICT":"SUSPECTED");
+                stable.put("reason",String.join("；",detail.stream().map(g->text(g,"reason")).distinct().collect(java.util.stream.Collectors.toList())));
+                stable.put("values",detail.stream().flatMap(g->stringValues(g.get("values")).stream()).distinct().collect(java.util.stream.Collectors.toList()));
+                stable.put("evidences",detail.stream().flatMap(g->objectValues(g.get("evidences")).stream()).distinct().collect(java.util.stream.Collectors.toList()));
+                stable.put("occurrenceIds",detail.stream().flatMap(g->stringValues(g.get("occurrenceIds")).stream()).distinct().collect(java.util.stream.Collectors.toList()));
+                List<Map<String,Object>> unresolved=legalRepresentativeOccurrences(occurrences,parent,true);stable.put("unresolvedOccurrences",unresolved.stream().map(o->map("occurrenceId",o.get("id"),"value",o.get("value"),"organizationScope",o.get("organizationScope"),"evidence",o.get("evidence"))).collect(java.util.stream.Collectors.toList()));
+            }groups.add(stable);
+        }
+        report.put("groups",groups);
+    }
+
+    private static String legalRepresentativeBucketKey(Map<String,Object> group){return String.join("|","personName","法定代表人",text(group,"scope"),text(group,"lot"),text(group,"basis"),text(group,"time"));}
+    private static List<Map<String,Object>> legalRepresentativeOccurrences(List<Map<String,Object>> occurrences,Map<String,Object> parent,boolean unresolvedOnly){return occurrences.stream().filter(o->"personName".equals(text(o,"field"))&&"法定代表人".equals(text(o,"subject"))&&text(o,"scope").equals(text(parent,"scope"))&&text(o,"lot").equals(text(parent,"lot"))&&text(o,"basis").equals(text(parent,"basis"))&&text(o,"time").equals(text(parent,"time"))).filter(o->!unresolvedOnly||text(o,"organizationScope").startsWith("UNRESOLVED:")).collect(java.util.stream.Collectors.toList());}
+    private static List<String> stringValues(Object value){List<String> out=new ArrayList<>();if(value instanceof Iterable<?>)for(Object item:(Iterable<?>)value)out.add(Objects.toString(item,""));return out;}
+    private static List<Object> objectValues(Object value){List<Object> out=new ArrayList<>();if(value instanceof Iterable<?>)for(Object item:(Iterable<?>)value)out.add(item);return out;}
+
+    private static String legalRepresentativeEntity(Page page){
+        String text=Objects.toString(page.text(),"");boolean license=text.matches("(?s).*(?:营业执照|统一社会信用代码).*" );
+        boolean companyDetails=text.matches("(?s).*(?:企业详情|企业基本信息|企业信息).*" );
+        if(!text.matches("(?s).*(?:法定代表人|企业法定代表人).*"))return "";
+        Set<String> candidates=new LinkedHashSet<>();boolean query=text.matches("(?s).*(?:查询网址|查询截图|查询结果).*" );
+        for(String line:text.split("\\R")){
+            String value="";
+            Matcher labelled=Pattern.compile("^[\\t ]*(?:\\|[\\t ]*)?(?:企业名称|公司名称)\\s*[:：|]?\\s*([^|｜\\t;；。]+)").matcher(line);
+            Matcher licenseName=Pattern.compile("^[\\t ]*(?:\\|[\\t ]*)?名\\s*称\\s*[:：|]?\\s*([^|｜\\t;；。]+)").matcher(line);
+            if(labelled.find())value=labelled.group(1);
+            else if(license&&licenseName.find())value=licenseName.group(1);
+            else if(query&&companyDetails&&line.matches("^[\\t ]*#{1,6}[\\t ]*[^#].*"))value=line.replaceFirst("^[\\t ]*#{1,6}[\\t ]*","");
+            if(cn.bidcheck.compat.Java8Api.isBlank(value))continue;
+            Matcher suffix=ENTITY_SUFFIX.matcher(value);if(!suffix.find())continue;
+            int end=suffix.end();String candidate=value.substring(0,end).replaceAll("[\\t *`#]+$","").trim();
+            candidate=candidate.replaceFirst("^(?:企业|公司|单位)?(?:名称|名\\s*称)\\s*","").trim();
+            if(candidate.matches("[\\p{IsHan}A-Za-z0-9·（）()]{3,70}"))candidates.add(candidate);
+        }
+        return candidates.size()==1?candidates.iterator().next():"";
     }
 
     private boolean eligible(Map<String,Object> occurrence) {

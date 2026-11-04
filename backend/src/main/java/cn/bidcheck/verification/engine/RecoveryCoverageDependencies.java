@@ -22,12 +22,31 @@ final class RecoveryCoverageDependencies {
         List<Map<String,Object>> conditions=new ArrayList<>(RuleEvaluator.maps(previous.get("conditions")));conditions.addAll(RuleEvaluator.maps(previous.get("obligations")));
         List<Map<String,Object>> fields=RuleEvaluator.maps(previous.get("fieldCoverage"));
         for(Map<String,Object> condition:conditions){Rule rule=byId.get(str(condition,"id"));if(rule==null)continue;
-            for(Map<String,Object> gap:RuleEvaluator.maps(condition.get("gaps")))if(CODES.contains(str(gap,"code")))add(rule,str(gap,"code"),sourceIds(rule,fields,priorSources));}
+            for(Map<String,Object> gap:RuleEvaluator.maps(condition.get("gaps")))if(CODES.contains(str(gap,"code"))&&!obligations.containsKey(rule.id()))add(rule,str(gap,"code"),sourceIds(rule,fields,priorSources));}
         boolean truncated=RuleEvaluator.maps(previous.get("gaps")).stream().anyMatch(g->"EVIDENCE_LOOKUP_INCOMPLETE".equals(str(g,"code")));
         if(truncated){List<Map<String,Object>> details=RuleEvaluator.maps(map(previous.get("metrics")).get("lookupTruncations"));if(details.isEmpty())details=RuleEvaluator.maps(map(previous.get("proof")).get("lookupTruncations"));
             for(Rule rule:rules){Set<String> refs=new LinkedHashSet<>();boolean relevant=details.isEmpty();for(Map<String,Object> detail:details){List<String> keys=ProofVerifier.strings(detail.get("observationKeys"));if(keys.isEmpty()||keys.contains(key(rule))){relevant=true;refs.addAll(ProofVerifier.strings(detail.get("sourceIds")));}}
-                if(relevant)add(rule,"EVIDENCE_LOOKUP_INCOMPLETE",refs.isEmpty()?sourceIds(rule,fields,priorSources):cn.bidcheck.compat.Java8Api.listCopyOf(refs));}
+                if(relevant&&!obligations.containsKey(rule.id()))add(rule,"EVIDENCE_LOOKUP_INCOMPLETE",refs.isEmpty()?sourceIds(rule,fields,priorSources):cn.bidcheck.compat.Java8Api.listCopyOf(refs));}
         }
+    }
+    void readOutstandingLookup(List<Rule> rules,List<Source> previousSources,EvidenceCorpus corpus,SharedFactReuse shared,
+            Map<String,Object> context,Map<String,Fact> facts){
+        List<Rule> toRead=new ArrayList<>();
+        Set<String> sourceIds=new LinkedHashSet<>();
+        for(Rule rule:rules){
+            Map<String,Object> dep=obligations.get(rule.id());
+            if(dep==null||!"EVIDENCE_LOOKUP_INCOMPLETE".equals(str(dep,"gapCode"))||resolved(dep,shared))continue;
+            List<String> required=ProofVerifier.strings(dep.get("sourceIds"));
+            if(required.isEmpty())previousSources.forEach(s->sourceIds.add(s.id()));
+            else sourceIds.addAll(required);
+            toRead.add(rule);
+        }
+        if(toRead.isEmpty()||sourceIds.isEmpty())return;
+        List<Source> sources=new ArrayList<>();
+        for(String id:sourceIds){Source source=corpus.byId.get(id);if(source!=null)sources.add(source);}
+        if(sources.isEmpty())return;
+        List<Map<String,Object>> layout=VerificationEngine.layout(context,sources,toRead);
+        for(Fact fact:shared.lookup(toRead,sources,layout,"RECOVERY_UNREAD_SOURCES"))facts.put(fact.id(),fact);
     }
     void apply(Map<String,Object> context,SharedFactReuse shared){
         Map<String,Map<String,Object>> pending=new LinkedHashMap<>();
@@ -35,7 +54,14 @@ final class RecoveryCoverageDependencies {
         context.put(CONTEXT_KEY,pending);
     }
     private boolean resolved(Map<String,Object> dependency,SharedFactReuse shared){
-        if(!active.contains(str(dependency,"obligationId"))||shared.factLookupTruncated())return false;
+        String key=str(dependency,"observationKey");
+        if(shared.truncatedFor(key))return false;
+        if("EVIDENCE_LOOKUP_INCOMPLETE".equals(str(dependency,"gapCode"))){
+            List<String> required=ProofVerifier.strings(dependency.get("sourceIds"));
+            Set<String> covered=shared.coveredSources(key);
+            return !covered.isEmpty()&&covered.containsAll(required);
+        }
+        if(!active.contains(str(dependency,"obligationId")))return false;
         List<String> required=ProofVerifier.strings(dependency.get("sourceIds"));if(required.isEmpty())return false;
         Set<String> read=new HashSet<>();
         for(Map<String,Object> field:shared.coverage())if(str(dependency,"observationKey").equals(str(field,"observationKey"))&&!Boolean.TRUE.equals(field.get("recoveryRevalidated"))){
@@ -80,7 +106,7 @@ final class RecoveryCoverageDependencies {
             if(decision==null&&SourceScoringRules.VERSION.equals(str(rule.parameters(),"sourceScoringReadVersion")))decision=decisions.get(str(rule.parameters(),"scoringParentRuleId"));
             if(decision==null)continue;for(Gap gap:decision.gaps())if(CODES.contains(gap.code())){
             retained.putIfAbsent(rule.id(),linked("obligationId",rule.id(),"observationKey",key(rule),"gapCode",gap.code(),"sourceIds",sourceIds(rule,shared.coverage(),candidates),"businessProof",false));}}
-        if(shared.factLookupTruncated())for(Rule rule:rules){Set<String> refs=new LinkedHashSet<>();boolean relevant=false;
+        for(Rule rule:rules){if(!shared.truncatedFor(key(rule)))continue;Set<String> refs=new LinkedHashSet<>();boolean relevant=false;
             for(Map<String,Object> detail:shared.lookupTruncations()){List<String> keys=ProofVerifier.strings(detail.get("observationKeys"));if(keys.isEmpty()||keys.contains(key(rule))){relevant=true;refs.addAll(ProofVerifier.strings(detail.get("sourceIds")));}}
             if(relevant)retained.put(rule.id(),linked("obligationId",rule.id(),"observationKey",key(rule),"gapCode","EVIDENCE_LOOKUP_INCOMPLETE","sourceIds",cn.bidcheck.compat.Java8Api.listCopyOf(refs),"businessProof",false));}
         return cn.bidcheck.compat.Java8Api.listCopyOf(retained.values());

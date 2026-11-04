@@ -65,7 +65,7 @@ final class EnterpriseSubjectBindings {
             // members are eligible; whitespace normalization cannot invent a new organization.
             String plain=clean(text);Set<String> named=new LinkedHashSet<>();completeSets(source).forEach(named::addAll);
             for(String company:named){String name=Pattern.quote(company);
-                if(Pattern.compile(name+"为[^。；]{0,240}?联合体牵头人[。；]").matcher(plain).find())for(String role:cn.bidcheck.compat.Java8Api.listOf("牵头人", "牵头单位", "联合体牵头人", "联合体牵头单位"))out.add(new Binding(role,company,"EXPLICIT_LEAD_MEMBER",cn.bidcheck.compat.Java8Api.listOf()));
+                if(Pattern.compile(name+"为[^。；]{0,240}?联合体牵头人[。；]|联合体牵头(?:人|单位)[:：]"+name+"(?=[。；;]|$)").matcher(plain).find())for(String role:cn.bidcheck.compat.Java8Api.listOf("牵头人", "牵头单位", "联合体牵头人", "联合体牵头单位"))out.add(new Binding(role,company,"EXPLICIT_LEAD_MEMBER",cn.bidcheck.compat.Java8Api.listOf()));
                 Matcher work=Pattern.compile(name+"负责(施工|设计)部分").matcher(plain);
                 while(work.find())for(String suffix:cn.bidcheck.compat.Java8Api.listOf("单位", "成员"))out.add(new Binding(work.group(1)+suffix,company,"EXPLICIT_MEMBER_WORK_ALLOCATION",cn.bidcheck.compat.Java8Api.listOf()));
             }

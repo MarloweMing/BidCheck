@@ -107,6 +107,7 @@ final class RequirementContextBindings {
         }
         for(String key:FIELDS){String value=str(parameters,key);if(cn.bidcheck.compat.Java8Api.isBlank(value))continue;
             if(at>=0&&rule.sourceQuote().contains(value))refs.put(key,reference(value,rule.sourceQuote(),at,"LOCAL",""));
+            else if(at>=0&&architectAlias(key,value,rule.sourceQuote()))refs.put(key,reference(value,rule.sourceQuote(),at,"EXPLICIT_ARCHITECT_GRADE_ALIAS",""));
             else if(scope!=null&&parameterUnambiguous(key,value,scope.quote()))refs.put(key,reference(value,scope.quote(),scope.start(),scope.kind(),scope.parentId()));
         }
         if(!refs.isEmpty())parameters.put("requirementBindings",refs);
@@ -202,7 +203,15 @@ final class RequirementContextBindings {
         if(!(rule.parameters().get("requirementBindings") instanceof Map<?,?>)||!(((Map<?,?>) (rule.parameters().get("requirementBindings"))).get(field) instanceof Map<?,?>))return null;
         boolean literal=Objects.toString(((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementBindings"))).get(field))).get("sourceQuote"),"").contains(value);
         boolean implicit="subject".equals(field)&&"SOURCE_DEFINED_BIDDER".equals(((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementBindings"))).get(field))).get("bindingKind"))&&TenderImplicitSubject.bidder(rule,source);
-        return value.equals(((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementBindings"))).get(field))).get("value"))&&validReference(((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementBindings"))).get(field))),source)&&(literal||implicit)?((Map<?,?>) (((Map<?,?>) (rule.parameters().get("requirementBindings"))).get(field))):null;
+        Map<?,?> ref=(Map<?,?>)((Map<?,?>)rule.parameters().get("requirementBindings")).get(field);
+        boolean architect="EXPLICIT_ARCHITECT_GRADE_ALIAS".equals(ref.get("bindingKind"))&&architectAlias(field,value,Objects.toString(ref.get("sourceQuote"),""));
+        return value.equals(ref.get("value"))&&validReference(ref,source)&&(literal||implicit||architect)?ref:null;
+    }
+    private static boolean architectAlias(String field, String value, String quote) {
+        String category = DeterministicRequirementCompiler.exactArchitectCategory(quote);
+        if (category.isEmpty()) return false;
+        return field.equals("category") && value.equals(category)
+            || field.equals("grade") && value.equals(category.substring(0, 2));
     }
     static boolean validReference(Map<?,?> ref,String source){
         if(!(ref.get("start") instanceof Number)||!(ref.get("end") instanceof Number))return false;

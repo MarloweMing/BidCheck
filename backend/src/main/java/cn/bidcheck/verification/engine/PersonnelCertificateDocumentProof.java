@@ -54,6 +54,9 @@ final class PersonnelCertificateDocumentProof {
             "proofScope","TYPED_CERTIFICATE_RECORD_SUBMISSION_ONLY","qualificationVerified",false,"validityVerified",false,
             "queryFieldsCompared",false,"registrationVerified",false,"fullPageVisualVerification",false);
         if(records.isEmpty())return pending(rule,"CERTIFICATE_EVIDENCE_REQUIRED","当前语料尚未建立该人员的证书原件记录；目录、查询截图或泛材料标题不能代替",cn.bidcheck.compat.Java8Api.listOf(),proof);
+        if(categories.isEmpty()&&CertificateSourceComparison.requirementQuote(rule,evaluator.context).contains("安全生产考核合格证")&&
+            records.stream().anyMatch(r->r.category().startsWith("安全生产考核合格证书")))
+            return pending(rule,"CERTIFICATE_ALLOWED_SUBTYPE_NOT_LOCATED","已找到该人员安全证原件，但其细类与条款列明的类别尚未对应",cn.bidcheck.compat.Java8Api.listOf(),proof);
         if(categories.isEmpty())return pending(rule,"REQUIREMENT_CREDENTIAL_SCHEMA_UNPROVEN","尚未按人员原条款确定应提交的证照类别，不能用其他证件替代",cn.bidcheck.compat.Java8Api.listOf(),proof);
         List<Evidence> evidence=new ArrayList<>();List<Fact> identityFacts=new ArrayList<>();List<Map<String,Object>> selected=new ArrayList<>();
         for(String category:categories){

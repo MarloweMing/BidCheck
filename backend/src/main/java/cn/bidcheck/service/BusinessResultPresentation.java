@@ -8,7 +8,7 @@ import java.util.*;
 
 /** Read-only business presentation, always based on the published evaluation after guards. */
 public final class BusinessResultPresentation {
-    public static final String VERSION="business-result-9-external-responsibility";
+    public static final String VERSION="business-result-11-inventory-dependencies";
     private static final ObjectMapper JSON=new ObjectMapper();
     private BusinessResultPresentation() {}
 
@@ -19,6 +19,20 @@ public final class BusinessResultPresentation {
     /** A system-owned gap is not an active job. Only persisted job identity and state indicate recovery. */
     public static Map<String,Object> describe(Evaluation evaluation,Map<String,Object> assessment,Map<String,Object> resolutionJob) {
         Map<String,Object> a=assessment==null?cn.bidcheck.compat.Java8Api.mapOf():assessment,atomic=map(a.get("atomicCheck")),ocr=map(a.get("ocrReview"));
+        Map<String,Object> investigation=map(atomic.get("agentInvestigation"));
+        if(Boolean.TRUE.equals(investigation.get("processingFailed"))){
+            // Project the host's evidence decision separately from the availability of its optional investigator.
+            Map<String,Object> businessAtomic=new LinkedHashMap<>(atomic);
+            businessAtomic.remove("agentInvestigation");
+            Map<String,Object> businessAssessment=new LinkedHashMap<>(a);
+            businessAssessment.put("atomicCheck",businessAtomic);
+            Map<String,Object> projected=new LinkedHashMap<>(describe(evaluation,businessAssessment,Collections.emptyMap()));
+            projected.put("processingFailed",true);
+            projected.put("processingError",text(investigation,"errorCode"));
+            projected.put("processingMessage","查证服务未完成，已保留依据现有原文计算的业务结论。");
+            return projected;
+        }
+        if(resolutionJob==null)resolutionJob=Collections.emptyMap();
         TrustedVisualReview.Result visualReview=TrustedVisualReview.inspect(a);
         ResultProjection template=template(a);boolean templateFinal=template!=null&&template.finalReconciled();
         String status=evaluation.status();Set<String> codes=new HashSet<>();
@@ -58,9 +72,24 @@ public final class BusinessResultPresentation {
         boolean visual=Boolean.TRUE.equals(ocr.get("required"));
         String state;
 switch (status) {case "PASS":state = "SATISFIED"; break;case "FAIL":case "WARNING":state = "RISK"; break;case "NOT_APPLICABLE":state = "NOT_APPLICABLE"; break;case "NEEDS_CONFIRMATION":state = processing?"SYSTEM_INCOMPLETE":"USER_ACTION"; break;default:state = processing?"SYSTEM_INCOMPLETE":!externalState.isEmpty()?"WAIT_EXTERNAL":external||visualReview.unreadableOnly()?"USER_ACTION":evidencePending?"EVIDENCE_PENDING":visual?"USER_ACTION":"EVIDENCE_PENDING"; break;}
+        int pendingCards=map(atomic.get("proof")).get("pendingConfirmationCount") instanceof Number?((Number)map(atomic.get("proof")).get("pendingConfirmationCount")).intValue():0;
+        if(pendingCards>0&&("UNDETERMINED".equals(status)||"NEEDS_CONFIRMATION".equals(status)))state="USER_ACTION";
+        boolean pending="UNDETERMINED".equals(status);
+        boolean fullText=fullTextNotice(evaluation,a);
+        Map<String,Object> inventory=maps(atomic.get("conditions")).stream().map(row->map(row.get("proof")))
+            .filter(p->p.containsKey("inventoryTotalMembers")).findFirst().orElse(Collections.emptyMap());
+        if(pending && !inventory.isEmpty() && !recoveryFailed && externalState.isEmpty())state="EVIDENCE_PENDING";
+        if(pending && pendingCards==0 && !recoveryFailed && Boolean.TRUE.equals(inventory.get("inventorySourceRangeClosed"))
+                && "WAIT_STAGE".equals(text(externalState,"state")) && codes.contains("EXTERNAL_OWNER_DATA_REQUIRED")
+                && Arrays.asList("WAIT_STAGE","EXTERNAL_WAIT_STAGE","EXTERNAL_OWNER_DATA_REQUIRED","REQUIREMENT_INVENTORY_COVERAGE_REQUIRED").containsAll(codes)
+                && !RecoveryTransition.hasProcessingFailure(new cn.bidcheck.domain.Domain.Finding("","",null,evaluation,a)))state="WAIT_EXTERNAL";
+        if(pending && fullText && pendingCards==0)state="NOTICE";
+        if(pending && "WAIT_OWNER_DATA".equals(text(externalState,"state")))state="WAIT_EXTERNAL";
+        if(pending && codes.contains("BID_VOLUME_NOT_UPLOADED"))state="MATERIAL_REQUIRED";
+        if(pending && "WAIT_TAX_REFERENCE_DATE".equals(text(resolutionJob,"strategy")))state="USER_ACTION";
         String label;
-switch (state) {case "SATISFIED":label = "满足要求"; break;case "RISK":label = "存在风险"; break;case "SYSTEM_INCOMPLETE":label = "系统未完成"; break;case "USER_ACTION":label = "需你确认"; break;case "WAIT_EXTERNAL":label = "待外部条件"; break;case "NOT_APPLICABLE":label = "不适用"; break;default:label = "待补证据"; break;}
-        boolean userAction="USER_ACTION".equals(state)||"RISK".equals(state)||"SATISFIED".equals(state)&&visual;
+switch (state) {case "SATISFIED":label = "满足要求"; break;case "RISK":label = "存在风险"; break;case "SYSTEM_INCOMPLETE":label = "系统未完成"; break;case "USER_ACTION":label = "需你确认"; break;case "WAIT_EXTERNAL":label = "待外部条件"; break;case "NOT_APPLICABLE":label = "不适用"; break;case "NOTICE":label = "全文提示"; break;case "MATERIAL_REQUIRED":label = "请补充材料"; break;default:label = "系统取证中"; break;}
+        boolean userAction="MATERIAL_REQUIRED".equals(state)||"USER_ACTION".equals(state)||"RISK".equals(state)||"SATISFIED".equals(state)&&visual;
         String owner;
 switch (state) {case "SYSTEM_INCOMPLETE":case "EVIDENCE_PENDING":owner = "SYSTEM"; break;case "WAIT_EXTERNAL":owner = "EXTERNAL"; break;case "USER_ACTION":case "RISK":owner = "USER"; break;default:owner = userAction?"USER":"NONE"; break;}
         String next;
@@ -90,6 +119,7 @@ switch (state) {case "SYSTEM_INCOMPLETE":next = "需继续处理条款、证据�
         if(templateFinal&&!cn.bidcheck.compat.Java8Api.isBlank(Objects.toString(template.nextStep(),""))&&!cn.bidcheck.compat.Java8Api.setOf("SYSTEM_INCOMPLETE", "WAIT_EXTERNAL").contains(state))next=template.nextStep();
         if("USER_ACTION".equals(state)&&visualReview.unreadableOnly())next="指定原图已检查，但签章无法辨清；请确认所列签署位置，或提供该页清晰图像。相同页面不再自动重复识别。";
         if("RISK".equals(state)&&visualReview.negative())next="指定原图已检查，未观察到要求签章；请对照所列位置确认签署风险。本项不自动作出否决投标结论。";
+        if(pendingCards>0&&"USER_ACTION".equals(state))next="还差 "+pendingCards+" 个待确认的证据关系，请核对卡片原文后确认或否定，再重新计算。";
         Map<String,Object> scope=proofScope(evaluation,a);
         if("SATISFIED".equals(state)&&!cn.bidcheck.compat.Java8Api.isBlank(text(scope,"label"))){
             label=text(scope,"label");
@@ -111,12 +141,28 @@ switch (state) {case "SYSTEM_INCOMPLETE":next = "需继续处理条款、证据�
                 if(!stopped)next="系统需继续完成证据字段或人员单位对应；当前不要求补交材料，也不计入人工核对待办。";
             }
         }
+        if("NOTICE".equals(state)){
+            next="查看已有出处和比较范围。";
+        }
+        if(pending && !inventory.isEmpty()){
+            String progressLabel="子项 "+inventory.get("inventoryCompletedMembers")+"/"+inventory.get("inventoryTotalMembers")+" 已完成";
+            reason=progressLabel+"。"+reason;
+            if("EVIDENCE_PENDING".equals(state)){label=progressLabel;next="查看对应子事项和仍未覆盖的招标要求。";}
+        }
+        if("MATERIAL_REQUIRED".equals(state))next=reason;
+        if("USER_ACTION".equals(state) && "WAIT_TAX_REFERENCE_DATE".equals(text(resolutionJob,"strategy")))next=text(resolutionJob,"nextAction");
         Map<String,Object> out=new LinkedHashMap<>();out.put("version",VERSION);out.put("state",state);out.put("label",label);out.put("owner",owner);
         out.put("reason",reason);out.put("nextStep",next);out.put("userActionRequired",userAction);out.put("finalStatus",status);
         if(!externalState.isEmpty())out.put("externalState",externalState);
         if(visualReview.reviewed())out.put("visualReview",cn.bidcheck.compat.Java8Api.mapOf("reviewed", true, "unreadableOnly", visualReview.unreadableOnly(), "negative", visualReview.negative(), "observations", visualReview.observations(), "automaticRejection", false));
         out.put("projectionVersion","business-dimensions-3");
         out.put("dimensions",dimensions(evaluation,a,resolutionJob));return out;
+    }
+
+    static boolean fullTextNotice(Evaluation evaluation, Map<String,Object> trace){
+        return "UNDETERMINED".equals(evaluation.status()) && (trace.containsKey("consistencyGroupId")
+            || "FULL_TEXT_REVIEW".equals(text(trace,"checkpointType"))
+            || Objects.toString(evaluation.method(),"").contains("FULL_TEXT_REVIEW"));
     }
 
     public static Map<String,Object> dimensions(Evaluation evaluation,Map<String,Object> assessment,Map<String,Object> resolutionJob) {

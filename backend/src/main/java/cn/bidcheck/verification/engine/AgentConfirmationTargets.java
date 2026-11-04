@@ -9,8 +9,10 @@ final class AgentConfirmationTargets {
     private static final ObjectMapper JSON=new ObjectMapper();
     private AgentConfirmationTargets(){}
     static Map<String,Object> proof(Rule target,Decision decision,RuleEvaluator evaluator){
-        if(decision==null||!"NEEDS_CONFIRMATION".equals(decision.status())||decision.gaps().isEmpty()
-            ||decision.gaps().stream().anyMatch(g->!"INFERENCE_CONFIRMATION_REQUIRED".equals(g.code())))return cn.bidcheck.compat.Java8Api.mapOf();
+        if(decision==null||decision.gaps().isEmpty())return Collections.emptyMap();
+        boolean legacy="NEEDS_CONFIRMATION".equals(decision.status())&&decision.gaps().stream().allMatch(g->"INFERENCE_CONFIRMATION_REQUIRED".equals(g.code()));
+        Set<String> gapCodes=new LinkedHashSet<>();decision.gaps().forEach(g->gapCodes.add(g.code()));
+        if(!legacy&&(!"UNDETERMINED".equals(decision.status())||!gapCodes.equals(new HashSet<>(ProofVerifier.strings(decision.proof().get("confirmationOnlyGapCodes"))))))return Collections.emptyMap();
         List<Map<String,Object>> supplied=RuleEvaluator.maps(decision.proof().get("inferredFacts"));
         List<Map<String,Object>> current=RuleEvaluator.maps(evaluator.context.get("inferredFacts"));
         String fingerprint=identity(JSON.valueToTree(target).toString());List<String> claims=new ArrayList<>();Set<String> sources=new LinkedHashSet<>();
@@ -34,7 +36,7 @@ final class AgentConfirmationTargets {
         }
         if(claims.isEmpty())return cn.bidcheck.compat.Java8Api.mapOf();
         return linked("authority","SOURCE_VALIDATED_PENDING_CONFIRMATION","targetObligationId",target.id(),"conditionStatus","NEEDS_CONFIRMATION",
-            "gapCodes",cn.bidcheck.compat.Java8Api.listOf("INFERENCE_CONFIRMATION_REQUIRED"),"claimIds",cn.bidcheck.compat.Java8Api.toList(claims.stream().distinct()),"sourceIds",cn.bidcheck.compat.Java8Api.listCopyOf(sources),
+            "gapCodes",Collections.singletonList("INFERENCE_CONFIRMATION_REQUIRED"),"businessGapCodes",new ArrayList<>(gapCodes),"claimIds",cn.bidcheck.compat.Java8Api.toList(claims.stream().distinct()),"sourceIds",cn.bidcheck.compat.Java8Api.listCopyOf(sources),
             "targetFingerprint",fingerprint,"businessProof",false,"sourceValidation","CURRENT_DOCUMENT_HASH_VERSION_PAGE_AND_EXACT_QUOTE");
     }
     private static Map<String,Object> map(Object raw){Map<String,Object> out=new LinkedHashMap<>();if(raw instanceof Map<?,?>)((Map<?,?>) (raw)).forEach((k,v)->out.put(String.valueOf(k),v));return out;}

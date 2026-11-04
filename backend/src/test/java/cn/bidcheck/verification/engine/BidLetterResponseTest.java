@@ -24,6 +24,15 @@ class BidLetterResponseTest {
     @Test void blankInstructionAndForeignLetterDoNotPass()throws Exception{for(String value:cn.bidcheck.compat.Java8Api.listOf("", "____", "待填写"))assertNotEquals("PASS",evaluate(QUALITY,tender(QUALITY,"180"),bid(value,"180",PROJECT)).status());assertNotEquals("PASS",evaluate(QUALITY,tender(QUALITY,"180"),bid("合格","180","另一历史工程" )).status());}
     @Test void adverseQualityIsRisk()throws Exception{assertEquals("FAIL",evaluate(QUALITY,tender(QUALITY,"180"),bid("不合格","180",PROJECT)).status());}
     @Test void validityComparesObservedNumberToTenderBaseline()throws Exception{assertEquals("PASS",evaluate(VALIDITY,tender(VALIDITY,"180"),bid("合格","180",PROJECT)).status());assertEquals("FAIL",evaluate(VALIDITY,tender(VALIDITY,"180"),bid("合格","90",PROJECT)).status());assertNotEquals("PASS",evaluate(VALIDITY,tender(VALIDITY,"180"),bid("合格","满足",PROJECT)).status());}
+    @Test void numericValidityAlsoReadsTheExplicitDurationFromTheBidLetter(){
+        Rule rule=new Rule("duration","投标有效期","NUMBER","","bidValidity",">=","180","天",
+            linked("deterministicFamily","SOURCE_VERIFIED_CONFIRMED_DURATION"),"投标有效期至少180天","",Collections.emptyList());
+        for(String period:Arrays.asList("180","90")){
+            EvidenceCorpus corpus=new EvidenceCorpus(Collections.singletonList(bid("合格",period,PROJECT)));
+            Decision d=new RuleEvaluator(Collections.emptyList(),corpus,Collections.emptyMap()).evaluate(rule);
+            assertEquals("180".equals(period)?"PASS":"FAIL",d.status(),d.toString());
+        }
+    }
     @Test void unsupportedExtraObligationCannotBeDropped(){assertNull(BidLetterResponse.compile(QUALITY+"且必须提交质量体系认证证书。"));}
     private Document append(Document original,int page,String suffix){return new Document(original.id(),original.projectId(),original.role(),original.name(),original.version(),original.sha256(),original.createdAt(),cn.bidcheck.compat.Java8Api.toList(original.pages().stream().map(p->p.number()==page?new Page(p.number(),p.text()+suffix,p.locationType(),p.parser(),p.warning(),p.layout()):p)),original.warnings());}
     @Test void filledInstructionsCannotReplaceAnEmptyResponse()throws Exception{

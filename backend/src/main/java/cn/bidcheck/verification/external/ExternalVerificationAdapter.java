@@ -64,6 +64,20 @@ public class ExternalVerificationAdapter {
         }catch(Exception e){connectors.clear();invalid=true;}
         configInvalid=invalid;
     }
+    /** Exposes only administrator-selected type/source names. Endpoints and keys stay private. */
+    public Map<String,String> providerSources() {
+        Map<String,String> sources=new LinkedHashMap<>();
+        for(Connector connector:connectors.values())sources.put(connector.type(),connector.source());
+        return Collections.unmodifiableMap(sources);
+    }
+
+    public static boolean requiresOwnerData(Map<String,Object> context,String type,String provider) {
+        if(!Boolean.TRUE.equals(context.get("providerConfigurationKnown")) || type.isEmpty())return false;
+        Object configured=context.get("providerSources");
+        if(!(configured instanceof Map<?,?>))return false;
+        Object source=((Map<?,?>)configured).get(type);
+        return source==null || (!provider.isEmpty() && !providerMatches(provider,String.valueOf(source)));
+    }
     public List<String> enabledTypes(){return cn.bidcheck.compat.Java8Api.listCopyOf(connectors.keySet());}
     /** Exact administrator-owned source names that have one unambiguous enabled adapter type. */
     public Map<String,String> enabledSourceTypes(){

@@ -12,9 +12,76 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class JavaAgentHttpTest {
+    @Test void slowResponseBodyKeepsTimeoutClassificationAndNeverRetries()throws Exception{
+        HttpServer server=server();AtomicInteger calls=new AtomicInteger();CountDownLatch release=new CountDownLatch(1);
+        server.createContext("/chat/completions",exchange->{try{calls.incrementAndGet();exchange.sendResponseHeaders(200,100);exchange.getResponseBody().write('{');exchange.getResponseBody().flush();release.await(3,TimeUnit.SECONDS);}catch(Exception ignored){}finally{exchange.close();}});server.start();
+        try{JavaAgentRunner.Failure failure=assertThrows(JavaAgentRunner.Failure.class,()->new JavaAgentRunner.HttpTransport(base(server),"synthetic-key",json).complete(Collections.emptyMap(),Duration.ofMillis(150)));assertTrue(Arrays.asList("INVESTIGATION_TIMEOUT","PROVIDER_TIMEOUT").contains(failure.code),failure.code);assertEquals(1,calls.get());}
+        finally{release.countDown();server.stop(0);}
+    }
+    @Test void completeMalformedJsonRemainsAProtocolErrorAndIsNeverRetried()throws Exception{
+        HttpServer server=server();AtomicInteger calls=new AtomicInteger();server.createContext("/chat/completions",exchange->{try{calls.incrementAndGet();byte[] body="{invalid-json}".getBytes(StandardCharsets.UTF_8);exchange.sendResponseHeaders(200,body.length);exchange.getResponseBody().write(body);}finally{exchange.close();}});server.start();
+        try{assertEquals("MODEL_PROTOCOL_ERROR",assertThrows(JavaAgentRunner.Failure.class,()->new JavaAgentRunner.HttpTransport(base(server),"synthetic-key",json).complete(Collections.emptyMap(),Duration.ofSeconds(5))).code);assertEquals(1,calls.get());}
+        finally{server.stop(0);}
+    }
+    @Test void interruptedResponseBodyRetriesAndExhaustionIsAConnectionFailure()throws Exception{
+        for(boolean recover:Arrays.asList(true,false)){
+            HttpServer server=server();AtomicInteger calls=new AtomicInteger();
+            server.createContext("/chat/completions",exchange->{try{
+                int attempt=calls.incrementAndGet();byte[] body="{}".getBytes(StandardCharsets.UTF_8);
+                if(recover&&attempt==2){exchange.sendResponseHeaders(200,body.length);exchange.getResponseBody().write(body);}
+                else{exchange.sendResponseHeaders(200,100);exchange.getResponseBody().write(body);}
+            }finally{exchange.close();}});server.start();
+            try{
+                JavaAgentRunner.HttpTransport transport=new JavaAgentRunner.HttpTransport(base(server),"synthetic-key",json);
+                if(recover){assertEquals(Collections.emptyMap(),transport.complete(Collections.emptyMap(),Duration.ofSeconds(5)));assertEquals(2,calls.get());}
+                else{assertEquals("PROVIDER_CONNECTION",assertThrows(JavaAgentRunner.Failure.class,()->transport.complete(Collections.emptyMap(),Duration.ofSeconds(5))).code);assertEquals(3,calls.get());}
+            }finally{server.stop(0);}
+        }
+    }
+    @Test void everyClientErrorIsSingleAttemptIncludingRateLimits()throws Exception{
+        for(int status:new int[]{400,401,403,404,429}){
+            HttpServer server=server();AtomicInteger calls=new AtomicInteger();server.createContext("/chat/completions",exchange->{try{calls.incrementAndGet();exchange.sendResponseHeaders(status,-1);}finally{exchange.close();}});server.start();
+            try{assertThrows(JavaAgentRunner.Failure.class,()->new JavaAgentRunner.HttpTransport(base(server),"synthetic-key",json).complete(Collections.emptyMap(),Duration.ofSeconds(5)));assertEquals(1,calls.get(),"HTTP "+status);}
+            finally{server.stop(0);}
+        }
+    }
     private final ObjectMapper json=new ObjectMapper();
     private HttpServer server()throws Exception{return HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(),0),0);}
     private String base(HttpServer server){return "http://127.0.0.1:"+server.getAddress().getPort();}
+    @Test void brokenConnectionCanRecoverAndExhaustionKeepsTransportCategory()throws Exception{
+        for(boolean recover:Arrays.asList(false,true)){
+            HttpServer server=server();AtomicInteger calls=new AtomicInteger();
+            server.createContext("/chat/completions",exchange->{
+                try{
+                    if(calls.incrementAndGet()==2 && recover){
+                        byte[] body="{}".getBytes(StandardCharsets.UTF_8);
+                        exchange.sendResponseHeaders(200,body.length);exchange.getResponseBody().write(body);
+                    }
+                }finally{exchange.close();}
+            });
+            server.start();
+            try{
+                JavaAgentRunner.HttpTransport transport=new JavaAgentRunner.HttpTransport(base(server),"test",json);
+                if(recover){transport.complete(Collections.emptyMap(),Duration.ofSeconds(5));assertEquals(2,calls.get());}
+                else{assertEquals("PROVIDER_CONNECTION",assertThrows(JavaAgentRunner.Failure.class,
+                    ()->transport.complete(Collections.emptyMap(),Duration.ofSeconds(5))).code);assertEquals(3,calls.get());}
+            }finally{server.stop(0);}
+        }
+    }
+    @Test void retriesServerFailuresTwiceButNeverRetriesUnauthorized()throws Exception{
+        for(int status:new int[]{503,401}){
+            HttpServer server=server();AtomicInteger count=new AtomicInteger();
+            server.createContext("/chat/completions",exchange->{try{
+                int n=count.incrementAndGet();byte[] body="{}".getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(n==3?200:status,body.length);exchange.getResponseBody().write(body);
+            }finally{exchange.close();}});server.start();
+            try{
+                JavaAgentRunner.HttpTransport transport=new JavaAgentRunner.HttpTransport(base(server),"test-key",json);
+                if(status==503){transport.complete(Collections.emptyMap(),Duration.ofSeconds(3));assertEquals(3,count.get());}
+                else{assertThrows(JavaAgentRunner.Failure.class,()->transport.complete(Collections.emptyMap(),Duration.ofSeconds(3)));assertEquals(1,count.get());}
+            }finally{server.stop(0);}
+        }
+    }
     @Test void realHttpWireUsesExplicitKeyAndUtf8AndParsesToolCalls()throws Exception{
         HttpServer server=server();AtomicReference<String> auth=new AtomicReference<>(),body=new AtomicReference<>();
         server.createContext("/chat/completions",exchange->{try{auth.set(exchange.getRequestHeaders().getFirst("Authorization"));body.set(new String(cn.bidcheck.compat.Java8Api.readAllBytes(exchange.getRequestBody()),StandardCharsets.UTF_8));byte[] response="{\"choices\":[{\"message\":{\"tool_calls\":[]}}]}".getBytes(StandardCharsets.UTF_8);exchange.sendResponseHeaders(200,response.length);exchange.getResponseBody().write(response);}finally{exchange.close();}});server.start();

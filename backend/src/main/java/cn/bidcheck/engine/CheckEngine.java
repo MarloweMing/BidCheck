@@ -8,6 +8,9 @@ import java.util.stream.Collectors;
 
 /** Deterministic evidence-backed evaluation. Unavailable model/OCR work stays unresolved. */
 public final class CheckEngine {
+    public static Map<String,Object> referenceDateConflict(Document bid,String referenceDate) {
+        return new FullTextReview().referenceDateConflict(bid,referenceDate);
+    }
     public static final String VERSION="deterministic-source-scope-4-explicit-history-recovery";
     public Evaluation evaluate(Checkpoint rule, Document document, List<Fact> inputFacts) {
         return evaluate(rule,document,inputFacts,null);

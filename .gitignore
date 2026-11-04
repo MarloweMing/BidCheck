@@ -155,3 +155,14 @@ backend/src/test/java/cn/bidcheck/verification/engine/SocialAttachmentReportTest
 backend/src/test/java/cn/bidcheck/verification/engine/PersonnelProfileSignalTest.java
 backend/src/test/java/cn/bidcheck/verification/engine/RegistrationProfileIntegrationTest.java
 backend/src/test/java/cn/bidcheck/verification/engine/PerformanceAmountConfirmationTest.java
+
+# Ticket 2.31 local acceptance fixtures and tests requiring private test helpers.
+backend/src/test/java/cn/bidcheck/consistency/Ticket08ConsistencyRegressionsTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/ActualReadHydrationTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/DeclaredPerformanceTargetTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/PerformanceReadCompletionRegressionTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/PersonalDeclaredOwnershipTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/PersonalOwnerLoadingTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/Ticket231FrozenDomainReplayTest.java
+backend/src/test/java/cn/bidcheck/verification/engine/Ticket231ProofWiringRegressionTest.java
+scripts/acceptance_cases.json

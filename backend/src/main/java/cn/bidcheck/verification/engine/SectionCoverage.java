@@ -38,9 +38,24 @@ final class SectionCoverage {
         @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.page); hash = 31 * hash + java.util.Objects.hashCode(this.start); hash = 31 * hash + java.util.Objects.hashCode(this.end); hash = 31 * hash + java.util.Objects.hashCode(this.text); return hash; }
         @Override public String toString() { return "Line[" + "page=" + page + ", start=" + start + ", end=" + end + ", text=" + text + "]"; }
 }
-    static Extent locate(String title,EvidenceCorpus corpus){if(title==null||title.length()<2||title.length()>80)return new Extent(cn.bidcheck.compat.Java8Api.listOf(),false,"章节名未明确");
-        for(Document doc:corpus.documents){List<Line> lines=new ArrayList<>();for(Page p:doc.pages()){String t=Objects.toString(p.text(),"");int start=0;for(String line:t.split("\n",-1)){lines.add(new Line(p,start,Math.min(t.length(),start+line.length()+1),line));start+=line.length()+1;}}
-            for(int i=0;i<lines.size();i++){Line heading=lines.get(i);String h=cn.bidcheck.compat.Java8Api.strip(heading.text());int level=level(h);if(level<1||!strip(h).equals(title)||corpus.all.stream().anyMatch(s->s.evidence().documentId().equals(doc.id())&&s.evidence().page()==heading.page().number()&&s.index()))continue;
+    static Extent locate(String title,EvidenceCorpus corpus){
+        // Covers and review indexes have filled fields/rows rather than eighty characters of prose.
+        // Use the same source-bound structural checks as retrieval; a directory mention is insufficient.
+        if(!MaterialTitleAliases.volume(title).isEmpty()||MaterialTitleAliases.canonical(title).endsWith("索引表")){
+            List<Source> structured=SubmittedMaterialStructure.locate(title,corpus);
+            if(!structured.isEmpty()){
+                for(Document doc:corpus.documents){
+                    if(structured.stream().noneMatch(s->s.evidence().documentId().equals(doc.id())))continue;
+                    if(doc.warnings()!=null&&doc.warnings().stream().anyMatch(w->w.contains("[OCR未完成]")&&doc.pages().stream().noneMatch(p->p.warning()!=null&&!cn.bidcheck.compat.Java8Api.isBlank(p.warning())&&w.endsWith(p.warning()))))return new Extent(structured,false,"文档有未能归属具体位置的图像未识别，无法确认章节覆盖完整");
+                    if(doc.pages().stream().anyMatch(p->p.warning()!=null&&p.warning().contains("[OCR未完成]")&&structured.stream().anyMatch(s->s.evidence().documentId().equals(doc.id())&&s.evidence().page()==p.number()&&s.evidence().locationType().equals(p.locationType()))))return new Extent(structured,false,"章节区间含未识别的图像内容，无法确认章节覆盖完整");
+                }
+                return new Extent(structured,true,"已定位文书标题及有效封面字段、索引表行或章节正文");
+            }
+            return new Extent(structured,false,"尚未定位文书标题及有效内容");
+        }
+        if(title==null||title.length()<2||title.length()>80)return new Extent(cn.bidcheck.compat.Java8Api.listOf(),false,"章节名未明确");
+        for(Document doc:corpus.documents){if(!"BID".equals(doc.role()))continue;List<Line> lines=new ArrayList<>();for(Page p:doc.pages()){String t=Objects.toString(p.text(),"");int start=0;for(String line:t.split("\n",-1)){lines.add(new Line(p,start,Math.min(t.length(),start+line.length()+1),line));start+=line.length()+1;}}
+            for(int i=0;i<lines.size();i++){Line heading=lines.get(i);String h=cn.bidcheck.compat.Java8Api.strip(heading.text());int level=level(h);if(level<1||!MaterialTitleAliases.matches(title,h)||!MaterialTitleAliases.navigation(title)&&corpus.all.stream().anyMatch(s->s.evidence().documentId().equals(doc.id())&&s.evidence().page()==heading.page().number()&&s.index()))continue;
                 int end=lines.size();for(int j=i+1;j<lines.size();j++){int next=level(cn.bidcheck.compat.Java8Api.strip(lines.get(j).text()));if(next>0&&next<=level){end=j;break;}}
                 List<Source> needed=new ArrayList<>();int chars=0;for(int j=i;j<end;j++){Line line=lines.get(j);chars+=clean(line.text()).length();for(Source s:corpus.all){if(s.id().startsWith("V")||!s.evidence().documentId().equals(doc.id())||s.evidence().page()!=line.page().number()||!s.evidence().locationType().equals(line.page().locationType()))continue;int[] range=range(s);if(range[0]<line.end()&&range[1]>line.start()&&!needed.contains(s))needed.add(s);}}
                 if(chars<80)return new Extent(needed,false,"章节正文过短或仅标题");

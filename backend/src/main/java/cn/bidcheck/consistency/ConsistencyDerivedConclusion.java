@@ -6,7 +6,7 @@ import static cn.bidcheck.consistency.ConsistencyRunSupport.*;
 
 /** Re-evaluates a complete original occurrence set; it does not overwrite the immutable scan or human review. */
 public final class ConsistencyDerivedConclusion {
-    public static final String VERSION="consistency-derived-2-confirmed-source-relations";
+    public static final String VERSION="consistency-derived-4-verified-peer-positions";
     public static String identity(){return VERSION+"|"+ConsistencyObjectRecovery.VERSION;}
     private final Document document;
     private final Map<String,Map<String,Object>> occurrences=new LinkedHashMap<>();
@@ -52,7 +52,8 @@ public final class ConsistencyDerivedConclusion {
             List<Evidence> local=new ArrayList<>(candidates);addEvidences(local,object.get("evidences"));
             Map<String,Object> relation=recovery.verifyRelations(object,ConsistencyObjectRecovery.unique(local));
             Set<String> values=new LinkedHashSet<>(strings(object.get("values")));values.remove("");
-            boolean sourceComplete=ids.stream().allMatch(id->!duplicatedIds.contains(id)&&validOccurrence(occurrences.get(id))
+            List<String> comparisonIds=strings(object.get("occurrenceIds"));
+            boolean sourceComplete=!comparisonIds.isEmpty()&&comparisonIds.containsAll(ids)&&comparisonIds.stream().allMatch(id->!duplicatedIds.contains(id)&&validOccurrence(occurrences.get(id))
                 &&Objects.equals(group.get("field"),occurrences.get(id).get("field")));
             boolean verified=sourceComplete&&Boolean.TRUE.equals(object.get("identityVerified"))&&Boolean.TRUE.equals(relation.get("contextResolved"))&&!values.isEmpty();
             String state;
@@ -60,7 +61,13 @@ public final class ConsistencyDerivedConclusion {
             else if("RELATION_CONFLICT".equals(relation.get("status"))){state="RELATION_CONFLICT";conflicts++;unresolved.addAll(ids);}
             else if(!verified){state="UNRESOLVED";unresolved.addAll(ids);}
             else if(values.size()>1){state="DIFFERENT_VALUES_SAME_OBJECT";comparedPairs++;conflicts++;resolved.addAll(ids);}
-            else{state="NO_DIFFERENCE_IN_OBSERVED_VALUES";singleValues++;resolved.addAll(ids);}
+            else{
+                long positions=comparisonIds.stream().map(occurrences::get)
+                    .map(this::verifiedPosition).distinct().count();
+                if(positions>=2){state="MATCHING_VALUES_SAME_OBJECT";comparedPairs++;}
+                else{state="SINGLE_OBSERVED_VALUE";singleValues++;}
+                resolved.addAll(ids);
+            }
             addEvidences(evidence,object.get("evidences"));
             for(java.util.Map<java.lang.String, java.lang.Object> r:maps(relation.get("relations"))){addEvidence(evidence,r.get("source"));addEvidence(evidence,r.get("headerSource"));addEvidence(evidence,r.get("invoiceSource"));}
             decisions.add(values("objectKey",object.get("objectKey"),"objectKind",object.get("objectKind"),"status",state,
@@ -73,10 +80,10 @@ public final class ConsistencyDerivedConclusion {
         resolved.removeAll(unresolved);
         excluded.removeAll(unresolved);
         boolean complete=!requested.isEmpty()&&failures.isEmpty()&&unresolved.isEmpty()&&resolved.size()+excluded.size()==new HashSet<>(requested).size();
-        String status=conflicts>0?"WARNING":complete&&!resolved.isEmpty()?"PASS":"UNDETERMINED";
+        String status=conflicts>0?"WARNING":complete&&comparedPairs>0?"PASS":"UNDETERMINED";
         String reason=conflicts>0?"已识别记录中有 "+conflicts+" 个同身份字段或关系存在差异；请对照原文核实。"
-            :complete&&!resolved.isEmpty()?"原组 "+requested.size()+" 条已识别记录已分别核对，"+resolved.size()+" 条完成同口径对象验证、"+excluded.size()+" 条有原文依据排除出当前比较，未发现同口径差异。"
-            :"已核对原组 "+requested.size()+" 条记录，其中 "+resolved.size()+" 条已完成对象与关系验证，"+excluded.size()+" 条有依据排除，"+unresolved.size()+" 条仍缺来源、身份或比较口径；未把未明记录排除或把全被排除当作通过。";
+            :complete&&comparedPairs>0?"原组 "+requested.size()+" 条已识别记录已分别核对，"+resolved.size()+" 条完成同口径对象验证、"+excluded.size()+" 条有原文依据排除出当前比较，未发现同口径差异。"
+            :complete&&comparedPairs==0?"已识别范围内没有可比较的同对象原文对。":"已核对原组 "+requested.size()+" 条记录，其中 "+resolved.size()+" 条已完成对象与关系验证，"+excluded.size()+" 条有依据排除，"+unresolved.size()+" 条仍缺来源、身份或比较口径；未把未明记录排除或把全被排除当作通过。";
         reason+=" 本结论仅覆盖本组已识别记录，不证明全文完整或资格、报价等业务条件全部满足。";
         Map<String,Object> derived=values("policyVersion",VERSION,"relationPolicyVersion",ConsistencyObjectRecovery.VERSION,
             "sourceDocumentId",document.id(),"sourceDocumentHash",document.sha256(),"sourceDocumentVersion",document.version(),
@@ -88,6 +95,14 @@ public final class ConsistencyDerivedConclusion {
         group.put("derivedConclusion",derived);
         return Optional.of(new Evaluation(status,reason,complete&&conflicts==0?"":"查看未完成对象及其原文依据；仅对具体缺口继续补查。",
             ConsistencyObjectRecovery.unique(evidence),complete?0.95:conflicts>0?0.8:0,"CONSISTENCY_DERIVED_OBSERVED_OCCURRENCES"));
+    }
+    private List<Object> verifiedPosition(Map<String,Object> occurrence){
+        Evidence e=ConsistencyObjectRecovery.evidence(occurrence.get("evidence"));
+        Object at=occurrence.get("sourceOffset");
+        int offset=at instanceof Number ? ((Number)at).intValue() :
+            document.pages().stream().filter(p->p.number()==e.page() && p.locationType().equals(e.locationType()))
+                .map(p->p.text().indexOf(e.quote())).findFirst().orElse(-1);
+        return Arrays.asList(e.documentId(),e.locationType(),e.page(),offset);
     }
     private boolean validOccurrence(Map<String,Object> occurrence){
         if(occurrence==null)return false;Evidence e=ConsistencyObjectRecovery.evidence(occurrence.get("evidence"));

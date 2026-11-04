@@ -26,11 +26,11 @@ class CertificateProfessionalDateComparisonTest {
         assertEquals("VALIDITY_END:建筑工程",((Map<?,?>)date(d).get("certificate")).get("field"));
         assertEquals("SAME_SOURCE_BOUND_PROFESSION",((Map<?,?>)date(d).get("dateScope")).get("resolution"));
     }
-    @Test void multiProfessionalQueryWithOneDateCannotBorrowOtherProfessionEnd(){
-        Decision d=compare("建筑,机电","2027-04-06",FULL,cn.bidcheck.compat.Java8Api.mapOf());assertEquals("UNDETERMINED",d.status(),d.toString());
-        assertEquals(3,RuleEvaluator.maps(d.proof().get("fieldComparisons")).stream().filter(f->"PASS".equals(f.get("status"))).count());
-        assertEquals("2026-08-06",((Map<?,?>)date(d).get("certificate")).get("value"));assertEquals(cn.bidcheck.compat.Java8Api.mapOf(),date(d).get("query"));
-        assertEquals("PROFESSION_DATE_SCOPE_NOT_ALIGNED",((Map<?,?>)date(d).get("dateScope")).get("resolution"));
+    @Test void multiProfessionalQueryDateIsComparedWithinListedProfessions(){
+        Decision d=compare("建筑,机电","2027-04-06",FULL,cn.bidcheck.compat.Java8Api.mapOf());assertEquals("PASS",d.status(),d.toString());
+        assertEquals("2027-04-06",((Map<?,?>)date(d).get("certificate")).get("value"));
+        assertEquals("机电工程",((Map<?,?>)date(d).get("dateScope")).get("matchingProfession"));
+        assertEquals("FAIL",compare("建筑,机电","2030-01-01",FULL,cn.bidcheck.compat.Java8Api.mapOf()).status());
     }
     @Test void actualDifferentEndOfSameExplicitProfessionRemainsRisk(){assertEquals("FAIL",compare("建筑工程","2027-04-06",FULL,cn.bidcheck.compat.Java8Api.mapOf()).status());}
     @Test void modelParameterCannotInventRequirementProfession(){

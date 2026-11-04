@@ -31,7 +31,7 @@ final class AgentEvidenceQuery {
         String expanded=query+(expand.isEmpty()?"":" "+String.join(" ",expand));
         // Appointment sources remain accessible through knownSources. Once a person's binding
         // exists, pinning their appointment above credential/social-insurance hits wastes slots.
-        List<Rule> anchors=cn.bidcheck.compat.Java8Api.toList(targets.stream().filter(r->cn.bidcheck.compat.Java8Api.setOf("PERSON_ROLE", "PERSON_COUNT", "ENTITY_COUNT").contains(r.predicate())
+        List<Rule> anchors=cn.bidcheck.compat.Java8Api.toList(targets.stream().filter(r->cn.bidcheck.compat.Java8Api.setOf("PERSON_ROLE", "PERSON_COUNT", "ENTITY_COUNT", "MATERIAL", "SECTION").contains(r.predicate())
             ||AgentRuleSubjects.selectors(r).stream().anyMatch(s->DomainBindings.role(s)&&DomainBindings.subjects(s,facts,corpus).isEmpty())));
         return new Selection(expanded,targets,anchors,expand);
     }

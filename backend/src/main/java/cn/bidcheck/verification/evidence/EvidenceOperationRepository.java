@@ -234,10 +234,10 @@ public final class EvidenceOperationRepository {
         row.owner=owner;row.acquiredAt=now;row.leaseUntil=until;
         try{if(store.mapper().tryInsertEvidenceOperationLease(row)==1)return true;}
         catch(RuntimeException collision){
-            // A plain INSERT can still lose a race on databases without INSERT IGNORE. Treat it as
-            // contention only when the winning row is visible; genuine database failures propagate.
+            // The owner may publish and release after the duplicate INSERT and before this read.
+            // Recheck completion in the outer loop before trying to become the next owner.
             if(!duplicateKey(collision))throw collision;
-            if(store.mapper().evidenceOperationLease(operationKey)==null)throw collision;
+            if(store.mapper().evidenceOperationLease(operationKey)==null)return false;
         }
         return store.mapper().takeOverEvidenceOperationLease(operationKey,projectId,owner,now,until)==1;
     }

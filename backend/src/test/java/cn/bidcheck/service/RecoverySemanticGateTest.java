@@ -8,6 +8,51 @@ import static cn.bidcheck.service.BidService.*;
 import static cn.bidcheck.service.CheckResolution.*;
 
 class RecoverySemanticGateTest {
+    @Test void consumedReadChildrenLeaveUnvisitedSiblingAvailableAndNewParentProofReopens()throws Exception{
+        Map<String,Object> rule=cn.bidcheck.verification.engine.Ticket09ReadTargetTest.scoreMap();String parent=text(rule,"id"),read=parent+"-READ-TITLE",other=parent+"-READ-SOCIAL";
+        Finding f=finding(Collections.emptyList());Map<String,Object> a=new LinkedHashMap<>(atomic(f));a.put("plan",fields("rules",Collections.singletonList(rule)));
+        a.put("conditions",Collections.singletonList(fields("id",parent,"status","UNDETERMINED","gaps",Collections.singletonList(fields("code","COMMON_PROOF_REQUIRED")))));
+        a.put("agentInvestigation",fields("requestId","synthetic-read-request","status","NO_PROGRESS","code","REPEATED_ACTION_WITHOUT_NEW_EVIDENCE","failedToolCount",0,
+            "targetReceiptAuthority","CURRENT_SERVER_PROOF","remainingTargetObligationIds",Arrays.asList(read,other),"exhaustedTargetObligationIds",Collections.emptyList(),
+            "targetProgressLedger",Arrays.asList(fields("targetObligationId",read,"visited",true,"navigationCount",3),fields("targetObligationId",other,"visited",false))));
+        Finding saved=capture(new Finding(f.id(),f.runId(),f.checkpoint(),f.evaluation(),fields("atomicCheck",a)),Collections.emptyMap());
+        Map<String,Object> result=gate(saved,context(parent),Collections.emptyList());
+        assertEquals(Collections.singletonList(read),result.get("blockedTargetIds"));assertEquals(Collections.singletonList(other),result.get("eligibleTargetIds"));
+        Map<String,Object> changed=new LinkedHashMap<>(atomic(saved));changed.put("conditions",Collections.singletonList(fields("id",parent,"status","UNDETERMINED","gaps",Collections.singletonList(fields("code","COMMON_PROOF_REQUIRED")),"proof",fields("factIds",Collections.singletonList("new-verified-parent-fact")))));
+        assertEquals(Collections.emptyList(),gate(new Finding(f.id(),f.runId(),f.checkpoint(),f.evaluation(),fields("atomicCheck",changed)),context(parent),Collections.emptyList()).get("blockedTargetIds"));
+    }
+    private Finding investigated(Finding f,String code,boolean visited){
+        Map<String,Object> a=new LinkedHashMap<>(atomic(f));
+        a.put("agentInvestigation",fields("requestId","synthetic-first-request","status","NO_PROGRESS","code",code,"failedToolCount",0,
+            "targetReceiptAuthority","CURRENT_SERVER_PROOF","remainingTargetObligationIds",Collections.singletonList(TARGET),
+            "targetProgressLedger",Collections.singletonList(fields("targetObligationId",TARGET,"visited",visited,"navigationCount",3,"acceptedFactCount",0)),
+            "exhaustedTargetObligationIds",Collections.emptyList()));
+        return new Finding(f.id(),f.runId(),f.checkpoint(),f.evaluation(),fields("atomicCheck",a));
+    }
+    private Finding capture(Finding f,Map<String,Object> context)throws Exception{
+        java.lang.reflect.Method m=RecoverySemanticGate.class.getDeclaredMethod("captureFirstRound",Finding.class,Map.class,String.class);
+        m.setAccessible(true);return (Finding)m.invoke(null,f,context,"engine-v1");
+    }
+    @Test void actualReadOnlyFirstRoundStopsSameInputEvenWithoutSemanticExhaustion()throws Exception{
+        Finding first=investigated(finding(Collections.emptyList()),"REPEATED_ACTION_WITHOUT_NEW_EVIDENCE",true);
+        Finding saved=capture(first,context(TARGET));
+        assertEquals(false,gate(saved,context(TARGET),Collections.emptyList()).get("allowed"));
+        assertEquals("UNDETERMINED",saved.evaluation().status());assertEquals(atomic(first).get("gaps"),atomic(saved).get("gaps"));
+        assertEquals(Collections.emptyList(),map(atomic(saved).get("agentInvestigation")).get("exhaustedTargetObligationIds"));
+        Map<String,Object> changed=new LinkedHashMap<>(atomic(saved));changed.put("facts",Collections.singletonList(fact("commitment","新的相关事实","原文")));
+        Finding newEvidence=new Finding(saved.id(),saved.runId(),saved.checkpoint(),saved.evaluation(),fields("atomicCheck",changed));
+        assertEquals(true,gate(newEvidence,context(TARGET),Collections.emptyList()).get("allowed"));
+        assertEquals(true,gate(saved,context("INDEPENDENT"),Collections.emptyList()).get("allowed"));
+        assertEquals(true,RecoverySemanticGate.inspect(saved,"VERIFY_SOURCE_PAGES",context(TARGET),Collections.emptyList(),"engine-v1").get("allowed"));
+    }
+    @Test void timeoutUnvisitedAndChangedRuleCannotBeDisguisedAsConsumedText()throws Exception{
+        for(Finding first:Arrays.asList(investigated(finding(Collections.emptyList()),"INVESTIGATION_TIMEOUT",true),investigated(finding(Collections.emptyList()),"REPEATED_ACTION_WITHOUT_NEW_EVIDENCE",false)))
+            assertEquals(true,gate(capture(first,context(TARGET)),context(TARGET),Collections.emptyList()).get("allowed"));
+        Finding saved=capture(investigated(finding(Collections.emptyList()),"REPEATED_ACTION_WITHOUT_NEW_EVIDENCE",true),context(TARGET));
+        assertEquals(true,RecoverySemanticGate.inspect(saved,"TARGETED_EVIDENCE",context(TARGET),Collections.emptyList(),"new-policy").get("allowed"));
+        Map<String,Object> recovery=context(TARGET);recovery.put("recoveryStrategy","TARGETED_EVIDENCE");
+        assertFalse(atomic(capture(investigated(finding(Collections.emptyList()),"REPEATED_ACTION_WITHOUT_NEW_EVIDENCE",true),recovery)).containsKey("firstRoundSemanticInputs"));
+    }
     private static final String TARGET="Dd1601e9a251f3f31f88c-WORKLOAD-RESPONSE";
     private Map<String,Object> rule(String id,String field){return fields("id",id,"predicate","DECLARATION","subject","","field",field,"expected","未超出最大承接数量","parameters",cn.bidcheck.compat.Java8Api.mapOf());}
     private Map<String,Object> fact(String field,String value,String basis){return fields("kind","DECLARATION","subject","","field",field,"value",value,"basis",basis,"scope","CURRENT_PROJECT","sourceIds",cn.bidcheck.compat.Java8Api.listOf("Sa7e6cb0f0dfbb7808607"));}
@@ -22,6 +67,21 @@ class RecoverySemanticGateTest {
     private List<Map<String,Object>> consumed(Finding f,String... targets){return cn.bidcheck.compat.Java8Api.listOf(fields("strategy","TARGETED_EVIDENCE","status","NO_PROGRESS","semanticConsumedInputs",RecoverySemanticGate.inputs(f,context(targets),"engine-v1")));}
     private Map<String,Object> gate(Finding f,Map<String,Object> context,List<Map<String,Object>> attempts){return RecoverySemanticGate.inspect(f,"TARGETED_EVIDENCE",context,attempts,"engine-v1");}
 
+    @Test void unchangedSharedRecomputationIsConsumedOnlyBySameStrategy(){
+        Finding f=finding(Collections.emptyList());String strategy="RECOMPUTE_SHARED_EVIDENCE";
+        List<Map<String,Object>> attempts=Collections.singletonList(fields("strategy",strategy,"status","NO_PROGRESS","semanticConsumedInputs",RecoverySemanticGate.inputs(f,context(TARGET),"v1")));
+        assertEquals(false,RecoverySemanticGate.inspect(f,strategy,context(TARGET),attempts,"v1").get("allowed"));
+        Finding changed=finding(Collections.singletonList(fact("commitment","超出最大数量","声明")));
+        assertEquals(true,RecoverySemanticGate.inspect(changed,strategy,context(TARGET),attempts,"v1").get("allowed"));
+    }
+    @Test void coverFactDoesNotWakeAnotherDocumentType(){
+        Map<String,Object> cover=fields("kind","MATERIAL","subject","","field","material","value","投标文件（技术部分）","scope","CURRENT_PROJECT");
+        Map<String,Object> event=fields("recordType","FACT","itemId","new-cover","fact",cover,"sources",Collections.singletonList(fields("id","page-of-cover")));
+        Map<String,Object> target=fields("predicate","MATERIAL","field","material","targetExpected","法定代表人身份证明");
+        assertFalse(OrdinaryRecoveryDependencies.matches(fields("target",target),event));
+        target.put("targetExpected","第二分册 技术投标文件");assertTrue(OrdinaryRecoveryDependencies.matches(fields("target",target),event));
+        target.put("targetExpected","第三分册 报价文件");assertFalse(OrdinaryRecoveryDependencies.matches(fields("target",target),event));
+    }
     @Test void firstCapabilityIsAllowedButRawVisualReceiptDoesNotReopenConsumedEvidence(){
         Finding f=finding(cn.bidcheck.compat.Java8Api.listOf(fact("commitment","未超出最大数量","人员承诺书")));
         assertEquals(true,gate(f,context(TARGET),cn.bidcheck.compat.Java8Api.listOf()).get("allowed"));

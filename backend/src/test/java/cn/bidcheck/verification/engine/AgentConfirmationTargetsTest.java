@@ -10,7 +10,7 @@ class AgentConfirmationTargetsTest {
     private RuleEvaluator evaluator(){
         Map<String,Object> context=new HashMap<>();context.put("enableProgrammaticInferences",true);
         Decision decision=InferenceClaims.discover(f.rule,f.unresolved(f.candidate()),cn.bidcheck.compat.Java8Api.listOf(),f.corpus,context);
-        assertEquals("NEEDS_CONFIRMATION",decision.status());RuleEvaluator evaluator=new RuleEvaluator(cn.bidcheck.compat.Java8Api.listOf(),f.corpus,context);
+        assertEquals("UNDETERMINED",decision.status());RuleEvaluator evaluator=new RuleEvaluator(cn.bidcheck.compat.Java8Api.listOf(),f.corpus,context);
         evaluator.decisions.put(f.rule.id(),decision);return evaluator;
     }
     private Map<String,Object> receipt(RuleEvaluator evaluator,List<Rule> rules){return AgentInvestigationScope.targetReceipt(rules,new Plan("ALL",rules,"FIXTURE",cn.bidcheck.compat.Java8Api.listOf()),evaluator);}

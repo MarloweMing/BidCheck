@@ -94,6 +94,15 @@ class CanonicalFactLookupTest {
         java.util.List<java.util.Map<java.lang.String, java.lang.Object>> rows=lookup(d,request(d,sources,true));assertEquals(1,rows.size());assertTrue(rows.get(0).containsKey("fact"));
         assertEquals(1,store.rows.values().stream().filter(r->r.kind.equals("fact_lookup_state")).findFirst().orElseThrow(java.util.NoSuchElementException::new).value.get("obsoleteObservationsExcluded"));
     }
+    @Test void cursorReturnsRemainingFactsAndCompleteSourceReceiptOnlyOnLastPage(){
+        Document d=doc();List<Map<String,Object>> sources=cn.bidcheck.compat.Java8Api.listOf(data.source(d,"S"));
+        publish(d,"pages",Arrays.asList(data.fact("a","一级","S"),data.fact("b","二级","S")),sources,Collections.emptyList(),"NATIVE");
+        Map<String,Object> req=request(d,sources,false);req.put("limit",1);req.put("paged",true);
+        Map<String,Object> first=lookup(d,req).get(0);assertNotNull(first.get("nextCursor"));assertNull(first.get("coveredSourceIds"));
+        req.put("cursor",first.get("nextCursor"));Map<String,Object> last=lookup(d,req).get(0);
+        assertNotEquals(first.get("occurrenceId"),last.get("occurrenceId"));assertNull(last.get("nextCursor"));
+        assertEquals(Collections.singletonList("S"),last.get("coveredSourceIds"));
+    }
     @Test void factLimitDoesNotPublishReceiptWhoseDependencyWasTruncated(){
         Document d=doc();java.util.List<java.util.Map<java.lang.String, java.lang.Object>> sources=cn.bidcheck.compat.Java8Api.listOf(data.source(d,"S"));publish(d,"original",cn.bidcheck.compat.Java8Api.listOf(data.fact("a","一级","S"), data.fact("b","二级","S")),sources,cn.bidcheck.compat.Java8Api.listOf(data.fieldReceipt("category","EXTRACTED",cn.bidcheck.compat.Java8Api.listOf("a", "b"))),"EXTRACTED");
         Map<String,Object> request=request(d,sources,true);request.put("limit",1);java.util.List<java.util.Map<java.lang.String, java.lang.Object>> result=lookup(d,request);assertEquals(1,result.size());assertEquals(true,result.get(0).get("lookupTruncated"));assertEquals(true,result.get(0).get("factLookupTruncated"));assertEquals(false,result.get(0).get("fieldLookupTruncated"));

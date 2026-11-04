@@ -64,17 +64,35 @@ final class SharedFactReuse {
     private final Set<String> emittedLookupAudits=new HashSet<>();
     private final Set<String> nativePublished=new HashSet<>();
     int sharedPublishes,extractionSkipped,rejectedFacts;
-    private boolean factLookupTruncated,fieldLookupTruncated;
+    private boolean fieldLookupTruncated;
+    private final Map<String,Set<String>> unreadByKey=new LinkedHashMap<>(), coveredByKey=new LinkedHashMap<>();
+    boolean truncatedFor(String key){return unreadByKey.containsKey(key)||unreadByKey.containsKey("*");}
+    Set<String> coveredSources(String key){return Collections.unmodifiableSet(coveredByKey.getOrDefault(key,Collections.emptySet()));}
+    boolean truncatedForRules(List<Rule> rules){return rules.stream().anyMatch(r->truncatedFor(FieldCoverage.key(observationTarget(r))));}
+    private void completeSourceRead(Collection<String> keys,Collection<String> sources){
+        for(String key:keys){
+            coveredByKey.computeIfAbsent(key,k->new LinkedHashSet<>()).addAll(sources);
+            Set<String> missing=unreadByKey.get(key);
+            if(missing!=null&&!missing.isEmpty()){missing.removeAll(sources);if(missing.isEmpty())unreadByKey.remove(key);}
+        }
+    }
     private Map<String,Object> subjectPreloadTrace=cn.bidcheck.compat.Java8Api.mapOf();
     private List<Map<String,Object>> personEvidenceProfiles=cn.bidcheck.compat.Java8Api.listOf();
     Map<String,Object> subjectPreloadTrace(){return subjectPreloadTrace;}
     List<Map<String,Object>> personEvidenceProfiles(){return personEvidenceProfiles;}
     private final Map<String,Map<String,Object>> lookupTruncations=new LinkedHashMap<>();
-    boolean factLookupTruncated(){return factLookupTruncated;}
+    boolean factLookupTruncated(){return !unreadByKey.isEmpty();}
     boolean fieldLookupTruncated(){return fieldLookupTruncated;}
     List<Map<String,Object>> lookupTruncations(){return cn.bidcheck.compat.Java8Api.listCopyOf(lookupTruncations.values());}
     private void markLookupTruncation(boolean facts,boolean fields,Map<String,Object> detail){
-        if(!facts&&!fields)return;factLookupTruncated|=facts;fieldLookupTruncated|=fields;
+        if(!facts&&!fields)return;fieldLookupTruncated|=fields;
+        if(facts){
+            List<String> keys=ProofVerifier.strings(detail.get("observationKeys")), sources=ProofVerifier.strings(detail.get("sourceIds"));
+            for(String key:keys.isEmpty()?Collections.singletonList("*"):keys){
+                unreadByKey.computeIfAbsent(key,k->new LinkedHashSet<>()).addAll(sources);
+                if(coveredByKey.containsKey(key))coveredByKey.get(key).removeAll(sources);
+            }
+        }
         Map<String,Object> value=new LinkedHashMap<>(detail);value.put("factLookupTruncated",facts);value.put("fieldLookupTruncated",fields);
         lookupTruncations.put(identity(json.valueToTree(ordered(value)).toString()),value);
     }
@@ -190,20 +208,49 @@ final class SharedFactReuse {
                     "fieldCoverage",cachedFields,"fieldCoverageSources",cachedSources,"coverageSources",cachedSources,"coverageComplete",false,"recordType","FIELD_COVERAGE"));
             }
         }
-        if(context.get("sharedFactLookup") instanceof Function<?,?>){Object result=((Function<Map<String,Object>,?>)((Function<?,?>) (context.get("sharedFactLookup")))).apply(linked("lookupMode",subjectLookup?"CANONICAL_SUBJECT":"CANONICAL_SOURCE","subjects",subjects,"sources",cn.bidcheck.compat.Java8Api.toList(selected.stream().map(metadata::get).filter(Objects::nonNull)),"modelIdentity",modelIdentity,"sourceIds",new ArrayList<>(selected),"documentIds",cn.bidcheck.compat.Java8Api.toList(corpus.documents.stream().map(Document::id)),"factKinds",new ArrayList<>(requestedKinds),"limit",LIMIT,"fieldCoverageLimit",LIMIT,"engineVersion",VERSION,"engineIdentity",engineIdentity,"observationPolicy",FieldCoverage.POLICY,"includeFieldCoverage",!subjectLookup,"observationKeys",cn.bidcheck.compat.Java8Api.toList(rules.stream().map(r->FieldCoverage.key(observationTarget(r))).distinct()),"runId",context.get("sourceRunId"),"checkpointId",context.get("checkpointId"),"lookupPhase",phase));entries.addAll(RuleEvaluator.maps(result));}
+        boolean completePageSet=false;
+        List<String> observationKeys=cn.bidcheck.compat.Java8Api.toList(rules.stream().map(r->FieldCoverage.key(observationTarget(r))).distinct());
+        if(context.get("sharedFactLookup") instanceof Function<?,?>){
+            Function<Map<String,Object>,?> query=(Function<Map<String,Object>,?>)context.get("sharedFactLookup");
+            Map<String,Object> request=linked("lookupMode",subjectLookup?"CANONICAL_SUBJECT":"CANONICAL_SOURCE","subjects",subjects,"sources",cn.bidcheck.compat.Java8Api.toList(selected.stream().map(metadata::get).filter(Objects::nonNull)),"modelIdentity",modelIdentity,"sourceIds",new ArrayList<>(selected),"documentIds",cn.bidcheck.compat.Java8Api.toList(corpus.documents.stream().map(Document::id)),"factKinds",new ArrayList<>(requestedKinds),"limit",LIMIT,"fieldCoverageLimit",LIMIT,"engineVersion",VERSION,"engineIdentity",engineIdentity,"observationPolicy",FieldCoverage.POLICY,"includeFieldCoverage",!subjectLookup,"observationKeys",cn.bidcheck.compat.Java8Api.toList(rules.stream().map(r->FieldCoverage.key(observationTarget(r))).distinct()),"runId",context.get("sourceRunId"),"checkpointId",context.get("checkpointId"),"lookupPhase",phase);
+            request.put("paged",true);
+            Set<String> visited=new HashSet<>();
+            while(true){
+                List<Map<String,Object>> page=RuleEvaluator.maps(query.apply(request));
+                entries.addAll(page);
+                if(page.isEmpty()){
+                    if(!visited.isEmpty())markLookupTruncation(true,true,linked("sourceIds",new ArrayList<>(selected),"observationKeys",observationKeys,"reason","MISSING_CONTINUATION_RECEIPT"));
+                    break;
+                }
+                Map<String,Object> receipt=page.get(0);
+                String cursor=str(receipt,"nextCursor");
+                if(cursor.isEmpty()){
+                    completePageSet=Boolean.TRUE.equals(receipt.get("lookupPagesComplete"));
+                    if(!visited.isEmpty()&&!completePageSet)markLookupTruncation(true,true,linked("sourceIds",new ArrayList<>(selected),"observationKeys",observationKeys,"reason","MISSING_CONTINUATION_RECEIPT"));
+                    if(completePageSet&&!subjectLookup&&selected.equals(new HashSet<>(ProofVerifier.strings(receipt.get("coveredSourceIds")))))
+                        completeSourceRead(observationKeys,selected);
+                    break;
+                }
+                if(!visited.add(cursor)){
+                    markLookupTruncation(true,true,linked("sourceIds",new ArrayList<>(selected),"observationKeys",observationKeys,"reason","REPEATED_LOOKUP_CURSOR"));
+                    break;
+                }
+                request.put("cursor",cursor);
+            }
+        }
         long suppliedFacts=entries.stream().filter(row->row.get("fact") instanceof Map<?,?>).map(row->json.valueToTree(ordered(row.get("fact"))).toString()).distinct().count();
         List<Map<String,Object>> processingAudit=new ArrayList<>();
         entries.addAll(processingEntries(requestedKinds,candidates,layout,(int)Math.max(0,120-suppliedFacts),processingAudit));
         Map<String,Object> lookupScope=linked("phase",phase,"sourceIds",new ArrayList<>(selected),"factKinds",new ArrayList<>(requestedKinds),"subjects",subjects,"observationKeys",cn.bidcheck.compat.Java8Api.toList(rules.stream().map(r->FieldCoverage.key(observationTarget(r))).distinct()));
         for(Map<String,Object> entry:entries){Map<String,Object> detail=new LinkedHashMap<>(lookupScope);if(entry.get("lookupTruncation") instanceof Map<?,?>)((Map<?,?>) (entry.get("lookupTruncation"))).forEach((k,v)->detail.put(String.valueOf(k),v));
             markLookupTruncation(Boolean.TRUE.equals(entry.get("factLookupTruncated")),Boolean.TRUE.equals(entry.get("fieldLookupTruncated")),detail);}
-        if(entries.size()>LIMIT*8){List<Map<String,Object>> omitted=entries.subList(LIMIT*8,entries.size());Map<String,Object> detail=new LinkedHashMap<>(lookupScope);detail.put("reason","SHARED_ENTRY_SCAN_CAPACITY");
+        if(!completePageSet&&entries.size()>LIMIT*8){List<Map<String,Object>> omitted=entries.subList(LIMIT*8,entries.size());Map<String,Object> detail=new LinkedHashMap<>(lookupScope);detail.put("reason","SHARED_ENTRY_SCAN_CAPACITY");
             markLookupTruncation(omitted.stream().anyMatch(row->row.get("fact") instanceof Map<?,?>),omitted.stream().anyMatch(row->!RuleEvaluator.maps(row.get("fieldCoverage")).isEmpty()),detail);}
         Map<String,Fact> accepted=new LinkedHashMap<>(),acceptedByOccurrence=new HashMap<>();Map<String,Set<String>> acceptedByBatch=new HashMap<>();Map<String,Map<String,Fact>> acceptedFactsByBatch=new HashMap<>();Map<String,Map<String,Object>> batchReceipts=new HashMap<>();Map<String,FieldCandidate> completeFields=new LinkedHashMap<>(),pendingFields=new LinkedHashMap<>();
         List<Map<String,Object>> candidateAudit=new ArrayList<>();int metadataEntries=0,fieldOnlyEntries=0;
         // Facts and field reads have independent capacities. A full fact result must not discard
         // READ_NOT_FOUND receipts or receipt dependencies returned after those facts.
-        for(Map<String,Object> entry:cn.bidcheck.compat.Java8Api.toList(entries.stream().limit(LIMIT*8L))){
+        for(Map<String,Object> entry:entries.subList(0,completePageSet?entries.size():Math.min(entries.size(),LIMIT*8))){
             if("LOOKUP_METADATA".equals(str(entry,"recordType"))){metadataEntries++;continue;}
             if(!VERSION.equals(str(entry,"engineVersion"))&&!FieldCoverage.POLICY.equals(str(entry,"observationPolicy"))){auditCandidate(candidateAudit,entry,"SKIPPED","ENGINE_OR_OBSERVATION_POLICY_MISMATCH",cn.bidcheck.compat.Java8Api.listOf(),"");continue;}
             String receiptBatch=str(entry,"batchId");if(cn.bidcheck.compat.Java8Api.isBlank(receiptBatch))receiptBatch=str(entry,"operationIdentity");
@@ -211,7 +258,7 @@ final class SharedFactReuse {
             List<Map<String,Object>> scopedFields=cn.bidcheck.compat.Java8Api.toList(RuleEvaluator.maps(entry.get("fieldCoverage")).stream().filter(row->{List<String> ids=ProofVerifier.strings(row.get("sourceIds"));return validFieldReceipt(row)&&!ids.isEmpty()&&selected.containsAll(ids)&&ids.stream().allMatch(id->sourceMatches(id,fieldSources.get(id)));}));
             if(!cn.bidcheck.compat.Java8Api.isBlank(receiptBatch))for(Map<String,Object> receipt:scopedFields){boolean occurrenceReferences="OCCURRENCE_ID".equals(str(entry,"factReferenceType"));Map<String,Object> semantic=new LinkedHashMap<>(receipt);for(String provenance:cn.bidcheck.compat.Java8Api.listOf("reusedFromBatchId", "reusedObservation", "observedInCurrentRun"))semantic.remove(provenance);
                 String key=(occurrenceReferences?"occurrence:":receiptBatch+":")+json.valueToTree(ordered(semantic));Map<String,FieldCandidate> bucket=FieldCoverage.completeRead(receipt)?completeFields:pendingFields;
-                if(bucket.size()<LIMIT)bucket.putIfAbsent(key,new FieldCandidate(receiptBatch,receipt,occurrenceReferences));
+                if(completePageSet||bucket.size()<LIMIT)bucket.putIfAbsent(key,new FieldCandidate(receiptBatch,receipt,occurrenceReferences));
                 else if(!bucket.containsKey(key)&&FieldCoverage.completeRead(receipt)){Map<String,Object> detail=new LinkedHashMap<>(lookupScope);detail.put("reason","SHARED_FIELD_RECEIPT_CAPACITY");markLookupTruncation(false,true,detail);}
             }
             if("FIELD_COVERAGE".equals(str(entry,"recordType"))){fieldOnlyEntries++;continue;}
@@ -227,8 +274,11 @@ final class SharedFactReuse {
             ProofVerifier.Verified verified=new ProofVerifier(corpus.byId).verify(json.valueToTree(cn.bidcheck.compat.Java8Api.mapOf("facts", cn.bidcheck.compat.Java8Api.listOf(((Map<?,?>) (entry.get("fact")))))),candidates,layout);
             if(verified.facts().size()!=1||!verified.rejected().isEmpty()){rejectedFacts++;auditCandidate(candidateAudit,entry,"REJECTED","PROOF_VERIFICATION_FAILED",verified.rejected(),"");continue;}
             Fact fact=canonical(verified.facts().get(0));if(!shareable(fact)){rejectedFacts++;auditCandidate(candidateAudit,entry,"REJECTED","CANONICAL_FACT_NOT_SHAREABLE",cn.bidcheck.compat.Java8Api.listOf(),fact.id());continue;}
+            if("MATERIAL".equals(kind)&&rules.stream().filter(r->"MATERIAL".equals(r.predicate())).noneMatch(r->FieldCoverage.matches(observationTarget(r),value(fact)))){
+                auditCandidate(candidateAudit,entry,"SKIPPED","DIFFERENT_MATERIAL_TARGET",cn.bidcheck.compat.Java8Api.listOf(),fact.id());continue;
+            }
             if(subjectLookup&&!subjectRelevant(fact,subjects)){auditCandidate(candidateAudit,entry,"SKIPPED","SUBJECT_NOT_REQUESTED",cn.bidcheck.compat.Java8Api.listOf(),fact.id());continue;}
-            if(accepted.size()>=LIMIT&&!accepted.containsKey(fact.id())){Map<String,Object> detail=new LinkedHashMap<>(lookupScope);detail.put("reason","SHARED_FACT_CAPACITY");markLookupTruncation(true,false,detail);auditCandidate(candidateAudit,entry,"SKIPPED","SHARED_FACT_CAPACITY",cn.bidcheck.compat.Java8Api.listOf(),fact.id());continue;}
+            if(!completePageSet&&accepted.size()>=LIMIT&&!accepted.containsKey(fact.id())){Map<String,Object> detail=new LinkedHashMap<>(lookupScope);detail.put("reason","SHARED_FACT_CAPACITY");markLookupTruncation(true,false,detail);auditCandidate(candidateAudit,entry,"SKIPPED","SHARED_FACT_CAPACITY",cn.bidcheck.compat.Java8Api.listOf(),fact.id());continue;}
             auditCandidate(candidateAudit,entry,accepted.containsKey(fact.id())?"DUPLICATE":"ACCEPTED",accepted.containsKey(fact.id())?"CANONICAL_FACT_ALREADY_ACCEPTED":"SOURCE_AND_TYPED_PROOF_VERIFIED",cn.bidcheck.compat.Java8Api.listOf(),fact.id());accepted.put(fact.id(),fact);reused.add(fact.id());
             if(!cn.bidcheck.compat.Java8Api.isBlank(str(entry,"occurrenceId")))acceptedByOccurrence.putIfAbsent(str(entry,"occurrenceId"),fact);
             String batch=str(entry,"batchId");if(cn.bidcheck.compat.Java8Api.isBlank(batch))batch=str(entry,"operationIdentity");
@@ -241,7 +291,7 @@ final class SharedFactReuse {
         }
         batchReceipts.forEach((batch,receipt)->{List<String> ids=ProofVerifier.strings(receipt.get("factIds"));if(!ids.isEmpty()&&acceptedByBatch.getOrDefault(batch,cn.bidcheck.compat.Java8Api.setOf()).containsAll(ids)&&validReceipt(receipt))receipts.put(batch,receipt);});
         Map<String,Map<String,Object>> adoptedFields=new LinkedHashMap<>();
-        List<FieldCandidate> fieldCandidates=new ArrayList<>(completeFields.values());fieldCandidates.addAll(cn.bidcheck.compat.Java8Api.toList(pendingFields.values().stream().limit(LIMIT-completeFields.size())));
+        List<FieldCandidate> fieldCandidates=new ArrayList<>(completeFields.values());fieldCandidates.addAll(cn.bidcheck.compat.Java8Api.toList(pendingFields.values().stream().limit(completePageSet?Long.MAX_VALUE:Math.max(0,LIMIT-completeFields.size()))));
         for(FieldCandidate candidate:fieldCandidates){String batch=candidate.batch();Map<String,Object> receipt=candidate.receipt();List<String> ids=ProofVerifier.strings(receipt.get("factIds"));Map<String,Fact> dependencies=candidate.occurrenceReferences()?acceptedByOccurrence:acceptedFactsByBatch.getOrDefault(batch,cn.bidcheck.compat.Java8Api.mapOf());
             if(ids.size()>120||ProofVerifier.strings(receipt.get("sourceIds")).size()>128||!dependencies.keySet().containsAll(ids)||"EXTRACTED".equals(str(receipt,"status"))&&ids.isEmpty())continue;
             Map<String,Object> target=(Map<String,Object>)receipt.get("target");List<String> sourceIds=ProofVerifier.strings(receipt.get("sourceIds"));
@@ -268,7 +318,7 @@ final class SharedFactReuse {
     @SuppressWarnings("unchecked") private void publishLookupAudit(String phase,String mode,List<String> subjects,Set<String> kinds,int sources,int entries,int metadataCount,int fieldOnlyCount,List<Fact> facts,List<Map<String,Object>> candidates,List<Map<String,Object>> processingCandidates){
         if(!(context.get("sharedFactAdoptionAudit") instanceof Consumer<?>))return;
         Map<String,Long> counts=new LinkedHashMap<>();for(String outcome:cn.bidcheck.compat.Java8Api.listOf("ACCEPTED", "DUPLICATE", "SKIPPED", "REJECTED"))counts.put(outcome,candidates.stream().filter(c->outcome.equals(c.get("outcome"))).count());
-        Map<String,Object> event=linked("policy","SHARED_FACT_ADOPTION_AUDIT_V1","lookupPhase",phase,"lookupMode",mode,"subjects",cn.bidcheck.compat.Java8Api.listCopyOf(subjects),"requestedKinds",cn.bidcheck.compat.Java8Api.listCopyOf(kinds),"selectedSourceCount",sources,"suppliedEntryCount",entries,"metadataEntryCount",metadataCount,"fieldOnlyEntryCount",fieldOnlyCount,"unexaminedEntryCount",Math.max(0,entries-LIMIT*8),"candidateCount",candidates.size(),"outcomeCounts",counts,"acceptedFactIds",cn.bidcheck.compat.Java8Api.toList(facts.stream().map(Fact::id)),"candidates",candidates,"processingRejectedCount",processingCandidates.size(),"processingCandidates",processingCandidates,"rejectedInThisLookup",counts.get("REJECTED")+processingCandidates.size(),"rawEvidenceStoredInLedger",true);
+        Map<String,Object> event=linked("policy","SHARED_FACT_ADOPTION_AUDIT_V1","lookupPhase",phase,"lookupMode",mode,"subjects",cn.bidcheck.compat.Java8Api.listCopyOf(subjects),"requestedKinds",cn.bidcheck.compat.Java8Api.listCopyOf(kinds),"selectedSourceCount",sources,"suppliedEntryCount",entries,"metadataEntryCount",metadataCount,"fieldOnlyEntryCount",fieldOnlyCount,"unexaminedEntryCount",Math.max(0,entries-metadataCount-fieldOnlyCount-candidates.size()),"candidateCount",candidates.size(),"outcomeCounts",counts,"acceptedFactIds",cn.bidcheck.compat.Java8Api.toList(facts.stream().map(Fact::id)),"candidates",candidates,"processingRejectedCount",processingCandidates.size(),"processingCandidates",processingCandidates,"rejectedInThisLookup",counts.get("REJECTED")+processingCandidates.size(),"rawEvidenceStoredInLedger",true);
         String auditId=identity(json.valueToTree(ordered(event)).toString());event.put("auditId",auditId);boolean repeated=!emittedLookupAudits.add(auditId);event.put("repeated",repeated);if(repeated){event.put("sameAsAuditId",auditId);event.put("candidates",cn.bidcheck.compat.Java8Api.listOf());event.put("processingCandidates",cn.bidcheck.compat.Java8Api.listOf());}
         ((Consumer<Map<String,Object>>)((Consumer<?>) (context.get("sharedFactAdoptionAudit")))).accept(event);
         LOG.info("bidcheck.fact_adoption_audit runId={} checkpointId={} phase={} mode={} auditId={} candidates={} accepted={} duplicate={} skipped={} rejected={} repeated={}",trace("sourceRunId"),trace("checkpointId"),phase,mode,auditId,candidates.size(),counts.get("ACCEPTED"),counts.get("DUPLICATE"),counts.get("SKIPPED"),counts.get("REJECTED"),repeated);

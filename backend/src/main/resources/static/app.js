@@ -16,7 +16,7 @@ const state = {
   resultVersionView: 'source', resultVersionRunId: null,
 };
 const statuses = { PASS: '符合', FAIL: '高风险', WARNING: '有风险', UNDETERMINED: '待核实', NEEDS_CONFIRMATION: '需你确认', NOT_APPLICABLE: '不适用' };
-const businessStates = { SATISFIED: '满足要求', RISK: '存在风险', SYSTEM_INCOMPLETE: '系统未完成', EVIDENCE_PENDING: '待补证据', WAIT_EXTERNAL: '待外部条件', USER_ACTION: '需你确认', UNDETERMINED: '未形成结论', NOT_APPLICABLE: '不适用' };
+const businessStates = { SATISFIED: '满足要求', RISK: '存在风险', SYSTEM_INCOMPLETE: '系统未完成', EVIDENCE_PENDING: '系统取证中', MATERIAL_REQUIRED: '请补充材料', NOTICE: '全文提示', WAIT_EXTERNAL: '待外部条件', USER_ACTION: '需你确认', UNDETERMINED: '未形成结论', NOT_APPLICABLE: '不适用' };
 const purposeLabels = { MANDATORY: '必备要求', SCORING: '评分优化', INFORMATIONAL: '信息提示' };
 const verificationModeLabels = { DOCUMENT: '文件核验', EXTERNAL: '外部核验', HUMAN_JUDGMENT: '需专业判断' };
 const templateParameterLabels = {
@@ -727,7 +727,7 @@ function templateBusinessPresentation(finding, projection) {
       SATISFIED: '本项已形成满足要求的结论，依据保留供追溯。',
       NOT_APPLICABLE: '本项不适用于当前条件，适用依据保留供追溯。',
     })[resultState] || (missing.length ? `本项还缺少 ${missing.length} 项明确输入，请查看关键子项。` : '本项已形成当前结论，依据保留供追溯。');
-  const userActionRequired = resultState === 'USER_ACTION' || resultState === 'RISK';
+  const userActionRequired = resultState === 'MATERIAL_REQUIRED' || resultState === 'USER_ACTION' || resultState === 'RISK';
   const owner = ['SYSTEM_INCOMPLETE','EVIDENCE_PENDING'].includes(resultState) ? 'SYSTEM' : userActionRequired ? 'USER' : 'NONE';
   return {
     state: resultState,
@@ -742,7 +742,7 @@ function templateBusinessPresentation(finding, projection) {
     proofScope: conclusion.proofScope || '', evidenceState: evidence.state || '', executionState: projection.execution?.state || '', projection,
   };
 }
-const currentBusinessResultVersion = 'business-result-9-external-responsibility';
+const currentBusinessResultVersion = 'business-result-10-document-scope';
 const legacyBusinessResultVersions = new Set(['business-result-1','business-result-2','business-result-3','business-result-4-proof-scope','business-result-5-failure-origin']);
 function adaptLegacyBusinessPresentation(saved, computed, status) {
   const version = saved?.version;
@@ -906,8 +906,16 @@ function businessPresentation(finding, includeReview = false) {
   const beforeVisual = (assessment.preOcrEvaluation || assessment.rawEvaluation)?.status;
   const evidencePending = assessment.model?.decision==='EXTERNAL_INPUT_REQUIRED' || resolvedInventory || beforeVisual === 'UNDETERMINED' || codes.includes('VISUAL_MARK_UNREADABLE')&&!visualReview.unreadableOnly || ['RELATION_UNCONFIRMED','EVIDENCE_NOT_FOUND'].includes(atomic && atomicPresentation(atomic).state) || codes.some(code=>['EVIDENCE_MISSING','PERSONNEL_COVERAGE_INCOMPLETE','NO_CANDIDATE_EVIDENCE','EVIDENCE_NOT_FOUND'].includes(code));
   const visual = ocr.required === true;
-  const resultState = ({PASS:'SATISFIED',FAIL:'RISK',WARNING:'RISK',NOT_APPLICABLE:'NOT_APPLICABLE'})[status] || (processing ? 'SYSTEM_INCOMPLETE' : status === 'NEEDS_CONFIRMATION' ? 'USER_ACTION' : externalState ? 'WAIT_EXTERNAL' : external || visualReview.unreadableOnly ? 'USER_ACTION' : evidencePending ? 'EVIDENCE_PENDING' : visual ? 'USER_ACTION' : 'EVIDENCE_PENDING');
-  const userActionRequired = resultState === 'USER_ACTION' || resultState === 'RISK' || resultState === 'SATISFIED' && visual;
+  let resultState = ({PASS:'SATISFIED',FAIL:'RISK',WARNING:'RISK',NOT_APPLICABLE:'NOT_APPLICABLE'})[status] || (processing ? 'SYSTEM_INCOMPLETE' : status === 'NEEDS_CONFIRMATION' ? 'USER_ACTION' : externalState ? 'WAIT_EXTERNAL' : external || visualReview.unreadableOnly ? 'USER_ACTION' : evidencePending ? 'EVIDENCE_PENDING' : visual ? 'USER_ACTION' : 'EVIDENCE_PENDING');
+  const inventory = (atomic?.conditions || []).map(row=>row.proof).find(p=>p && Number.isInteger(p.inventoryTotalMembers));
+  if(status==='UNDETERMINED'){
+    if(inventory && !recoveryFailed && !externalState)resultState='EVIDENCE_PENDING';
+    if(assessment.consistencyGroupId || finding.checkpoint?.type==='FULL_TEXT_REVIEW')resultState='NOTICE';
+    if(externalState?.state==='WAIT_OWNER_DATA')resultState='WAIT_EXTERNAL';
+    if(codes.includes('BID_VOLUME_NOT_UPLOADED'))resultState='MATERIAL_REQUIRED';
+    if(job?.strategy==='WAIT_TAX_REFERENCE_DATE')resultState='USER_ACTION';
+  }
+  const userActionRequired = resultState === 'MATERIAL_REQUIRED' || resultState === 'USER_ACTION' || resultState === 'RISK' || resultState === 'SATISFIED' && visual;
   let nextStep = ({SYSTEM_INCOMPLETE:'需继续处理条款、证据校验或失败请求；当前不要求补交材料，也不计入人工核对待办。',EVIDENCE_PENDING:'需继续检索并关联现有文件中的证据；只有确认具体缺口后才要求补充材料。',USER_ACTION:'按下方说明补充外部信息、确认核验时点或核对原图。',RISK:'对照所列原文确认风险，并记录复核结论。',SATISFIED:visual?'文字要求已得到支持；另有原图复核事项，请核对下方指定位置。':'本项已形成满足要求的结论，依据保留供追溯。',NOT_APPLICABLE:'本项不适用于当前条件，适用依据保留供追溯。'})[resultState];
   if(stopped&&['SYSTEM_INCOMPLETE','EVIDENCE_PENDING'].includes(resultState))nextStep='本轮自动补查已停止，需修复处理环节或补足检索条件后再启动；当前不据此要求补交材料。';
   if(resultState==='USER_ACTION'&&gapKind==='EXTERNAL_INPUT')nextStep='需取得招标条款要求的外部记录或现场核验结果；现有文件检索不能替代该记录。';
@@ -939,6 +947,16 @@ function businessPresentation(finding, includeReview = false) {
   if(resultState==='USER_ACTION'&&codes.includes('CAPABILITY_CRITERIA_REQUIRED')){automatic.label='核验标准待明确';automatic.nextStep='招标原文未说明履约能力的具体指标或认可的证明方式，需依据招标澄清明确标准；这不表示投标材料缺失。';}
   if(resultState==='SYSTEM_INCOMPLETE'&&codes.includes('EXTERNAL_CONNECTOR_FAILED')&&!externalState)automatic.nextStep='系统需修复并重试指定外部查询；已完成文件证据保留，不要求补交投标材料。';
   if(resultState==='USER_ACTION'&&scoringReview)automatic.label=codes.includes('SCORE_SOURCE_LIST_AMBIGUOUS')?'评分口径待确认':'评分档次待评审';
+  if(resultState==='NOTICE'){
+    automatic.nextStep='查看已有出处和比较范围。';
+  }
+  if(inventory && status==='UNDETERMINED'){
+    const progress='子项 '+inventory.inventoryCompletedMembers+'/'+inventory.inventoryTotalMembers+' 已完成';
+    automatic.reason=progress+'。'+automatic.reason;
+    if(resultState==='EVIDENCE_PENDING')automatic.label=progress;
+  }
+  if(resultState==='MATERIAL_REQUIRED')Object.assign(automatic,{owner:'USER',userActionRequired:true,nextStep:reason});
+  if(resultState==='USER_ACTION' && job?.strategy==='WAIT_TAX_REFERENCE_DATE')automatic.nextStep=job.nextAction;
   automatic=adaptLegacyBusinessPresentation(saved,automatic,status);
   return includeReview?applyManualReviewPresentation(automatic,reviewOf(finding)):automatic;
 }
@@ -1002,13 +1020,13 @@ function findingDimensions(finding) {
   return computed;
 }
 function groupUnresolvedCount(item) {
-  return item.members.filter(f=>!findingDimensions(f).conclusion.determined).length;
+  return item.members.filter(f=>businessPresentation(f).state!=='NOTICE'&&!findingDimensions(f).conclusion.determined).length;
 }
 function groupPendingMemberCount(item) {
   return item.members.filter(f=>findingDimensions(f).conclusion.state==='UNDETERMINED').length;
 }
 function renderResolutionOverview(groups,results) {
-  const run=state.run.run,summary=state.run.resolutionSummary||{},dimensions=results.map(findingDimensions),unresolved=dimensions.filter(d=>!d.conclusion.determined).length;
+  const run=state.run.run,summary=state.run.resolutionSummary||{},dimensions=results.filter(f=>businessPresentation(f).state!=='NOTICE').map(findingDimensions),unresolved=dimensions.filter(d=>!d.conclusion.determined).length;
   const activeJobs=results.filter(f=>findingDimensions(f).execution.active).length,finished=terminal.has(run.status),failedRun=failed.has(run.status);
   const determined=dimensions.filter(d=>d.conclusion.determined&&d.conclusion.state!=='NOT_APPLICABLE').length,applicable=dimensions.filter(d=>d.conclusion.state!=='NOT_APPLICABLE').length;
   const sufficient=dimensions.filter(d=>d.evidence.state==='SUFFICIENT').length,unresolvedGroups=groups.filter(g=>groupUnresolvedCount(g)>0).length;
@@ -1043,7 +1061,7 @@ function businessGroups(results) {
   return groups;
 }
 function businessGroupState(item) {
-  const priority = ['RISK','SYSTEM_INCOMPLETE','EVIDENCE_PENDING','WAIT_EXTERNAL','USER_ACTION','UNDETERMINED','SATISFIED','NOT_APPLICABLE'];
+  const priority = ['RISK','SYSTEM_INCOMPLETE','MATERIAL_REQUIRED','EVIDENCE_PENDING','WAIT_EXTERNAL','USER_ACTION','UNDETERMINED','NOTICE','SATISFIED','NOT_APPLICABLE'];
   const states = new Set(item.members.map(f=>businessPresentation(f,true).state));
   if (states.size===2 && states.has('SATISFIED') && states.has('NOT_APPLICABLE')) return 'SYSTEM_INCOMPLETE';
   return priority.find(value => states.has(value)) || 'EVIDENCE_PENDING';
@@ -1487,6 +1505,11 @@ function displayedRunResults() {
   const overlays = new Map(version.results.map(entry => [entry?.checkpointId, entry?.finding]).filter(([id, finding]) => id && finding));
   return source.map(finding => overlays.get(finding?.checkpoint?.id) || finding);
 }
+function renderReferenceDateCard(card) {
+  if (card?.code !== 'REFERENCE_DATE_CONFLICT') return '';
+  const pages = [...new Set((card.evidences || []).map(ev => ev.page))];
+  return `<section class="panel"><div class="panel-body"><strong>请确认本项目核验日期</strong><p>当前比对日期为 ${e(card.referenceDate)}。已读取的 ${e(card.observedCount)} 处落款中，有 ${e(card.lateCount)} 处晚于该日，涉及 ${e((card.signingDates || []).join('、'))}。请结合延期公告核对项目时间。</p><small>投标原文页码：${e(pages.join('、'))}</small> <button class="text-action" data-action="tab" data-tab="documents">核对项目基础信息</button></div></section>`;
+}
 function renderResults() {
   const runs = [...(state.project.runs || [])].reverse();
   if (!runs.length) return `<div class="empty-state"><div class="empty-illustration">${icon('shield')}</div><h2>检查报告将在这里生成</h2><p>确认检查项并上传投标文件后，启动一次检查。<br>每一条问题都保留检查依据、投标证据与人工复核记录。</p><button class="button button-primary" data-action="tab" data-tab="documents">前往准备检查 ${icon('arrow', true)}</button></div>`;
@@ -1504,22 +1527,72 @@ function renderResults() {
   const document = (state.run.documents || docs()).find(d => d.id === (state.sourceDoc || evidence?.documentId)) || (state.run.documents || docs()).find(d => d.id === run.documentId);
   const publishedVersion = publishedRunVersion();
   const versionSwitch = publishedVersion ? `<div class="result-version-switch"><label for="result-version-view">查看结论版本</label><select id="result-version-view"><option value="current" ${state.resultVersionView === 'current' ? 'selected' : ''}>当前发布版本 V${e(publishedVersion.revision)}</option><option value="source" ${state.resultVersionView === 'source' ? 'selected' : ''}>原始检查报告</option></select><small>${state.resultVersionView === 'current' ? `由 ${e(publishedVersion.publishedBy || '审核人')} 发布：${e(publishedVersion.publicationNote || '未填写发布说明')}` : '历史原始结论只读保留，未被增量发布覆盖'}</small></div>` : '';
-  const reportHeader = `<div class="result-topline"><select id="run-select" aria-label="选择历史检查报告">${runs.map(r => `<option value="${e(r.id)}" ${r.id === run.id ? 'selected' : ''}>${e(date(r.createdAt))} · ${e(reviewModeLabel(r.reviewMode))} · ${e(r.recoveryOnly?'补查批次 · ':'')}${e(terminal.has(r.status)&&!failed.has(r.status)?'本轮执行结束':runStatuses[r.status] || r.status)}</option>`).join('')}</select><div class="report-actions"><span class="pill">${e(reviewModeLabel(run.reviewMode))}</span>${renderReviewModeSelect(state.rerunReviewMode || run.reviewMode, 'rerun-review-mode')}<button class="button button-primary button-small" data-action="retry-run" ${!complete || state.busy.has('run') || isRunning() || !checksReady() || processing() ? 'disabled' : ''}>${icon('refresh', true)}重新检查</button><button class="button button-secondary button-small" data-action="tab" data-tab="${checksReady() ? 'profile' : 'checkpoints'}">${icon('upload', true)}替换投标文件</button><span>下载报告</span>${['html', 'csv', 'json'].map(format => `<button class="button button-secondary button-small" data-action="download-report" data-format="${format}" ${!complete ? 'disabled' : ''}>${icon('download', true)}${format.toUpperCase()}</button>`).join('')}</div></div>${versionSwitch}${!complete ? `<div class="run-status-banner ${e(run.status)}">${failed.has(run.status) ? icon('alert') : '<span class="spinner"></span>'}<div><strong>${e(runStatuses[run.status] || run.status)}</strong><div>${e(run.error || run.stage || '正在处理检查任务')}</div>${typeof run.progress === 'number' ? `<div class="progress-track" role="progressbar" aria-label="检查进度" aria-valuenow="${Math.max(0, Math.min(100, run.progress))}" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style="width:${Math.max(0, Math.min(100, run.progress))}%"></div></div>` : ''}${failed.has(run.status) && run.taskId ? `<button class="text-action" data-action="retry-task" data-id="${e(run.taskId)}">重试检查任务</button>` : ''}</div></div>` : ''}`;
+  const reportHeader = renderReferenceDateCard(run.referenceDateConfirmation) + `<div class="result-topline"><select id="run-select" aria-label="选择历史检查报告">${runs.map(r => `<option value="${e(r.id)}" ${r.id === run.id ? 'selected' : ''}>${e(date(r.createdAt))} · ${e(reviewModeLabel(r.reviewMode))} · ${e(r.recoveryOnly?'补查批次 · ':'')}${e(terminal.has(r.status)&&!failed.has(r.status)?'本轮执行结束':runStatuses[r.status] || r.status)}</option>`).join('')}</select><div class="report-actions"><span class="pill">${e(reviewModeLabel(run.reviewMode))}</span>${renderReviewModeSelect(state.rerunReviewMode || run.reviewMode, 'rerun-review-mode')}<button class="button button-primary button-small" data-action="retry-run" ${!complete || state.busy.has('run') || isRunning() || !checksReady() || processing() ? 'disabled' : ''}>${icon('refresh', true)}重新检查</button><button class="button button-secondary button-small" data-action="tab" data-tab="${checksReady() ? 'profile' : 'checkpoints'}">${icon('upload', true)}替换投标文件</button><span>下载报告</span>${['html', 'csv', 'json'].map(format => `<button class="button button-secondary button-small" data-action="download-report" data-format="${format}" ${!complete ? 'disabled' : ''}>${icon('download', true)}${format.toUpperCase()}</button>`).join('')}</div></div>${versionSwitch}${!complete ? `<div class="run-status-banner ${e(run.status)}">${failed.has(run.status) ? icon('alert') : '<span class="spinner"></span>'}<div><strong>${e(runStatuses[run.status] || run.status)}</strong><div>${e(run.error || run.stage || '正在处理检查任务')}</div>${typeof run.progress === 'number' ? `<div class="progress-track" role="progressbar" aria-label="检查进度" aria-valuenow="${Math.max(0, Math.min(100, run.progress))}" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style="width:${Math.max(0, Math.min(100, run.progress))}%"></div></div>` : ''}${failed.has(run.status) && run.taskId ? `<button class="text-action" data-action="retry-task" data-id="${e(run.taskId)}">重试检查任务</button>` : ''}</div></div>` : ''}`;
   const categoryNav=renderCategoryNavigation(categoryCounts,state.category,'result-category','业务事项');
-  if (state.reportView === 'consistency'&&state.category==='全文信息检查') return reportHeader + renderIncrementalCandidates() + categoryNav + renderResolutionOverview(groups,scopedResults) + renderReportViewTabs() + renderConsistency();
+  if (state.reportView === 'consistency'&&state.category==='全文信息检查') return reportHeader + renderProjectSigningNotice() + renderIncrementalCandidates() + categoryNav + renderResolutionOverview(groups,scopedResults) + renderReportViewTabs() + renderConsistency();
   const actions = uniqueUserActions(scopedResults), mandatoryCount=searchedGroups.filter(item=>item.members.some(f=>findingPurpose(f)==='MANDATORY')).length, scoringCount=searchedGroups.filter(item=>item.members.some(f=>findingPurpose(f)==='SCORING')).length, externalCount=searchedGroups.filter(item=>item.members.some(f=>findingVerificationMode(f)==='EXTERNAL')).length;
   const scopeFilters=`<div class="result-scope-filters" aria-label="按检查目的和核验方式筛选"><div class="scope-filter-group" role="group" aria-label="检查目的">${[['ALL','全部'],['MANDATORY',`必备要求 ${mandatoryCount}`],['SCORING',`评分优化 ${scoringCount}`]].map(([value,label])=>`<button class="${state.purposeFilter===value?'active':''}" data-action="result-purpose" data-purpose="${value}" aria-pressed="${state.purposeFilter===value}">${e(label)}</button>`).join('')}</div><button class="scope-filter-toggle ${state.externalOnly?'active':''}" data-action="result-external" aria-pressed="${state.externalOnly}">外部核验 ${externalCount}</button></div>`;
-  return reportHeader + renderIncrementalCandidates() + categoryNav + renderResolutionOverview(groups,scopedResults) + renderReportViewTabs() + `<div class="result-metrics business-metrics">${Object.entries(businessStates).map(([status,label]) => `<button class="result-metric ${status} ${state.filter===status?'active':''}" data-action="filter-status" data-status="${status}" aria-pressed="${state.filter===status}"><span>${label}</span><strong>${groups.filter(item=>businessGroupState(item)===status).length}</strong></button>`).join('')}</div><div class="business-summary"><span>${groups.length} 个业务事项 · ${scopedResults.length} 条检查记录</span><button class="text-action" data-action="filter-status" data-status="MY_ACTIONS">需要我处理 ${actions.length} 个动作</button><small>同一 actionId 只计一个待办；系统与外部动作单独归属。</small></div>${scopeFilters}<div class="result-filters"><div class="search-wrap">${icon('search')}<input id="result-search" type="search" aria-label="搜索检查项或问题" placeholder="搜索事项、问题描述" value="${e(state.resultQuery)}"></div><select id="result-status" aria-label="筛选业务结论">${options({ALL:'全部事项',...businessStates,MY_ACTIONS:'需要我处理'},state.filter)}</select><span class="filter-total">${shownGroups.length} / ${groups.length} 个事项 · 保留人工复核结论</span></div>${renderReportOcrContext()}${results.length?`<div class="results-layout results-focus-layout"><section class="panel finding-list" aria-label="检查结果列表">${shownGroups.length?shownGroups.map(item=>renderBusinessListItem(item,selected)).join(''):categoryGroups.length===0&&state.category!=='ALL'?`<div class="empty-inline category-empty">${complete?`本次没有生成${e(categoryLabel(state.category))}事项，不表示该类要求已通过。`:'此类检查结果尚未生成，请等待本次检查完成。'}</div>`:'<div class="empty-inline">没有匹配的事项。<br><button class="text-action" data-action="clear-filters">清空筛选</button></div>'}</section><section class="panel finding-detail">${selected?renderBusinessMembers(selectedGroup,selected)+renderFinding(selected,`<details class="report-source-disclosure" id="report-source-disclosure" ${disclosureAttributes('report-source-disclosure')}><summary>查看完整原文 <span>${e(document?.name||'本次报告文件')}</span></summary>${renderSourcePane(document,state.sourcePage||evidence?.page||1,'原文对照')}</details>`):'<div class="empty-inline">选择事项查看证据与分析。</div>'}</section></div>`:`<div class="panel empty-inline">${complete?'本次检查没有返回检查项。请检查启用的检查项后重新运行。':'检查完成后，结果会在此自动显示。'}</div>`}`;
+  return reportHeader + renderProjectSigningNotice() + renderIncrementalCandidates() + categoryNav + renderResolutionOverview(groups,scopedResults) + renderReportViewTabs() + `<div class="result-metrics business-metrics">${Object.entries(businessStates).map(([status,label]) => `<button class="result-metric ${status} ${state.filter===status?'active':''}" data-action="filter-status" data-status="${status}" aria-pressed="${state.filter===status}"><span>${label}</span><strong>${groups.filter(item=>businessGroupState(item)===status).length}</strong></button>`).join('')}</div><div class="business-summary"><span>${groups.length} 个业务事项 · ${scopedResults.length} 条检查记录</span><button class="text-action" data-action="filter-status" data-status="MY_ACTIONS">需要我处理 ${actions.length} 个动作</button><small>同一 actionId 只计一个待办；系统与外部动作单独归属。</small></div>${scopeFilters}<div class="result-filters"><div class="search-wrap">${icon('search')}<input id="result-search" type="search" aria-label="搜索检查项或问题" placeholder="搜索事项、问题描述" value="${e(state.resultQuery)}"></div><select id="result-status" aria-label="筛选业务结论">${options({ALL:'全部事项',...businessStates,MY_ACTIONS:'需要我处理'},state.filter)}</select><span class="filter-total">${shownGroups.length} / ${groups.length} 个事项 · 保留人工复核结论</span></div>${renderReportOcrContext()}${results.length?`<div class="results-layout results-focus-layout"><section class="panel finding-list" aria-label="检查结果列表">${shownGroups.length?shownGroups.map(item=>renderBusinessListItem(item,selected)).join(''):categoryGroups.length===0&&state.category!=='ALL'?`<div class="empty-inline category-empty">${complete?`本次没有生成${e(categoryLabel(state.category))}事项，不表示该类要求已通过。`:'此类检查结果尚未生成，请等待本次检查完成。'}</div>`:'<div class="empty-inline">没有匹配的事项。<br><button class="text-action" data-action="clear-filters">清空筛选</button></div>'}</section><section class="panel finding-detail">${selected?renderBusinessMembers(selectedGroup,selected)+renderFinding(selected,`<details class="report-source-disclosure" id="report-source-disclosure" ${disclosureAttributes('report-source-disclosure')}><summary>查看完整原文 <span>${e(document?.name||'本次报告文件')}</span></summary>${renderSourcePane(document,state.sourcePage||evidence?.page||1,'原文对照')}</details>`):'<div class="empty-inline">选择事项查看证据与分析。</div>'}</section></div>`:`<div class="panel empty-inline">${complete?'本次检查没有返回检查项。请检查启用的检查项后重新运行。':'检查完成后，结果会在此自动显示。'}</div>`}`;
 }
 function renderFinding(f, sourcePanel = '') {
   const cp=f.checkpoint,ev=f.evaluation,presentation=findingPresentation(f),business=businessPresentation(f),review=reviewOf(f),references=findingEvidence(f),evidences=references.bid,isConsistency=cp.type==='ENTITY_FIELD_CONSISTENCY';
-  const evidenceMissing=findingDimensions(f).evidence.state!=='SUFFICIENT',analysis=businessAnalysisReason(f,presentation,business)||'未提供分析说明。';
-  return `<div class="finding-detail-header"><div class="detail-kicker">${e(findingCategory(f))} / ${e(types[cp.type]||cp.type)}</div><h2>${e(cp.title)}</h2><div class="detail-tags"><span class="pill ${e(business.state)}">${e(business.label)}</span>${renderResultScopeTags(f)}${review?badge(review.status,`人工：${statuses[review.status]||review.status}`):''}</div></div><div class="panel-body">${renderFindingDimensions(f)}<div class="result-reason ${e(business.state)}"><strong>检查结论</strong><p>${e(analysis)}</p></div><p class="suggestion result-next-step"><b>下一步</b><span>${e(business.nextStep)}</span></p>${renderInferenceConfirmations(f)}${renderTemplateSubchecks(f)}${renderCompleteness(f)}${originalReviewIsSourceRecord(f)?'':renderOriginalReview(f,presentation)}<div class="evidence-title"><span>${isConsistency?'多处信息与依据对照':'招标要求与投标证据'}</span><small>原文可追溯</small></div><div class="evidence-grid">${renderEvidence(references.source,'招标依据',cp.source?'未取得本次招标文件的有效依据。':'该项为手动或全文通用检查，无独立招标条款。')}${renderEvidence(evidences[0],isConsistency?'证据位置 1':'投标证据',evidenceMissing?'本项尚未取得足够原文依据；当前不据此认定投标材料缺失。':'未返回可展示的投标原文，请按证据引用继续追溯。')}</div>${references.tender.length?`<div class="more-evidence">${references.tender.map(item=>renderEvidence(item,'补充招标依据')).join('')}</div>`:''}${evidences.length>1?`<div class="more-evidence">${evidences.slice(1).map((item,i)=>renderEvidence(item,`证据位置 ${i+2}`)).join('')}</div>`:''}${sourcePanel}${renderInheritedReviews(f)}<details class="business-processing-details result-diagnostics"><summary>处理详情与诊断</summary><div class="result-diagnostics-body">${renderAgentInvestigationDetails(f)}${renderTargetProgressDetails(f)}${renderExternalCheckDetails(f)}${renderTemplateDiagnostics(f)}<p class="preview-caption">条款风险等级：${e(({HIGH:'高',MEDIUM:'中',LOW:'低'})[cp.severity]||'未设置')} · ${e(methodLabel(ev.method))}</p>${renderAtomicCheck(f)}${renderFieldCoverage(f)}${originalReviewIsSourceRecord(f)?renderOriginalReview(f,presentation):''}${renderOriginalExplanation(presentation)}${renderAssessmentDetails(f)}</div></details><details class="business-manual-details" ${disclosureAttributes(`manual-finding-${f.id}`,!!review||state.reviewDrafts.has(f.id))}><summary>记录人工复核${review?' · 已有记录':''}</summary>${renderManualReview(f)}</details></div>`;
+  const processing = f.assessment?.businessPresentation;
+  const serviceNote = processing?.processingFailed ? ' '+processing.processingMessage+'（'+processing.processingError+'）' : '';
+  const evidenceMissing=findingDimensions(f).evidence.state!=='SUFFICIENT',analysis=(businessAnalysisReason(f,presentation,business)||'未提供分析说明。')+serviceNote;
+  return `<div class="finding-detail-header"><div class="detail-kicker">${e(findingCategory(f))} / ${e(types[cp.type]||cp.type)}</div><h2>${e(cp.title)}</h2><div class="detail-tags"><span class="pill ${e(business.state)}">${e(business.label)}</span>${renderResultScopeTags(f)}${review?badge(review.status,`人工：${statuses[review.status]||review.status}`):''}</div></div><div class="panel-body">${renderFindingDimensions(f)}<div class="result-reason ${e(business.state)}"><strong>检查结论</strong><p>${e(analysis)}</p></div><p class="suggestion result-next-step"><b>下一步</b><span>${e(confirmationNextStep(f,business))}</span></p>${renderTaxReferenceConfirmation(f)}${renderInferenceConfirmations(f)}${renderTemplateSubchecks(f)}${renderCompleteness(f)}${originalReviewIsSourceRecord(f)?'':renderOriginalReview(f,presentation)}<div class="evidence-title"><span>${isConsistency?'多处信息与依据对照':'招标要求与投标证据'}</span><small>原文可追溯</small></div><div class="evidence-grid">${renderEvidence(references.source,'招标依据',cp.source?'未取得本次招标文件的有效依据。':'该项为手动或全文通用检查，无独立招标条款。')}${renderEvidence(evidences[0],isConsistency?'证据位置 1':'投标证据',evidenceMissing?'本项尚未取得足够原文依据；当前不据此认定投标材料缺失。':'未返回可展示的投标原文，请按证据引用继续追溯。')}</div>${references.tender.length?`<div class="more-evidence">${references.tender.map(item=>renderEvidence(item,'补充招标依据')).join('')}</div>`:''}${evidences.length>1?`<div class="more-evidence">${evidences.slice(1).map((item,i)=>renderEvidence(item,`证据位置 ${i+2}`)).join('')}</div>`:''}${sourcePanel}${renderInheritedReviews(f)}<details class="business-processing-details result-diagnostics"><summary>处理详情与诊断</summary><div class="result-diagnostics-body">${renderAgentInvestigationDetails(f)}${renderTargetProgressDetails(f)}${renderExternalCheckDetails(f)}${renderTemplateDiagnostics(f)}<p class="preview-caption">条款风险等级：${e(({HIGH:'高',MEDIUM:'中',LOW:'低'})[cp.severity]||'未设置')} · ${e(methodLabel(ev.method))}</p>${renderAtomicCheck(f)}${renderFieldCoverage(f)}${originalReviewIsSourceRecord(f)?renderOriginalReview(f,presentation):''}${renderOriginalExplanation(presentation)}${renderAssessmentDetails(f)}</div></details><details class="business-manual-details" ${disclosureAttributes(`manual-finding-${f.id}`,!!review||state.reviewDrafts.has(f.id))}><summary>记录人工复核${review?' · 已有记录':''}</summary>${renderManualReview(f)}</details></div>`;
 }
 function renderInferenceFact(record) {
   const fact = record.proposedFact || {};
   const field = fields[fact.field] || ({ role: '岗位', employer: '所属单位', certificate: '证书', qualification: '资质', amount: '金额', expiry: '有效期' })[fact.field] || fact.field || '对应内容';
   return `<div class="inference-fact"><span>确认后采用的内容</span><strong>${e(fact.subject || '所引材料')} · ${e(field)}：${e(fact.value || '')}${fact.unit ? ` ${e(unitLabel(fact.unit))}` : ''}</strong>${fact.basis ? `<small>口径：${e(fact.basis)}</small>` : ''}</div>`;
+}
+function renderTaxReferenceConfirmation(finding) {
+  const cards=new Map();
+  function visit(node) {
+    const proof=node?.proof||{}, card=proof.taxReferenceConfirmation;
+    if(card?.type==='TAX_REFERENCE_DATE' && card.businessProof===false && Array.isArray(card.sources) && card.sources.length){
+      cards.set(JSON.stringify([card.subject,card.referenceDate,card.sources.map(s=>s.sourceId)]),card);
+    }
+    if(Array.isArray(proof.children))proof.children.forEach(visit);
+  }
+  (atomicCheckOf(finding)?.conditions||[]).forEach(visit);
+  if(!cards.size || !['UNDETERMINED','NEEDS_CONFIRMATION'].includes(finding.evaluation.status))return '';
+  return [...cards.values()].map(card=>'<article class="inference-card"><strong>税务查询时点待确认</strong><p>'+e(card.question)+'</p><p>'+e(card.subject)+' · 核验日 '+e(card.referenceDate)+'</p>'+card.sources.map(s=>renderEvidence(s.evidence,'税务查询截图')).join('')+`<button class="text-action" type="button" data-tax-review="${e(card.sources.map(s=>'第'+s.page+'页').join('、'))}">记录时点确认依据</button><details><summary>补充带日期的截图</summary><form data-tax-attachment data-run="${e(state.run?.run?.id||'')}" data-checkpoint="${e(finding.checkpoint?.id||'')}"><input type="hidden" name="sourceId" value="${e(card.sources[0].sourceId)}"><input type="file" name="file" aria-label="税务证明文件" accept=".pdf,.docx,.png,.jpg,.jpeg" required><input name="note" aria-label="补充证明用途" maxlength="3000" value="补充当前单位纳税人资格与查询时点证明" required><button type="submit" class="button button-small" ${['COMPLETED','FAILED'].includes(state.run?.run?.status)?'':'disabled'}>提交补充材料</button><span role="status"></span></form></details></article>`).join('');
+}
+
+function renderProjectSigningNotice() {
+  const all=state.run?.results||[], docs=state.run?.documents||[];
+  const notices=[];
+  for(const doc of docs.filter(d=>d.role==='BID' && Number.isInteger(d.pageCount) && d.pageCount>0)){
+    const negative=new Set();
+    let inconclusive=false;
+    for(const finding of all){
+      const review=trustedVisualReview(finding);
+      for(const obs of review.observations.filter(o=>o.documentId===doc.id)){
+        if(obs.negativeConclusion===true && obs.outcome==='NOT_OBSERVED')negative.add(obs.location);
+        else inconclusive=true;
+      }
+      const scan=node=>{
+        const p=node?.proof||{};
+        if(Array.isArray(p.observations) && p.observations.some(o=>o.documentId===doc.id && ['SIGNATURE','SEAL'].includes(o.type) && o.outcome!=='NOT_OBSERVED'))inconclusive=true;
+        if(Array.isArray(p.children))p.children.forEach(scan);
+        if(p.signatureCoverage)scan(p.signatureCoverage);
+      };
+      (atomicCheckOf(finding)?.conditions||[]).forEach(scan);
+    }
+    if(!inconclusive && negative.size===doc.pageCount && Array.from({length:doc.pageCount},(_,i)=>i+1).every(n=>negative.has(n))){
+      notices.push(e(doc.name)+'（'+doc.pageCount+'页）');
+    }
+  }
+  return notices.length?'<div class="inline-warning"><strong>请核对签章版本</strong><p>'+notices.join('、')+'的逐页原图核验中，指定位置均未观察到签章。请核对上传文件是否为最终签章版本。</p></div>':'';
+}
+
+function confirmationNextStep(finding,business) {
+  if (business.state !== 'USER_ACTION' || !atomicCheckOf(finding)?.proof?.pendingConfirmationCount || state.inferenceConfirmationError) return business.nextStep;
+  const records=state.inferenceConfirmations.filter(item=>item.runId===state.run?.run?.id && item.checkpointId===finding.checkpoint?.id);
+  if (!records.length) return business.nextStep;
+  const pending=records.filter(item=>item.status==='NEEDS_CONFIRMATION').length;
+  return pending ? `还差 ${pending} 个待确认的证据关系，请对照卡片原文核对。` : '证据关联卡已处理，可查看该事项的重算结果。';
 }
 function renderInferenceConfirmations(finding) {
   const runId = state.run?.run?.id;

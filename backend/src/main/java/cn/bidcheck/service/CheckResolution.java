@@ -21,6 +21,7 @@ public final class CheckResolution {
             ||maps(a.get("gaps")).stream().anyMatch(gap->"AGENT_INVESTIGATION_STALLED".equals(text(gap,"code")));
     }
     public static boolean unresolved(Finding f){
+        if(BusinessResultPresentation.fullTextNotice(f.evaluation(),map(f.assessment())) && !agentStalledWithRemainingTargets(f))return false;
         if(cn.bidcheck.compat.Java8Api.setOf("UNDETERMINED", "NEEDS_CONFIRMATION").contains(f.evaluation().status()))return true;
         if("NOT_APPLICABLE".equals(f.evaluation().status()))return false;
         // An ALL tree can already fail while other required conditions remain unresolved.
@@ -77,7 +78,8 @@ public final class CheckResolution {
         if(!"UNDETERMINED".equals(before.evaluation().status())||!"UNDETERMINED".equals(after.evaluation().status()))return after;
         Map<String,Object> change=progress(before,after),a=atomic(after);
         if(((Number)change.get("removedProofCount")).longValue()==0||((Number)change.get("newCompletedConditionCount")).longValue()>0)return after;
-        boolean transport=explicitTransportFailure(map(a.get("modelDiagnostics")));
+        boolean transport=explicitTransportFailure(map(a.get("modelDiagnostics")))
+            || Boolean.TRUE.equals(map(a.get("agentInvestigation")).get("processingFailed"));
         boolean sameInputs=sameProofInputs(before,after),revoked=proofRevoked(before,after);
         if(!transport||!sameInputs||revoked)return archivePriorProof(before,after,!transport?"NO_EXPLICIT_TRANSPORT_FAILURE":!sameInputs?"SOURCE_OR_VALIDATION_REVISION_NOT_IDENTICAL":"CURRENT_VALIDATOR_REVOKED_PROOF");
         Map<String,Object> kept=new LinkedHashMap<>(map(before.assessment()));
@@ -142,13 +144,17 @@ public final class CheckResolution {
         maps(assessment.get("externalQueryDiagnostics")).forEach(g->codes.add(text(g,"code")));
         Map<String,Object> externalState=ExternalCheckState.describe(assessment,cn.bidcheck.compat.Java8Api.mapOf());
         String strategy="BLOCKED",reason="现有证据尚未支持完整判断，需要进一步完善规则或证据对应。",next="保留已有证明，等待相关规则、证据或条件变化后继续。",status="BLOCKED_NO_PROGRESS";
+        if(BusinessResultPresentation.fullTextNotice(f.evaluation(),assessment) && !agentStalledWithRemainingTargets(f))
+            return fields("strategy","NONE","status","SUCCEEDED","reason","全文扫描已结束，当前记录保留为提示","nextAction","查看扫描范围和已有原文");
         if(!unresolved(f))return fields("strategy","NONE","status","SUCCEEDED","reason","已形成结论","nextAction","查看判断依据");
+        if(codes.contains("BID_VOLUME_NOT_UPLOADED"))return fields("strategy","WAIT_VOLUME_UPLOAD","status","WAITING_USER","reason","尚未提供条款要求的分册","nextAction",f.evaluation().reason());
         Map<String,Object> compilation=map(a.get("compilationAudit"));
         TrustedVisualReview.Result visualReview=TrustedVisualReview.inspect(assessment);
         List<Map<String,Object>> pendingVisual=TrustedVisualReview.pendingRequests(a,visualReview.observations());
         boolean invalidCompilation=cn.bidcheck.compat.Java8Api.setOf("UNRESOLVED", "VALIDATION_FAILED", "REPAIR_RETRY_PENDING").contains(text(compilation,"state"))
             ||codes.stream().anyMatch(RecoveryFailureRouting::requirement);
-        if(!invalidCompilation&&"NEEDS_CONFIRMATION".equals(f.evaluation().status())&&codes.equals(cn.bidcheck.compat.Java8Api.setOf("INFERENCE_CONFIRMATION_REQUIRED")))
+        if(!invalidCompilation&&(map(a.get("proof")).get("pendingConfirmationCount") instanceof Number&&((Number)map(a.get("proof")).get("pendingConfirmationCount")).intValue()>0||
+            "NEEDS_CONFIRMATION".equals(f.evaluation().status())&&codes.equals(cn.bidcheck.compat.Java8Api.setOf("INFERENCE_CONFIRMATION_REQUIRED"))))
             return fields("strategy","WAIT_INFERENCE_CONFIRMATION","status","WAITING_USER","reason","已有带原文引用的推断需要确认，尚未构成业务通过。","nextAction","确认或否定下方推断后重算；相同证据不再自动重复调查。");
         if(cn.bidcheck.compat.Java8Api.setOf("NOT_CONFIGURED", "CONFIGURATION_INVALID", "SCOPE_INCOMPLETE").contains(text(externalState,"state"))){
             strategy="SCOPE_INCOMPLETE".equals(text(externalState,"state"))?"REPAIR_EXTERNAL_SCOPE":"RESTORE_EXTERNAL_CONNECTION";status="FAILED";reason=text(externalState,"label");next=text(externalState,"nextStep");
@@ -162,6 +168,10 @@ public final class CheckResolution {
             strategy="VERIFY_SOURCE_PAGES";status="QUEUED";
             reason="自动查证已定位需要观察原图的具体位置。";
             next="先执行对应页面的原图核验，观察结果写入后只重算受影响条件。";
+        }else if(!invalidCompilation&&codes.contains("CURRENT_TAXPAYER_PROOF_REQUIRED")&&pendingVisual.isEmpty()
+                &&codes.stream().allMatch(c->Arrays.asList("CURRENT_TAXPAYER_PROOF_REQUIRED","VISUAL_MARK_UNREADABLE","VISUAL_OBSERVATION_REQUIRED").contains(c))){
+            strategy="WAIT_TAX_REFERENCE_DATE";status="WAITING_USER";reason="尚未取得适用当前时点的纳税人证明。";
+            next="请核对当前单位税务证明的查询时点，或补充带查询日期的截图。";
         }else if(agentStalledWithRemainingTargets(f)){
             strategy="WAIT_AGENT_INPUT_CHANGE";status="FAILED";
             reason="自动查证在重复无收益路径上停止，仍有目标尚未处理；这属于系统未完成，不能认定相关材料缺失。";

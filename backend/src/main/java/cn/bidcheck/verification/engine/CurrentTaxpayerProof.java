@@ -35,12 +35,13 @@ final class CurrentTaxpayerProof {
         List<Evidence> accepted=new ArrayList<>(),inspected=new ArrayList<>();
         List<Map<String,Object>> checks=new ArrayList<>(),proofs=new ArrayList<>();
         boolean conflict=false;
+        List<Map<String,Object>> undatedQueries=new ArrayList<>();
         // Each page is examined independently. Never combine one page's owner with another page's dates.
         Set<String> seen=new HashSet<>();
         for(Source source:evaluator.corpus.all){
             if(source.index()||source.historical()||source.scopeContext().blocked()||source.id().startsWith("V"))continue;
             Evidence origin=source.evidence();
-            Document document=evaluator.corpus.documents.stream().filter(d->d.id().equals(origin.documentId())&&"BID".equals(d.role())).findFirst().orElse(null);
+            Document document=evaluator.corpus.documents.stream().filter(d->d.id().equals(origin.documentId())&&("BID".equals(d.role())||"SUPPLEMENT".equals(d.role()))).findFirst().orElse(null);
             if(document==null)continue;
             String key=EvidenceCorpus.pageKey(origin.documentId(),origin.page(),origin.locationType());
             if(!seen.add(key))continue;
@@ -65,6 +66,8 @@ final class CurrentTaxpayerProof {
             String basis="";
             if(cn.bidcheck.compat.Java8Api.isBlank(reason)){
                 if(officialQuery){
+                    if(queryDates.isEmpty())undatedQueries.add(linked("sourceId",source.id(),"documentId",document.id(),
+                        "documentHash",document.sha256(),"documentVersion",document.version(),"page",page.number(),"evidence",evidence));
                     if(queryDates.size()!=1||!queryDates.get(0).equals(reference))reason="TAXPAYER_QUERY_TIME_REQUIRED";
                     else basis="SOURCE_STATUS_AT_REFERENCE_DATE";
                 }else if(formalRegistration){
@@ -82,6 +85,9 @@ final class CurrentTaxpayerProof {
         }
         Map<String,Object> proof=linked("executor",VERSION,"proofScope","SOURCE_BOUND_TAXPAYER_QUALIFICATION_AT_REFERENCE_DATE","subject",company,
                 "referenceDate",reference.toString(),"checks",checks,"qualifiedDocuments",proofs,"externalTaxRegistryQueried",false,"absenceOrDisqualificationProven",false);
+        if(!conflict&&accepted.isEmpty()&&!undatedQueries.isEmpty())proof.put("taxReferenceConfirmation",
+            linked("type","TAX_REFERENCE_DATE","status","NEEDS_CONFIRMATION","subject",company,"referenceDate",reference.toString(),
+                "question","截图没有查询日期，请确认是否以该截图为准，或补充带查询日期的截图。","sources",undatedQueries,"businessProof",false));
         if(conflict)return new Decision(rule.id(),rule.description(),"UNDETERMINED","已提供税务来源存在状态冲突，需明确适用记录；不能仅凭一份历史登记认定当前资格",combineEvidence(accepted,inspected),cn.bidcheck.compat.Java8Api.listOf(gap("TAXPAYER_CURRENT_STATUS_CONFLICT","需对应当前适用税务状态与时点")),proof);
         if(!accepted.isEmpty())return new Decision(rule.id(),rule.description(),"PASS","已核对同一当前投标单位的税务文书名称、识别号、资格表述和适用日期；未以标题或历史辅导期材料代替",accepted,cn.bidcheck.compat.Java8Api.listOf(),proof);
         return new Decision(rule.id(),rule.description(),"UNDETERMINED","已读材料尚不足以证明本次适用的一般纳税人资格；历史辅导期材料不证明企业失去资格，可继续核对正式税务证明或本项目开票承诺替代分支",inspected,

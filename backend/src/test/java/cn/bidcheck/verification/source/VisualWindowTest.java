@@ -25,6 +25,42 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 
 class VisualWindowTest {
+    void publishCached(CollectionHarness h,TaskRow submitted,List<Map<String,Object>> observations)throws Exception{
+        java.lang.reflect.Method method=VerificationService.class.getDeclaredMethod("persistCheckVisualObservations",TaskRow.class,String.class,String.class,List.class);
+        try{method.invoke(h.service,submitted,"check-run","new-check",observations);}
+        catch(java.lang.reflect.InvocationTargetException failure){if(failure.getCause() instanceof RuntimeException)throw (RuntimeException)failure.getCause();throw failure;}
+    }
+    @Test void cachedObservationPublicationRetainsRunAttemptAndLeaseFence()throws Exception{
+        CollectionHarness h=new CollectionHarness(12,2);h.store.save("run","check-run","project",document.id(),cn.bidcheck.service.BidService.fields("projectId","project","taskId",h.task.id,"status","RUNNING"));
+        List<Map<String,Object>> observations=Collections.singletonList(cn.bidcheck.compat.Java8Api.mapOf("id","cached","documentId",document.id()));int before=h.records.size();
+        h.task.status="CANCELLED";assertThrows(cn.bidcheck.infrastructure.queue.TaskLeaseLostException.class,()->publishCached(h,h.task,observations));assertEquals(before,h.records.size());
+        h.task.status="RUNNING";h.lease.set(false);assertThrows(cn.bidcheck.infrastructure.queue.TaskLeaseLostException.class,()->publishCached(h,h.task,observations));assertEquals(before,h.records.size());
+        h.lease.set(true);h.task.leaseOwner="owner";h.task.leaseUntil=0L;assertThrows(cn.bidcheck.infrastructure.queue.TaskLeaseLostException.class,()->publishCached(h,h.task,observations));assertEquals(before,h.records.size());
+        h.task.leaseUntil=System.currentTimeMillis()+60000;TaskRow old=new TaskRow();old.id=h.task.id;old.projectId=h.task.projectId;old.leaseOwner=h.task.leaseOwner;old.attempt=h.task.attempt+1;
+        assertThrows(cn.bidcheck.infrastructure.queue.TaskLeaseLostException.class,()->publishCached(h,old,observations));assertEquals(before,h.records.size());
+        publishCached(h,h.task,observations);assertEquals(before+1,h.records.size());
+    }
+    @SuppressWarnings("unchecked") List<Map<String,Object>> cached(CollectionHarness h,List<Document> docs,List<Map<String,Object>> requests)throws Exception{
+        java.lang.reflect.Method method=VerificationService.class.getDeclaredMethod("collectCachedCheckVisual",TaskRow.class,String.class,Checkpoint.class,Map.class,List.class,List.class);
+        Checkpoint cp=new Checkpoint("new-check","缓存观察","形式","HIGH","MATERIAL","","","","",true,true,true,null);
+        return (List<Map<String,Object>>)method.invoke(h.service,h.task,"new-run",cp,cn.bidcheck.compat.Java8Api.mapOf("visualRequests",requests),docs,h.diagnostics);
+    }
+    @Test void firstRoundCacheOnlyRebindsCurrentFieldsAndNeverSchedulesMissingPages()throws Exception{
+        CollectionHarness h=new CollectionHarness(12,2);Map<String,Object> warm=requested(document,6);
+        h.collect(Collections.singletonList(document),Collections.singletonList(warm));assertEquals(1,calls.get());int stored=h.records.size();
+        Map<String,Object> same=new LinkedHashMap<>(warm);same.put("obligationId","new-obligation");
+        List<Map<String,Object>> result=cached(h,Collections.singletonList(document),Arrays.asList(same,requested(document,2)));
+        assertEquals(1,result.size());assertEquals("new-obligation",result.get(0).get("obligationId"));assertEquals("new-check",result.get(0).get("checkpointId"));
+        assertEquals(1,calls.get());assertEquals(stored,h.records.size(),"cache-only must not create jobs, leases, calls or page states");
+        Map<String,Object> otherField=new LinkedHashMap<>(same);otherField.put("fields",Collections.singletonList("合同金额"));
+        assertTrue(cached(h,Collections.singletonList(document),Collections.singletonList(otherField)).isEmpty());
+        assertTrue(cached(h,Collections.singletonList(version(document.id(),2)),Collections.singletonList(same)).isEmpty());
+        Document another=version("other-doc",1);assertTrue(cached(h,Collections.singletonList(another),Collections.singletonList(requested(another,6))).isEmpty());
+        assertEquals(1,calls.get());assertEquals(stored,h.records.size());
+        for(Stored row:h.records.values())if(row.body!=null)row.body=row.body.replace(document.sha256(),"invalid-source-hash");
+        assertTrue(cached(h,Collections.singletonList(document),Collections.singletonList(same)).isEmpty(),"rejected original-image provenance must never be rebound");
+        assertEquals(1,calls.get());assertEquals(stored,h.records.size());
+    }
     @TempDir Path temp;
     final ObjectMapper json=new ObjectMapper();
     final AtomicInteger calls=new AtomicInteger(),active=new AtomicInteger(),peak=new AtomicInteger(),windowActive=new AtomicInteger(),windowPeak=new AtomicInteger();

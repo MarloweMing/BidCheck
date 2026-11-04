@@ -7,7 +7,7 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 
 /** Reads both name fields locally; a document reference is never a literal company name. */
 final class EnterpriseNameComparison {
-    static final String VERSION="enterprise-name-source-comparison-1";
+    static final String VERSION="enterprise-name-source-comparison-2";
     private static final String COMPANY="[\\p{IsHan}A-Za-z0-9（）()·]{2,100}?(?:有限责任公司|股份有限公司|有限公司|公司)";
     private static final Pattern RESPONSE=Pattern.compile("(投标人名称|投标单位名称|投标人(?=[（(:：])|投标单位(?=[（(:：]))(?:[（(][^）)]{0,18}[）)])?[:：]?(?:[（(]盖章[）)])?("+COMPANY+")");
     private static final Pattern LEGAL=Pattern.compile("(企业名称|单位名称|名称)[:：]?("+COMPANY+")");
@@ -54,6 +54,25 @@ final class EnterpriseNameComparison {
 
         Map<String,Object> map(){return linked("value",value,"side",side,"documentType",documentType,"sourceId",sourceId,"source",source,"documentRole",roleHint);}
     }
+    static boolean internalCheckpoint(Rule rule){
+        return "SAME_FIELD".equals(rule.predicate())&&"companyName".equals(rule.field())&&rule.expected().isEmpty()
+                && "CONFIRMED_CHECKPOINT_METADATA".equals(rule.parameters().get("intentAuthority"))
+                && "CURRENT_PROJECT_OCCURRENCES".equals(rule.parameters().get("comparisonScope"));
+    }
+    static Decision internalNames(Rule rule,RuleEvaluator evaluator){
+        Rule bidder=new Rule(rule.id(),rule.description(),rule.predicate(),"投标人",rule.field(),rule.operator(),"","",
+                rule.parameters(),rule.sourceQuote(),"",Collections.emptyList());
+        List<Fact> bindings=EnterpriseSubjectBindings.extract(Collections.singletonList(bidder),evaluator.corpus.all);
+        List<String> parties=DomainBindings.subjects("投标人",bindings,evaluator.corpus);
+        if(parties.isEmpty())return pending(rule,"COMPANY_IDENTITY_REQUIRED","当前投标主体尚未由投标文书确定",Collections.emptyList(),Collections.emptyMap());
+        List<Decision> children=new ArrayList<>();
+        for(String party:parties){
+            Rule child=new Rule(rule.id()+"-"+identity(party).substring(0,12),rule.description(),rule.predicate(),party,
+                    rule.field(),rule.operator(),"","",rule.parameters(),rule.sourceQuote(),"",Collections.emptyList());
+            children.add(evaluate(child,evaluator));
+        }
+        return RuleEvaluator.combine(rule.id(),rule.description(),"ALL",children);
+    }
     static Decision evaluate(Rule rule,RuleEvaluator evaluator){
         EvidenceCorpus corpus=evaluator.corpus;List<Rule> roleRules=new ArrayList<>();
         for(String role:cn.bidcheck.compat.Java8Api.listOf("投标人", "施工单位", "设计单位"))roleRules.add(new Rule("NAME-PARTY-"+role,"名称来源主体","MATERIAL",role,"","","","",cn.bidcheck.compat.Java8Api.mapOf(),"","",cn.bidcheck.compat.Java8Api.listOf()));
@@ -71,7 +90,7 @@ final class EnterpriseNameComparison {
                     else unboundResponse.add(linked("sourceId",source.id(),"responseName",name.value(),"documentRole",hint,"source",name.source()));
                 }
             }
-            else if(requestedType(target,type)){
+            else if(requestedType(target,type)||internalCheckpoint(rule)&&!type.isEmpty()){
                 String hint=roleHint(text.value());List<Name> names=read(source,text,LEGAL,"LEGAL_NAME",type,hint);
                 for(Name name:names){List<String> owners=hint.isEmpty()?parties.contains(name.value())?cn.bidcheck.compat.Java8Api.listOf(name.value()):cn.bidcheck.compat.Java8Api.listOf():companiesByRole.getOrDefault(hint,cn.bidcheck.compat.Java8Api.listOf());
                     if(owners.size()==1){if(owners.get(0).equals(rule.subject()))right.add(name);}

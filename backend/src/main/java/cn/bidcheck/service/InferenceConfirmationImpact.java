@@ -8,17 +8,28 @@ import static cn.bidcheck.service.CheckResolution.*;
 /** Computes conservative invalidation only. A dependency match never proves a business fact. */
 public final class InferenceConfirmationImpact {
     private InferenceConfirmationImpact() {}
+    static List<Map<String,Object>> changedDecisions(List<Map<String,Object>> priorRecords,
+            List<Map<String,Object>> currentRecords,List<Map<String,Object>> decisions){
+        Map<String,Integer> prior=versions(priorRecords),current=versions(currentRecords);
+        List<Map<String,Object>> changed=new ArrayList<>();
+        for(Map<String,Object> decision:decisions){
+            String id=text(decision,"id");int revision=integer(decision.get("revision"));
+            if(revision>=0&&Objects.equals(current.get(id),revision)&&!Objects.equals(prior.get(id),revision))changed.add(decision);
+        }
+        return changed;
+    }
     public static Set<String> affected(List<Finding> findings,List<Map<String,Object>> priorRecords,
             List<Map<String,Object>> currentRecords,List<Map<String,Object>> decisionRows){
-        Map<String,Integer> prior=versions(priorRecords),current=versions(currentRecords);List<Map<String,Object>> changes=new ArrayList<>();
-        for(Map<String,Object> decision:decisionRows){String id=text(decision,"id");int revision=integer(decision.get("revision"));
-            if(!"CONFIRMED".equals(text(decision,"status"))||revision<0||!Objects.equals(current.get(id),revision)||Objects.equals(prior.get(id),revision))continue;
+        List<Map<String,Object>> changes=new ArrayList<>();
+        for(Map<String,Object> decision:changedDecisions(priorRecords,currentRecords,decisionRows)){
+            String id=text(decision,"id");int revision=integer(decision.get("revision"));
+            if(!"CONFIRMED".equals(text(decision,"status")))continue;
             Map<String,Object> fact=map(decision.get("proposedFact"));List<Map<String,Object>> sources=cn.bidcheck.compat.Java8Api.toList(maps(decision.get("evidences")).stream().filter(e->!cn.bidcheck.compat.Java8Api.isBlank(text(e,"sourceId"))).map(e->{Map<String,Object> source=new LinkedHashMap<>(e);source.put("id",e.get("sourceId"));return source;}));
             if(fact.isEmpty()||sources.isEmpty())continue;
             changes.add(fields("itemId",id+":"+revision,"recordType","FACT","fact",fact,"sources",sources));
         }
         if(changes.isEmpty())return cn.bidcheck.compat.Java8Api.setOf();Set<String> affected=new LinkedHashSet<>();
-        for(Finding finding:findings){Map<String,Object> atomic=atomic(finding);if(atomic.isEmpty()||unresolved(finding))continue;
+        for(Finding finding:findings){Map<String,Object> atomic=atomic(finding);if(atomic.isEmpty())continue;
             List<Map<String,Object>> dependencies=maps(atomic.get("recoveryEvidenceDependencies"));
             // Historical results lacking a trustworthy observation index cannot certify independence.
             boolean incomplete=dependencies.isEmpty()||dependencies.stream().anyMatch(d->cn.bidcheck.compat.Java8Api.isBlank(text(d,"obligationId"))||cn.bidcheck.compat.Java8Api.isBlank(text(d,"observationKey"))||map(d.get("target")).isEmpty());

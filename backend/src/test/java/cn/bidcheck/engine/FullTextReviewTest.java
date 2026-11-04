@@ -6,6 +6,40 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class FullTextReviewTest {
+    @Test void originalSignatureRecognizesStandaloneLabelAndSpacedOrWrappedDate() {
+        for(String value:Arrays.asList("日期：2025 年10 月8 日","日期：2025 年10 月\n8 日")) {
+            Evaluation result=review("signingAfterOpening","2025-08-05",value);
+            assertEquals("WARNING",result.status());
+            assertTrue(result.reason().contains("晚于开标时间"));
+            assertEquals("UNDETERMINED",review("signatureDate","",value).status());
+        }
+        assertEquals("UNDETERMINED",review("signatureDate","","发证日期：2025年2月30日\n签订时间：2022年2月31日").status());
+    }
+
+    @Test void purchaseOrderDatesDoNotDescribeTheCurrentBidSignature() {
+        String transaction="# 某公司采购订单\n日期：__________\n订单号：PO-45\n签字日期：2024年2月31日";
+        assertEquals("UNDETERMINED",review("signatureDate","",transaction).status());
+        String mixed=transaction+"\n3.投标函\n日期：2025年10月8日";
+        Evaluation current=review("signingAfterOpening","2025-08-05",mixed);
+        assertEquals("WARNING",current.status());
+        assertEquals("日期：2025年10月8日",current.evidences().get(0).quote());
+        assertEquals("WARNING",review("signatureDate","",transaction+"\n投标函\n日期：2025年2月30日").status());
+        Document bundle=new Document("bid","p","BID","投标.pdf",1,"h","",Arrays.asList(
+            new Page(1,"投标人（盖章）：甲公司\n日期：2025年8月4日","PAGE","PDFBOX",null),
+            new Page(2,"社保经办机构\n日期：2025年9月18日","PAGE","PDFBOX",null),
+            new Page(3,"付款银行回单\n日期：2025年9月16日","PAGE","PDFBOX",null)),Collections.emptyList());
+        assertTrue(CheckEngine.referenceDateConflict(bundle,"2025-08-05").isEmpty());
+    }
+
+    @Test void projectDateConflictRequiresMajorityAndKeepsReferenceAndPages() {
+        Document bid=doc("日期：2025年4月8日\n日期：2025年5月1日\n发证日期：2030年1月1日");
+        assertTrue(CheckEngine.referenceDateConflict(bid,"2025-04-08").isEmpty());
+        Map<String,Object> card=CheckEngine.referenceDateConflict(bid,"2025-04-01");
+        assertEquals("REFERENCE_DATE_CONFLICT",card.get("code"));
+        assertEquals("2025-04-01",card.get("referenceDate"));
+        assertEquals(2,((List<?>)card.get("evidences")).size());
+        assertTrue(CheckEngine.referenceDateConflict(bid,"").isEmpty());
+    }
     private Document doc(String text) { return new Document("bid","p","BID","投标.pdf",1,"h","",cn.bidcheck.compat.Java8Api.listOf(new Page(1,text,"PAGE","PDFBOX",null)),cn.bidcheck.compat.Java8Api.listOf()); }
     private Evaluation review(String field,String expected,String text) {
         Document doc=doc("certificateCoverage".equals(field)?"本项目证件\n"+text:text);

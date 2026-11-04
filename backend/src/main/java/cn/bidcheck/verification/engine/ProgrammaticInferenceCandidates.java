@@ -8,7 +8,7 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 final class ProgrammaticInferenceCandidates {
     static final String VERSION="programmatic-inference-candidates-1";
     private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(ProgrammaticInferenceCandidates.class);
-    private static final Set<String> IDENTITY_GAPS=cn.bidcheck.compat.Java8Api.setOf("PERSON_IDENTITY_REQUIRED", "PERSON_IDENTITY_UNPROVEN", "PERSON_IDENTITY_AMBIGUOUS", "SUBJECT_IDENTITY_UNPROVEN", "ENTITY_IDENTITY_AMBIGUOUS", "CERTIFICATE_SUBJECT_REQUIRED", "CERTIFICATE_IDENTITY_REQUIRED", "PERSONNEL_BINDING_REQUIRED");
+    private static final Set<String> IDENTITY_GAPS=cn.bidcheck.compat.Java8Api.setOf("SCORING_TITLE_IDENTITY_REQUIRED", "PERSON_IDENTITY_REQUIRED", "PERSON_IDENTITY_UNPROVEN", "PERSON_IDENTITY_AMBIGUOUS", "SUBJECT_IDENTITY_UNPROVEN", "ENTITY_IDENTITY_AMBIGUOUS", "CERTIFICATE_SUBJECT_REQUIRED", "CERTIFICATE_IDENTITY_REQUIRED", "PERSONNEL_BINDING_REQUIRED");
     private ProgrammaticInferenceCandidates(){}
 
     static List<Map<String,Object>> collect(Rule rule,Decision decision,List<Fact> facts,EvidenceCorpus corpus){
@@ -21,7 +21,7 @@ final class ProgrammaticInferenceCandidates {
         // Keep each candidate explicit. A large candidate set needs narrowing rather than arbitrary truncation.
         if(result.size()>12){LOG.info("bidcheck.inference_candidate targetId={} event=PROGRAMMATIC_SKIPPED reason=CANDIDATE_SET_NEEDS_NARROWING candidateCount={}",rule.id(),result.size());return cn.bidcheck.compat.Java8Api.listOf();}return cn.bidcheck.compat.Java8Api.listCopyOf(result.values());
     }
-    static boolean technical(Decision decision){return decision.gaps().stream().anyMatch(g->{String code=g.code();return code.startsWith("MODEL_")||code.startsWith("AGENT_INVESTIGATION_")||code.contains("UNCOMPILED")||code.contains("COMPILATION")||code.equals("RULE_NOT_EXECUTABLE")||code.equals("SOURCE_VERSION_CONFLICT")||code.equals("UNSUPPORTED_PREDICATE");});}
+    static boolean technical(Decision decision){return decision.gaps().stream().anyMatch(g->{String code=g.code();return code.startsWith("MODEL_")||(code.startsWith("AGENT_INVESTIGATION_")&&!code.equals("AGENT_INVESTIGATION_STALLED"))||code.contains("UNCOMPILED")||code.contains("COMPILATION")||code.equals("RULE_NOT_EXECUTABLE")||code.equals("SOURCE_VERSION_CONFLICT")||code.equals("UNSUPPORTED_PREDICATE");});}
     private static void add(Map<String,Map<String,Object>> target,Map<String,Object> raw,Rule rule,EvidenceCorpus corpus){
         if(!cn.bidcheck.compat.Java8Api.isBlank(str(raw,"targetId"))&&!str(raw,"targetId").equals(rule.id()))return;
         List<Map<String,Object>> evidence=RuleEvaluator.maps(raw.get("evidence"));if(evidence.isEmpty())evidence=RuleEvaluator.maps(raw.get("evidences"));
@@ -38,7 +38,20 @@ final class ProgrammaticInferenceCandidates {
         List<Pattern> masks=cn.bidcheck.compat.Java8Api.toList(roles.stream().map(Fact::value).filter(n->n.matches("[\\p{IsHan}·]{2,12}")).distinct().map(n->Pattern.compile(n.codePoints().mapToObj(c->"(?:"+Pattern.quote(new String(Character.toChars(c)))+"|[*＊×●_])").reduce("",String::concat))));
         List<Source> maskedSources=cn.bidcheck.compat.Java8Api.toList(corpus.all.stream().filter(s->!s.index()&&!s.historical()&&!s.scopeContext().blocked()&&s.evidence().quote().matches("(?s).*[*＊×●_].*")&&masks.stream().anyMatch(p->p.matcher(s.evidence().quote()).find())));
         for(cn.bidcheck.verification.engine.CertificateSourceComparison.Record record:CertificateRecordBindings.records(corpus,maskedSources)){Fact f=ConfirmedSubjectBindings.recordIdentity(record);if(f!=null&&f.subject().matches(".*[*＊×●_].*"))proofs.add(f);}
-        for(Fact role:roles)for(Fact proof:proofs){String person=role.value(),owner=SubjectIdentity.person(proof);
+        if(decision.gaps().stream().anyMatch(g->"SCORING_TITLE_IDENTITY_REQUIRED".equals(g.code()))){
+            Pattern maskedName=Pattern.compile("(?m)^\\s*(?:\\|\\s*)?姓[ \\t]*名[ \\t]*[|：:][ \\t]*([\\p{IsHan}*＊×●_·]{2,12})[ \\t]*[|]?[ \\t]*$");
+            for(Source source:maskedSources){
+                String quote=source.evidence().quote();
+                if(!quote.contains("职称")||!quote.contains("查询"))continue;
+                java.util.regex.Matcher found=maskedName.matcher(quote);
+                if(!found.find())continue;
+                String name=found.group(1);
+                if(found.find()||!name.matches(".*[*＊×●_].*"))continue;
+                proofs.add(new Fact("title-name:"+source.id(),"FIELD",name,"姓名",name,name,"","","UNRESOLVED",
+                    Collections.singletonList(source.id()),linked("person",name)));
+            }
+        }
+        for(Fact role:roles)for(Fact proof:proofs){String person=role.value(),owner="FIELD".equals(proof.kind())&&"姓名".equals(proof.field())?proof.subject():SubjectIdentity.person(proof);
             if(!compatible(person,owner)||!safe(role,corpus)||!safe(proof,corpus)||!sameDocument(role,proof,corpus)||role.sourceIds().stream().anyMatch(proof.sourceIds()::contains))continue;
             if(!certificateRelevant(rule,proof))continue;
             Set<String> ids=new HashSet<>(ConfirmedSubjectBindings.identifiers(role,corpus));ids.addAll(ConfirmedSubjectBindings.identifiers(proof,corpus));if(ids.size()>1)continue;

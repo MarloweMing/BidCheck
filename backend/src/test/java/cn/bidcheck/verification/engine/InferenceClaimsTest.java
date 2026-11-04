@@ -13,6 +13,7 @@ class InferenceClaimsTest {
         Map<String,Object> inference=linked("type","GRADE_NORMALIZATION","claim","等级贰级等价二级","reasoning","中文数字等价归一化","confidence",0.95,"risks",cn.bidcheck.compat.Java8Api.listOf(),"evidence",cn.bidcheck.compat.Java8Api.listOf(linked("sourceId",source.id(),"quote","资质等级：贰级")));
         Map<String,Object> p=linked("kind","INFERRED","rawValue","贰级","field","grade","sourceIds",cn.bidcheck.compat.Java8Api.listOf(source.id()),"attributes",linked("inference",inference,"proposedFact",linked("kind","CERTIFICATE","subject","测试单位","field","grade","rawValue","贰级","value","二级","scope","UNRESOLVED","attributes",cn.bidcheck.compat.Java8Api.mapOf("grade", "贰级"))));
         h.ctx.put("inferenceNormalizationMinConfidence","NaN");assertEquals("NEEDS_CONFIRMATION",h.call("submit_candidate_fact",cn.bidcheck.compat.Java8Api.mapOf("targetObligationId", "grade", "fact", p)).get("status"));assertTrue(h.facts.isEmpty());
+        inference.remove("type");
         h.ctx.put("inferenceNormalizationMinConfidence","0.9");assertFalse(ProofVerifier.strings(h.call("submit_candidate_fact",cn.bidcheck.compat.Java8Api.mapOf("targetObligationId", "grade", "fact", p)).get("acceptedFactIds")).isEmpty());
     }
     EvidenceInvestigation.Host host(){return new EvidenceInvestigationTest().host("项目负责人相关证明资料\n姓名：张*超\n注册编号：京123456");}

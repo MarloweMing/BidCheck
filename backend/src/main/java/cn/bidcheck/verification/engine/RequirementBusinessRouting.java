@@ -125,7 +125,7 @@ final class RequirementBusinessRouting {
         if(accepted.isEmpty()){
             boolean failed=records.stream().anyMatch(row->str(row,"type").equals(str(rule.parameters(),"externalType"))
                     &&failedRecord(row));
-            return evaluator.unknown(rule,failed?"EXTERNAL_CONNECTOR_FAILED":"EXTERNAL_RECORD_REQUIRED",
+            return evaluator.unknown(rule,failed?"EXTERNAL_CONNECTOR_FAILED":cn.bidcheck.verification.external.ExternalVerificationAdapter.requiresOwnerData(evaluator.context,str(rule.parameters(),"externalType"),str(rule.parameters(),"requiredProvider"))?"EXTERNAL_OWNER_DATA_REQUIRED":"EXTERNAL_RECORD_REQUIRED",
                     failed?"指定外部查询失败，需修复或重试查询；不判定投标材料不合格":"需要指定来源、同主体与同范围的外部记录；承诺文件和历史截图只能证明书面声明，不能证明实时状态",cn.bidcheck.compat.Java8Api.listOf(),
                     linked("executor",VERSION,"externalType",rule.parameters().get("externalType"),"requiredProvider",rule.parameters().get("requiredProvider"),
                             "requirementScopeFingerprint",rule.parameters().get("requiredScopeFingerprint"),"requiredConditionFields",rule.parameters().get("requiredConditionFields"),

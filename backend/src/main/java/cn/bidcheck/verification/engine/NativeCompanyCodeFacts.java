@@ -6,7 +6,10 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 
 /** Literal identifier extraction with an independently resolved current bidder and a bounded owner. */
 final class NativeCompanyCodeFacts {
-    static final String VERSION="company-credit-code-source-spans-1";
+    static final String VERSION="company-credit-code-source-spans-2";
+    private static final Pattern TABLE=Pattern.compile("(?is)<table\\b[^>]*>(.*?)</table>");
+    private static final Pattern CREDENTIAL_HEADING=Pattern.compile("(?m)^[\\t #*]*(?:(?:施工|设计)单位)?(?:营业执照|建筑业企业资质证书|安全生产许可证|工程设计资质证书)[\\t *]*$");
+    private static final Pattern PAIR=Pattern.compile("(?is)<tr\\b[^>]*>\\s*<td\\b[^>]*>\\s*([^<>]{1,45}?)\\s*</td>\\s*<td\\b[^>]*>\\s*([^<>]{1,140}?)\\s*</td>\\s*</tr>");
     private static final Pattern CODE=Pattern.compile("(?:统一社会信用代码|社会信用代码|纳税人识别号)[\\t *`|:：]*(?:\\r?\\n[\\t *`|]*)?([0-9A-Z]{18})(?![0-9A-Z])");
     private static final Pattern OWNER=Pattern.compile("(?m)^[\\t #*`|]*(?:名\\s*称|企业名称|单位名称|纳税人名称|投标人名称|企业全称)[\\t *`|:：]+([\\p{IsHan}A-Za-z0-9（）()·]{2,100}?(?:有限责任公司|股份有限公司|有限公司|公司))(?=[\\t *`|。；;]|$)");
     private NativeCompanyCodeFacts(){}
@@ -15,15 +18,44 @@ final class NativeCompanyCodeFacts {
         String selector=cn.bidcheck.compat.Java8Api.isBlank(rule.subject())?"投标人":rule.subject();Rule partyRule=new Rule(rule.id()+":parties",rule.description(),rule.predicate(),selector,rule.field(),rule.operator(),rule.expected(),rule.unit(),rule.parameters(),rule.sourceQuote(),rule.logic(),rule.children());
         List<Fact> parties=EnterpriseSubjectBindings.extract(cn.bidcheck.compat.Java8Api.listOf(partyRule),corpus.all);Set<String> owners=new LinkedHashSet<>(DomainBindings.subjects(selector,parties,corpus));if(owners.isEmpty()&&!DomainBindings.role(selector)&&!cn.bidcheck.compat.Java8Api.isBlank(selector))owners.add(selector);if(owners.isEmpty())return cn.bidcheck.compat.Java8Api.listOf();
         Set<String> selectedPages=new HashSet<>();selected.forEach(s->selectedPages.add(EvidenceCorpus.pageKey(s.evidence().documentId(),s.evidence().page(),s.evidence().locationType())));Map<String,Fact> result=new LinkedHashMap<>();
+        if("CONFIRMED_CHECKPOINT_METADATA".equals(rule.parameters().get("intentAuthority"))
+                &&"CURRENT_PROJECT_OCCURRENCES".equals(rule.parameters().get("comparisonScope"))){
+            for(Map.Entry<String,cn.bidcheck.domain.Domain.Page> entry:corpus.pages.entrySet()){
+                String text=entry.getValue().text();
+                if(text.contains("统一社会信用代码")&&(CREDENTIAL_HEADING.matcher(text).find()
+                        ||text.contains("<table")&&text.contains("企业名称")&&text.contains("证书编号"))
+                        &&!text.matches("(?s).*(?:销售方|购买方|发包人|承包人|纳税人识别号).*"))selectedPages.add(entry.getKey());
+            }
+        }
         for(String owner:owners)for(cn.bidcheck.verification.engine.LegalRegistrationProof.Registration registration:LegalRegistrationProof.records(corpus,owner)){
             cn.bidcheck.domain.Domain.Evidence evidence=registration.evidence();if(!selectedPages.contains(EvidenceCorpus.pageKey(evidence.documentId(),evidence.page(),evidence.locationType())))continue;
             List<String> sourceIds=ProofVerifier.strings(registration.binding().get("sourceIds"));add(result,rule,corpus,owner,registration.number(),sourceIds,"SINGLE_CURRENT_REGISTRATION_BLOCK");
         }
         for(String pageKey:selectedPages){cn.bidcheck.domain.Domain.Page page=corpus.pages.get(pageKey);if(page==null)continue;List<Source> sources=cn.bidcheck.compat.Java8Api.toList(corpus.all.stream().filter(s->EvidenceCorpus.pageKey(s.evidence().documentId(),s.evidence().page(),s.evidence().locationType()).equals(pageKey)));if(sources.isEmpty()||sources.stream().anyMatch(s->s.index()||s.historical()||s.scopeContext().blocked()))continue;
-            String text=page.text();if(text.matches("(?s).*(?:填写示例|示范文本|仅供参考|空白模板).*"))continue;Set<String> labelled=new LinkedHashSet<>();Matcher owner=OWNER.matcher(text);while(owner.find())labelled.add(owner.group(1));if(labelled.size()!=1)continue;String company=labelled.iterator().next();if(!owners.contains(company))continue;
+            String text=page.text();if(text.matches("(?s).*(?:填写示例|示范文本|仅供参考|空白模板).*"))continue;
+            certificateTables(result,rule,corpus,owners,sources,text);
+            Set<String> labelled=new LinkedHashSet<>();Matcher owner=OWNER.matcher(text);while(owner.find())labelled.add(owner.group(1));if(labelled.size()!=1)continue;String company=labelled.iterator().next();if(!owners.contains(company))continue;
             Matcher codes=CODE.matcher(text);while(codes.find())add(result,rule,corpus,company,codes.group(1),cn.bidcheck.compat.Java8Api.toList(sources.stream().map(Source::id)),"UNIQUE_LABELLED_OWNER_ON_ORIGINAL_PAGE");
         }
         return cn.bidcheck.compat.Java8Api.listCopyOf(result.values());
+    }
+    private static void certificateTables(Map<String,Fact> result,Rule rule,EvidenceCorpus corpus,Set<String> owners,List<Source> sources,String text){
+        Matcher table=TABLE.matcher(text);
+        while(table.find()){
+            Set<String> names=new LinkedHashSet<>(),codes=new LinkedHashSet<>();boolean credential=false;
+            Matcher row=PAIR.matcher(table.group(1));
+            while(row.find()){
+                String label=clean(row.group(1)),value=row.group(2).trim();
+                if(label.matches("企业名称|单位名称"))names.add(value);
+                if(label.matches("统一社会信用代码(?:[（(]或营业执照注册号[）)])?")&&value.matches("[A-Z0-9]{18}"))codes.add(value);
+                if(label.equals("证书编号")&&!value.isEmpty())credential=true;
+            }
+            if(!credential||names.size()!=1||codes.size()!=1||!owners.contains(names.iterator().next()))continue;
+            String code=codes.iterator().next();List<String> ids=new ArrayList<>();
+            if(text.indexOf(code)!=text.lastIndexOf(code))continue;
+            for(Source source:sources)if(source.evidence().quote().contains(code))ids.add(source.id());
+            if(!ids.isEmpty())add(result,rule,corpus,names.iterator().next(),code,ids,"SAME_CERTIFICATE_TABLE_OWNER_AND_CODE");
+        }
     }
     private static void add(Map<String,Fact> out,Rule rule,EvidenceCorpus corpus,String company,String code,List<String> ids,String binding){
         Fact fact=new Fact("N"+identity(VERSION+rule.field()+company+code+ids).substring(0,20),"FIELD",company,rule.field(),code,code,"","","CURRENT_PROJECT",ids,linked("bindingMethod",binding,"bindingVersion",VERSION,"sourceLabel","统一社会信用代码或纳税人识别号","identifierOwner",company,"scopeBoundary","SAME_CURRENT_BID_COMPANY_ONLY"));

@@ -14,10 +14,19 @@ final class NativeCertificateFacts {
     /** Expand a retrieved chunk to its original certificate occurrence before extracting fields. */
     static List<Fact> extract(Rule rule,EvidenceCorpus corpus,List<Source> selected){
         if(!cn.bidcheck.compat.Java8Api.setOf("CERTIFICATE", "VALIDITY").contains(rule.predicate()))return cn.bidcheck.compat.Java8Api.listOf();
+        return fromRecords(rule,corpus,selected,false);
+    }
+    /** Only the already identified appointment packet may provide employer candidates for a social contribution rule. */
+    static List<Fact> employerCandidates(Rule rule,EvidenceCorpus corpus,List<Source> appointmentPacket){
+        if(!"MONTHS".equals(rule.predicate())||DomainBindings.role(rule.subject())||rule.subject().isEmpty())return Collections.emptyList();
+        return fromRecords(rule,corpus,appointmentPacket,true);
+    }
+    private static List<Fact> fromRecords(Rule rule,EvidenceCorpus corpus,List<Source> selected,boolean employment){
         String required=str(rule.parameters(),"category"),kind=str(rule.parameters(),"personnelCredentialKind");
         List<Fact> out=new ArrayList<>();
         for(cn.bidcheck.verification.engine.CertificateSourceComparison.Record record:CertificateRecordBindings.records(corpus,selected)){
-            if(!required.equals(record.category())&&!(kind.equals("REGISTERED_BUILDER")&&record.category().contains("注册建造师"))
+            if(employment){if(record.value("EMPLOYER").isEmpty())continue;}
+            else if(!required.equals(record.category())&&!(kind.equals("REGISTERED_BUILDER")&&record.category().contains("注册建造师"))
                 &&!(kind.equals("SAFETY")&&record.category().startsWith("安全生产考核合格证书")))continue;
             if(!cn.bidcheck.compat.Java8Api.isBlank(rule.subject())&&!DomainBindings.role(rule.subject())&&!rule.subject().equals(record.owner()))continue;
             cn.bidcheck.verification.engine.CertificateSourceComparison.Field number=record.fields().get("CERTIFICATE_NUMBER");if(number==null)number=record.fields().get("REGISTRATION_NUMBER");if(number==null)continue;

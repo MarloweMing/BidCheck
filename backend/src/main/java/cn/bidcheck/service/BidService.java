@@ -72,6 +72,10 @@ public class BidService {
     private cn.bidcheck.verification.facts.FactLedgerService factLedger;
     @org.springframework.beans.factory.annotation.Autowired(required=false)
     private cn.bidcheck.verification.source.VisualVerificationService processingVisual;
+    @Value("${bidcheck.recovery.max-minutes:15}")
+    private int maxRecoveryMinutes=15;
+    @Value("${bidcheck.recovery.max-no-progress:20}")
+    private int maxConsecutiveNoProgress=20;
     @Value("${bidcheck.processing.max-visual-calls:128}")
     private int processingMaxVisualCalls=128;
     @Value("${bidcheck.processing.full-visual-hard-limit:2048}")
@@ -786,7 +790,7 @@ public class BidService {
     private String runApiRequestId(String project,String key){if(key==null||cn.bidcheck.compat.Java8Api.isBlank(key))return "";if(key.length()>160||!key.matches("[A-Za-z0-9._:-]+"))throw bad("幂等键格式无效或长度超过限制");return stableId("api-request:START_RUN:"+project+":"+key);}
     private Map<String,Object> priorRunRequest(String id,String digest){Stored row=store.mapper().get(id);if(row==null)return null;if(!"api_request".equals(row.kind))throw new IllegalStateException("IDEMPOTENCY_RECORD_SCOPE_MISMATCH");Map<String,Object> saved=store.map(row.body);if(!digest.equals(text(saved,"requestDigest")))throw cn.bidcheck.checktemplate.TemplateApiException.conflict("IDEMPOTENCY_CONFLICT","同一幂等键已用于不同的检查请求",-1);return saved;}
     private void persistRunRequest(String project,String id,String key,String digest,String runId){if(id==null||cn.bidcheck.compat.Java8Api.isBlank(id))return;Map<String,Object> value=fields("schemaVersion","api-request-v1","projectId",project,"operation","START_RUN","idempotencyKey",key,"requestDigest",digest,"resourceId",runId,"committedAt",now());store.insertImmutableIfAbsent("api_request",id,project,project,value);}
-    public String resolutionPolicyIdentity(){return hash(CheckResolution.VERSION+RULE_VERSION+"|reviewMode="+CheckReviewMode.VERSION+"|agentGroup="+AgentBusinessGroupReuse.VERSION+"|ocrReview="+cn.bidcheck.engine.OcrReviewPolicy.VERSION+"|"+semantic.identity()+focusedCheckIdentity()+templateCheckIdentity()+consistencyIdentity()+onDemandPolicyVersion()
+    public String resolutionPolicyIdentity(){return hash(CheckResolution.VERSION+RULE_VERSION+"|recoveryAdmission="+RecoverySemanticGate.POLICY+"|reviewMode="+CheckReviewMode.VERSION+"|agentGroup="+AgentBusinessGroupReuse.VERSION+"|ocrReview="+cn.bidcheck.engine.OcrReviewPolicy.VERSION+"|"+semantic.identity()+focusedCheckIdentity()+templateCheckIdentity()+consistencyIdentity()+onDemandPolicyVersion()
         +(focusedContext==null?"":focusedContext.identity())+(verification==null?"":verification.getObject().checkSourceIdentity()));}
 
     private boolean currentTemplateRoute(String projectId,Checkpoint checkpoint){
@@ -819,7 +823,13 @@ public class BidService {
     private boolean reusableResult(Finding finding,Map<String,Object> parent,String currentTemplateSpecIdentity){
         if(CheckResolution.unresolved(finding))return false;
         Map<String,Object> a=CheckResolution.map(finding.assessment());
-        if(a.containsKey("consistencyGroupId"))return consistencyIdentity().equals(text(parent,"consistencyIdentity"));
+        if(a.containsKey("consistencyGroupId")){
+            // Old groups can carry a display-only notice without a current derived proof.
+            // Rebuild that proof in the child from the saved group/review before reusing it.
+            if("UNDETERMINED".equals(finding.evaluation().status())&&
+                    !cn.bidcheck.consistency.ConsistencyDerivedConclusion.VERSION.equals(text(CheckResolution.map(a.get("derivedConclusion")),"policyVersion")))return false;
+            return consistencyIdentity().equals(text(parent,"consistencyIdentity"));
+        }
         if(a.containsKey("templateTrace"))return Boolean.TRUE.equals(parent.get("templateRouteEnabled"))
             &&templateCheckIdentity().equals(text(parent,"templateCheckIdentity"))
             &&Objects.equals(currentTemplateSpecIdentity,text(parent,"templateSpecIdentity"));
@@ -853,21 +863,24 @@ public class BidService {
             Stored requested=store.mapper().get(requestId);
             if(requested!=null){if(!"check_recovery_request".equals(requested.kind)||!project.equals(requested.projectId)||!parentRunId.equals(requested.parentId))throw new IllegalStateException("RECOVERY_IDEMPOTENCY_SCOPE_MISMATCH");return store.getMap("run",text(store.map(requested.body),"runId"));}
             Set<String> confirmationAffected=new LinkedHashSet<>();
+            List<Map<String,Object>> changedDecisions=InferenceConfirmationImpact.changedDecisions(CheckResolution.maps(parent.get("inferenceConfirmationRecords")),confirmations.records(),inferenceDecisions);
             if(confirmationChanged){
-                confirmationAffected.addAll(confirmations.checkpointIds());
+                changedDecisions.forEach(c->confirmationAffected.add(text(c,"checkpointId")));
                 confirmationAffected.addAll(InferenceConfirmationImpact.affected(previous,CheckResolution.maps(parent.get("inferenceConfirmationRecords")),confirmations.records(),inferenceDecisions));
                 LOG.info("bidcheck.inference_recompute parentRunId={} confirmationRecords={} affectedCheckpointIds={}",parentRunId,confirmations.records().size(),confirmationAffected);
             }
             if(supplementChanged){confirmationAffected.addAll(supplements.affectedCheckpointIds());LOG.info("bidcheck.supplement_recompute parentRunId={} manifestDigest={} attachmentCount={} affectedCheckpointIds={} scope=BOUND_ITEM_AND_EXPLICIT_DEPENDENCIES",parentRunId,supplements.digest(),supplements.manifest().size(),supplements.affectedCheckpointIds());}
             Map<String,Object> consistency=consistencyReport(parentRunId);
             if(confirmationChanged){
-                List<Map<String,Object>> cited=cn.bidcheck.compat.Java8Api.toList(inferenceDecisions.stream().filter(c->"CONFIRMED".equals(text(c,"status"))).flatMap(c->CheckResolution.maps(c.get("evidences")).stream()));
+                List<Map<String,Object>> cited=cn.bidcheck.compat.Java8Api.toList(changedDecisions.stream().filter(c->"CONFIRMED".equals(text(c,"status"))).flatMap(c->CheckResolution.maps(c.get("evidences")).stream()));
                 for(Map<String,Object> group:ConsistencyRunSupport.maps(consistency.get("groups")))if(CheckResolution.maps(group.get("evidences")).stream().anyMatch(e->cited.stream().anyMatch(c->text(e,"documentId").equals(text(c,"documentId"))&&Objects.equals(e.get("page"),c.get("page"))&&text(e,"locationType").equals(text(c,"locationType")))))
                     previous.stream().filter(f->f.id().equals(text(group,"findingId"))).map(f->f.checkpoint().id()).forEach(confirmationAffected::add);
             }
             Set<String> confirmedTargets=cn.bidcheck.compat.Java8Api.setCopyOf(confirmationAffected);
             Set<String> found=previous.stream().map(f->f.checkpoint().id()).collect(java.util.stream.Collectors.toSet());
             boolean missing=checks.stream().anyMatch(c->!found.contains(c.id()));
+            boolean inputsOnly=supplementOnly || confirmationChanged&&!changedDecisions.isEmpty()&&!missing
+                &&"COMPLETED".equals(text(parent,"status"))&&policy.equals(text(parent,"resolutionPolicyIdentity"));
             Map<String,Object> available=CheckResolution.summary(parent,previous,store.maps("check_resolution",project,parentRunId),policy);
             if(!missing&&!confirmationChanged&&!supplementChanged&&!Boolean.TRUE.equals(available.get("canRecover")))throw bad(text(available,"blockReason"));
             String id=Store.id();TaskRow task=newTask(project,"CHECK",fields("runId",id,"documentId",bid.id()));
@@ -882,9 +895,9 @@ public class BidService {
             List<String> targets=new ArrayList<>();
             run.put("inferenceConfirmationDigest",confirmations.digest());
             run.put("inferenceConfirmationRecords",confirmations.records());
-            run.put("supplementManifest",supplements.manifest());run.put("supplementDigest",supplements.digest());run.put("supplementOnlyRecovery",supplementOnly);
+            run.put("supplementManifest",supplements.manifest());run.put("supplementDigest",supplements.digest());run.put("supplementOnlyRecovery",supplementOnly);run.put("changedInputsOnlyRecovery",inputsOnly);
             for(Finding f:previous){
-                boolean pending=confirmedTargets.contains(f.checkpoint().id())||!supplementOnly&&!reusableResult(f,parent,frozenTemplateSpecIdentity);if(pending)targets.add(f.checkpoint().id());
+                boolean pending=confirmedTargets.contains(f.checkpoint().id())||!inputsOnly&&!reusableResult(f,parent,frozenTemplateSpecIdentity);if(pending)targets.add(f.checkpoint().id());
                 Map<String,Object> a=pending?new LinkedHashMap<>():new LinkedHashMap<>(CheckResolution.map(f.assessment()));a.remove("resolutionJob");
                 if(pending){
                     copyConsistencyLocation(a,CheckResolution.map(f.assessment()));
@@ -902,8 +915,8 @@ public class BidService {
                     fields("id",CheckResolution.jobId(id,f.checkpoint().id()),"runId",id,"checkpointId",f.checkpoint().id(),"status","QUEUED","strategy","REEVALUATE_CHANGED_POLICY",
                         "parentRunId",parentRunId,"reason","按当前规则继续未完成义务，复用冻结原文和已有证明。","nextAction","补查本项缺口","attempts",0,"updatedAt",now()));
             }
-            checks.stream().filter(c->!found.contains(c.id())&&(!supplementOnly||confirmedTargets.contains(c.id()))).forEach(c->targets.add(c.id()));run.put("recoveryCheckpointIds",targets);
-            run.put("inheritedResolvedCount",previous.stream().filter(f->!confirmedTargets.contains(f.checkpoint().id())&&(supplementOnly||reusableResult(f,parent,frozenTemplateSpecIdentity))).count());
+            checks.stream().filter(c->!found.contains(c.id())&&(!inputsOnly||confirmedTargets.contains(c.id()))).forEach(c->targets.add(c.id()));run.put("recoveryCheckpointIds",targets);
+            run.put("inheritedResolvedCount",previous.stream().filter(f->!confirmedTargets.contains(f.checkpoint().id())&&(inputsOnly||reusableResult(f,parent,frozenTemplateSpecIdentity))).count());
             Map<String,Map<String,Object>> priorReviews=new LinkedHashMap<>();
             CheckResolution.maps(parent.get("priorReviewRecords")).forEach(v->priorReviews.put(text(v,"id"),v));
             store.maps("review",project,null).stream().filter(v->parentRunId.equals(v.get("runId"))).forEach(v->priorReviews.put(text(v,"id"),v));
@@ -920,7 +933,7 @@ public class BidService {
                 for(Map<String,Object> old:ConsistencyRunSupport.maps(copy.get("groups"))){
                     Map<String,Object> group=new LinkedHashMap<>(old);String previousId=text(old,"findingId");
                     previous.stream().filter(f->f.id().equals(previousId)).findFirst().ifPresent(f->{group.put("findingId",stableId(id+":"+f.checkpoint().id()));
-                        if(confirmedTargets.contains(f.checkpoint().id())||!supplementOnly&&!reusableResult(f,parent,frozenTemplateSpecIdentity)){group.remove("targetedReview");group.remove("recoveryRetained");}else group.put("recoveryRetained",true);});groups.add(group);
+                        if(confirmedTargets.contains(f.checkpoint().id())||!inputsOnly&&!reusableResult(f,parent,frozenTemplateSpecIdentity)){group.remove("targetedReview");group.remove("recoveryRetained");}else group.put("recoveryRetained",true);});groups.add(group);
                 }
                 copy.put("groups",groups);store.save("consistency_report",ConsistencyRunSupport.reportId(id),project,id,copy);
             }
@@ -1239,7 +1252,10 @@ public class BidService {
         long ocrStarted=System.nanoTime();
         Document d=Boolean.TRUE.equals(frozen.get("ocrPreparationComplete"))?original:preparePlannedDocument(task,original,checkpoints);
         checkPhase(task,runId,"OCR_PREPARATION",ocrStarted,d.pages().size());
+        Map<String,Object> dateConflict=CheckEngine.referenceDateConflict(d,text(CheckResolution.map(frozen.get("projectInformation")),"openingTime"));
         tx.executeWithoutResult(s->{progress(task,4,"检查计划所需识别已结束");Map<String,Object> current=store.getMap("run",runId);
+            if(dateConflict.isEmpty())current.remove("referenceDateConfirmation");
+            else current.put("referenceDateConfirmation",dateConflict);
             current.putIfAbsent("inputDocumentId",documentId);current.put("documentId",d.id());current.put("documentVersion",d.version());current.put("ocrPreparationComplete",true);current.put("ocrPlan",ocrPlan(d.id()));store.save("run",runId,task.projectId,d.id(),current);});
         String tenderId=text(frozen,"tenderDocumentId");
         Document tender=cn.bidcheck.compat.Java8Api.isBlank(tenderId)?null:document(tenderId);
@@ -1413,6 +1429,47 @@ public class BidService {
             }
             try{
                 Finding result=evaluateFinding(runId,checkpoint,d,tender,facts,consistency,modelBudget::reserve,atomicContext);
+                result=RecoverySemanticGate.captureFirstRound(result,atomicContext,resolutionPolicyIdentity());
+                if (verification != null) {
+                    long cacheStarted = System.nanoTime();
+                    List<Map<String,Object>> cacheRounds = new ArrayList<>();
+                    Finding beforeCache = result;
+                    result = closeFirstRoundVisualCache(result, atomicContext, current -> {
+                        long roundStarted = System.nanoTime();
+                        List<Map<String,Object>> diagnostics = new ArrayList<>();
+                        Map<String,Object> request = RecoveryInputs.visualRequest(current);
+                        List<Map<String,Object>> cached = verification.getObject().collectCachedCheckVisual(
+                            task, runId, checkpoint, request, cn.bidcheck.compat.Java8Api.listOf(d), diagnostics);
+                        if (!cached.isEmpty()) {
+                            verification.getObject().persistCheckVisualObservations(task, runId, checkpoint.id(), cached);
+                        }
+                        Map<String,Object> refreshed = cached.isEmpty()
+                            ? Collections.emptyMap() : atomicContexts.apply(checkpoint);
+                        long elapsed = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - roundStarted);
+                        Map<String,Object> round = fields("round", cacheRounds.size() + 1,
+                            "requests", request.get("visualRequests"), "cachedObservationCount", cached.size(),
+                            "durationMs", elapsed, "newModelCalls", 0, "diagnostics", diagnostics);
+                        cacheRounds.add(round);
+                        LOG.info("bidcheck.first_round_visual_cache_round runId={} checkpointId={} round={} requests={} observations={} durationMs={} newModelCalls=0",
+                            runId, checkpoint.id(), cacheRounds.size(), request.get("visualRequests"), cached.size(), elapsed);
+                        return refreshed;
+                    }, local -> evaluateFinding(runId, checkpoint, d, tender, facts, consistency, () -> false, local));
+                    if (!cacheRounds.isEmpty()) {
+                        long elapsed = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - cacheStarted);
+                        int observations = cacheRounds.stream()
+                            .mapToInt(round -> ((Number) round.get("cachedObservationCount")).intValue()).sum();
+                        Map<String,Object> cacheAudit = fields("cacheOnly", true, "cachedObservationCount", observations,
+                            "recomputed", result != beforeCache, "durationMs", elapsed, "newModelCalls", 0,
+                            "rounds", cacheRounds);
+                        Map<String,Object> atomic = new LinkedHashMap<>(CheckResolution.atomic(result));
+                        atomic.put("firstRoundVisualCache", cacheAudit);
+                        Map<String,Object> assessment = new LinkedHashMap<>(result.assessment());
+                        assessment.put("atomicCheck", atomic);
+                        result = new Finding(result.id(), result.runId(), result.checkpoint(), result.evaluation(), assessment);
+                        LOG.info("bidcheck.first_round_visual_cache runId={} checkpointId={} observations={} recomputed={} durationMs={} newModelCalls=0",
+                            runId, checkpoint.id(), observations, cacheAudit.get("recomputed"), elapsed);
+                    }
+                }
                 if(membership!=null&&membership.leader(checkpoint.id()))leaderFuture.complete(result);
                 return result;
             }catch(RuntimeException|Error failure){
@@ -1537,11 +1594,24 @@ public class BidService {
         tx.executeWithoutResult(s->{progress(task,96,"整理未完成义务与补查任务");
             for(Finding f:store.list("finding",task.projectId,runId,Finding.class))if(CheckResolution.unresolved(f)
                 &&store.mapper().get(CheckResolution.jobId(runId,f.checkpoint().id()))==null)recordResolution(task,runId,f);});
+        final long recoveryDeadline=System.nanoTime()+java.util.concurrent.TimeUnit.MINUTES.toNanos(Math.max(1,maxRecoveryMinutes));
+        int consecutiveNoProgress=0;
         while(true){
             tx.executeWithoutResult(s->{progress(task,96,"核对新增证据影响的检查条件");OrdinaryRecoveryDependencies.schedule(store,task.projectId,runId);});
             List<Map<String,Object>> queued=cn.bidcheck.compat.Java8Api.toList(store.maps("check_resolution",task.projectId,runId).stream().filter(j->CheckResolution.ACTIVE.contains(text(j,"status"))));
             if(queued.isEmpty())break;
             for(Map<String,Object> pending:queued){
+                final String limit=recoveryLimitReason(System.nanoTime(),recoveryDeadline,consecutiveNoProgress,maxConsecutiveNoProgress);
+                if(!limit.isEmpty()){
+                    tx.executeWithoutResult(s->{
+                        for(Map<String,Object> job:store.maps("check_resolution",task.projectId,runId)){
+                            if(!CheckResolution.ACTIVE.contains(text(job,"status")))continue;
+                            store.save("check_resolution",text(job,"id"),task.projectId,runId,stoppedRecoveryJob(job,limit));
+                        }
+                    });
+                    LOG.info("bidcheck.recovery_stop runId={} code={} consecutiveNoProgress={}",runId,limit,consecutiveNoProgress);
+                    return;
+                }
                 String checkpointId=text(pending,"checkpointId"),jobId=text(pending,"id");
                 Finding before=store.get("finding",stableId(runId+":"+checkpointId),Finding.class);
                 String strategy=text(pending,"strategy");
@@ -1586,6 +1656,7 @@ public class BidService {
                         job.put("status","BLOCKED_NO_PROGRESS");job.put("stopReason","本轮可用策略已执行；保留具体证据缺口，等待规则或证据变化。");job.put("updatedAt",now());store.save("check_resolution",jobId,task.projectId,runId,job);});continue;
                 }
                 Map<String,Object> initialContext=RecoveryInputs.context(before,strategy,contexts.apply(before.checkpoint()));
+                initialContext.put("recoveryDeadlineEpochMillis",System.currentTimeMillis()+Math.max(0,java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(recoveryDeadline-System.nanoTime())));
                 if(!RecoveryInputs.applyDependencyTrigger(initialContext,pending,before)){
                     tx.executeWithoutResult(s->{progress(task,96,"受影响条件已完成，保留其他事项结论");Map<String,Object> job=new LinkedHashMap<>(pending);
                         job.put("status","BLOCKED_NO_PROGRESS");job.put("stopReason","新增证据影响的条件已经完成，未重复调查整项其他缺口。");job.put("updatedAt",now());
@@ -1667,6 +1738,7 @@ public class BidService {
                     "newExternalRecordCount",newExternalRecords.size(),"recomputed",businessRecomputed,"newModelCalls",!businessRecomputed?0:CheckResolution.map(CheckResolution.atomic(after).get("metrics")).getOrDefault("modelCalls",0),
                     "dependencyRevision",context.getOrDefault("recoveryDependencyRevision",""),"noopReason",context.getOrDefault("recoveryNoopReason",""));
                 Finding preserved=CheckResolution.protectCompletedProof(before,after);
+                preserved=RecoverySemanticGate.preserveFirstRound(before,preserved);
                 Finding published=withPreviousReference(preserved);
                 Map<String,Object> requirementsProgress=RecoveryInputs.requirementProgress(before,preserved);
                 boolean requirementsRepaired=cn.bidcheck.verification.engine.RequirementRepairPolicy.requirementWork(strategy)&&Boolean.TRUE.equals(requirementsProgress.get("progressMade"));
@@ -1703,6 +1775,7 @@ public class BidService {
                     if(!failedOutcome.isEmpty())attempt.put("unpublishedFailedOutcome",failedOutcome);
                     store.save("check_resolution_attempt",attemptId,task.projectId,jobId,attempt);
                 });
+                consecutiveNoProgress=progressMade||requirementsRepaired||Boolean.TRUE.equals(transition.get("technicalRecovered"))?0:consecutiveNoProgress+1;
                 LOG.info("bidcheck.resolution taskId={} runId={} checkpointId={} strategy={} durationMs={} progressMade={} requirementsRepaired={} businessComplete={} recomputed={} newModelCalls={} technicalRecovered={} processingFailed={} nextStrategy={} resolutionStatus={}",
                     task.id,runId,checkpointId,strategy,(System.nanoTime()-recoveryStarted)/1_000_000,progressMade,requirementsRepaired,!CheckResolution.unresolved(published),recoveryInput.get("recomputed"),recoveryInput.get("newModelCalls"),transition.get("technicalRecovered"),transition.get("processingFailed"),transition.get("nextStrategy"),transition.get("status"));
                 LOG.info("bidcheck.recovery_dependencies runId={} checkpointId={} strategy={} targets={} revision={} noopReason={} gapCodes={}",runId,checkpointId,strategy,
@@ -1836,6 +1909,51 @@ public class BidService {
             }
         };
     }
+    static String recoveryLimitReason(long nowNanos,long deadlineNanos,int consecutive,int maximum){
+        return nowNanos>=deadlineNanos?"RECOVERY_TIME_LIMIT":consecutive>=Math.max(1,maximum)?"RECOVERY_NO_PROGRESS_LIMIT":"";
+    }
+    static Map<String,Object> stoppedRecoveryJob(Map<String,Object> pending,String limit){
+        Map<String,Object> stopped=new LinkedHashMap<>(pending);
+        stopped.putAll(fields("status","BLOCKED_NO_PROGRESS","stopReason",limit,"updatedAt",now(),
+            "reason","本轮补查达到时间或连续无进展上限，保留当前证据和未完成条件。"));return stopped;
+    }
+    /** Expand deterministic page dependencies until existing cache evidence stops changing.
+     * Each request set is loaded once. A miss or unchanged observation leaves the gap open. */
+    static Finding closeFirstRoundVisualCache(Finding initial, Map<String,Object> initialContext,
+            java.util.function.Function<Finding,Map<String,Object>> refreshCached,
+            java.util.function.Function<Map<String,Object>,Finding> evaluate) {
+        Finding current = initial;
+        Map<String,Object> context = initialContext;
+        Set<String> consumedRequests = new HashSet<>();
+        while (true) {
+            Object requests = RecoveryInputs.visualRequest(current).get("visualRequests");
+            if (CheckResolution.maps(requests).isEmpty()
+                    || !consumedRequests.add(RecoveryEvidenceIdentity.canonical(requests))) return current;
+            Map<String,Object> refreshed = refreshCached.apply(current);
+            if (refreshed.isEmpty()) return current;
+            Finding next = adoptFirstRoundVisual(current, context, refreshed, evaluate);
+            if (next == current) return current;
+            current = next;
+            context = refreshed;
+        }
+    }
+
+    static Finding adoptFirstRoundVisual(Finding before,Map<String,Object> previous,Map<String,Object> refreshed,
+            java.util.function.Function<Map<String,Object>,Finding> evaluate){
+        List<Map<String,Object>> added=RecoveryInputs.changedObservations(previous.get("visualObservations"),refreshed.get("visualObservations"));
+        if(added.isEmpty())return before;
+        Map<String,Object> context=RecoveryInputs.context(before,"VERIFY_SOURCE_PAGES",refreshed);RecoveryInputs.changedInputs(context,added);
+        Finding after=evaluate.apply(context);Map<String,Object> original=CheckResolution.atomic(before),atomic=new LinkedHashMap<>(CheckResolution.atomic(after));
+        if(original.containsKey("firstRoundSemanticInputs"))atomic.put("firstRoundSemanticInputs",original.get("firstRoundSemanticInputs"));
+        if (original.containsKey("firstRoundInvestigation")) {
+            atomic.put("firstRoundInvestigation", original.get("firstRoundInvestigation"));
+        } else if (original.containsKey("agentInvestigation")) {
+            atomic.put("firstRoundInvestigation", original.get("agentInvestigation"));
+        }
+        Map<String,Object> assessment=new LinkedHashMap<>(after.assessment());assessment.put("atomicCheck",atomic);
+        return new Finding(after.id(),after.runId(),after.checkpoint(),after.evaluation(),assessment);
+    }
+
     private Finding evaluateFinding(String runId,Checkpoint c,Document d,Document tender,List<Fact> facts,Map<String,Object> consistency,java.util.function.BooleanSupplier reserveAttempt,Map<String,Object> atomicContext) {
         long started=System.nanoTime();
         LOG.info("bidcheck.checkpoint runId={} checkpointId={} state=STARTED recovery={}",runId,c.id(),atomicContext.containsKey("recoveryMode"));
@@ -1921,7 +2039,7 @@ public class BidService {
         OcrReviewPolicy.Decision decision=OcrReviewPolicy.assess(beforeOcr,c,d,tender,
             TemplateResultFinalizer.requiredProofDocumentRoles(assessment.audit()));
         Evaluation e=decision.evaluation();
-        Map<String,Object> trace=new LinkedHashMap<>(assessment.audit());
+        Map<String,Object> trace=new LinkedHashMap<>(assessment.audit());trace.put("checkpointType",c.type());
         List<Object> adjustments=new ArrayList<>();
         if(trace.get("guards") instanceof List<?>) adjustments.addAll(((List<?>) (trace.get("guards"))));
         adjustments.addAll(decision.adjustments());

@@ -24,18 +24,39 @@ final class PersonnelEmployerBindings {
         boolean resolved(){return employers.size()==1;}
         Map<String,Object> audit(){return linked("expectedEmployers",employers,"employerBindingBasis",basis,
             "employerBindingFactIds",cn.bidcheck.compat.Java8Api.toList(witnesses.stream().map(Fact::id)),"confirmationRequired",!resolved(),
+            "employerBindingSourceIds",cn.bidcheck.compat.Java8Api.toList(witnesses.stream().flatMap(w->w.sourceIds().stream()).distinct()),
             "doesNotProveEmployment",basis.equals("CURRENT_ROLE_AND_CONSORTIUM_ALLOCATION"));}
     }
     static Binding resolve(Rule rule,List<Fact> facts,EvidenceCorpus corpus){
         return resolve(rule,facts,corpus,cn.bidcheck.compat.Java8Api.listOf());
     }
     static Binding resolve(Rule rule,List<Fact> facts,EvidenceCorpus corpus,List<Map<String,Object>> layout){
+        return resolve(rule,facts,corpus,layout,false);
+    }
+    /** Only the executing social check may locate new employment evidence. Callers inspecting
+     * supplied facts (including a social report locator) do not inherit that permission. */
+    static Binding resolveForSocialCheck(Rule rule,List<Fact> facts,EvidenceCorpus corpus,List<Map<String,Object>> layout){
+        String employer=str(rule.parameters(),"employer");
+        boolean readAttachment="MONTHS".equals(rule.predicate())&&deictic(employer)&&clean(rule.sourceQuote()).contains(clean(employer));
+        return resolve(rule,facts,corpus,layout,readAttachment);
+    }
+    private static Binding resolve(Rule rule,List<Fact> facts,EvidenceCorpus corpus,List<Map<String,Object>> layout,boolean readAttachment){
         String requested=str(rule.parameters(),"employer");
         if(!deictic(requested))return new Binding(DomainBindings.subjects(requested,facts,corpus),cn.bidcheck.compat.Java8Api.listOf(),"EXPLICIT_REQUIREMENT");
         String name=rule.subject();List<Fact> witnesses=new ArrayList<>();Set<String> companies=new LinkedHashSet<>();
         List<PersonEvidenceProfiles.Profile> profiles=PersonEvidenceProfiles.forPerson(name,facts,corpus,layout);
         for(cn.bidcheck.verification.engine.PersonEvidenceProfiles.Profile profile:profiles){companies.addAll(profile.employers());witnesses.addAll(profile.employerWitnesses());}
         if(!companies.isEmpty())return new Binding(cn.bidcheck.compat.Java8Api.listCopyOf(companies),cn.bidcheck.compat.Java8Api.listCopyOf(witnesses),"SOURCE_LINKED_PERSON_PROFILE");
+        if(readAttachment&&profiles.size()==1&&!profiles.get(0).conflict()){
+            Set<List<String>> inspected=new HashSet<>();
+            for(Fact role:profiles.get(0).appointments()){
+                if(!inspected.add(role.sourceIds()))continue;
+                for(Fact certificate:PersonnelAttachmentIdentity.employmentWitnesses(rule,role,corpus)){
+                    companies.add(str(certificate.attributes(),"employer"));witnesses.add(certificate);
+                }
+            }
+            if(!companies.isEmpty())return new Binding(new ArrayList<>(companies),witnesses,"CURRENT_APPOINTMENT_ATTACHMENT_EMPLOYMENT");
+        }
         for(Fact fact:facts){
             if(!current(fact,corpus))continue;
             if(fact.kind().equals("RELATION")&&name.equals(fact.subject())&&DomainBindings.employment(fact.field())){
@@ -51,6 +72,8 @@ final class PersonnelEmployerBindings {
             &&(cn.bidcheck.compat.Java8Api.isBlank(selector)||DomainBindings.roleMatches(selector,fact.subject(),fact,corpus)))roles.add(fact.subject());
         Set<String> memberRoles=new LinkedHashSet<>();for(String role:roles){String member=memberRole(role);if(!cn.bidcheck.compat.Java8Api.isBlank(member))memberRoles.add(member);}
         // An unqualified project leader may belong to either member. Never guess from lead status.
+        if(roles.stream().anyMatch(r->"项目负责人".equals(PersonnelRoles.canonical(r)))&&
+            clean(rule.sourceQuote()).matches(".*项目负责人(?:应|须|必须)?由(?:联合体)?牵头(?:单位|人)(?:负责)?委派.*"))memberRoles.add("牵头单位");
         if(memberRoles.isEmpty())return new Binding(cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(),"PERSON_MEMBER_UNRESOLVED");
         for(String member:memberRoles){
             Rule query=new Rule(rule.id()+"-employer", "岗位对应联合体分工", "RELATION",member,"名称","","","",cn.bidcheck.compat.Java8Api.mapOf(),rule.sourceQuote(),"",cn.bidcheck.compat.Java8Api.listOf());

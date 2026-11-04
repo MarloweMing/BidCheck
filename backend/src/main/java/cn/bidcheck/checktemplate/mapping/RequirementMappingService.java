@@ -948,7 +948,7 @@ switch (missing) {case "closedScoreEvidenceSet":explanation = "该条款描述�
         if (containsAny(text, "每项", "每个", "每增加", "每新增", "每提供", "每具备", "每持有",
                 "累计", "累加", "分别", "酌情", "横向比较") || PERSON_COUNT.matcher(text).find()) return false;
         Pattern materialAward = Pattern.compile(
-                "(?:具备|具有|提供|持有)\\s*[^，,。；;\\r\\n]{2,80}?(?:认证证书|资格证书|资质证书|许可证|证书|资质|证明材料|证明)"
+                "(?:具备|具有|提供|持有)\\s*[^，,。；;\\r\\n]{2,80}?(?:管理体系认证(?:证书)?|认证证书|资格证书|资质证书|许可证|证书|资质|证明材料|证明)"
                         + "\\s*(?:的)?\\s*[,，]?\\s*(?:得|计)\\s*([0-9]+(?:\\.[0-9]+)?)\\s*分");
         Matcher matcher = materialAward.matcher(text);
         if (!matcher.find()) return false;

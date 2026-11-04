@@ -278,7 +278,7 @@ final class AgentLedReview {
             if(decision!=null)decisions.add(decision);
         }
         Decision combined=RuleEvaluator.combine(cp.id(),cp.title(),"ALL",decisions);
-        combined=VerificationEngine.lookupCoverageGuard(combined,shared.factLookupTruncated(),shared.lookupTruncations());
+        combined=VerificationEngine.lookupCoverageGuard(combined,shared.truncatedForRules(RequirementCompiler.leaves(plan.rules())),shared.lookupTruncations());
         boolean complete=decisions.size()==conditions.size()&&!decisions.isEmpty()&&combined.gaps().isEmpty()&&cn.bidcheck.compat.Java8Api.setOf("PASS", "FAIL", "NOT_APPLICABLE").contains(combined.status());
         return linked("kind","HOST_RULE_RECOMPUTE","status","COMPLETED","planRevision",planRevision,"businessCheckCompleted",complete,"targetCheckCompleted",complete,"businessDecision",combined.status(),"targetEvidenceRevision",revision(),"targetEvidenceRevisions",versions,
             "obligations",cn.bidcheck.compat.Java8Api.toList(decisions.stream().map(Decision::map)),"gaps",cn.bidcheck.compat.Java8Api.toList(combined.gaps().stream().map(Gap::map)),"reason",combined.reason(),"evidences",combined.evidences(),"remainingTargetObligationIds",cn.bidcheck.compat.Java8Api.toList(decisions.stream().filter(d->!AgentInvestigationScope.closed(d)).map(Decision::id)),"remainingGapIds",cn.bidcheck.compat.Java8Api.toList(combined.gaps().stream().map(Gap::code).distinct()));

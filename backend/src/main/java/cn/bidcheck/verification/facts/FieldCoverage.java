@@ -19,6 +19,12 @@ public final class FieldCoverage {
         Map<String,Object> parameters=map(target.get("parameters"));
         if(predicate.equals("PRICE_RECONCILE")){Set<String> fields=new LinkedHashSet<>(strings(parameters.get("componentFields")));fields.add(text(parameters,"totalField"));fields.add(text(target,"field"));fields.remove("");return cn.bidcheck.compat.Java8Api.setOf("NUMBER", "FIELD").contains(kind)&&fields.contains(text(fact,"field"))&&(cn.bidcheck.compat.Java8Api.isBlank(text(target,"subject"))||text(target,"subject").equals(text(fact,"subject")));}
         if(predicate.equals("DATE_RELATION")){Set<String> fields=new LinkedHashSet<>(cn.bidcheck.compat.Java8Api.listOf(text(parameters,"leftRole"), text(parameters,"rightRole"), text(target,"field")));fields.remove("");return kind.equals("FIELD")&&fields.contains(text(fact,"field"))&&(cn.bidcheck.compat.Java8Api.isBlank(text(target,"subject"))||text(target,"subject").equals(text(fact,"subject")));}
+        if("MATERIAL".equals(predicate)&&"MATERIAL".equals(kind)){
+            String expected=text(target,"targetExpected");
+            if(expected.isEmpty())expected=text(target,"expected");
+            if(expected.isEmpty())expected=text(parameters,"materialIdentity");
+            if(!expected.isEmpty()&&!cn.bidcheck.verification.engine.MaterialTitleAliases.matches(expected,text(fact,"value")))return false;
+        }
         boolean compatible;
 switch (predicate) {case "VALIDITY":compatible = cn.bidcheck.compat.Java8Api.setOf("CERTIFICATE", "DATE_RANGE").contains(kind); break;case "SAME_FIELD":compatible = cn.bidcheck.compat.Java8Api.setOf("FIELD", "NUMBER", "CERTIFICATE").contains(kind); break;default:compatible = predicate.equals(kind); break;}
         return compatible&&(cn.bidcheck.compat.Java8Api.isBlank(text(target,"subject"))||text(target,"subject").equals(text(fact,"subject")))

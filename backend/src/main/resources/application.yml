@@ -41,6 +41,9 @@ logging:
 mybatis:
   mapper-locations: classpath:mappers/*.xml
 bidcheck:
+  recovery:
+    max-minutes: ${BIDCHECK_RECOVERY_MAX_MINUTES:15}
+    max-no-progress: ${BIDCHECK_RECOVERY_MAX_NO_PROGRESS:20}
   data: ${BIDCHECK_DATA:./data}
   check-mode: ${BIDCHECK_CHECK_MODE:RULES_RETRIEVAL}
   # Affects newly created runs only. Each run freezes its route and evaluator identity.

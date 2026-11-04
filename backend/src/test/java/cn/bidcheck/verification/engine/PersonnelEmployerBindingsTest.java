@@ -7,10 +7,35 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class PersonnelEmployerBindingsTest {
     final PersonnelCountRoleTest fixture=new PersonnelCountRoleTest();
+    @Test void missingEmploymentFactMayBeRecoveredOnlyFromTheIdentifiedAppointmentPacket() {
+        String id="110101199001010015";
+        Rule rule=new Rule("m","本单位连续社保","MONTHS","李明","社保","","","",
+                linked("employer","本单位","count",3),"在本单位缴纳社保","",Collections.emptyList());
+        String certificate="一级建造师注册证书\n6\n姓名：李明\n出生日期：1990年1月1日\n注册编号：京1999999999990001\n聘用企业：北方设计有限公司\n注册专业：建筑工程(有效期：2024-01-01至2027-01-01)";
+        for(String document:Arrays.asList(certificate,certificate.replace("1990年1月1日","1990年1月2日"),certificate.replace("聘用企业","注册单位"))){
+            EvidenceCorpus c=fixture.corpus("投标文件\n项目名称：北方中心办公楼装修工程\n1","目录\n1.项目负责人 ............ 3\n2",
+                    "1.项目负责人\n附表6-1 项目负责人情况表\n姓名 李明 年龄35\n身份证号 "+id+"\n拟在本合同任职 项目负责人\n主要工作经历\n任职经历\n3",
+                    "（2）证明文件扫描件\n4","身份证\n5\n姓名 李明\n出生 1990 年 1 月 1 日\n公民身份号码 "+id,document);
+            Fact role=new Fact("role","PERSON_ROLE","项目负责人","姓名","李明","李明","","","CURRENT_PROJECT",
+                    Collections.singletonList(fixture.source(c,3).id()),Collections.emptyMap());
+            assertFalse(PersonnelEmployerBindings.resolve(rule,Collections.singletonList(role),c).resolved());
+            PersonnelEmployerBindings.Binding resolved=PersonnelEmployerBindings.resolveForSocialCheck(rule,Collections.singletonList(role),c,Collections.emptyList());
+            assertEquals(certificate.equals(document),resolved.resolved(),resolved.audit().toString());
+            if(resolved.resolved())assertEquals(Collections.singletonList("北方设计有限公司"),resolved.employers());
+        }
+    }
     final String agreement="联合体协议书\n合成施工有限公司、合成设计有限公司[所有成员单位名称]自愿组成：合成施工有限公司和合成设计有限公司联合体，共同投标北方中心装修工程/标段。\n合成施工有限公司负责施工部分；合成设计有限公司负责设计部分。";
     EvidenceCorpus appointed(String text){return fixture.corpus("投标文件\n项目名称：北方中心装修工程\n投标人名称：（盖章）合成施工有限公司",agreement,text);}
     Map<String,Object> reference(){return cn.bidcheck.compat.Java8Api.mapOf("referenceDate", "2025-08-05", "referenceDateSourceVerified", true, "referenceDateEvidence", cn.bidcheck.compat.Java8Api.mapOf("documentId", "tender", "quote", "投标截止时间：2025年8月5日", "confirmation", "SOURCE_UNAMBIGUOUS", "confirmed", true));}
     Rule rule(String selector){return new Rule("months","本单位社保","MONTHS","测试甲","社保","","","",cn.bidcheck.compat.Java8Api.mapOf("employer", "本单位", "count", 3, "personnelRoleSelector", selector),selector+"在本单位缴纳社保","",cn.bidcheck.compat.Java8Api.listOf());}
+    @Test void onlyExplicitAppointmentClauseBindsProjectLeaderToConsortiumLead(){
+        EvidenceCorpus corpus=fixture.corpus("投标文件\n项目名称：北方中心装修工程",agreement+"\n联合体牵头人：合成施工有限公司。","本项目人员配置\n项目负责人：测试甲");
+        List<Fact> roles=fixture.checked(corpus,fixture.role(corpus,3,"项目负责人","测试甲","",""));
+        Rule base=rule("项目负责人");
+        Rule explicit=new Rule(base.id(),base.description(),base.predicate(),base.subject(),base.field(),base.operator(),base.expected(),base.unit(),base.parameters(),"项目负责人应由牵头单位委派。"+base.sourceQuote(),"",base.children());
+        assertEquals(Collections.singletonList("合成施工有限公司"),PersonnelEmployerBindings.resolve(explicit,roles,corpus).employers());
+        assertFalse(PersonnelEmployerBindings.resolve(base,roles,corpus).resolved());
+    }
     @Test void designAndConstructionResolveToTheirOwnMemberNotTheLead(){
         for(String role:cn.bidcheck.compat.Java8Api.listOf("设计部分负责人", "施工部分负责人")){
             cn.bidcheck.verification.engine.EvidenceCorpus c=appointed("本项目人员配置\n"+role+"：测试甲");java.util.List<cn.bidcheck.verification.engine.VerificationTypes.Fact> fs=fixture.checked(c,fixture.role(c,3,role,"测试甲","",""));cn.bidcheck.verification.engine.PersonnelEmployerBindings.Binding binding=PersonnelEmployerBindings.resolve(rule(role),fs,c);

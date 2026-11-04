@@ -20,20 +20,39 @@ final class AgentInvestigationScope {
         result.addAll(rules);return cn.bidcheck.compat.Java8Api.listCopyOf(result);
     }
     private static Decision currentDecision(Rule rule,String id,RuleEvaluator evaluator){
-        return Boolean.TRUE.equals(rule.parameters().get("identityPrerequisite"))?evaluator.evaluate(rule):evaluator.decisions.get(id);
+        Decision decision=Boolean.TRUE.equals(rule.parameters().get("identityPrerequisite"))?evaluator.evaluate(rule):evaluator.decisions.get(id);
+        return SourcePerformanceScore.readDecision(rule,decision,evaluator);
     }
     private static boolean prerequisiteCovered(Rule rule,Set<String> covered){
         List<String> parents=ProofVerifier.strings(rule.parameters().get("prerequisiteFor"));
         return Boolean.TRUE.equals(rule.parameters().get("identityPrerequisite"))&&!parents.isEmpty()&&covered.containsAll(parents);
     }
 
+    static boolean requiresEvidence(Decision decision){
+        if(closed(decision))return false;
+        if(decision!=null&&awaitingRequirementSource(decision.proof()))return false;
+        if(decision==null||decision.gaps().isEmpty())return true;
+        for(Gap gap:decision.gaps())if(!Arrays.asList("CURRENT_TAXPAYER_PROOF_REQUIRED","VISUAL_MARK_UNREADABLE",
+                "VISUAL_OBSERVATION_REQUIRED","BID_VOLUME_NOT_UPLOADED","EXTERNAL_OWNER_DATA_REQUIRED","EXTERNAL_RECORD_REQUIRED","EVIDENCE_LOOKUP_INCOMPLETE").contains(gap.code()))return true;
+        return false;
+    }
+    /** An unresolved tender baseline needs requirement clarification, not another bid-person search. */
+    static boolean awaitingRequirementSource(Map<String,Object> proof) {
+        if (!"source-extra-personnel-score-1".equals(str(proof, "executor"))) return false;
+        Object raw = proof.get("baseConfiguration");
+        if (!(raw instanceof Map<?,?>)) return false;
+        Map<String,Object> base = (Map<String,Object>) raw;
+        return "UNDETERMINED".equals(str(base, "status"))
+            && RuleEvaluator.maps(base.get("gaps")).stream().anyMatch(gap ->
+                "SCORING_BASE_REQUIREMENT_SOURCE_REQUIRED".equals(str(gap, "code")));
+    }
     static List<Rule> pending(Plan plan,List<Rule> executable,Map<String,Object> context,RuleEvaluator evaluator){
         Map<String,String> parents=SourceScoringRules.readParents(plan.rules(),executable);
         Set<String> primary=new LinkedHashSet<>();
         if(context.containsKey("recoveryTargetObligationIds")){
             Set<String> requested=new LinkedHashSet<>(ProofVerifier.strings(context.get("recoveryTargetObligationIds")));
             plan.rules().forEach(r->select(r,requested,primary,false));
-            parents.forEach((read,parent)->{if(primary.contains(parent))primary.add(read);});
+            parents.forEach((read,parent)->{if(primary.contains(parent)||requested.contains(read))primary.add(read);});
         }else executable.forEach(r->primary.add(r.id()));
         // A selected conditional branch first depends on its applicability condition. The
         // unselected alternative and already-satisfied ANY groups are not outstanding work.
@@ -42,13 +61,13 @@ final class AgentInvestigationScope {
         parents.forEach((read,parent)->{if(applicable.contains(parent))applicable.add(read);});
         List<String> unclosed=cn.bidcheck.compat.Java8Api.toList(executable.stream().filter(r->primary.contains(r.id())&&applicable.contains(r.id()))
             .filter(r->!kinds(r).isEmpty())
-            .filter(r->!closed(evaluator.decisions.get(parents.getOrDefault(r.id(),r.id())))).map(Rule::id));
+            .filter(r->requiresEvidence(currentDecision(r,parents.getOrDefault(r.id(),r.id()),evaluator))).map(Rule::id));
         if(unclosed.isEmpty())return cn.bidcheck.compat.Java8Api.listOf();
         // Identity facts remain admissible prerequisites through relevant(). Do not re-expand
         // a selected ::own predicate into its sibling obligations just because they share a role.
         Set<String> selected=new LinkedHashSet<>(unclosed);
         return cn.bidcheck.compat.Java8Api.toList(executable.stream().filter(r->selected.contains(r.id())&&!kinds(r).isEmpty())
-            .filter(r->!closed(evaluator.decisions.get(parents.getOrDefault(r.id(),r.id())))));
+            .filter(r->requiresEvidence(currentDecision(r,parents.getOrDefault(r.id(),r.id()),evaluator))));
     }
     private static void select(Rule r,Set<String> requested,Set<String> selected,boolean parent){
         boolean direct=parent||requested.contains(r.id())||requested.stream().anyMatch(id->id.startsWith(r.id()+":subject:"));

@@ -21,7 +21,7 @@ import static cn.bidcheck.verification.source.SourceSafety.map;
 final class PdfNativeTableLayout {
     static final String VERSION="pdf-native-cell-layout-1";
     private static final double EPS=1.0;
-    private static final Set<String> LABELS=cn.bidcheck.compat.Java8Api.setOf("姓名", "人员姓名", "年龄", "学历", "职称", "身份证号", "身份证号码", "公民身份号码", "拟在本合同任职", "拟任岗位", "岗位", "职务", "工作单位", "聘用单位", "单位名称", "证书编号", "注册编号", "专业", "注册专业", "证书名称", "证书类别", "等级", "级别", "有效期", "注册有效期", "缴费月份", "缴费单位", "参保单位");
+    private static final Set<String> LABELS=cn.bidcheck.compat.Java8Api.setOf("姓名", "人员姓名", "年龄", "学历", "职称", "身份证号", "身份证号码", "公民身份号码", "拟在本合同任职", "拟任岗位", "岗位", "职务", "工作单位", "聘用单位", "单位名称", "证书编号", "注册编号", "专业", "注册专业", "证书名称", "证书类别", "等级", "级别", "有效期", "注册有效期", "缴费月份", "缴费单位", "参保单位", "序号", "合同名称", "签订时间", "签订日期", "合同金额", "金额（万元）", "金额(万元)", "装修部分金额", "建安费", "设计费", "主要内容");
     @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
     private static final class Line{
         private final double x1;
@@ -84,7 +84,12 @@ boolean horizontal(){return Math.abs(y1-y2)<EPS;}double start(){return horizonta
             org.apache.pdfbox.pdmodel.common.PDRectangle crop=page.getCropBox();double width=crop.getWidth(),height=crop.getHeight();
             GridReader lines=new GridReader(page);lines.processPage(page);
             GlyphReader text=new GlyphReader();text.setStartPage(stored.number());text.setEndPage(stored.number());text.setSortByPosition(true);text.getText(pdf);
-            Aligned aligned=align(text.glyphs,stored.text());if(!aligned.complete())return unavailable(document,stored,"NATIVE_TABLE_SOURCE_ALIGNMENT_REQUIRED");
+            Aligned aligned=align(text.glyphs,stored.text());
+            // PDFBox may print a multi-line physical row in a different order from baseline sorting.
+            // Use its actual write order only when every observed glyph occurs once and the full frozen page matches.
+            if(!aligned.complete()&&text.written.size()==text.glyphs.size()&&new HashSet<>(text.written).size()==text.glyphs.size())
+                aligned=alignWritten(text.written,stored.text());
+            if(!aligned.complete())return unavailable(document,stored,"NATIVE_TABLE_SOURCE_ALIGNMENT_REQUIRED");
             List<Line> display=cn.bidcheck.compat.Java8Api.toList(lines.lines.stream().map(l->new Line(l.x1-crop.getLowerLeftX(),height-(l.y1-crop.getLowerLeftY()),l.x2-crop.getLowerLeftX(),height-(l.y2-crop.getLowerLeftY()))));
             int table=0;for(List<Line> group:components(display)){
                 List<Cell> cells=grid(group);if(cells.isEmpty())continue;String tableId=id(document,stored,"table:"+(++table)+cells);
@@ -118,6 +123,9 @@ boolean horizontal(){return Math.abs(y1-y2)<EPS;}double start(){return horizonta
     private static Aligned align(List<Glyph> input,String original){
         List<Glyph> sorted=new ArrayList<>(input);sorted.sort(Comparator.comparingDouble((Glyph g)->g.baseline).thenComparingDouble(g->g.x));List<Glyph> ordered=new ArrayList<>();
         for(int at=0;at<sorted.size();){int end=at+1;double y=sorted.get(at).baseline;while(end<sorted.size()&&sorted.get(end).baseline-y<2.0)end++;List<Glyph> line=new ArrayList<>(sorted.subList(at,end));line.sort(Comparator.comparingDouble(g->g.x));ordered.addAll(line);at=end;}
+        return alignWritten(ordered,original);
+    }
+    private static Aligned alignWritten(List<Glyph> ordered,String original){
         List<Integer> offsets=new ArrayList<>();StringBuilder literal=new StringBuilder();for(int i=0;i<original.length();i++)if(!whitespace(original.charAt(i))){literal.append(original.charAt(i));offsets.add(i);}
         String joined=String.join("",cn.bidcheck.compat.Java8Api.toList(ordered.stream().map(g->clean(g.text))));
         if(!joined.contentEquals(literal))return new Aligned(cn.bidcheck.compat.Java8Api.listOf(),false);
@@ -134,9 +142,10 @@ boolean horizontal(){return Math.abs(y1-y2)<EPS;}double start(){return horizonta
     private static List<Cell> grid(List<Line> lines){List<Double> xs=axes(lines,false),ys=axes(lines,true);int columns=xs.size()-1,rows=ys.size()-1;if(columns<2||rows<1||columns>60||rows>200||rows*columns>3000)return cn.bidcheck.compat.Java8Api.listOf();int[] p=new int[rows*columns];for(int i=0;i<p.length;i++)p[i]=i;
         for(int r=0;r<rows;r++)for(int c=0;c<columns;c++){int top=edge(lines,true,ys.get(r),xs.get(c),xs.get(c+1)),bottom=edge(lines,true,ys.get(r+1),xs.get(c),xs.get(c+1)),left=edge(lines,false,xs.get(c),ys.get(r),ys.get(r+1)),right=edge(lines,false,xs.get(c+1),ys.get(r),ys.get(r+1));if(top<0||bottom<0||left<0||right<0||r==0&&top!=1||r==rows-1&&bottom!=1||c==0&&left!=1||c==columns-1&&right!=1)return cn.bidcheck.compat.Java8Api.listOf();if(c+1<columns&&right==0)p[root(p,r*columns+c)]=root(p,r*columns+c+1);if(r+1<rows&&bottom==0)p[root(p,r*columns+c)]=root(p,(r+1)*columns+c);}
         Map<Integer,List<Integer>> groups=new LinkedHashMap<>();for(int i=0;i<p.length;i++)groups.computeIfAbsent(root(p,i),k->new ArrayList<>()).add(i);List<Cell> cells=new ArrayList<>();for(List<Integer> group:groups.values()){int r0=group.stream().mapToInt(i->i/columns).min().orElseThrow(java.util.NoSuchElementException::new),r1=group.stream().mapToInt(i->i/columns).max().orElseThrow(java.util.NoSuchElementException::new),c0=group.stream().mapToInt(i->i%columns).min().orElseThrow(java.util.NoSuchElementException::new),c1=group.stream().mapToInt(i->i%columns).max().orElseThrow(java.util.NoSuchElementException::new);if(group.size()!=(r1-r0+1)*(c1-c0+1))return cn.bidcheck.compat.Java8Api.listOf();cells.add(new Cell(r0+1,c0+1,r1-r0+1,c1-c0+1,xs.get(c0),ys.get(r0),xs.get(c1+1),ys.get(r1+1)));}return cells;}
-    private static final class GlyphReader extends PDFTextStripper {final List<Glyph> glyphs=new ArrayList<>();int operators;final long deadline=System.nanoTime()+8_000_000_000L;GlyphReader()throws IOException{}
+    private static final class GlyphReader extends PDFTextStripper {final List<Glyph> glyphs=new ArrayList<>(),written=new ArrayList<>();final Map<TextPosition,Glyph> originalGlyphs=new IdentityHashMap<>();int operators;final long deadline=System.nanoTime()+8_000_000_000L;GlyphReader()throws IOException{}
         @Override protected void processOperator(org.apache.pdfbox.contentstream.operator.Operator op,List<org.apache.pdfbox.cos.COSBase> args)throws IOException{SourceSafety.interrupted();if(++operators>100000||System.nanoTime()>deadline)throw new IOException("NATIVE_TABLE_PROCESSING_LIMIT");super.processOperator(op,args);}
-        @Override protected void processTextPosition(TextPosition t){SourceSafety.interrupted();if(glyphs.size()>=50000)throw new IllegalStateException("NATIVE_TABLE_GLYPH_LIMIT");if(!cn.bidcheck.compat.Java8Api.isBlank(clean(t.getUnicode())))glyphs.add(new Glyph(t.getUnicode(),t.getXDirAdj(),t.getYDirAdj()-t.getHeightDir(),t.getXDirAdj()+t.getWidthDirAdj(),t.getYDirAdj(),t.getYDirAdj()));super.processTextPosition(t);}}
+        @Override protected void writeString(String text,List<TextPosition> positions)throws IOException{for(TextPosition p:positions){Glyph g=originalGlyphs.get(p);if(g!=null)written.add(g);}super.writeString(text,positions);}
+        @Override protected void processTextPosition(TextPosition t){SourceSafety.interrupted();if(glyphs.size()>=50000)throw new IllegalStateException("NATIVE_TABLE_GLYPH_LIMIT");if(!cn.bidcheck.compat.Java8Api.isBlank(clean(t.getUnicode()))){Glyph g=new Glyph(t.getUnicode(),t.getXDirAdj(),t.getYDirAdj()-t.getHeightDir(),t.getXDirAdj()+t.getWidthDirAdj(),t.getYDirAdj(),t.getYDirAdj());glyphs.add(g);originalGlyphs.put(t,g);}super.processTextPosition(t);}}
     private static final class GridReader extends PDFGraphicsStreamEngine {
         final List<Line> lines=new ArrayList<>(),path=new ArrayList<>();Point2D current=new Point2D.Double(),begin=current;int operators,pdfOperators;final long deadline=System.nanoTime()+8_000_000_000L;GridReader(PDPage page){super(page);}
         @Override protected void processOperator(org.apache.pdfbox.contentstream.operator.Operator op,List<org.apache.pdfbox.cos.COSBase> args)throws IOException{SourceSafety.interrupted();if(++pdfOperators>100000||System.nanoTime()>deadline)throw new IOException("NATIVE_TABLE_PROCESSING_LIMIT");super.processOperator(op,args);}

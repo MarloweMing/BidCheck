@@ -6,6 +6,12 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ConsistencyExtractionNoiseTest {
+    @Test void historyAndCertificateTitlesDoNotSupplyCurrentProjectPosts(){
+        List<Map<String,Object>> occurrences=facts("本项目人员配置\n项目经理：张三\n主要工作经历\n项目经理：李四\n本项目人员配置\n项目经理：王五\n# 建筑施工企业项目负责人 安全生产考核合格证书\n项目经理：赵六");
+        List<String> people=new ArrayList<>();
+        for(Map<String,Object> fact:occurrences)if("personName".equals(fact.get("field")))people.add(String.valueOf(fact.get("rawValue")));
+        assertTrue(people.containsAll(Arrays.asList("张三","王五")),people.toString());assertFalse(people.contains("李四"));assertFalse(people.contains("赵六"));
+    }
     private List<Map<String,Object>> facts(String text) {
         cn.bidcheck.domain.Domain.Document doc = new Document("bid", "p", "BID", "投标.pdf", 1, "hash", "",
                 cn.bidcheck.compat.Java8Api.listOf(new Page(1, text, "PAGE", "PDFBOX_NATIVE", null)), cn.bidcheck.compat.Java8Api.listOf());

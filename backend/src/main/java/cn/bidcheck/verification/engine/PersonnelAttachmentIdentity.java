@@ -71,9 +71,19 @@ final class PersonnelAttachmentIdentity {
     }
 
     static Map<String,Object> proof(Fact appointment,Fact certificate,EvidenceCorpus corpus){
-        if(!certificate.kind().equals("CERTIFICATE")||!SubjectIdentity.person(appointment).equals(certificate.subject()))return cn.bidcheck.compat.Java8Api.mapOf();
-        Packet packet=packet(appointment,corpus);if(packet==null)return cn.bidcheck.compat.Java8Api.mapOf();
-        cn.bidcheck.verification.engine.CertificateSourceComparison.Record record=CertificateRecordBindings.matching(certificate,corpus.byId);if(record==null||cn.bidcheck.compat.Java8Api.isBlank(record.value("BIRTH_DATE"))||!record.value("BIRTH_DATE").equals(packet.card().birth()))return cn.bidcheck.compat.Java8Api.mapOf();
+        if(!certificate.kind().equals("CERTIFICATE")||!SubjectIdentity.person(appointment).equals(certificate.subject()))return Collections.emptyMap();
+        return proof(appointment,certificate,corpus,packet(appointment,corpus));
+    }
+    static List<Fact> employmentWitnesses(Rule rule,Fact appointment,EvidenceCorpus corpus){
+        Packet packet=packet(appointment,corpus);if(packet==null)return Collections.emptyList();
+        List<Fact> result=new ArrayList<>();
+        for(Fact certificate:NativeCertificateFacts.employerCandidates(rule,corpus,packet.sources()))
+            if(!proof(appointment,certificate,corpus,packet).isEmpty()&&!PersonEvidenceProfiles.explicitEmployment(certificate,corpus).isEmpty())result.add(certificate);
+        return result;
+    }
+    private static Map<String,Object> proof(Fact appointment,Fact certificate,EvidenceCorpus corpus,Packet packet){
+        if(packet==null||!packet.name().equals(certificate.subject()))return cn.bidcheck.compat.Java8Api.mapOf();
+        cn.bidcheck.verification.engine.CertificateSourceComparison.Record record=identityRecord(certificate,corpus);if(record==null||cn.bidcheck.compat.Java8Api.isBlank(record.value("BIRTH_DATE"))||!record.value("BIRTH_DATE").equals(packet.card().birth()))return cn.bidcheck.compat.Java8Api.mapOf();
         if(record.sources().stream().anyMatch(s->!s.scopeContext().status().equals("CURRENT_BID_ATTACHMENT")||!s.scopeContext().anchor().equals(packet.anchor())))return cn.bidcheck.compat.Java8Api.mapOf();
         if(!cn.bidcheck.compat.Java8Api.isBlank(record.value("PERSON_ID"))&&!record.value("PERSON_ID").equals(packet.card().number()))return cn.bidcheck.compat.Java8Api.mapOf();
         Set<String> versions=new HashSet<>();
@@ -88,6 +98,20 @@ final class PersonnelAttachmentIdentity {
             "doesNotProveEmployment",true,"sameNameAloneAccepted",false);
     }
 
+    private static CertificateSourceComparison.Record identityRecord(Fact fact,EvidenceCorpus corpus){
+        CertificateSourceComparison.Record exact=CertificateRecordBindings.matching(fact,corpus.byId);if(exact!=null)return exact;
+        // A coarse category can still identify one record, but cannot prove that record's qualification.
+        // Re-read the complete original with every other claimed field unchanged; never promote the input fact.
+        if(!"注册建筑师".equals(str(fact.attributes(),"category")))return null;
+        CertificateSourceComparison.Record found=null;
+        for(String category:Arrays.asList("一级注册建筑师","二级注册建筑师")){
+            Map<String,Object> attributes=new LinkedHashMap<>(fact.attributes());attributes.put("category",category);
+            Fact candidate=new Fact(fact.id(),fact.kind(),fact.subject(),fact.field(),fact.rawValue(),fact.value(),fact.unit(),fact.basis(),fact.scope(),fact.sourceIds(),attributes);
+            CertificateSourceComparison.Record record=CertificateRecordBindings.matching(candidate,corpus.byId);
+            if(record!=null){if(found!=null)return null;found=record;}
+        }
+        return found;
+    }
     /** Supplies the appointment's ID only after a matching identity card in its own proof packet. */
     static Map<String,Object> appointmentIdentity(Fact appointment,EvidenceCorpus corpus){
         Packet packet=packet(appointment,corpus);if(packet==null)return cn.bidcheck.compat.Java8Api.mapOf();
@@ -102,43 +126,58 @@ final class PersonnelAttachmentIdentity {
         for(String id:role.sourceIds()){Source source=corpus.byId.get(id);if(source==null)continue;
             cn.bidcheck.domain.Domain.Page page=corpus.pages.get(EvidenceCorpus.pageKey(source.evidence().documentId(),source.evidence().page(),source.evidence().locationType()));
             if(page==null)continue;String text=page.text();Matcher history=Pattern.compile("(?m)^\\s*(?:主要工作经历|工作经历|工作履历|参加过的类似项目)").matcher(text);if(history.find())text=text.substring(0,history.start());
-            if(text.contains("身份证号")&&Pattern.compile("[0-9]{8,17}").matcher(text).find())return true;
+            if(text.contains("身份证号")&&text.contains("拟在本合同任职"))return true;
         }return false;
     }
 
     private static Packet packet(Fact appointment,EvidenceCorpus corpus){
-        if(!appointment.kind().equals("PERSON_ROLE")||!appointment.scope().equals("CURRENT_PROJECT")||!DomainBindings.currentRoleSource(appointment,corpus.byId))return null;
-        if(new ProofVerifier().issue(appointment,corpus.byId)!=null||DomainBindings.issue(appointment,corpus.byId,cn.bidcheck.compat.Java8Api.listOf())!=null)return null;
-        String name=SubjectIdentity.person(appointment);if(cn.bidcheck.compat.Java8Api.isBlank(name))return null;
-        List<Source> roleSources=cn.bidcheck.compat.Java8Api.toList(appointment.sourceIds().stream().map(corpus.byId::get).filter(Objects::nonNull));if(roleSources.isEmpty())return null;
-        Set<String> anchors=new HashSet<>();for(Source s:roleSources){if(!s.scopeContext().status().equals("CURRENT_BID_SECTION")||!s.scopeContext().anchor().endsWith(":cover-navigation-section-form-printed-page"))return null;anchors.add(s.scopeContext().anchor());}
-        if(anchors.size()!=1)return null;String roleAnchor=anchors.iterator().next();cn.bidcheck.domain.Domain.Evidence first=roleSources.get(0).evidence();
+        if(!appointment.kind().equals("PERSON_ROLE")||!appointment.scope().equals("CURRENT_PROJECT")||!DomainBindings.currentRoleSource(appointment,corpus.byId))return rejectedPacket(corpus,appointment,"NOT_CURRENT_APPOINTMENT");
+        if(new ProofVerifier().issue(appointment,corpus.byId)!=null||DomainBindings.issue(appointment,corpus.byId,cn.bidcheck.compat.Java8Api.listOf())!=null)return rejectedPacket(corpus,appointment,"UNVERIFIED_ROLE_SOURCE");
+        String name=SubjectIdentity.person(appointment);if(cn.bidcheck.compat.Java8Api.isBlank(name))return rejectedPacket(corpus,appointment,"MISSING_PERSON_NAME");
+        List<Source> roleSources=cn.bidcheck.compat.Java8Api.toList(appointment.sourceIds().stream().map(corpus.byId::get).filter(Objects::nonNull));if(roleSources.isEmpty())return rejectedPacket(corpus,appointment,"MISSING_ROLE_SOURCE");
+        Set<String> anchors=new HashSet<>();for(Source s:roleSources){if(!s.scopeContext().status().equals("CURRENT_BID_SECTION")||!s.scopeContext().anchor().endsWith(":cover-navigation-section-form-printed-page"))return rejectedPacket(corpus,appointment,"WRONG_ROLE_SECTION");anchors.add(s.scopeContext().anchor());}
+        if(anchors.size()!=1)return rejectedPacket(corpus,appointment,"AMBIGUOUS_ROLE_SECTION");String roleAnchor=anchors.iterator().next();cn.bidcheck.domain.Domain.Evidence first=roleSources.get(0).evidence();
         Set<String> attachmentAnchors=new HashSet<>();List<Source> pack=new ArrayList<>();
         for(Source s:corpus.all)if(s.evidence().documentId().equals(first.documentId())&&s.scopeContext().status().equals("CURRENT_BID_ATTACHMENT")&&s.scopeContext().anchor().startsWith(roleAnchor+":proof-attachment:")){
-            if(s.index()||s.historical()||s.scopeContext().blocked())return null;attachmentAnchors.add(s.scopeContext().anchor());pack.add(s);
+            if(s.index()||s.historical()||s.scopeContext().blocked())return rejectedPacket(corpus,appointment,"UNUSABLE_ATTACHMENT");attachmentAnchors.add(s.scopeContext().anchor());pack.add(s);
         }
-        if(attachmentAnchors.size()!=1)return null;
+        if(attachmentAnchors.size()!=1)return rejectedPacket(corpus,appointment,"AMBIGUOUS_ATTACHMENT");
         Map<String,List<Source>> pages=new LinkedHashMap<>();for(Source s:pack)pages.computeIfAbsent(EvidenceCorpus.pageKey(s.evidence().documentId(),s.evidence().page(),s.evidence().locationType()),k->new ArrayList<>()).add(s);
         List<Card> cards=new ArrayList<>();
         for(java.util.Map.Entry<java.lang.String, java.util.List<cn.bidcheck.verification.engine.VerificationTypes.Source>> entry:pages.entrySet()){
             cn.bidcheck.domain.Domain.Page page=corpus.pages.get(entry.getKey());if(page==null)continue;String text=Objects.toString(page.text(),"");
             if(!text.contains("公民身份号码")&&!Pattern.compile("(?m)^[\\t #]*身份证[\\t ]*$").matcher(text).find())continue;
-            Matcher owner=NAME.matcher(text),id=ID.matcher(text),birth=BIRTH.matcher(text);if(!owner.find()||!owner.group(1).equals(name)||!id.find()||!birth.find())return null;
-            String identifier=id.group(1).toUpperCase(Locale.ROOT),date=date(birth);if(!validId(identifier)||!date.equals(identifier.substring(6,10)+"-"+identifier.substring(10,12)+"-"+identifier.substring(12,14)))return null;
+            Matcher owner=NAME.matcher(text),id=ID.matcher(text),birth=BIRTH.matcher(text);if(!owner.find()||!owner.group(1).equals(name)||!id.find()||!birth.find())return rejectedPacket(corpus,appointment,"CARD_FIELDS_UNREADABLE");
+            String identifier=id.group(1).toUpperCase(Locale.ROOT),date=date(birth);if(!validId(identifier)||!date.equals(identifier.substring(6,10)+"-"+identifier.substring(10,12)+"-"+identifier.substring(12,14)))return rejectedPacket(corpus,appointment,"CARD_CHECKSUM_OR_BIRTH_CONFLICT");
             List<Map<String,Object>> fields=new ArrayList<>();
-            for(cn.bidcheck.verification.engine.CertificateSourceComparison.Field f:Arrays.asList(CertificateRecordBindings.sourceField("NAME","姓名",name,text,owner.start(1),owner.end(1),entry.getValue()),CertificateRecordBindings.sourceField("PERSON_ID","公民身份号码",identifier,text,id.start(1),id.end(1),entry.getValue()),CertificateRecordBindings.sourceField("BIRTH_DATE","出生",date,text,birth.start(1),birth.end(3),entry.getValue()))){if(f==null)return null;fields.add(f.audit());}
-            if(owner.find()||id.find()||birth.find())return null;cards.add(new Card(identifier,date,cn.bidcheck.compat.Java8Api.listCopyOf(fields)));
+            for(cn.bidcheck.verification.engine.CertificateSourceComparison.Field f:Arrays.asList(CertificateRecordBindings.sourceField("NAME","姓名",name,text,owner.start(1),owner.end(1),entry.getValue()),CertificateRecordBindings.sourceField("PERSON_ID","公民身份号码",identifier,text,id.start(1),id.end(1),entry.getValue()),CertificateRecordBindings.sourceField("BIRTH_DATE","出生",date,text,birth.start(1),birth.end(3),entry.getValue()))){if(f==null)return rejectedPacket(corpus,appointment,"UNBOUND_CARD_FIELD");fields.add(f.audit());}
+            if(owner.find()||id.find()||birth.find())return rejectedPacket(corpus,appointment,"AMBIGUOUS_CARD_FIELD");cards.add(new Card(identifier,date,cn.bidcheck.compat.Java8Api.listCopyOf(fields)));
         }
-        if(cards.isEmpty()||cards.stream().map(Card::number).distinct().count()!=1)return null;Card card=cards.get(0);
-        cn.bidcheck.domain.Domain.Page rolePage=corpus.pages.get(EvidenceCorpus.pageKey(first.documentId(),first.page(),first.locationType()));if(rolePage==null)return null;
+        for(SocialInsuranceEvidenceRecords.Record social:SocialInsuranceEvidenceRecords.records(pack)){
+            if(!name.equals(social.person()))continue;
+            SocialInsuranceEvidenceRecords.Field field=social.fields().get("identifier");
+            if(field==null)continue;
+            String identifier=clean(field.text()).toUpperCase(Locale.ROOT);
+            if(!validId(identifier))return rejectedPacket(corpus,appointment,"SOCIAL_ID_INVALID");
+            java.time.LocalDate birth;
+            try{birth=java.time.LocalDate.of(Integer.parseInt(identifier.substring(6,10)),Integer.parseInt(identifier.substring(10,12)),Integer.parseInt(identifier.substring(12,14)));}catch(RuntimeException invalid){return rejectedPacket(corpus,appointment,"SOCIAL_BIRTH_INVALID");}
+            cards.add(new Card(identifier,birth.toString(),Collections.singletonList(linked("binding","VALIDATED_SOCIAL_INSURANCE_ROW","recordId",social.id(),"field","identifier","sourceIds",cn.bidcheck.compat.Java8Api.toList(social.sources().stream().map(Source::id))))));
+        }
+        if(cards.isEmpty()||cards.stream().map(Card::number).distinct().count()!=1)return rejectedPacket(corpus,appointment,"IDENTIFIER_NOT_UNIQUE");Card card=cards.get(0);
+        cn.bidcheck.domain.Domain.Page rolePage=corpus.pages.get(EvidenceCorpus.pageKey(first.documentId(),first.page(),first.locationType()));if(rolePage==null)return rejectedPacket(corpus,appointment,"APPOINTMENT_PAGE_MISSING");
         String text=rolePage.text();int end=text.length();Matcher history=Pattern.compile("(?m)^\\s*(?:主要工作经历|工作经历|工作履历|参加过的类似项目)").matcher(text);if(history.find())end=history.start();String prefix=text.substring(0,end);
-        Matcher person=NAME.matcher(prefix);if(!person.find()||!person.group(1).equals(name)||person.find()||!prefix.contains("身份证号")||!prefix.contains("拟在本合同任职"))return null;
-        AppointmentId appointmentId=appointmentId(prefix,card.number());if(appointmentId==null)return null;List<Map<String,Object>> parts=new ArrayList<>();
+        Matcher person=NAME.matcher(prefix);if(!person.find()||!person.group(1).equals(name)||person.find()||!prefix.contains("身份证号")||!prefix.contains("拟在本合同任职"))return rejectedPacket(corpus,appointment,"APPOINTMENT_IDENTITY_LABEL_AMBIGUOUS");
+        AppointmentId appointmentId=appointmentId(prefix,card.number());if(appointmentId==null)return rejectedPacket(corpus,appointment,"APPOINTMENT_FRAGMENTS_CONFLICT");List<Map<String,Object>> parts=new ArrayList<>();
         List<Source> rolePageSources=cn.bidcheck.compat.Java8Api.toList(corpus.all.stream().filter(s->s.evidence().documentId().equals(first.documentId())&&s.evidence().page()==first.page()&&s.evidence().locationType().equals(first.locationType())));
-        for(int[] span:appointmentId.parts()){cn.bidcheck.verification.engine.CertificateSourceComparison.Field field=CertificateRecordBindings.sourceField("PERSON_ID_PART","身份证号",text.substring(span[0],span[1]),text,span[0],span[1],rolePageSources);if(field==null)return null;parts.add(field.audit());}
-        cn.bidcheck.verification.engine.CertificateSourceComparison.Field label=CertificateRecordBindings.sourceField("IDENTITY_FIELD_LABEL","身份证号",text.substring(appointmentId.labelStart(),appointmentId.labelEnd()),text,appointmentId.labelStart(),appointmentId.labelEnd(),rolePageSources);if(label==null)return null;
+        for(int[] span:appointmentId.parts()){cn.bidcheck.verification.engine.CertificateSourceComparison.Field field=CertificateRecordBindings.sourceField("PERSON_ID_PART","身份证号",text.substring(span[0],span[1]),text,span[0],span[1],rolePageSources);if(field==null)return rejectedPacket(corpus,appointment,"UNBOUND_ID_FRAGMENT");parts.add(field.audit());}
+        cn.bidcheck.verification.engine.CertificateSourceComparison.Field label=CertificateRecordBindings.sourceField("IDENTITY_FIELD_LABEL","身份证号",text.substring(appointmentId.labelStart(),appointmentId.labelEnd()),text,appointmentId.labelStart(),appointmentId.labelEnd(),rolePageSources);if(label==null)return rejectedPacket(corpus,appointment,"UNBOUND_ID_LABEL");
         Map<String,Object> proof=linked("assembly",parts.size()==1?"LITERAL_ID":"ORDERED_FRAGMENTS_IN_UNIQUE_CURRENT_APPOINTMENT_TABLE","fieldSpans",parts,"fieldLabelSpan",label.audit(),"identifierChecksumVerified",true,"scopeAnchor",roleAnchor,"sourceIds",appointment.sourceIds());
         return new Packet(name,attachmentAnchors.iterator().next(),cn.bidcheck.compat.Java8Api.listCopyOf(pack),proof,card);
+    }
+
+    private static Packet rejectedPacket(EvidenceCorpus corpus,Fact role,String reason){
+        if(corpus.identityPacketRejections.add(role.id()+":"+reason))org.slf4j.LoggerFactory.getLogger(PersonnelAttachmentIdentity.class).info("bidcheck.identity_packet roleFactId={} sourceIds={} reason={}",role.id(),role.sourceIds(),reason);
+        return null;
     }
 
     /** OCR can split one appointment-table identity cell over the title/header/title lines.
@@ -166,8 +205,12 @@ final class PersonnelAttachmentIdentity {
         Map<String,List<Source>> pages=new LinkedHashMap<>();for(Source s:packet.sources())pages.computeIfAbsent(EvidenceCorpus.pageKey(s.evidence().documentId(),s.evidence().page(),s.evidence().locationType()),key->new ArrayList<>()).add(s);
         for(java.util.Map.Entry<java.lang.String, java.util.List<cn.bidcheck.verification.engine.VerificationTypes.Source>> entry:pages.entrySet()){
             cn.bidcheck.domain.Domain.Page page=corpus.pages.get(entry.getKey());if(page==null)return true;String text=Objects.toString(page.text(),""),category=selected.category();
-            boolean family=category.contains("建造师")?text.contains("建造师")&&text.contains("注册证书"):
-                category.contains("建筑师")?text.contains("建筑师")&&text.contains("注册证书"):
+            // The query-table column "注册证书所在单位名称" describes an employer,
+            // not another certificate occurrence. Keep every other registration-certificate
+            // mention (including an unreadable competing card) in the uniqueness check.
+            boolean registrationCertificate=Pattern.compile("注册证书(?![\\t ]*所在单位)").matcher(text).find();
+            boolean family=category.contains("建造师")?text.contains("建造师")&&registrationCertificate:
+                category.contains("建筑师")?text.contains("建筑师")&&registrationCertificate:
                 category.contains("安全生产考核")?text.contains("安全生产考核合格证"):text.contains(category);
             if(!family||!text.contains(packet.name()))continue;
             java.util.List<cn.bidcheck.verification.engine.CertificateSourceComparison.Record> records=CertificateRecordBindings.records(corpus,entry.getValue());

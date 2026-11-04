@@ -31,6 +31,8 @@ public final class FocusedCheckContext {
     @org.springframework.beans.factory.annotation.Autowired(required=false)
     private InferenceConfirmationService inferenceConfirmations;
     @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private cn.bidcheck.verification.external.ExternalVerificationAdapter externalAdapter;
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
     private cn.bidcheck.storage.ArtifactStorage artifactStorage;
     @org.springframework.beans.factory.annotation.Value("${bidcheck.agent.inference-normalization-min-confidence:0.9}")
     private String inferenceNormalizationConfidence="0.9";
@@ -58,6 +60,10 @@ public final class FocusedCheckContext {
         Consumer<Runnable> write=action->DbTransactionRetry.executeWithoutResult(tx,"ATOMIC_EVIDENCE_PUBLISH",cn.bidcheck.compat.Java8Api.mapOf("taskId", taskId, "runId", runId),s->{fence.run();action.run();fence.run();});
         Map<String,Object> base=new LinkedHashMap<>();
         String reviewMode=CheckReviewMode.of(store.getMap("run",runId));base.put("reviewMode",reviewMode);
+        if(externalAdapter!=null){
+            base.put("providerConfigurationKnown",!"CONFIGURATION_INVALID".equals(externalAdapter.identity()));
+            base.put("providerSources",externalAdapter.providerSources());
+        }
         base.put("focusedCheck",true);base.put("unlimitedModelCalls",true);base.put("modelAttemptPermit",permit);
         base.put("inferenceNormalizationMinConfidence",inferenceNormalizationConfidence);
         base.put("allowModelRuleCompilation",false);
@@ -157,11 +163,13 @@ public final class FocusedCheckContext {
                 context.put("requirementDependencyInputsVerified",dependency.getOrDefault("verified",false));
                 context.put("requirementDependencyRevision",dependency.getOrDefault("revision",""));
             }
+            context.put("inferenceCheckpointId",cp.id());
             if(inferenceConfirmations!=null)context.put("inferencePublisher",(Consumer<Map<String,Object>>)claim->write.accept(()->inferenceConfirmations.capture(runId,cp.id(),bid,tender,claim)));
             context.put("ordinaryRecoveryObservedRevision",OrdinaryRecoveryDependencies.currentRevision(store,project,runId));
             String factRevision=ledger.lookupRevision(itemManifest);
             if(!cn.bidcheck.compat.Java8Api.isBlank(factRevision))context.put("sharedFactRevision",factRevision);
-            List<Map<String,Object>> prior=new ArrayList<>();String previousRun=text(store.getMap("run",runId),"parentRunId");
+            Map<String,Object> currentRun=store.getMap("run",runId);
+            List<Map<String,Object>> prior=new ArrayList<>();String previousRun=text(currentRun,"parentRunId");
             if(!cn.bidcheck.compat.Java8Api.isBlank(previousRun)){
                 Map<String,Object> previous=store.getMap("run",previousRun);
                 if(project.equals(text(previous,"projectId"))&&bid.id().equals(text(previous,"documentId"))&&reviewMode.equals(CheckReviewMode.of(previous)))
@@ -187,13 +195,23 @@ public final class FocusedCheckContext {
                 List<Map<String,Object>> batches=publicationBatches(batch);
                 java.util.List<cn.bidcheck.verification.facts.FactLedgerService.PreparedBatch> prepared=cn.bidcheck.compat.Java8Api.toList(batches.stream().map(part->ledger.prepareBatch(itemManifest,runId,cp.id(),part)));
                 long preparedAt=System.nanoTime();
+                // A committed publication marker covers the ledger write and dependency
+                // notification in one transaction. Only skip identical validated reuse.
+                List<String> receiptIds=new ArrayList<>();
+                for(int i=0;i<prepared.size();i++)receiptIds.add(stableId(parent+":"+text(batch,"operationIdentity")+":"+i));
+                boolean mayReuse="REUSED".equals(text(batch,"origin"))&&maps(batch.get("fieldCoverage")).isEmpty();
+                Map<String,Map<String,Object>> previous=mayReuse?store.mapsByIds("check_atomic_publication",project,receiptIds):Collections.emptyMap();
+                int skipped=0;
                 for(int part=0;part<prepared.size();part++){
                     cn.bidcheck.verification.facts.FactLedgerService.PreparedBatch value=prepared.get(part);int index=part;
+                    Map<String,Object> marker=previous.get(receiptIds.get(part));
+                    if(alreadyCommittedAdoption(marker,runId,cp.id(),value)){skipped++;continue;}
                     write.accept(()->{store.lock("project",project);Map<String,Object> receipt=ledger.publishPrepared(value);
                         OrdinaryRecoveryDependencies.publishChanges(store,project,runId,cp.id(),receipt);
                         store.save("check_atomic_publication",stableId(parent+":"+text(batch,"operationIdentity")+":"+index),project,parent,
                             fields("runId",runId,"checkpointId",cp.id(),"part",index,"parts",prepared.size(),"batchDigest",value.digest(),"receipt",receipt));});
                 }
+                if(skipped>0)LOG.info("bidcheck.fact_adoption_publication_reused runId={} checkpointId={} exactParts={} totalParts={}",runId,cp.id(),skipped,prepared.size());
                 List<Map<String,Object>> coverage=maps(batch.get("fieldCoverage"));Map<String,Object> partition=CheckResolution.map(batch.get("observationPartition"));
                 boolean complete="EXTRACTED".equals(batch.get("origin"))&&prepared.size()==1&&number(partition.get("parts"),1)==1&&!coverage.isEmpty()
                     &&coverage.stream().allMatch(row->Boolean.TRUE.equals(row.get("sourceScopeComplete"))&&cn.bidcheck.compat.Java8Api.setOf("EXTRACTED", "READ_NOT_FOUND").contains(text(row,"status")));
@@ -202,6 +220,15 @@ public final class FocusedCheckContext {
                 }
                 LOG.info("bidcheck.fact_publish_fenced runId={} checkpointId={} origin={} parts={} prepareMs={} transactionMs={} durationMs={}",runId,cp.id(),text(batch,"origin"),prepared.size(),(preparedAt-started)/1_000_000,(System.nanoTime()-preparedAt)/1_000_000,(System.nanoTime()-started)/1_000_000);
             });
+            List<Map<String,Object>> preparations=maps(currentRun.get("retrievalPreparation"));
+            Map<String,Object> index=preparations.isEmpty()?Collections.emptyMap():preparations.get(preparations.size()-1);
+            if(factRevision!=null&&!factRevision.isEmpty()&&"INDEX_READY".equals(text(index,"mode"))&&Boolean.TRUE.equals(index.get("denseCoverageComplete"))
+                    &&!text(index,"scopeFingerprint").isEmpty()){
+                context.put("agentAdmissionKey",hash(store.encode(fields("run",runId,"checkpoint",cp,"engine",engineIdentity,
+                    "bid",itemManifest.identity(),"tender",tender==null?"":tender.sha256(),"facts",factRevision,"index",index.get("scopeFingerprint"),
+                    "projectFacts",context.get("ordinaryRecoveryObservedRevision"),"visual",context.get("visualObservations"),
+                    "external",context.get("externalRecords"),"layout",layoutId,"layoutComplete",cached,"policy",inferenceNormalizationConfidence))));
+            }
             return context;
         };
     }
@@ -226,6 +253,14 @@ public final class FocusedCheckContext {
         if(!(value.get("documentVersion") instanceof Number)||((Number) (value.get("documentVersion"))).doubleValue()!=tender.version())return false;
         for(String key:cn.bidcheck.compat.Java8Api.listOf("artifactId", "compilerPolicyVersion", "modelIdentity", "inputFingerprint"))if(cn.bidcheck.compat.Java8Api.isBlank(text(value,key)))return false;
         return true;
+    }
+    static boolean alreadyCommittedAdoption(Map<String,Object> marker,String runId,String checkpointId,FactLedgerService.PreparedBatch value){
+        if(marker==null||!runId.equals(text(marker,"runId"))||!checkpointId.equals(text(marker,"checkpointId"))
+                ||!value.digest().equals(text(marker,"batchDigest"))||value.inputCount()==0||value.rejected()
+                ||! (marker.get("receipt") instanceof Map))return false;
+        Map<String,Object> receipt=CheckResolution.map(marker.get("receipt"));
+        return receipt.get("accepted") instanceof Number&&((Number)receipt.get("accepted")).intValue()==value.inputCount()
+            &&receipt.get("rejected") instanceof Collection&&((Collection<?>)receipt.get("rejected")).isEmpty();
     }
     private List<Map<String,Object>> publicationBatches(Map<String,Object> batch){
         List<Map<String,Object>> facts=maps(batch.get("facts")),sources=maps(batch.get("sources"));

@@ -10,8 +10,11 @@ import java.util.regex.*;
 
 /** Finds bounded, cited text anomalies; absence of a hit never proves full-document coverage. */
 final class FullTextReview {
-    private static final String SIGNING_LABEL="(?:签署日期|签署时间|签订日期|签订时间|签字日期|签字时间|签章日期|签章时间|落款日期|落款时间)";
+    private static final String SIGNING_LABEL="(?:签署日期|签署时间|签字日期|签字时间|签章日期|签章时间|落款日期|落款时间|(?<![\\p{IsHan}])日期(?=\\s*[:：=]))";
     private static final Pattern SIGNING=Pattern.compile(SIGNING_LABEL+"\\s*[:：=]?\\s*([^；;。\\t]*)");
+    private static final Pattern ORDER_HEADER=Pattern.compile("^\\s*[#*\\s]*(?:[\\p{IsHan}A-Za-z0-9（）()·]{0,60}采购订单[*\\s]*$|(?:采购)?订单(?:编?号)\\s*[:：]\\s*[A-Za-z0-9])");
+    private static final Pattern BID_SIGNING_FORM=Pattern.compile("^\\s*[#*\\s]*(?:[一二三四五六七八九十0-9]+[.、．]\\s*)?(?:投\\s*标\\s*函|投标人声明|(?:投标人|履约|人员)承诺书|法定代表人(?:（负责人）)?授权委托书)[*\\s]*$");
+    private static final Pattern BID_SIGNATORY=Pattern.compile("(?:投标人|应答人|响应人|联合体(?:牵头人|成员))[\\s*（(：:]|本次投标|我方(?:郑重)?承诺");
     private static final Pattern CLOCK=Pattern.compile("^\\s*T?\\s*(\\d{1,2})\\s*[:：时]\\s*(\\d{1,2})(?:\\s*[:：分]\\s*(\\d{1,2}))?\\s*(?:分|秒)?(?=$|[\\s（(，,]|北京时间)");
     private static final Pattern BLANK=Pattern.compile("(?:项目名称|项目编号|招标编号|投标人(?:名称)?|应答人(?:名称)?|供应商名称|统一社会信用代码|开户银行|银行账号|签署日期|签章日期|落款日期|联系电话|联系人|投标报价)\\s*[:：=]\\s*(?:[_＿—－-]{2,}|待填写|待填|待补充|TBD|[XxＸｘ]{2,}|[（(]\\s*(?:请填写|填写|待填)[）)])(?=$|[\\s，,；;。])");
     private static final Pattern EMPTY_LABEL=Pattern.compile("(?:项目名称|项目编号|招标编号|投标人名称|应答人名称|供应商名称|统一社会信用代码|开户银行|银行账号|签署日期|签章日期|落款日期|联系电话|联系人|投标报价)\\s*[:：=]\\s*$");
@@ -146,7 +149,7 @@ final class FullTextReview {
             if(openingClock.invalid()) return unknown(cp,"开标时间格式无效，请核对后比较签署及落款时间",cn.bidcheck.compat.Java8Api.listOf());
         }
         List<Evidence> invalid=new ArrayList<>(),late=new ArrayList<>(),read=new ArrayList<>();
-        for(Located line:lines(doc)) {
+        for(Located line:signingLines(doc)) {
             Matcher signing=SIGNING.matcher(line.text());
             while(signing.find()) {
                 String value=signing.group(1); Matcher date=EngineText.DATE.matcher(value);
@@ -182,6 +185,66 @@ final class FullTextReview {
         @Override public int hashCode() { int hash = 0; hash = 31 * hash + java.util.Objects.hashCode(this.time); hash = 31 * hash + java.util.Objects.hashCode(this.seconds); hash = 31 * hash + java.util.Objects.hashCode(this.invalid); return hash; }
         @Override public String toString() { return "ClockValue[" + "time=" + time + ", seconds=" + seconds + ", invalid=" + invalid + "]"; }
 }
+    private static boolean bidderSignatureNearby(String[] rows,int index) {
+        int nonblank=0;
+        for(int i=index;i>=0&&nonblank<8;i--) {
+            if(rows[i].trim().isEmpty())continue;
+            if(BID_SIGNATORY.matcher(rows[i]).find()||BID_SIGNING_FORM.matcher(rows[i]).matches())return true;
+            nonblank++;
+        }
+        return false;
+    }
+
+    private List<Located> signingLines(Document doc) {
+        List<Located> matches=new ArrayList<>();
+        for(Page page:doc.pages()==null?Collections.<Page>emptyList():doc.pages()) {
+            String[] rows=Objects.toString(page.text(),"").split("\\R",-1);
+            boolean purchaseOrder=false;
+            for(int i=0;i<rows.length;i++) {
+                String row=rows[i];
+                if(ORDER_HEADER.matcher(row).find())purchaseOrder=true;
+                else if(purchaseOrder && BID_SIGNING_FORM.matcher(row).matches())purchaseOrder=false;
+                // Order signature fields belong to the transaction, including blank cells in its printed form.
+                if(purchaseOrder)continue;
+                Matcher label=SIGNING.matcher(row);
+                if(!label.find())continue;
+                // In a bundle, a bare date also occurs on bank receipts, insurance records and historical certificates.
+                if(doc.pages().size()>1 && row.startsWith("日期",label.start()) && !bidderSignatureNearby(rows,i))continue;
+                if(label.group(1).matches("\\s*20\\d{2}\\s*年\\s*\\d{1,2}\\s*月\\s*") && i+1<rows.length
+                        && rows[i+1].matches("\\s*\\d{1,2}\\s*日(?:\\s+.*)?\\s*")) {
+                    row=row+"\n"+rows[i+1];
+                    // The parser consumes a single logical date; preserve the physical line break in the quote.
+                    matches.add(new Located(row.replace('\n',' '),EngineText.evidence(doc,page,i+1,row)));
+                } else matches.add(new Located(row,EngineText.evidence(doc,page,i+1,row)));
+            }
+        }
+        return matches;
+    }
+
+    Map<String,Object> referenceDateConflict(Document doc,String reference) {
+        if(reference==null || reference.length()<10)return Collections.emptyMap();
+        LocalDate cutoff;
+        try { cutoff=LocalDate.parse(reference.substring(0,10)); }
+        catch(DateTimeException invalid){return Collections.emptyMap();}
+        int total=0;
+        List<Evidence> later=new ArrayList<>();
+        Set<LocalDate> dates=new TreeSet<>();
+        for(Located line:signingLines(doc)){
+            Matcher label=SIGNING.matcher(line.text());
+            if(!label.find())continue;
+            List<LocalDate> values=EngineText.dates(label.group(1));
+            if(values.size()!=1)continue;
+            total++;
+            if(values.get(0).isAfter(cutoff)){later.add(line.evidence());dates.add(values.get(0));}
+        }
+        if(later.size()<=total/2)return Collections.emptyMap();
+        Map<String,Object> card=new LinkedHashMap<>();
+        card.put("code","REFERENCE_DATE_CONFLICT");card.put("status","NEEDS_CONFIRMATION");
+        card.put("referenceDate",cutoff.toString());card.put("signingDates",dates.stream().map(LocalDate::toString).collect(java.util.stream.Collectors.toList()));
+        card.put("observedCount",total);card.put("lateCount",later.size());card.put("evidences",later);
+        return card;
+    }
+
     private ClockValue clock(String suffix) {
         Matcher matcher=CLOCK.matcher(suffix);
         if(!matcher.find()) return new ClockValue(null,false,suffix.matches("(?s)^\\s*T?\\s*\\d{1,2}\\s*[:：时].*"));

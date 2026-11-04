@@ -1,6 +1,7 @@
 package cn.bidcheck.verification.engine;
 
 import cn.bidcheck.domain.Domain.*;
+import cn.bidcheck.verification.engine.VerificationTypes.Fact;
 import java.math.BigDecimal;
 import java.util.*;
 import java.util.regex.*;
@@ -66,6 +67,24 @@ final class BidLetterResponse {
         }
         return new Decision(rule.id(),rule.description(),pass?"PASS":"FAIL",pass?"本项目投标函的实际填写字段满足对应招标要求；仅证明承诺响应":"本项目投标函的实际填写字段不满足对应招标要求",cn.bidcheck.compat.Java8Api.toList(evidence.stream().distinct()),cn.bidcheck.compat.Java8Api.listOf(),proof);
     }
+    static Decision numericValidity(Rule rule,RuleEvaluator evaluator,List<Fact> matched){
+        if(!"bidValidity".equals(rule.field())||!"SOURCE_VERIFIED_CONFIRMED_DURATION".equals(str(rule.parameters(),"deterministicFamily"))||
+            !rule.expected().matches("[0-9]+")||!Arrays.asList("天","日","DAY").contains(rule.unit()))return null;
+        Set<String> values=new LinkedHashSet<>();List<Evidence> evidence=new ArrayList<>();
+        for(Source source:evaluator.corpus.all){
+            if(source.index()||source.historical()||source.scopeContext().blocked()||
+                !clean(source.opening()).contains("投标函")||!Arrays.asList("CURRENT_PROJECT","CURRENT_DOCUMENT","CURRENT_BID_SECTION").contains(source.scopeContext().status()))continue;
+            Matcher matcher=VALIDITY.matcher(body(source));while(matcher.find()){values.add(matcher.group(1));evidence.add(source.evidence());}
+        }
+        if(values.isEmpty())return null;
+        for(Fact fact:matched)if("CURRENT_PROJECT".equals(fact.scope())&&fact.value().matches("[0-9]+")&&Arrays.asList("天","日","DAY").contains(fact.unit()))values.add(fact.value());
+        Map<String,Object> proof=linked("observedDays",values,"expectedDays",rule.expected(),"scope","CURRENT_BID_LETTER");
+        if(values.size()!=1)return evaluator.unknown(rule,"BID_LETTER_FIELD_CONFLICT","当前投标有效期字段出现多个天数",matched,proof);
+        Boolean ok=RuleEvaluator.compare(new BigDecimal(values.iterator().next()),new BigDecimal(rule.expected()),rule.operator());
+        if(ok==null)return null;
+        return new Decision(rule.id(),rule.description(),ok?"PASS":"FAIL","已将投标函明示的有效期天数与招标门槛逐值比较",new ArrayList<>(new LinkedHashSet<>(evidence)),Collections.emptyList(),proof);
+    }
+
     private static String body(Source source){return clean(source.evidence().quote().split("(?:编制及签署要求|填写说明|编制说明)",2)[0]);}
     private static Set<String> validityStarts(String text){
         Set<String> result=new LinkedHashSet<>();

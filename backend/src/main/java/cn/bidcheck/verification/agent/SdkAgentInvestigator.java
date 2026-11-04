@@ -81,7 +81,7 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
         if(protocolFactory==null)return investigateJava(start,handler,event);
         long began=System.nanoTime();String requestId=safeId(start==null?null:start.get("requestId"));
         ProtocolConnection connection=null;ExecutorService executor=null;boolean acquired=false;
-        HostReceipts receipts=new HostReceipts();AtomicBoolean callActive=new AtomicBoolean(true);
+        HostReceipts receipts=new HostReceipts();receipts.requestId=requestId;AtomicBoolean callActive=new AtomicBoolean(true);
         try{
             if(!configuredEnabled)throw new BridgeFailure("AGENT_DISABLED");
             if(timeoutSeconds<=0||timeoutSeconds>86400)throw new BridgeFailure("INVALID_TIMEOUT_CONFIGURATION");
@@ -164,7 +164,7 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
 
     private Map<String,Object> investigateJava(Map<String,Object> start,ToolHandler handler,Consumer<Map<String,Object>> event){
         long began=System.nanoTime();String requestId=safeId(start==null?null:start.get("requestId"));
-        HostReceipts receipts=new HostReceipts();AtomicBoolean active=new AtomicBoolean(true);ExecutorService executor=null;boolean acquired=false;
+        HostReceipts receipts=new HostReceipts();receipts.requestId=requestId;AtomicBoolean active=new AtomicBoolean(true);ExecutorService executor=null;boolean acquired=false;
         try{
             if(!configuredEnabled)throw new BridgeFailure("AGENT_DISABLED");
             if(timeoutSeconds<=0||timeoutSeconds>86400)throw new BridgeFailure("INVALID_TIMEOUT_CONFIGURATION");
@@ -172,7 +172,10 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
             if(cn.bidcheck.compat.Java8Api.isBlank(apiKey)||!model.matches("[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}"))throw new BridgeFailure("MODEL_CONFIGURATION_MISSING");
             if(handler==null)throw new BridgeFailure("TOOL_HANDLER_MISSING");
             Set<String> offered=validateStart(start,requestId);receipts.initialize(object(start.get("context"),"INVALID_CONTEXT"));
-            long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(timeoutSeconds);
+            long available=TimeUnit.SECONDS.toMillis(timeoutSeconds);
+            if(start.get("recoveryDeadlineEpochMillis") instanceof Number)available=Math.min(available,((Number)start.get("recoveryDeadlineEpochMillis")).longValue()-System.currentTimeMillis());
+            if(available<=0)throw new BridgeFailure("INVESTIGATION_TIMEOUT");
+            long deadline=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(available);
             if(!slots.tryAcquire(remaining(deadline),TimeUnit.NANOSECONDS))throw new BridgeFailure("AGENT_CONCURRENCY_TIMEOUT");acquired=true;
             executor=Executors.newCachedThreadPool(r->{Thread thread=new Thread(r,"bidcheck-java-agent");thread.setDaemon(true);return thread;});
             final ExecutorService runtime=executor;final long[] toolCalls={0};ToolPayloadAudit toolAudit=new ToolPayloadAudit(auditDirectory,apiKey);
@@ -252,6 +255,8 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
     }
     private Map<String,Object> safeEvent(Map<String,Object> frame,String requestId,HostReceipts receipts)throws BridgeFailure{
         String name=Objects.toString(frame.get("event"),"");if(!EVENTS.contains(name))throw new BridgeFailure("PROTOCOL_EVENT_INVALID");
+        if("model_started".equals(name))receipts.observedModels.accumulateAndGet(nonnegative(frame.getOrDefault("modelIndex",0)),Math::max);
+        if("tool_started".equals(name))receipts.observedTools.accumulateAndGet(nonnegative(frame.getOrDefault("toolIndex",0)),Math::max);
         Map<String,Object> safe=map("type","event","protocol",PROTOCOL,"requestId",requestId,"event",name);
         String observedEvent=safeEventId(frame.get("eventId"),requestId);if(!cn.bidcheck.compat.Java8Api.isBlank(observedEvent)&&receipts.observedEventIds.size()<4096)receipts.observedEventIds.add(observedEvent);
         if(!cn.bidcheck.compat.Java8Api.isBlank(observedEvent)&&cn.bidcheck.compat.Java8Api.setOf("target_tool_failed", "investigation_failed", "tool_arguments_rejected", "investigation_error").contains(name)&&receipts.observedFailureEventIds.size()<4096)receipts.observedFailureEventIds.add(observedEvent);
@@ -304,7 +309,7 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
         String status=Objects.toString(frame.get("status"),"");if(!cn.bidcheck.compat.Java8Api.setOf("COMPLETED", "EVIDENCE_UPDATED", "NO_PROGRESS", "FAILED").contains(status))throw new BridgeFailure("WORKER_RESULT_STATUS_INVALID");
         if(!Boolean.FALSE.equals(frame.get("tracingExportEnabled")))throw new BridgeFailure("WORKER_TRACING_POLICY_VIOLATION");
         if(status.equals("COMPLETED")&&!receipts.targetCompleted&&!receipts.completed||status.equals("EVIDENCE_UPDATED")&&receipts.accepted.isEmpty())throw new BridgeFailure("WORKER_RESULT_STATE_MISMATCH");
-        String code=Objects.toString(frame.get("code"),"");if(!cn.bidcheck.compat.Java8Api.isBlank(code)&&!WORKER_ERRORS.contains(code)&&!cn.bidcheck.compat.Java8Api.setOf("MODEL_PERMISSION_TIMEOUT", "MODEL_PERMISSION_PROTOCOL_ERROR", "MODEL_REQUEST_DENIED", "SEMANTIC_REJECTION_WITHOUT_NEW_EVIDENCE", "EVIDENCE_PENDING", "AGENT_STALLED_WITH_REMAINING_TARGETS", "TARGET_CONTRACT_MISSING", "TARGET_WORK_RECEIPT_MISSING", "TARGET_WORK_RECEIPT_INVALID", "INVALID_TARGET_RECEIPT", "CANDIDATE_TARGET_REQUIRED", "REVIEW_PLAN_REQUIRED", "REVIEW_PLAN_RECEIPT_INVALID", "REVIEW_PLAN_REVISION_MISMATCH", "TARGET_STATE_UNCHANGED", "HOST_TARGET_RECEIPT_INVALID", "WAIT_CONFIRMATION", "HOST_CONFIRMATION_RECEIPT_INVALID").contains(code))code="WORKER_REPORTED_FAILURE";
+        String code=Objects.toString(frame.get("code"),"");if(!cn.bidcheck.compat.Java8Api.isBlank(code)&&!WORKER_ERRORS.contains(code)&&!Arrays.asList("PROVIDER_CONNECTION","PROVIDER_TIMEOUT","PROVIDER_SERVER","PROVIDER_TLS_ERROR","PROVIDER_AUTHENTICATION","PROVIDER_RATE_LIMIT").contains(code)&&!cn.bidcheck.compat.Java8Api.setOf("MODEL_PERMISSION_TIMEOUT", "MODEL_PERMISSION_PROTOCOL_ERROR", "MODEL_REQUEST_DENIED", "SEMANTIC_REJECTION_WITHOUT_NEW_EVIDENCE", "EVIDENCE_PENDING", "AGENT_STALLED_WITH_REMAINING_TARGETS", "TARGET_CONTRACT_MISSING", "TARGET_WORK_RECEIPT_MISSING", "TARGET_WORK_RECEIPT_INVALID", "INVALID_TARGET_RECEIPT", "CANDIDATE_TARGET_REQUIRED", "REVIEW_PLAN_REQUIRED", "REVIEW_PLAN_RECEIPT_INVALID", "REVIEW_PLAN_REVISION_MISMATCH", "TARGET_STATE_UNCHANGED", "HOST_TARGET_RECEIPT_INVALID", "WAIT_CONFIRMATION", "HOST_CONFIRMATION_RECEIPT_INVALID","INVESTIGATION_CALL_LIMIT").contains(code))code="WORKER_REPORTED_FAILURE";
         if(status.equals("FAILED")&&cn.bidcheck.compat.Java8Api.isBlank(code))code="WORKER_REPORTED_FAILURE";
         // A worker's historical tool error cannot override the host's current
         // operation receipts. Transport/model failures remain fail-closed.
@@ -336,7 +341,7 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
         LOG.info("bidcheck.agent_bridge requestId={} policy={} status=FAILED code={} elapsedMs={}",requestId,POLICY,code,elapsed(began));
         return map("status","FAILED","code",code,"errorCode",code,"requestId",requestId,"protocol",PROTOCOL,"policy",POLICY,"acceptedFactIds",cn.bidcheck.compat.Java8Api.listCopyOf(receipts.accepted),"businessCheckCompleted",false,"targetCheckCompleted",false,
             "firstFailureEventId",receipts.firstFailureEventId,"completedTargetObligationIds",cn.bidcheck.compat.Java8Api.listCopyOf(receipts.closedTargets),"businessUnclosedTargetObligationIds",cn.bidcheck.compat.Java8Api.toList(receipts.targets.stream().filter(id->!receipts.closedTargets.contains(id))),
-            "failedToolCount",receipts.unresolved.size(),"recoveredToolCount",receipts.recovered,"validationRejectionCount",receipts.rejections,"elapsedMs",elapsed(began),"tracingExportEnabled",false);
+            "modelCalls",receipts.observedModels.get(),"toolCalls",receipts.observedTools.get(),"countBasis","OBSERVED_STARTED_EVENTS","failedToolCount",receipts.unresolved.size(),"recoveredToolCount",receipts.recovered,"validationRejectionCount",receipts.rejections,"elapsedMs",elapsed(began),"tracingExportEnabled",false);
     }
     private static <T>T invoke(ExecutorService executor,Callable<T> action,long deadline,String code,AtomicBoolean active)throws InterruptedException,BridgeFailure{
         Future<T> future=executor.submit(()->{CALL_FENCE.set(active);try{if(!currentCallActive())throw new InterruptedException();return action.call();}finally{CALL_FENCE.remove();}});
@@ -395,6 +400,9 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
     private static Map<String,Object> map(Object... values){Map<String,Object> out=new LinkedHashMap<>();for(int i=0;i<values.length;i+=2)out.put(values[i].toString(),values[i+1]);return out;}
     static final class BridgeFailure extends Exception{final String code;BridgeFailure(String code){super(code);this.code=code;}}
     private final class HostReceipts{
+        String requestId = "";
+        final java.util.concurrent.atomic.AtomicLong observedModels=new java.util.concurrent.atomic.AtomicLong();
+        final java.util.concurrent.atomic.AtomicLong observedTools=new java.util.concurrent.atomic.AtomicLong();
         final Set<String> accepted=new LinkedHashSet<>(),unresolved=new LinkedHashSet<>(),targets=new LinkedHashSet<>(),closedTargets=new LinkedHashSet<>();
         final Set<String> historicalFailureIds=new HashSet<>(),observedEventIds=new HashSet<>(),observedFailureEventIds=new HashSet<>();
         final Map<String,String> targetRevisions=new LinkedHashMap<>(),blockedTargets=new LinkedHashMap<>();
@@ -470,12 +478,54 @@ public final class SdkAgentInvestigator implements AgentInvestigator {
                 targetCompleted=!bad&&!rejected&&currentPlan(result)&&(completed||Boolean.TRUE.equals(result.get("targetCheckCompleted")));
                 if(!bad&&!rejected&&currentPlan(result))observeTargets(result);
             }
-            if((cn.bidcheck.compat.Java8Api.setOf("search_evidence", "read_section", "read_table_record", "submit_candidate_fact").contains(name)||review&&name.equals("submit_review_judgment"))&&!bad&&result.get("computationReceipt") instanceof Map<?,?>
+            if((cn.bidcheck.compat.Java8Api.setOf("search_evidence", "read_section", "read_table_record", "submit_candidate_fact").contains(name)||review&&name.equals("submit_review_judgment"))&&!bad&&!result.containsKey("evaluatedTargetReceipt")&&result.get("computationReceipt") instanceof Map<?,?>
                     &&"HOST_RULE_RECOMPUTE".equals(((Map<?,?>) (result.get("computationReceipt"))).get("kind"))&&"COMPLETED".equals(((Map<?,?>) (result.get("computationReceipt"))).get("status"))&&!cn.bidcheck.compat.Java8Api.isBlank(revision)&&revision.equals(((Map<?,?>) (result.get("computationReceipt"))).get("targetEvidenceRevision"))
                     &&((Map<?,?>) (result.get("computationReceipt"))).get("businessCheckCompleted") instanceof Boolean&&((Map<?,?>) (result.get("computationReceipt"))).get("targetCheckCompleted") instanceof Boolean&&currentPlan(((Map<?,?>) (result.get("computationReceipt"))))){
                 completed=Boolean.TRUE.equals(((Map<?,?>) (result.get("computationReceipt"))).get("businessCheckCompleted"));targetCompleted=completed||Boolean.TRUE.equals(((Map<?,?>) (result.get("computationReceipt"))).get("targetCheckCompleted"));automaticRecomputations++;observeTargets(((Map<?,?>) (result.get("computationReceipt"))));
             }
+            if (!bad && !rejected && typed && result.containsKey("evaluatedTargetReceipt")) {
+                observeEvaluatedRead(name, arguments, result);
+            }
             if(!bad)observeWork(result);
+        }
+        void observeEvaluatedRead(String name, Map<String,Object> arguments, Map<String,Object> result)
+                throws BridgeFailure {
+            if (!(result.get("evaluatedTargetReceipt") instanceof Map<?,?>))
+                throw new BridgeFailure("HOST_TARGET_RECEIPT_INVALID");
+            Map<?,?> receipt = (Map<?,?>) result.get("evaluatedTargetReceipt");
+            Object receiptTargets = receipt.get("targetObligationIds");
+            boolean targetSetMatches = receiptTargets instanceof List<?>
+                && ((List<?>) receiptTargets).size() == targets.size()
+                && new LinkedHashSet<>((List<?>) receiptTargets).equals(targets);
+            boolean boundToCall = REVIEW_TARGET_READS.contains(name)
+                && "HOST_TARGET_RECOMPUTE".equals(receipt.get("kind"))
+                && "COMPLETED".equals(receipt.get("status"))
+                && !requestId.isEmpty() && requestId.equals(receipt.get("requestId"))
+                && name.equals(receipt.get("tool"))
+                && Objects.equals(arguments.getOrDefault("targetObligationId", ""), receipt.get("targetObligationId"));
+            if (!boundToCall || !targetSetMatches
+                    || !(receipt.get("businessCheckCompleted") instanceof Boolean)
+                    || !(receipt.get("targetCheckCompleted") instanceof Boolean))
+                throw new BridgeFailure("HOST_TARGET_RECEIPT_INVALID");
+            for (String field : Arrays.asList("serverPlanRevision", "serverPlanFingerprint",
+                    "targetEvidenceRevision", "targetEvidenceRevisions", "targetReceiptAuthority",
+                    "completedTargetObligationIds", "remainingTargetObligationIds")) {
+                if (!result.containsKey(field) || !Objects.equals(result.get(field), receipt.get(field)))
+                    throw new BridgeFailure("HOST_TARGET_RECEIPT_INVALID");
+                if (result.get("computationReceipt") instanceof Map<?,?>
+                        && !Objects.equals(((Map<?,?>) result.get("computationReceipt")).get(field), receipt.get(field)))
+                    throw new BridgeFailure("HOST_TARGET_RECEIPT_INVALID");
+            }
+            if (result.get("computationReceipt") instanceof Map<?,?>) {
+                Map<?,?> nested = (Map<?,?>) result.get("computationReceipt");
+                for (String field : Arrays.asList("businessCheckCompleted", "targetCheckCompleted"))
+                    if (!Objects.equals(nested.get(field), receipt.get(field)))
+                        throw new BridgeFailure("HOST_TARGET_RECEIPT_INVALID");
+            }
+            completed = Boolean.TRUE.equals(receipt.get("businessCheckCompleted"));
+            targetCompleted = completed || Boolean.TRUE.equals(receipt.get("targetCheckCompleted"));
+            observeTargets(receipt);
+            automaticRecomputations++;
         }
         void observeTargets(Map<?,?> receipt)throws BridgeFailure{
             if(typed&&(receipt.containsKey("targetReceiptAuthority")||receipt.containsKey("completedTargetObligationIds")||receipt.containsKey("remainingTargetObligationIds"))){

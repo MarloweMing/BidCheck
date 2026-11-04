@@ -17,7 +17,283 @@ final class CertificateSourceComparison {
     private static final Pattern NUMBER=Pattern.compile("(电子证书编号|注册编号/执业印章号|执业印章号|证书编号|注册证号|注册编号|资格证号|证件号码|身份证号)[:：]?([A-Za-z0-9()（）-]{4,80})(?![A-Za-z0-9])");
     private static final Pattern EMPLOYER=Pattern.compile("(注册证书所在单位名称|注册单位|聘用单位)[:：]?([^:：|│]{2,100}?)(?=电子证书编号|注册编号|执业印章号|注册专业|注册有效期|有效期|执业注册信息|证书编号|签名|发证日期|$)");
     private static final Pattern PERIOD=Pattern.compile("(注册有效期|证书有效期|有效期限|有效期至|有效期)[:：]?("+DATE+")(?:[-至—~～]("+DATE+"))?");
+    private static final Pattern QUERY_URL=Pattern.compile("(?i)https?://[^\\s<>]+|www\\.[^\\s<>]+");
     private CertificateSourceComparison() {}
+
+    /** Proves a personnel query URL/screenshot only from the same source-bound certificate
+     * and query record that passes the existing common-field comparison. */
+    static Decision personnelQueryMaterial(Rule rule,RuleEvaluator evaluator){
+        if(!"MATERIAL".equals(rule.predicate())||!cn.bidcheck.compat.Java8Api.setOf("查询网址","查询截图").contains(rule.expected())
+            ||!"CERTIFICATE_PROOF_DOCUMENTS".equals(str(rule.parameters(),"deterministicFamily"))
+            ||!(PersonnelRoles.personRole(rule.subject())||!cn.bidcheck.compat.Java8Api.isBlank(str(rule.parameters(),"personnelRoleSelector"))))return null;
+        String requirement=str(rule.parameters(),"certificateRequirementQuote"),original=str(evaluator.context,"originalRequirement");
+        if(cn.bidcheck.compat.Java8Api.isBlank(requirement)||!original.contains(requirement)||!requirement.contains(rule.sourceQuote()))
+            return evaluator.unknown(rule,"REQUIREMENT_CREDENTIAL_SCHEMA_UNPROVEN","查询材料未绑定原条款中的具体人员证照要求",evaluator.match(rule));
+        List<String> people=evaluator.resolvedSubjects(rule);
+        if(people.size()!=1||DomainBindings.role(people.get(0)))return evaluator.unknown(rule,"SUBJECT_RELATION_UNPROVEN","查询材料尚未绑定唯一的本次拟派人员",evaluator.match(rule));
+        List<Record> all=evaluator.personnelCredentialRecords(),certificates=cn.bidcheck.compat.Java8Api.toList(all.stream().filter(r->"CERTIFICATE".equals(r.side())&&ConfirmedSubjectBindings.recordMatches(people.get(0),r,evaluator)));
+        Set<String> categories=requiredCategories(rule,certificates,evaluator.context);
+        boolean submissionOnlyComparison=false;
+        if(categories.isEmpty()&&requirement.contains("安全生产考核合格证")){
+            categories=submissionComparisonCategories(people.get(0),certificates,all);
+            submissionOnlyComparison=!categories.isEmpty();
+        }
+        if(categories.isEmpty())return evaluator.unknown(rule,"CERTIFICATE_QUERY_IDENTITY_REQUIRED","未从本人员原条款和原件记录解析唯一证照类别",evaluator.match(rule));
+        Map<String,Object> comparisonParameters=new LinkedHashMap<>(rule.parameters());
+        if(submissionOnlyComparison)comparisonParameters.put("submissionOnlyExactCredentialPair",Boolean.TRUE);
+        Rule comparison=new Rule(rule.id()+"-same-certificate-comparison",rule.description(),"SAME_FIELD",rule.subject(),"证书信息","","","",comparisonParameters,rule.sourceQuote(),"",cn.bidcheck.compat.Java8Api.listOf());
+        Decision matched=evaluate(comparison,evaluator);
+        if(!"PASS".equals(matched.status()))return evaluator.unknown(rule,"CERTIFICATE_QUERY_IDENTITY_REQUIRED","同一人员、同类证照及证号的原件与查询记录尚未通过现有一致性核验",evaluator.match(rule));
+        List<Map<String,Object>> links=new ArrayList<>();List<Evidence> evidence=new ArrayList<>();
+        for(String category:categories){
+            List<Record> certs=cn.bidcheck.compat.Java8Api.toList(certificates.stream().filter(r->r.category().equals(category)));
+            List<Record> queries=cn.bidcheck.compat.Java8Api.toList(all.stream().filter(r->"QUERY".equals(r.side())&&people.get(0).equals(r.owner())&&category.equals(r.category())));
+            if(certs.size()!=1||queries.size()!=1)return evaluator.unknown(rule,"CERTIFICATE_QUERY_IDENTITY_REQUIRED","存在多份或缺少同一人员、同一类别的证书/查询记录，不能选取其中一项",evaluator.match(rule));
+            Record certificate=certs.get(0),query=queries.get(0);String certNumber=number(certificate),queryNumber=number(query);
+            if(cn.bidcheck.compat.Java8Api.isBlank(certNumber)||!certNumber.equals(queryNumber))return evaluator.unknown(rule,"CERTIFICATE_QUERY_IDENTITY_REQUIRED","证书原件与查询记录没有同一证书编号，不能仅凭同名关联",evaluator.match(rule));
+            Set<String> pageKeys=new LinkedHashSet<>();for(Source source:query.sources())pageKeys.add(EvidenceCorpus.pageKey(source.evidence().documentId(),source.evidence().page(),source.evidence().locationType()));
+            List<String> matchingPages=new ArrayList<>();for(String key:pageKeys){cn.bidcheck.domain.Domain.Page page=evaluator.corpus.pages.get(key);if(page==null)continue;String text=Objects.toString(page.text(),"");boolean incompleteOtherScreenshot=false,pageHasTarget=false;
+                List<QueryFragment> blocks=queryMaterialFragments(text);for(QueryFragment fragment:blocks){String block=fragment.text;
+                    // URL, name and certificate number must share this screenshot fragment.
+                    boolean hasTarget=targetQueryFragment(block,query.owner(),certNumber)
+                        &&fieldInFragment(query,"NAME",key,fragment.start,fragment.end,evaluator.corpus)
+                        &&numberFieldInFragment(query,key,fragment.start,fragment.end,evaluator.corpus);
+                    if(hasScreenshotUrl(block)&&!hasCompleteIdentityRow(block)&&!hasTarget)incompleteOtherScreenshot=true;
+                    if(hasTarget)pageHasTarget=true;
+                }
+                if(pageHasTarget&&!incompleteOtherScreenshot)matchingPages.add(key);
+            }
+            if(matchingPages.size()!=1)return evaluator.unknown(rule,"CERTIFICATE_QUERY_SOURCE_REQUIRED","同一证号的查询原文尚未明确包含查询网址及截图来源",evaluator.match(rule));
+            links.add(linked("subject",people.get(0),"category",category,"certificateNumber",certNumber,"certificateRecordId",certificate.id(),"queryRecordId",query.id(),"querySourceIds",cn.bidcheck.compat.Java8Api.toList(query.sources().stream().map(Source::id)),"queryPageKey",matchingPages.get(0)));
+            for(Source source:query.sources())evidence.add(source.evidence());
+        }
+        return new Decision(rule.id(),rule.description(),"PASS","已按本次人员、证照类别及同一证书编号核到查询网址/截图原文；仅证明材料提交",cn.bidcheck.compat.Java8Api.toList(evidence.stream().distinct()),cn.bidcheck.compat.Java8Api.listOf(),
+            linked("executor",VERSION,"proofScope","PERSON_SAME_CERTIFICATE_QUERY_SUBMISSION_ONLY","certificateBindings",links,"commonFieldComparison",matched.proof(),"qualificationVerified",false,"validityVerified",false,"registrationVerified",false));
+    }
+
+    private static Set<String> submissionComparisonCategories(
+            String person, List<Record> certificates, List<Record> all) {
+        Set<String> categories = new LinkedHashSet<>();
+        certificates.stream()
+            .filter(record -> record.category().startsWith("安全生产考核合格证书"))
+            .forEach(record -> categories.add(record.category()));
+        if (categories.size() != 1) {
+            return Collections.emptySet();
+        }
+
+        String category = categories.iterator().next();
+        List<Record> matchingCertificates = cn.bidcheck.compat.Java8Api.toList(
+            certificates.stream().filter(record -> category.equals(record.category())));
+        List<Record> matchingQueries = cn.bidcheck.compat.Java8Api.toList(
+            all.stream().filter(record -> "QUERY".equals(record.side())
+                && person.equals(record.owner())
+                && category.equals(record.category())));
+        if (matchingCertificates.size() != 1 || matchingQueries.size() != 1) {
+            return Collections.emptySet();
+        }
+
+        Record certificate = matchingCertificates.get(0);
+        Record query = matchingQueries.get(0);
+        String certificateNumber = number(certificate);
+        String queryNumber = number(query);
+        if (cn.bidcheck.compat.Java8Api.isBlank(certificateNumber)
+                || !certificateNumber.equals(queryNumber)
+                || !certificate.issues().isEmpty()
+                || !query.issues().isEmpty()) {
+            return Collections.emptySet();
+        }
+        return categories;
+    }
+    static List<QueryFragment> queryMaterialFragments(String text) {
+        List<Integer> starts = new ArrayList<>();
+        String[] lines = text.split("(?<=\\n)", -1);
+        int cursor = 0;
+        int current = -1;
+        boolean hasUrl = false;
+
+        for (String chunk : lines) {
+            String line = chunk.replaceFirst("[\\r\\n]+$", "");
+            boolean header = isQueryHeaderLine(line.trim());
+            boolean url = independentUrl(line);
+
+            if (header) {
+                if (current >= 0 && cursor > current) {
+                    starts.add(cursor);
+                } else if (current < 0) {
+                    starts.add(cursor);
+                }
+                current = cursor;
+                hasUrl = false;
+            }
+
+            if (url) {
+                if (current < 0) {
+                    current = cursor;
+                    starts.add(cursor);
+                    hasUrl = true;
+                } else if (hasUrl) {
+                    starts.add(cursor);
+                    current = cursor;
+                    hasUrl = true;
+                } else {
+                    hasUrl = true;
+                }
+            }
+            cursor += chunk.length();
+        }
+
+        if (current < 0) {
+            return Collections.emptyList();
+        }
+        if (starts.isEmpty()) {
+            starts.add(current);
+        }
+
+        List<Integer> sortedStarts = new ArrayList<>(starts.stream()
+            .distinct()
+            .sorted()
+            .collect(java.util.stream.Collectors.<Integer>toList()));
+        List<QueryFragment> fragments = new ArrayList<>();
+        for (int i = 0; i < sortedStarts.size(); i++) {
+            int start = sortedStarts.get(i);
+            int end = i + 1 < sortedStarts.size() ? sortedStarts.get(i + 1) : text.length();
+            if (end > start) {
+                fragments.add(new QueryFragment(start, end, text.substring(start, end)));
+            }
+        }
+        return fragments;
+    }
+
+    static boolean targetQueryFragment(String block, String owner, String certificateNumber) {
+        String url = independentQueryUrl(block);
+        boolean hasScreenshot = block.matches("(?s).*(?:查询截图|网址查询截图|证书查询结果).*");
+        if (url.isEmpty() || !hasScreenshot) {
+            return false;
+        }
+
+        String normalized = java.text.Normalizer.normalize(block, java.text.Normalizer.Form.NFKC)
+            .replaceAll("\\s+", "")
+            .toUpperCase(Locale.ROOT);
+        int urlOffset = normalized.indexOf(normalizeQueryToken(url));
+        int personOffset = normalized.indexOf(normalizeQueryToken(owner));
+        int numberOffset = normalized.indexOf(normalizeQueryToken(certificateNumber));
+        return urlOffset >= 0 && personOffset > urlOffset && numberOffset > urlOffset;
+    }
+
+    private static String independentQueryUrl(String block) {
+        List<String> urls = new ArrayList<>();
+        for (String line : block.split("\\R")) {
+            String url = independentQueryUrlLine(line);
+            if (!url.isEmpty()) {
+                urls.add(url);
+            }
+        }
+        return urls.size() == 1 ? urls.get(0) : "";
+    }
+
+    private static String independentQueryUrlLine(String line) {
+        String trimmed = line.trim();
+        Matcher matcher = QUERY_URL.matcher(trimmed);
+        if (!matcher.find()) {
+            return "";
+        }
+
+        String url = matcher.group();
+        String queryUrlField = "(?i)^(?:(?:本次|证书)?查询网址|网址|URL)\\s*[:：]\\s*"
+            + Pattern.quote(url) + "$";
+        if (trimmed.matches(QUERY_URL.pattern()) || trimmed.matches(queryUrlField)) {
+            return url;
+        }
+        return "";
+    }
+
+    private static boolean hasScreenshotUrl(String block) {
+        boolean hasScreenshot = block.matches("(?s).*(?:查询截图|网址查询截图|证书查询结果).*");
+        return hasScreenshot && QUERY_URL.matcher(block).find();
+    }
+
+    private static boolean hasCompleteIdentityRow(String block) {
+        Pattern name = Pattern.compile("姓名[:：]?[^\\s|│]{2,12}");
+        Pattern number = Pattern.compile("(?:证书编号|证书号|注册编号|注册证号|证件号码|身份证号)[:：]?[^\\s|│]{4,80}");
+        return name.matcher(block).find() && number.matcher(block).find();
+    }
+
+    private static boolean isQueryHeaderLine(String line) {
+        return line.matches("(?i).*(?:证书查询网址|查询网址(?:及网址)?查询截图|网址查询截图|查询截图|证书查询结果截图).*");
+    }
+
+    private static boolean independentUrl(String line) {
+        return !independentQueryUrlLine(line).isEmpty();
+    }
+
+    private static boolean fieldInFragment(Record record, String key, String pageKey, int start, int end,
+            EvidenceCorpus corpus) {
+        Field field = record.fields().get(key);
+        return field != null && fieldRange(field, pageKey, start, end, corpus);
+    }
+
+    private static boolean numberFieldInFragment(Record record, String pageKey, int start, int end,
+            EvidenceCorpus corpus) {
+        Field field = record.fields().get("CERTIFICATE_NUMBER");
+        if (field == null) {
+            field = record.fields().get("REGISTRATION_NUMBER");
+        }
+        return field != null && fieldRange(field, pageKey, start, end, corpus);
+    }
+
+    private static boolean fieldRange(Field field, String pageKey, int start, int end, EvidenceCorpus corpus) {
+        Source source = corpus.byId.get(field.sourceId());
+        if (source == null || field.evidence() == null || field.evidence().anchor() == null) {
+            return false;
+        }
+
+        Evidence evidence = source.evidence();
+        String sourcePageKey = EvidenceCorpus.pageKey(
+            evidence.documentId(), evidence.page(), evidence.locationType());
+        if (!sourcePageKey.equals(pageKey)) {
+            return false;
+        }
+
+        Matcher span = Pattern.compile("chars:(\\d+)-(\\d+)").matcher(field.evidence().anchor());
+        if (!span.matches()) {
+            return false;
+        }
+        int fieldStart = Integer.parseInt(span.group(1));
+        int fieldEnd = Integer.parseInt(span.group(2));
+        return fieldStart >= start && fieldEnd <= end;
+    }
+
+    static final class QueryFragment {
+        final int start;
+        final int end;
+        final String text;
+
+        QueryFragment(int start, int end, String text) {
+            this.start = start;
+            this.end = end;
+            this.text = text;
+        }
+    }
+
+    private static String normalizeQueryToken(String value) {
+        return java.text.Normalizer.normalize(Objects.toString(value, ""), java.text.Normalizer.Form.NFKC)
+            .replaceAll("\\s+", "")
+            .toUpperCase(Locale.ROOT);
+    }
+    static boolean provenPersonnelQueryMaterial(Rule rule,Decision decision,RuleEvaluator evaluator){
+        if(!"PASS".equals(decision.status())||!decision.gaps().isEmpty())return false;
+        Decision fresh=personnelQueryMaterial(rule,evaluator);
+        return fresh!=null&&"PASS".equals(fresh.status())&&fresh.gaps().isEmpty()
+            &&decision.evidences().containsAll(fresh.evidences())
+            &&Objects.equals(fresh.proof().get("certificateBindings"),certificateBindings(decision.proof()));
+    }
+    private static List<Map<String,Object>> certificateBindings(Object value){
+        if(value instanceof Map<?,?>){Map<?,?> map=(Map<?,?>)value;Object own=map.get("certificateBindings");if(own instanceof List<?>)return RuleEvaluator.maps(own);
+            List<Map<String,Object>> nested=new ArrayList<>();for(Object child:map.values())nested.addAll(certificateBindings(child));return nested;}
+        if(value instanceof List<?>){List<Map<String,Object>> nested=new ArrayList<>();for(Object child:(List<?>)value)nested.addAll(certificateBindings(child));return nested;}
+        return Collections.emptyList();
+    }
+    private static String number(Record record){String value=record.value("CERTIFICATE_NUMBER");return cn.bidcheck.compat.Java8Api.isBlank(value)?record.value("REGISTRATION_NUMBER"):value;}
 
     @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
     static final class Field {
@@ -103,10 +379,30 @@ final class CertificateSourceComparison {
         List<Record> candidates=cn.bidcheck.compat.Java8Api.toList(records.stream().filter(r->ConfirmedSubjectBindings.recordMatches(name,r,evaluator)));
         if(candidates.isEmpty())return SameFieldComparisonTarget.unresolved(rule,evaluator.match(rule),evaluator);
         if(roles.isEmpty())return pending(rule,evaluator,"SUBJECT_RELATION_UNPROVEN","已发现同名证书候选，但尚无已核源的本次岗位任职，不能以同名材料替代当前人员",roles,candidates,cn.bidcheck.compat.Java8Api.mapOf());
-        SubjectIdentity.Problem identity=evaluator.identities.issue(new Rule(rule.id(),rule.description(),"CERTIFICATE",rule.subject(),rule.field(),rule.operator(),rule.expected(),rule.unit(),rule.parameters(),rule.sourceQuote(),rule.logic(),cn.bidcheck.compat.Java8Api.listOf()),cn.bidcheck.compat.Java8Api.listOf());
-        if(identity!=null)return pending(rule,evaluator,identity.code(),identity.reason(),roles,candidates,cn.bidcheck.compat.Java8Api.mapOf());
+        SubjectIdentity.Problem identity=evaluator.identities.issue(new Rule(rule.id(),rule.description(),"CERTIFICATE",identitySubject(rule),rule.field(),rule.operator(),rule.expected(),rule.unit(),rule.parameters(),rule.sourceQuote(),rule.logic(),cn.bidcheck.compat.Java8Api.listOf()),cn.bidcheck.compat.Java8Api.listOf());
         Set<String> categories=requiredCategories(rule,candidates,evaluator.context);
+        boolean submissionOnlyComparison=false;
+        if(categories.isEmpty()){
+            String requirement=clean(requirementQuote(rule,evaluator.context));
+            if(requirement.contains("安全生产考核合格证")
+                &&clean(rule.sourceQuote()).matches(".*(?:查询截图|查询结果).*(?:信息|内容).*一致.*")){
+                categories=submissionComparisonCategories(name,
+                    cn.bidcheck.compat.Java8Api.toList(candidates.stream().filter(r->"CERTIFICATE".equals(r.side()))),
+                    candidates);
+                submissionOnlyComparison=!categories.isEmpty();
+            }
+        }
+        if(identity!=null)return pending(rule,evaluator,identity.code(),identity.reason(),roles,candidates,cn.bidcheck.compat.Java8Api.mapOf());
         if(categories.isEmpty())return pending(rule,evaluator,"REQUIREMENT_COMPARISON_TARGET_UNRESOLVED","原条款要求的证照类型尚未与两端记录对应，不以另一类现有证照缩小检查范围",roles,candidates,cn.bidcheck.compat.Java8Api.mapOf());
+        if(submissionOnlyComparison){
+            Set<String> exactCategories=categories;
+            List<Record> certificates=cn.bidcheck.compat.Java8Api.toList(candidates.stream().filter(r->"CERTIFICATE".equals(r.side())&&exactCategories.contains(r.category())));
+            for(Record certificate:certificates){
+                Fact selected=ConfirmedSubjectBindings.recordIdentity(certificate);
+                if(selected==null||roles.stream().noneMatch(role->evaluator.identities.samePerson(role,selected)))
+                    return pending(rule,evaluator,"ENTITY_IDENTITY_AMBIGUOUS","本次岗位人员与所引安全证原件的身份信息未能确认一致，不能将共同材料比对当作资格或身份确认",roles,candidates,cn.bidcheck.compat.Java8Api.mapOf());
+            }
+        }
         List<Decision> compared=new ArrayList<>();for(String category:categories)compared.add(compareCategory(rule,name,category,cn.bidcheck.compat.Java8Api.toList(candidates.stream().filter(r->r.category().equals(category))),roles,evaluator));
         return compared.size()==1?compared.get(0):RuleEvaluator.combine(rule.id(),rule.description(),"ALL",compared);
     }
@@ -119,7 +415,7 @@ final class CertificateSourceComparison {
         Field selectedNumber=certificate.fields().get("CERTIFICATE_NUMBER");if(selectedNumber==null)selectedNumber=certificate.fields().get("REGISTRATION_NUMBER");
         if(selectedNumber==null)return pending(rule,evaluator,"COMPARISON_RECORD_IDENTITY_UNPROVEN","证书一端没有明确类型的编号，不能只凭姓名关联查询记录",roles,candidates,cn.bidcheck.compat.Java8Api.mapOf());
         Fact selected=ConfirmedSubjectBindings.recordIdentity(certificate);
-        Rule identityRule=new Rule(rule.id(),rule.description(),"CERTIFICATE",rule.subject(),rule.field(),rule.operator(),rule.expected(),rule.unit(),rule.parameters(),rule.sourceQuote(),"",cn.bidcheck.compat.Java8Api.listOf());
+        Rule identityRule=new Rule(rule.id(),rule.description(),"CERTIFICATE",identitySubject(rule),rule.field(),rule.operator(),rule.expected(),rule.unit(),rule.parameters(),rule.sourceQuote(),"",cn.bidcheck.compat.Java8Api.listOf());
         SubjectIdentity.Problem roleIdentity=evaluator.identities.issue(identityRule,cn.bidcheck.compat.Java8Api.listOf(selected));
         if(roleIdentity!=null)return pending(rule,evaluator,roleIdentity.code(),roleIdentity.reason(),roles,candidates,cn.bidcheck.compat.Java8Api.mapOf("comparisonIdentityScope", "CURRENT_ROLE_TO_SELECTED_CERTIFICATE"));
         String certNumber=certificate.value("CERTIFICATE_NUMBER"),queryNumber=query.value("CERTIFICATE_NUMBER");
@@ -154,6 +450,11 @@ final class CertificateSourceComparison {
         return new Decision(rule.id(),rule.description(),status,reason,evidence,missing?cn.bidcheck.compat.Java8Api.listOf(gap("COMPARISON_FIELD_MAPPING_REQUIRED",reason)):cn.bidcheck.compat.Java8Api.listOf(),proof);
     }
 
+    private static String identitySubject(Rule rule) {
+        String selector = str(rule.parameters(), "personnelRoleSelector");
+        return cn.bidcheck.compat.Java8Api.isBlank(selector) ? rule.subject() : selector;
+    }
+
     static boolean equivalentFieldValue(String category,String field,String left,String right){
         if(left.equals(right))return true;
         if(!"PROFESSION".equals(field)||!category.matches("[一二]级注册建造师"))return false;
@@ -168,6 +469,17 @@ final class CertificateSourceComparison {
         return quote;
     }
     static Set<String> requiredCategories(Rule rule,List<Record> records,Map<String,Object> context){
+        if(Boolean.TRUE.equals(rule.parameters().get("submissionOnlyExactCredentialPair"))){
+            String requirement=clean(requirementQuote(rule,context));
+            if(!requirement.contains("安全生产考核合格证")
+                ||!clean(rule.sourceQuote()).matches(".*(?:查询截图|查询结果).*(?:信息|内容).*一致.*"))return Collections.emptySet();
+            Set<String> people=new LinkedHashSet<>();
+            records.stream().filter(r->"CERTIFICATE".equals(r.side())).map(Record::owner).filter(v->!cn.bidcheck.compat.Java8Api.isBlank(v)).forEach(people::add);
+            if(people.size()!=1)return Collections.emptySet();
+            String person=people.iterator().next();
+            List<Record> certificates=cn.bidcheck.compat.Java8Api.toList(records.stream().filter(r->"CERTIFICATE".equals(r.side())));
+            return submissionComparisonCategories(person,certificates,records);
+        }
         String original=clean(requirementQuote(rule,context));Set<String> required=new LinkedHashSet<>();boolean scoped=false;
         for(String family:cn.bidcheck.compat.Java8Api.listOf("建造师", "建筑师", "监理工程师", "造价工程师"))if(original.contains(family)){
             scoped=true;Set<String> found=new LinkedHashSet<>();records.stream().filter(r->r.category().contains(family)).forEach(r->found.add(r.category()));
@@ -200,9 +512,32 @@ final class CertificateSourceComparison {
         boolean scoped=certificate.fields().keySet().stream().anyMatch(k->k.startsWith(field+":"))
             ||query.fields().keySet().stream().anyMatch(k->k.startsWith(field+":"));
         if(!scoped)return new DatePair(certificate.fields().get(field),query.fields().get(field),cn.bidcheck.compat.Java8Api.mapOf("resolution", "SAME_UNQUALIFIED_DATE_FIELD"));
+        if(required.isEmpty() && query.value("PROFESSION").isEmpty() && query.fields().containsKey(field)){
+            String profession=canonicalProfession(certificate.value("PROFESSION"));
+            Field single=certificate.fields().get(field+":"+profession);
+            long scopedDates=certificate.fields().keySet().stream().filter(k->k.startsWith(field+":")).count();
+            if(!profession.isEmpty() && single!=null && scopedDates==1
+                    && query.fields().keySet().stream().noneMatch(k->k.startsWith(field+":"))){
+                return new DatePair(single,query.fields().get(field),linked("resolution","SINGLE_PROFESSION_SAME_RECORD",
+                    "profession",profession,"comparisonScope","QUERY_RECORD_CONSISTENCY_ONLY"));
+            }
+        }
         Field left=null,right=null;
         if(!cn.bidcheck.compat.Java8Api.isBlank(required)){
             left=professionalDate(certificate,field,required);right=professionalDate(query,field,required);
+        }
+        if(left!=null&&right==null&&query.fields().containsKey(field)){
+            Set<String> listed=new LinkedHashSet<>();
+            for(String item:query.value("PROFESSION").split("[,，、/;；]+"))listed.add(canonicalProfession(item));
+            if(listed.size()>1&&listed.contains(required)&&listed.stream().allMatch(p->certificate.fields().containsKey(field+":"+p))){
+                Field aggregate=query.fields().get(field);
+                for(String p:listed){
+                    Field professional=certificate.fields().get(field+":"+p);
+                    if(professional.value().equals(aggregate.value()))return new DatePair(professional,aggregate,
+                        linked("resolution","MERGED_QUERY_DATE_MATCHES_LISTED_PROFESSION","matchingProfession",p,"requiredProfession",required,"comparisonScope","QUERY_RECORD_CONSISTENCY_ONLY"));
+                }
+                return new DatePair(left,aggregate,linked("resolution","MERGED_QUERY_DATE_DIFFERS_FROM_ALL_LISTED_PROFESSIONS","requiredProfession",required));
+            }
         }
         return new DatePair(left,right,linked("resolution",cn.bidcheck.compat.Java8Api.isBlank(required)?"REQUIREMENT_PROFESSION_UNRESOLVED":left==null||right==null?"PROFESSION_DATE_SCOPE_NOT_ALIGNED":"SAME_SOURCE_BOUND_PROFESSION",
             "requiredProfession",required,"certificateAvailableFields",cn.bidcheck.compat.Java8Api.toList(certificate.fields().keySet().stream().filter(k->k.startsWith(field))),

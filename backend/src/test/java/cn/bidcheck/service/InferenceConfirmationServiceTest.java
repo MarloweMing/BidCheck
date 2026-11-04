@@ -34,6 +34,17 @@ class InferenceConfirmationServiceTest {
     }
     void run(String id,Checkpoint point){store.save("run",id,"project","",fields("id",id,"projectId","project","documentId","bid","tenderDocumentId","tender","status","COMPLETED"));store.save("snapshot",id+"-snapshot","project",id,point);}
     String capture(){service.capture("run","cp",bid,tender,fields("id","engine","claim","确认姓名","proposedFact",cn.bidcheck.compat.Java8Api.mapOf("value", "张国超")));return text(service.list("run").get(0),"id");}
+    @Test void twoTargetsSharingOneIdentityPairNeedOnlyOneDecisionAndOneRecomputation(){
+        for(String target:Arrays.asList("credential","social")){
+            service.capture("run","cp",bid,tender,fields("id","old-"+target,"targetId",target,"claim","请核对两处姓名",
+                "proposedFact",fields("kind","RELATION","subject","李明","field","同一人","value","李*"),
+                "evidences",Arrays.asList(fields("sourceId","appointment"),fields("sourceId","proof"))));
+        }
+        List<Map<String,Object>> cards=service.list("run");assertEquals(1,cards.size());
+        service.decide("run",text(cards.get(0),"id"),decision("CONFIRMED"));
+        assertEquals(1,service.list("run").size());assertEquals("CONFIRMED",service.list("run").get(0).get("status"));
+        verify(bids,times(1)).recoverRun("project","run");
+    }
     Map<String,Object> decision(String status){return fields("decision",status,"reviewer","审核人","note","对照原文确认","expectedRevision",0);}
     @Test void confirmationPersistsActorRevisionAndQueuesIndependentRecalculation(){String id=capture();java.util.Map<java.lang.String, java.lang.Object> response=service.decide("run",id,decision("CONFIRMED"));assertEquals("QUEUED",response.get("recomputeStatus"));assertEquals(1,service.confirmed("project",bid,tender).size());
         java.util.Map<java.lang.String, java.lang.Object> claim=service.list("run").get(0);assertEquals(1,claim.get("revision"));assertEquals("审核人",claim.get("actor"));assertNotNull(claim.get("decidedAt"));assertEquals(1,((List<?>)service.exportRecords("run").get("history")).size());assertThrows(RuntimeException.class,()->service.decide("run",id,decision("CONFIRMED")));}

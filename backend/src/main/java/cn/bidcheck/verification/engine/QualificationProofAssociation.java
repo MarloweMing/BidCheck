@@ -181,13 +181,35 @@ final class QualificationProofAssociation {
 
     private static Decision compare(Rule rule,Selected selected,List<Record> records,RuleEvaluator evaluator){
         Record certificate=selected.certificate();List<Record> identities=cn.bidcheck.compat.Java8Api.toList(records.stream().filter(q->q.key().equals(certificate.key())));
-        List<Record> queries=cn.bidcheck.compat.Java8Api.toList(identities.stream().filter(q->DomainBindings.sameCertificateCategory(CertificateEvidenceRecords.category(q.category()),CertificateEvidenceRecords.category(certificate.category()))));
+        List<Record> queries=new ArrayList<>(cn.bidcheck.compat.Java8Api.toList(identities.stream().filter(q->DomainBindings.sameCertificateCategory(CertificateEvidenceRecords.category(q.category()),CertificateEvidenceRecords.category(certificate.category())))));
         Map<String,Object> proof=linked("executor",VERSION,"selectedQualificationRuleId",selected.branch().id(),"selectedQualificationQuote",selected.branch().sourceQuote(),"selectedFactId",selected.fact().id(),"certificate",certificate.audit(),"identityKeyFields",cn.bidcheck.compat.Java8Api.listOf("SUBJECT", "CERTIFICATE_NUMBER"),"sameIdentityCandidates",cn.bidcheck.compat.Java8Api.toList(identities.stream().map(Record::audit)),"queries",cn.bidcheck.compat.Java8Api.toList(queries.stream().map(Record::audit)),"comparedFields",cn.bidcheck.compat.Java8Api.listOf("SUBJECT", "CATEGORY", "CERTIFICATE_NUMBER", "GRADE"));
         if(identities.isEmpty()||queries.isEmpty()){
             List<Map<String,Object>> actions=CertificateEvidenceRecords.qualificationLayoutActions(evaluator.corpus,certificate.company(),certificate.category(),certificate.number(),rule.id());
             if(!actions.isEmpty())proof.put("requiredEvidenceActions",actions);
+            List<Map<String,Object>> questions=new ArrayList<>();
+            for(Record option:CertificateEvidenceRecords.qualificationQueries(evaluator.corpus,certificate.company(),certificate.category(),Collections.emptyList(),certificate.number())){
+                Set<String> ids=new LinkedHashSet<>(selected.fact().sourceIds());
+                for(String key:Arrays.asList("SUBJECT","CATEGORY","CERTIFICATE_NUMBER","GRADE")){
+                    Object value=option.fields().get(key);
+                    if(value instanceof Map<?,?>)ids.add(Objects.toString(((Map<?,?>)value).get("sourceId"),""));
+                }
+                List<Map<String,Object>> citations=new ArrayList<>();
+                for(String id:ids){Source s=evaluator.corpus.byId.get(id);if(s!=null)citations.add(linked("sourceId",id,"quote",s.evidence().quote()));}
+                String pair=identity(certificate.key()+certificate.category()+option.fields().get("CATEGORY")+new TreeSet<>(ids));
+                boolean confirmed=evaluator.facts.stream().anyMatch(f->InferenceClaims.humanConfirmed(f)&&"RELATION".equals(f.kind())&&
+                    "QUALIFICATION_ROW_NUMBER".equals(f.field())&&certificate.company().equals(f.subject())&&certificate.number().equals(f.value())&&
+                    pair.equals(str(f.attributes(),"rowIdentity"))&&new HashSet<>(f.sourceIds()).equals(ids));
+                if(confirmed){queries.add(option);proof.put("confirmedQueryRow",option.audit());continue;}
+                questions.add(linked("type","QUALIFICATION_ROW_NUMBER","claim","请确认“"+certificate.company()+"”的“"+certificate.category()+"”查询行是否对应证号 "+certificate.number(),
+                    "reasoning","同一张资质表出现多个证号，所引类别行的证号留空。请对照查询表与证书原件确认行归属。","confidence",0.5,
+                    "risks",Collections.singletonList("确认行归属后仍须比较资质及等级"),"evidence",citations,
+                    "proposedFact",linked("kind","RELATION","subject",certificate.company(),"field","QUALIFICATION_ROW_NUMBER","value",certificate.number(),"rawValue",certificate.number(),
+                        "scope","CURRENT_PROJECT","attributes",linked("object",certificate.number(),"rowIdentity",pair)),
+                    "unresolvedGapCodes",Arrays.asList("QUALIFICATION_QUERY_IDENTITY_REQUIRED","QUALIFICATION_QUERY_CATEGORY_REQUIRED")));
+            }
+            if(!questions.isEmpty())proof.put("confirmationCandidates",questions);
         }
-        if(identities.isEmpty())return evaluator.unknown(rule,"QUALIFICATION_QUERY_IDENTITY_REQUIRED","尚无与已满足资质的单位和证号对应的查询截图，不能借其他证书的查询材料",cn.bidcheck.compat.Java8Api.listOf(selected.fact()),proof);
+        if(queries.isEmpty()&&identities.isEmpty())return evaluator.unknown(rule,"QUALIFICATION_QUERY_IDENTITY_REQUIRED","尚无与已满足资质的单位和证号对应的查询截图，不能借其他证书的查询材料",cn.bidcheck.compat.Java8Api.listOf(selected.fact()),proof);
         if(queries.isEmpty())return evaluator.unknown(rule,"QUALIFICATION_QUERY_CATEGORY_REQUIRED","相同单位及证号已对应，但本项资质类别尚未通过原文或已验证单元格归属对齐",cn.bidcheck.compat.Java8Api.listOf(selected.fact()),proof);
         Set<String> grades=new LinkedHashSet<>();queries.forEach(q->grades.add(q.grade()));
         if(grades.size()!=1||grades.contains(""))return evaluator.unknown(rule,"QUALIFICATION_QUERY_FIELDS_REQUIRED","同一证号查询记录的等级缺失或存在不同版本，尚不能确认字段一致",cn.bidcheck.compat.Java8Api.listOf(selected.fact()),proof);

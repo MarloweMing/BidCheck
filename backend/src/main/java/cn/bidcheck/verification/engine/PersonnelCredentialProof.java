@@ -110,6 +110,8 @@ final class PersonnelCredentialProof {
         if(kind.equals("SAFETY")){
             List<String> allowed=strings(rule.parameters().get("allowedSafetyClasses"));if(allowed.isEmpty()||allowed.stream().anyMatch(v->!clean(rule.sourceQuote()).matches(".*[（(]"+java.util.regex.Pattern.quote(v)+"(?:类|证)[）)].*")))return evaluator.unknown(rule,"REQUIREMENT_CREDENTIAL_SCHEMA_UNPROVEN","安全证细类未对应条款明确的允许范围",cn.bidcheck.compat.Java8Api.listOf(),proof);
             String actual=record.category().replace("安全生产考核合格证书(","").replace(")","");proof.putAll(linked("allowedSafetyClasses",allowed,"actualSafetyClass",actual,"proofScope","SAFETY_CERTIFICATE_CLASS_ONLY"));
+            if("C2".equals(actual)&&allowed.contains("C")&&allowed.contains("C3")&&!allowed.contains("C2"))
+                return new Decision(rule.id(),rule.description(),"FAIL","证书是 C2，招标要求 C 或 C3",evidence,cn.bidcheck.compat.Java8Api.listOf(),proof);
             if(!allowed.contains(actual))return evaluator.unknown(rule,"CREDENTIAL_SUBTYPE_APPLICABILITY_REQUIRED","已读取安全证细类，但与条款列明类别未直接对应，不能把C2自动当作C3或笼统C类通过",cn.bidcheck.compat.Java8Api.listOf(),proof);
         }else{
             String grade=str(rule.parameters(),"requiredGrade").replace('壹','一').replace('贰','二'),profession=str(rule.parameters(),"requiredProfession");

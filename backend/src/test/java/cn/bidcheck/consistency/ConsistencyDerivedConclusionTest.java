@@ -40,10 +40,23 @@ class ConsistencyDerivedConclusionTest {
         java.util.Map<java.lang.String, java.lang.Object> r=report(os,"certificateNumber");assertEquals("UNDETERMINED",evaluate(d,r).status());
         assertEquals(cn.bidcheck.compat.Java8Api.listOf("b"),derived(r).get("unresolvedOccurrenceIds"));assertEquals(false,derived(r).get("comparisonCoverageComplete"));
     }
+    @Test void independentlyVerifiedPeerFromAnotherGroupCanSupplyAComparisonPosition(){
+        String name="2026年合成中心装修工程";
+        Document d=doc(page(1,"（"+name+"）\n投标文件（商务部分）"),page(2,"合同条款偏离表\n项目名称："+name),
+                page(3,"技术偏离表\n项目名称："+name));
+        List<Map<String,Object>> os=Arrays.asList(occurrence(d,2,"项目名称："+name,"projectName",name,"a"),
+                occurrence(d,3,"项目名称："+name,"projectName",name,"b"));
+        Map<String,Object> r=report(os,"projectName");
+        maps(r.get("groups")).get(0).put("occurrenceIds",Collections.singletonList("a"));
+        assertEquals("PASS",evaluate(d,r).status());
+        assertEquals(Collections.singletonList("a"),derived(r).get("resolvedOccurrenceIds"));
+        os.get(1).put("sourceOffset",0);
+        assertEquals("UNDETERMINED",evaluate(d,r).status());
+    }
     @Test void differentCertificateInstancesAreSeparatedWithoutProvingQualificationValidity(){
         Document d=doc(page(1,"建筑业企业资质证书\n企业名称：甲公司\n证书编号：ABC12345"),page(2,"建筑业企业资质证书\n企业名称：乙公司\n证书编号：DEF67890"));
         java.util.List<java.util.Map<java.lang.String, java.lang.Object>> os=cn.bidcheck.compat.Java8Api.listOf(occurrence(d,1,"证书编号：ABC12345","certificateNumber","ABC12345","a"), occurrence(d,2,"证书编号：DEF67890","certificateNumber","DEF67890","b"));
-        java.util.Map<java.lang.String, java.lang.Object> r=report(os,"certificateNumber");assertEquals("PASS",evaluate(d,r).status());assertEquals(2,derived(r).get("separatedObjectCount"));
+        java.util.Map<java.lang.String, java.lang.Object> r=report(os,"certificateNumber");assertEquals("UNDETERMINED",evaluate(d,r).status());assertEquals(2,derived(r).get("separatedObjectCount"));
         assertTrue(maps(derived(r).get("objects")).stream().allMatch(o->Boolean.FALSE.equals(o.get("provesQualificationValidity"))));
     }
     @Test void sameCertificateDifferentHoldersRemainRisk(){
@@ -54,7 +67,7 @@ class ConsistencyDerivedConclusionTest {
     @Test void twoInvoicesAreVerifiedSeparatelyAndNeverBecomeCurrentBidPrices(){
         Document d=doc(page(263,invoice("12345678901234567890","仪器甲","100.00","13.00")),page(274,invoice("22345678901234567890","仪器乙","200.00","26.00")));
         java.util.Map<java.lang.String, java.lang.Object> r=report(cn.bidcheck.compat.Java8Api.listOf(tax(d,263,"13.00","a"), tax(d,274,"26.00","b")),"taxAmount");
-        assertEquals("PASS",evaluate(d,r).status());assertEquals(2,derived(r).get("separatedObjectCount"));
+        assertEquals("UNDETERMINED",evaluate(d,r).status());assertEquals(2,derived(r).get("separatedObjectCount"));
         for(java.util.Map<java.lang.String, java.lang.Object> o:maps(derived(r).get("objects"))){assertEquals("INVOICE_TRANSACTION",o.get("objectKind"));
             java.util.List<java.util.Map<java.lang.String, java.lang.Object>> relations=maps(map(o.get("relationValidation")).get("relations"));assertFalse(relations.isEmpty());
             assertTrue(relations.stream().allMatch(x->Boolean.FALSE.equals(x.get("currentBidPrice"))));}
@@ -75,7 +88,7 @@ class ConsistencyDerivedConclusionTest {
     }
     @Test void validUnitPriceBasisNeedsPrintedColumnArithmetic(){
         Document d=doc(page(1,invoice("12345678901234567890","仪器甲","100.00","13.00")));
-        java.util.Map<java.lang.String, java.lang.Object> o=occurrence(d,1,"100.00</td>","unitPrice","100.00","a");java.util.Map<java.lang.String, java.lang.Object> r=report(cn.bidcheck.compat.Java8Api.listOf(o),"unitPrice");assertEquals("PASS",evaluate(d,r).status());
+        java.util.Map<java.lang.String, java.lang.Object> o=occurrence(d,1,"100.00</td>","unitPrice","100.00","a");java.util.Map<java.lang.String, java.lang.Object> r=report(cn.bidcheck.compat.Java8Api.listOf(o),"unitPrice");assertEquals("UNDETERMINED",evaluate(d,r).status());
         java.util.Map<java.lang.String, java.lang.Object> proof=map(maps(derived(r).get("objects")).get(0).get("identityProof"));assertEquals("CNY_EXCLUSIVE",proof.get("basis"));
         Document bad=doc(page(1,invoice("12345678901234567890","仪器甲","100.00","18.00")));
         assertEquals("UNDETERMINED",evaluate(bad,report(cn.bidcheck.compat.Java8Api.listOf(occurrence(bad,1,"100.00</td>","unitPrice","100.00","a")),"unitPrice")).status());
@@ -95,7 +108,7 @@ class ConsistencyDerivedConclusionTest {
         Document d=doc(page(1,"建筑业企业资质证书\n企业名称：甲公司\n证书编号：ABC12345"));
         java.util.Map<java.lang.String, java.lang.Object> r=report(cn.bidcheck.compat.Java8Api.listOf(occurrence(d,1,"证书编号：ABC12345","certificateNumber","ABC12345","a")),"certificateNumber");
         new ConsistencyDoubtReviewer((a,b,c)->{fail("No retrieval is needed for complete local relations");return null;},(a,b,c,e)->{fail("No distinct values require a model");return null;},()->true).review(d,r,()->true,g->{});
-        assertEquals("PASS",derived(r).get("status"));assertEquals("LOCAL_RELATIONS_VERIFIED",map(maps(r.get("groups")).get(0).get("targetedReview")).get("status"));
+        assertEquals("UNDETERMINED",derived(r).get("status"));assertEquals("LOCAL_RELATIONS_VERIFIED",map(maps(r.get("groups")).get(0).get("targetedReview")).get("status"));
     }
     @Test void contentsAndHistoricalProjectMentionsDoNotAcquireCurrentIdentity(){
         String name="2026年合成中心装修工程";
@@ -108,7 +121,7 @@ class ConsistencyDerivedConclusionTest {
         String name="2026年合成中心装修工程";
         Document d=doc(page(1,"（"+name+"）\n投标文件（商务部分）"),page(9,"合同条款偏离表\n项目名称："+name),page(10,"历史项目\n项目名称：旧工程"));
         java.util.List<java.util.Map<java.lang.String, java.lang.Object>> os=cn.bidcheck.compat.Java8Api.listOf(occurrence(d,9,"项目名称："+name,"projectName",name,"a"), occurrence(d,10,"项目名称：旧工程","projectName","旧工程","b"));
-        java.util.Map<java.lang.String, java.lang.Object> r=report(os,"projectName");assertEquals("PASS",evaluate(d,r).status());assertEquals(cn.bidcheck.compat.Java8Api.listOf("b"),derived(r).get("excludedOccurrenceIds"));
+        java.util.Map<java.lang.String, java.lang.Object> r=report(os,"projectName");assertEquals("UNDETERMINED",evaluate(d,r).status());assertEquals(cn.bidcheck.compat.Java8Api.listOf("b"),derived(r).get("excludedOccurrenceIds"));
     }
     private List<?> strings(Object value){return (List<?>)value;}
 }

@@ -33,7 +33,7 @@ class InferenceDimensionClosureTest {
         Rule rule=new Rule("price","报价","NUMBER","合成有限公司","amount","<=","100","元",cn.bidcheck.compat.Java8Api.mapOf(),"100元","",cn.bidcheck.compat.Java8Api.listOf());
         Map<String,Object> context=cn.bidcheck.compat.Java8Api.mapOf("inferredFacts", cn.bidcheck.compat.Java8Api.listOf(linked("targetId","price","proposedFact",linked("kind","NUMBER","basis","投标总报价","unit","元"))));
         Decision unknown=new Decision("price","报价","UNDETERMINED","口径待定",cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(new Gap("PRICE_DIMENSIONS_REQUIRED","口径","确认","INPUT")),cn.bidcheck.compat.Java8Api.mapOf());
-        assertEquals("NEEDS_CONFIRMATION",InferenceClaims.pending(rule,unknown,context).status());
+        assertEquals("UNDETERMINED",InferenceClaims.pending(rule,unknown,context).status());
         Decision uncompiled=new Decision("price","报价","UNDETERMINED","要求未明确",cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf(new Gap("PRICE_REQUIREMENT_DIMENSIONS_REQUIRED","要求","编译","RETRY")),cn.bidcheck.compat.Java8Api.mapOf());
         assertEquals("UNDETERMINED",InferenceClaims.pending(rule,uncompiled,context).status());
     }

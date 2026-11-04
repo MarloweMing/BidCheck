@@ -32,6 +32,29 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Exercises the text path with separate process registries and separate database sessions. */
 class TextExtractionDurableSingleFlightTest {
+    @Test void releasedOwnerBetweenDuplicateInsertAndReadLetsFollowerClaimSafely()throws Exception{
+        SqlSessionFactory db=database();
+        try(SqlSession first=db.openSession(true);SqlSession second=db.openSession(true)){
+            String key=cn.bidcheck.compat.Java8Api.repeat("a",64);
+            RecordMapper ownerMapper=first.getMapper(RecordMapper.class), followerMapper=second.getMapper(RecordMapper.class);
+            EvidenceOperationRepository owner=independent(new Store(ownerMapper,new ObjectMapper()));
+            java.util.concurrent.atomic.AtomicBoolean releasedAfterCollision=new java.util.concurrent.atomic.AtomicBoolean();
+            try(EvidenceOperationRepository.Lease lease=owner.coordinate("p",key)){
+                RecordMapper interleaved=(RecordMapper)java.lang.reflect.Proxy.newProxyInstance(RecordMapper.class.getClassLoader(),new Class<?>[]{RecordMapper.class},(proxy,method,args)->{
+                    try{return method.invoke(followerMapper,args);}
+                    catch(java.lang.reflect.InvocationTargetException failed){
+                        if(method.getName().equals("tryInsertEvidenceOperationLease")&&releasedAfterCollision.compareAndSet(false,true))lease.close();
+                        throw failed.getCause();
+                    }
+                });
+                EvidenceOperationRepository follower=independent(new Store(interleaved,new ObjectMapper()));
+                try(EvidenceOperationRepository.Lease acquired=follower.coordinate("p",key)){
+                    assertTrue(releasedAfterCollision.get());assertNotNull(followerMapper.evidenceOperationLease(key));
+                }
+                assertNull(followerMapper.evidenceOperationLease(key));
+            }
+        }
+    }
     @Test void secondInstanceWaitsThenReusesTheFirstInstancesDurableObservation()throws Exception{
         SqlSessionFactory database=database();
         try(SqlSession firstSession=database.openSession(true);SqlSession secondSession=database.openSession(true)){

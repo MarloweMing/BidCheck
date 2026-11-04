@@ -317,6 +317,8 @@ public class VerificationService {
             "referenceDateSource",text(run,"referenceDateSourceDocumentId"),"referenceDateEvidence",run.get("referenceDateEvidence"),
             "evaluationStage",run.get("evaluationStage"),"externalRecords",run.get("externalRecords"),"analysisRevision",run.get("analysisRevision"),
             "tenderDocuments",cn.bidcheck.compat.Java8Api.toList(all.stream().filter(d->"TENDER".equals(d.role()))),"documentSetComplete",false,"visualObservations",cn.bidcheck.compat.Java8Api.listOf(),"unlimitedModelCalls",true);
+        base.put("providerConfigurationKnown",!"CONFIGURATION_INVALID".equals(externalAdapter.identity()));
+        base.put("providerSources",externalAdapter.providerSources());
         base.put("allowModelRuleCompilation",false);
         base.put("layoutLookup",layoutIndex);
         base.put("layoutIdentity",layouts.identity());
@@ -482,6 +484,7 @@ public class VerificationService {
         final List<Map<String,Object>> bindings=new ArrayList<>();final Map<Integer,Map<String,Object>> completed=new TreeMap<>();
         final Set<Integer> splitPages=new HashSet<>();final Set<String> limitations=new LinkedHashSet<>();
         final Set<Integer> deferred=new HashSet<>();
+        final Set<Integer> markRepairs=new HashSet<>();
         VisualGroup(String id,String operationKey,Map<String,Object> operationDescriptor,Document document,java.nio.file.Path original,List<Integer> pages,Map<String,Object> request){this.id=id;this.operationKey=operationKey;this.operationDescriptor=operationDescriptor;this.document=document;this.original=original;this.pages=pages;this.request=request;}
     }
     @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
@@ -506,6 +509,20 @@ public class VerificationService {
             List<Map<String,Object>> diagnostics,BooleanSupplier permit){
         return collectVisual(task,runId,cp,result,documents,diagnostics,true,permit);
     }
+    /** Rebind current durable image/field observations before the first result is published.
+     * A cache miss is still pending work; this path cannot create or submit a visual job. */
+    public List<Map<String,Object>> collectCachedCheckVisual(TaskRow task,String runId,Checkpoint cp,Map<String,Object> result,List<Document> documents,
+            List<Map<String,Object>> diagnostics){
+        return collectVisual(task,runId,cp,result,documents,diagnostics,true,()->false,true);
+    }
+    /** Cached observations are evidence publication too: retain the same task/run fence as paid reads. */
+    public void persistCheckVisualObservations(TaskRow task,String runId,String checkpointId,List<Map<String,Object>> observations){
+        visualWrite(task,runId,true,()->{for(Map<String,Object> observation:observations){
+            String id=stableId(runId+":check-observation:"+checkpointId+":"+store.encode(observation));
+            Map<String,Object> value=new LinkedHashMap<>(observation);value.put("runId",runId);value.put("checkpointId",checkpointId);
+            store.save("check_visual_observation",id,task.projectId,runId,value);
+        }});
+    }
     private void visualWrite(TaskRow task,String runId,boolean checkRun,Runnable action){
         if(!checkRun){DbTransactionRetry.executeWithoutResult(tx,"VERIFY_VISUAL_PUBLISH",cn.bidcheck.compat.Java8Api.mapOf("taskId", task.id, "runId", runId),s->{fence(task);action.run();});return;}
         DbTransactionRetry.executeWithoutResult(tx,"CHECK_VISUAL_PUBLISH",cn.bidcheck.compat.Java8Api.mapOf("taskId", task.id, "runId", runId),s->{
@@ -515,6 +532,9 @@ public class VerificationService {
         });
     }
     private List<Map<String,Object>> collectVisual(TaskRow task,String runId,Checkpoint cp,Map<String,Object> result,List<Document> documents,List<Map<String,Object>> diagnostics,boolean checkRun,BooleanSupplier checkPermit) {
+        return collectVisual(task,runId,cp,result,documents,diagnostics,checkRun,checkPermit,false);
+    }
+    private List<Map<String,Object>> collectVisual(TaskRow task,String runId,Checkpoint cp,Map<String,Object> result,List<Document> documents,List<Map<String,Object>> diagnostics,boolean checkRun,BooleanSupplier checkPermit,boolean cacheOnly) {
         List<Map<String,Object>> requests=maps(result.get("visualRequests"));
         if(!visualEnabled){if(!requests.isEmpty())diagnostics.add(diagnostic("VISUAL_NOT_CONFIGURED","原图核验服务尚未启用；已有文本结论保留","启用已配置的原图核验服务","SERVICE_AVAILABLE"));return cn.bidcheck.compat.Java8Api.listOf();}
         Map<String,VisualGroup> groups=new LinkedHashMap<>();Map<String,java.nio.file.Path> originals=new HashMap<>();
@@ -546,6 +566,7 @@ public class VerificationService {
         List<VisualGroup> orderedGroups=cn.bidcheck.compat.Java8Api.toList(groups.values().stream().sorted(Comparator.comparing(group->group.operationKey)));
         for(VisualGroup group:orderedGroups){
             loadVisualGroupState(task,group);
+            if(cacheOnly)continue;
             if(group.completed.size()==group.pages.size())continue;
             boolean hasRunnablePage=group.pages.stream().anyMatch(page->!group.completed.containsKey(page)&&!group.deferred.contains(page));
             if(!hasRunnablePage){if(!group.deferred.isEmpty())diagnostics.add(diagnostic("VISUAL_RETRY_PENDING","原图服务冷却中，已保留完成页面；未完成位置将在下次继续时重试","待服务冷却结束后继续","SERVICE_AVAILABLE"));continue;}
@@ -585,7 +606,7 @@ public class VerificationService {
             visualWrite(task,runId,checkRun,()->store.save("verification_visual_call",job.id(),task.projectId,runId,trace));
             group.limitations.addAll(strings(response.get("limitations")));
             for(Map<String,Object> page:maps(response.get("pageResults"))){
-                if(!validVisualPage(group.document,submission.pages(),page))continue;
+                if(!validVisualPage(group.document,submission.pages(),page,group.request))continue;
                 int location=number(page.get("page"),0);Map<String,Object> saved=new LinkedHashMap<>(page);
                 saved.put("inputPages",submission.pages());saved.put("callId",job.id());saved.put("identity",visuals.identity());saved.put("windowId",group.id);
                 group.completed.put(location,saved);visualWrite(task,runId,checkRun,()->store.save("verification_visual_page",visualPageId(group,location),task.projectId,runId,saved));
@@ -601,6 +622,11 @@ public class VerificationService {
                 Map<String,Object> saved=visualGroupResponse(group);visualWrite(task,runId,checkRun,()->{store.save("verification_visual",group.id,task.projectId,runId,saved);evidenceOperations.publishCompleted(task.projectId,group.operationKey,group.operationDescriptor,saved);});
             }else if(!exhausted[0]&&!submission.split()&&submission.pages().size()>1&&VisualVerificationService.splitRetryable(response)){
                 for(int page:submission.pages())if(!group.completed.containsKey(page)&&group.splitPages.add(page))next.add(visualJob(group,cn.bidcheck.compat.Java8Api.listOf(page),true,runId,submissions));
+            }else if(!exhausted[0]&&"VISUAL_MARK_RESULT_INCOMPLETE".equals(text(response,"errorCode"))){
+                // A field-only response did not inspect the requested mark. Repair the same
+                // page once; keep both attempts and never synthesize a negative signature.
+                for(int page:submission.pages())if(!group.completed.containsKey(page)&&group.markRepairs.add(page))
+                    next.add(visualJob(group,Collections.singletonList(page),true,runId,submissions));
             }
             if(next.isEmpty()&&group.completed.size()<group.pages.size()&&!"VISUAL_BUDGET_EXHAUSTED".equals(text(response,"errorCode")))
                 diagnostics.add("RETRY_PENDING".equals(response.get("status"))
@@ -613,11 +639,18 @@ public class VerificationService {
             int observedPage=number(observation.get("page"),0);Map<String,Object> source=map(observation.get("source"));Document doc=group.document;
             if(!validVisualSource(doc,observedPage,source)||!validVisualObservation(observation,source))continue;
             Page located=doc.pages().stream().filter(p->p.number()==observedPage).findFirst().orElse(null);if(located==null)continue;
-            String observationId=VisualVerificationService.observationKey(observation),binding=observationId+":"+text(request,"obligationId");
+            List<String> sourceIds=observedPage==number(request.getOrDefault("page",request.get("location")),0)
+                ?cn.bidcheck.compat.Java8Api.listCopyOf(new TreeSet<>(strings(request.get("sourceIds"))))
+                :Collections.emptyList();
+            String observationId=VisualVerificationService.observationKey(observation);
+            String binding=observationId+":"+text(request,"obligationId")+":"+hash(store.encode(fields(
+                "task",request.getOrDefault("task","FIELD"),
+                "fields",new TreeSet<>(strings(request.get("fields"))),
+                "sourceIds",sourceIds,"requestPage",request.getOrDefault("page",request.get("location")),
+                "region",request.get("region"),"roiFrame",request.get("roiFrame"),
+                "imageIndex",request.getOrDefault("imageIndex",1))));
             Map<String,Object> existing=observations.get(binding);
             if(existing!=null){LinkedHashSet<String> notes=new LinkedHashSet<>(strings(existing.get("modelLimitations")));notes.addAll(strings(observation.get("modelLimitations")));existing.put("modelLimitations",cn.bidcheck.compat.Java8Api.listCopyOf(notes));continue;}
-            List<String> sourceIds=cn.bidcheck.compat.Java8Api.toList(requests.stream().filter(r->doc.id().equals(text(r,"documentId"))&&text(request,"obligationId").equals(text(r,"obligationId"))
-                &&observedPage==number(r.getOrDefault("page",r.get("location")),0)).flatMap(r->strings(r.get("sourceIds")).stream()).distinct());
             Map<String,Object> o=new LinkedHashMap<>(observation);o.put("id",observationId);o.put("documentId",doc.id());o.put("page",observedPage);o.put("location",observedPage);
             o.put("observationIdentity",visuals.identity());
             o.put("obligationId",text(request,"obligationId"));o.put("checkpointId",cp.id());o.put("requestedSourceIds",sourceIds);
@@ -629,19 +662,19 @@ public class VerificationService {
     }
     private void loadVisualGroupState(TaskRow task,VisualGroup group){
         evidenceOperations.completed(task.projectId,group.operationKey).ifPresent(previous->{
-            if(VisualVerificationService.cacheable(previous))for(Map<String,Object> page:maps(previous.get("pageResults")))if(validVisualPage(group.document,group.pages,page))group.completed.put(number(page.get("page"),0),page);
+            if(VisualVerificationService.cacheable(previous))for(Map<String,Object> page:maps(previous.get("pageResults")))if(validVisualPage(group.document,group.pages,page,group.request))group.completed.put(number(page.get("page"),0),page);
             group.limitations.addAll(strings(previous.get("limitations")));
         });
         Stored cached=store.mapper().get(group.id);
         if(cached!=null&&"verification_visual".equals(cached.kind)&&task.projectId.equals(cached.projectId)){
             Map<String,Object> previous=store.map(cached.body);
-            if(VisualVerificationService.cacheable(previous))for(Map<String,Object> page:maps(previous.get("pageResults")))if(validVisualPage(group.document,group.pages,page))group.completed.put(number(page.get("page"),0),page);
+            if(VisualVerificationService.cacheable(previous))for(Map<String,Object> page:maps(previous.get("pageResults")))if(validVisualPage(group.document,group.pages,page,group.request))group.completed.put(number(page.get("page"),0),page);
             group.limitations.addAll(strings(previous.get("limitations")));
         }
         for(int page:group.pages)if(!group.completed.containsKey(page)){
             Stored stored=store.mapper().get(visualPageId(group,page));
             if(stored!=null&&"verification_visual_page".equals(stored.kind)&&task.projectId.equals(stored.projectId)){
-                Map<String,Object> previous=store.map(stored.body);if(validVisualPage(group.document,group.pages,previous))group.completed.put(page,previous);
+                Map<String,Object> previous=store.map(stored.body);if(validVisualPage(group.document,group.pages,previous,group.request))group.completed.put(page,previous);
             }
             Stored pending=store.mapper().get(visualPageStatusId(group,page));
             if(!group.completed.containsKey(page)&&pending!=null&&"verification_visual_page_status".equals(pending.kind)&&task.projectId.equals(pending.projectId)){
@@ -668,12 +701,13 @@ public class VerificationService {
             "pageResults",pages,"observations",observations,"inputPages",group.pages,"limitations",cn.bidcheck.compat.Java8Api.listCopyOf(group.limitations),
             "identity",visuals.identity(),"proofLevel","VISUAL_OBSERVATION_ONLY","authenticityVerified",false);
     }
-    private static boolean validVisualPage(Document doc,List<Integer> requested,Map<String,Object> page){
+    private static boolean validVisualPage(Document doc,List<Integer> requested,Map<String,Object> page,Map<String,Object> request){
         int location=number(page.get("page"),0);Map<String,Object> source=map(page.get("source"));
         if(!"COMPLETED".equals(page.get("status"))||!requested.contains(location)||!validVisualSource(doc,location,source))return false;
         for(Map<String,Object> observation:maps(page.get("observations")))if(number(observation.get("page"),0)!=location
             ||!source.equals(map(observation.get("source")))||!validVisualObservation(observation,source))return false;
-        return page.get("observations") instanceof List<?>;
+        return page.get("observations") instanceof List<?>
+            &&VisualVerificationService.markRequestComplete(request,maps(page.get("observations")));
     }
     private static boolean validVisualSource(Document doc,int page,Map<String,Object> source){
         return doc.id().equals(text(source,"documentId"))&&doc.projectId().equals(text(source,"projectId"))&&doc.sha256().equals(text(source,"documentHash"))
@@ -705,6 +739,11 @@ public class VerificationService {
             if("WAIT_STAGE".equals(text(result,"workflowState"))||!cn.bidcheck.compat.Java8Api.isBlank(text(run,"evaluationStage"))&&!cn.bidcheck.compat.Java8Api.isBlank(stage)
                     &&!sameExternalStage(stage,text(run,"evaluationStage"))){
                 externalDiagnostic(diagnostics,request,"EXTERNAL_WAIT_STAGE","条款指定的核验阶段尚未到达，未执行外部查询。",false,"STAGE_CHANGED","");continue;
+            }
+            if(!"CONFIGURATION_INVALID".equals(externalAdapter.identity()) && !type.isEmpty() && !text(request,"requiredProvider").isEmpty()
+                    && !externalAdapter.enabledTypes().contains(type)){
+                externalDiagnostic(diagnostics,request,"EXTERNAL_OWNER_DATA_REQUIRED","需由指定外部来源提供该项核验记录。",false,"EXTERNAL_RECORD_CHANGED","");
+                continue;
             }
             if(cn.bidcheck.compat.Java8Api.isBlank(subject)||subject.length()>200||cn.bidcheck.compat.Java8Api.isBlank(type)||cn.bidcheck.compat.Java8Api.isBlank(stage)||cn.bidcheck.compat.Java8Api.isBlank(date)){
                 externalDiagnostic(diagnostics,request,"EXTERNAL_QUERY_SCOPE_INCOMPLETE","外部请求缺少有效主体、来源类型、阶段或日期，系统尚未执行查询。",false,"QUERY_SCOPE_CHANGED","");continue;

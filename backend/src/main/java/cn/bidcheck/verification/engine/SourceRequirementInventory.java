@@ -126,14 +126,14 @@ public final class SourceRequirementInventory {
         List<Document> tenderDocuments=evaluator.context.get("tenderDocuments") instanceof Collection<?>
                 ?cn.bidcheck.compat.Java8Api.toList(((Collection<?>) (evaluator.context.get("tenderDocuments"))).stream().filter(Document.class::isInstance).map(Document.class::cast)):cn.bidcheck.compat.Java8Api.listOf();
         List<Finding> findings=snapshot.findings();
-        List<Decision> children=new ArrayList<>();List<String> unresolved=new ArrayList<>(inventory.issues());unresolved.addAll(snapshot.issues());Set<String> ids=new LinkedHashSet<>();
+        List<Decision> children=new ArrayList<>();List<String> unresolved=new ArrayList<>(inventory.issues());unresolved.addAll(snapshot.issues());Set<String> ids=new LinkedHashSet<>(); int completeMembers=0;
         if(inventory.members().isEmpty())unresolved.add("引用范围未形成非空、完整的要求成员集合");
         for(Member member:inventory.members()){
             List<Finding> matches=cn.bidcheck.compat.Java8Api.toList(findings.stream().filter(f->!f.checkpoint().id().equals(cp.id())&&!aggregateCheckpoint(f.checkpoint()))
                     .filter(f->str(evaluator.context,"sourceRunId").equals(f.runId())).filter(f->sourceMatches(f.checkpoint(),member,tenderDocuments))
                     .filter(f->snapshot.verified()));
             if(matches.isEmpty()&&cn.bidcheck.compat.Java8Api.setOf(SourceObligationDirectory.EVENT, SourceObligationDirectory.EXTERNAL, SourceObligationDirectory.OPEN).contains(member.nodeType())){
-                String code=SourceObligationDirectory.EVENT.equals(member.nodeType())?"WAIT_STAGE":"EXTERNAL_RECORD_REQUIRED";
+                String code=SourceObligationDirectory.EVENT.equals(member.nodeType())?"WAIT_STAGE":Boolean.TRUE.equals(evaluator.context.get("providerConfigurationKnown")) && evaluator.context.get("providerSources") instanceof Map && ((Map<?,?>)evaluator.context.get("providerSources")).isEmpty()?"EXTERNAL_OWNER_DATA_REQUIRED":"EXTERNAL_RECORD_REQUIRED";
                 String detail=SourceObligationDirectory.EVENT.equals(member.nodeType())?"此义务依赖评标现场的事件或记录：":"此义务需要文件范围之外的事实及适用依据：";
                 children.add(new Decision(rule.id()+":"+str(member.map(),"canonicalObligationId"),member.name(),"UNDETERMINED",detail+member.name(),cn.bidcheck.compat.Java8Api.listOf(),
                         cn.bidcheck.compat.Java8Api.listOf(new Gap(code,detail+member.name(),"带来源、适用范围和时点的评审或外部核验记录","RELEVANT_EXTERNAL_RECORD_CHANGED")),member.map()));
@@ -148,6 +148,8 @@ public final class SourceRequirementInventory {
             if(!sourceCovered(member,matches,tenderDocuments)){
                 unresolved.add("子事项尚未覆盖完整来源："+member.name());continue;
             }
+            boolean closedMember=matches.stream().allMatch(f->Arrays.asList("PASS","FAIL","NOT_APPLICABLE").contains(f.evaluation().status()) && !(f.assessment()!=null && f.assessment().get("atomicCheck") instanceof Map && !RuleEvaluator.maps(((Map<?,?>) f.assessment().get("atomicCheck")).get("gaps")).isEmpty()));
+            if(closedMember)completeMembers++;
             for(Finding finding:matches)if(ids.add(finding.checkpoint().id())){
                 List<Gap> gaps=new ArrayList<>();Object rawAtomic=finding.assessment()==null?null:finding.assessment().get("atomicCheck");
                 if(rawAtomic instanceof Map<?,?>)for(Map<String,Object> gapRow:RuleEvaluator.maps(((Map<?,?>) (rawAtomic)).get("gaps")))gaps.add(new Gap(str(gapRow,"code"),str(gapRow,"description"),str(gapRow,"requiredInput"),str(gapRow,"resumeTrigger")));
@@ -159,6 +161,8 @@ public final class SourceRequirementInventory {
                         linked("sourceFindingId",finding.id(),"runId",finding.runId(),"sourceCheckpointId",finding.checkpoint().id())));
             }
         }
+        proof.put("inventoryCompletedMembers",completeMembers);
+        proof.put("inventoryTotalMembers",inventory.members().stream().filter(m->!SourceObligationDirectory.HEADING.equals(m.nodeType())).count());
         proof.put("dependencyCheckpointIds",cn.bidcheck.compat.Java8Api.listCopyOf(ids));proof.put("unresolvedMembers",unresolved);
         proof.put("dependencyRevision",RequirementDependencyProof.relevantRevision(snapshot,ids));
         proof.put("inventorySourceRangeClosed",inventory.issues().isEmpty());

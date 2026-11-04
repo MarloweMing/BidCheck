@@ -170,33 +170,59 @@ Map<String,Object> audit(){return linked("value",value,"sourceId",source.id(),"s
         return qualificationQueries(corpus,company,requiredCategory,cn.bidcheck.compat.Java8Api.listOf());
     }
     static List<QualificationProofAssociation.Record> qualificationQueries(EvidenceCorpus corpus,String company,String requiredCategory,List<Map<String,Object>> layout){
+        return qualificationQueries(corpus,company,requiredCategory,layout,"");
+    }
+    static List<QualificationProofAssociation.Record> qualificationQueries(EvidenceCorpus corpus,String company,String requiredCategory,List<Map<String,Object>> layout,String ambiguousNumber){
         Map<String,ScopeResolver> resolvers=new HashMap<>();Map<String,List<Source>> pages=new LinkedHashMap<>();for(Source source:corpus.all)if(usable(source,corpus,resolvers))pages.computeIfAbsent(EvidenceCorpus.pageKey(source.evidence().documentId(),source.evidence().page(),source.evidence().locationType()),k->new ArrayList<>()).add(source);
         List<QualificationProofAssociation.Record> result=new ArrayList<>();
         for(java.util.Map.Entry<java.lang.String, java.util.List<cn.bidcheck.verification.engine.VerificationTypes.Source>> entry:pages.entrySet()){
             cn.bidcheck.domain.Domain.Page page=corpus.pages.get(entry.getKey());if(page==null)continue;String text=page.text();
             if(!text.matches("(?s).*(?:查询截图|查询结果|资质查询|资质详情).*"))continue;
             Field owner=owner(text,company,entry.getValue());if(owner==null)continue;
-            result.addAll(structuredQueries(corpus,entry.getValue(),text,owner,company,requiredCategory,layout));
-            List<Field> urls=urls(text,entry.getValue());List<Cell> header=cn.bidcheck.compat.Java8Api.listOf();int number=-1,name=-1,rank=-1,offset=0;
+            if(ambiguousNumber.isEmpty())result.addAll(structuredQueries(corpus,entry.getValue(),text,owner,company,requiredCategory,layout));
+            List<Field> urls=urls(text,entry.getValue());List<Cell> header=cn.bidcheck.compat.Java8Api.listOf();int number=-1,name=-1,rank=-1,offset=0; Cell soleNumber=null;
             for(String line:text.split("\\n",-1)){
                 List<Cell> cells=cells(line,offset);offset+=line.length()+1;
                 if(cells.isEmpty()){header=cn.bidcheck.compat.Java8Api.listOf();continue;}
                 int candidateNumber=column(cells,cn.bidcheck.compat.Java8Api.setOf("资质证书号", "资质证书编号", "证书编号", "证书号码")),candidateName=column(cells,cn.bidcheck.compat.Java8Api.setOf("资质名称", "资质类别及等级"));
                 if(candidateName<0)candidateName=column(cells,cn.bidcheck.compat.Java8Api.setOf("资质类别", "证书类别"));
-                if(candidateNumber>=0&&candidateName>=0){header=cells;number=candidateNumber;name=candidateName;rank=column(cells,cn.bidcheck.compat.Java8Api.setOf("资质等级", "等级"));continue;}
+                if(candidateNumber>=0&&candidateName>=0){header=cells;number=candidateNumber;name=candidateName;rank=column(cells,cn.bidcheck.compat.Java8Api.setOf("资质等级", "等级"));
+                    Map<String,Cell> tableNumbers=numberCells(text,offset,number,header.size());
+                    soleNumber=ambiguousNumber.isEmpty()?(layout.isEmpty()&&tableNumbers.size()==1?tableNumbers.values().iterator().next():null)
+                        :(tableNumbers.size()>1?tableNumbers.get(normalizeCertificateNumber(ambiguousNumber)):null);
+                    continue;}
                 if(header.isEmpty()||cells.size()!=header.size()||cells.stream().allMatch(c->c.value().matches("[:—-]+")))continue;
                 String certificateNumber=cells.get(number).value().toUpperCase(Locale.ROOT),rawCategory=cells.get(name).value();
-                // Blank merged cells are not copied from the preceding row. That requires explicit
-                // rowspan/row continuation evidence, not a neighbouring company's credential.
+                boolean inherited=certificateNumber.isEmpty()&&soleNumber!=null;
+                if(!ambiguousNumber.isEmpty()&&!inherited)continue;
+                Cell numberCell=inherited?soleNumber:cells.get(number);
+                certificateNumber=numberCell.value().toUpperCase(Locale.ROOT);
                 if(!certificateNumber.matches("[A-Z0-9][A-Z0-9()（）/-]{3,79}"))continue;
                 String actualCategory=categoryWithoutGrade(rawCategory),actualGrade=rank<0?grade(rawCategory):grade(cells.get(rank).value());
                 if(!DomainBindings.sameCertificateCategory(actualCategory,category(requiredCategory))||cn.bidcheck.compat.Java8Api.isBlank(actualGrade))continue;
-                Field num=field(certificateNumber,cells.get(number),text,entry.getValue()),cat=field(actualCategory,cells.get(name),text,entry.getValue()),grade=field(actualGrade,cells.get(rank<0?name:rank),text,entry.getValue());
+                Field num=field(certificateNumber,numberCell,text,entry.getValue()),cat=field(actualCategory,cells.get(name),text,entry.getValue()),grade=field(actualGrade,cells.get(rank<0?name:rank),text,entry.getValue());
                 if(num==null||cat==null||grade==null)continue;
                 List<Evidence> evidence=new ArrayList<>(cn.bidcheck.compat.Java8Api.listOf(owner.evidence(), num.evidence(), cat.evidence(), grade.evidence()));urls.forEach(u->evidence.add(u.evidence()));
-                result.add(new QualificationProofAssociation.Record(num.source(),clean(company),actualCategory,certificateNumber,actualGrade,true,cn.bidcheck.compat.Java8Api.toList(urls.stream().map(Field::value)),cn.bidcheck.compat.Java8Api.toList(evidence.stream().distinct()),linked("SUBJECT",owner.audit(),"CATEGORY",cat.audit(),"CERTIFICATE_NUMBER",num.audit(),"GRADE",grade.audit(),"URL",cn.bidcheck.compat.Java8Api.toList(urls.stream().map(Field::audit)),"binding","EXPLICIT_QUERY_TABLE_ROW_AND_UNIQUE_PAGE_OWNER")));
+                result.add(new QualificationProofAssociation.Record(num.source(),clean(company),actualCategory,certificateNumber,actualGrade,true,cn.bidcheck.compat.Java8Api.toList(urls.stream().map(Field::value)),cn.bidcheck.compat.Java8Api.toList(evidence.stream().distinct()),linked("SUBJECT",owner.audit(),"CATEGORY",cat.audit(),"CERTIFICATE_NUMBER",num.audit(),"GRADE",grade.audit(),"URL",cn.bidcheck.compat.Java8Api.toList(urls.stream().map(Field::audit)),"binding",!ambiguousNumber.isEmpty()?"ROW_NUMBER_ASSOCIATION_REQUIRES_HUMAN_CONFIRMATION":inherited?"UNIQUE_NUMBER_IN_SAME_TABLE_AND_PAGE_OWNER":"EXPLICIT_QUERY_TABLE_ROW_AND_UNIQUE_PAGE_OWNER","inheritedCertificateNumber",inherited&&ambiguousNumber.isEmpty())));
             }
         }return result;
+    }
+
+    private static Cell soleNumberCell(String text,int offset,int column,int width){
+        Map<String,Cell> numbers=numberCells(text,offset,column,width);
+        return numbers.size()==1?numbers.values().iterator().next():null;
+    }
+    private static Map<String,Cell> numberCells(String text,int offset,int column,int width){
+        Map<String,Cell> numbers=new LinkedHashMap<>();
+        for(String line:text.substring(Math.min(offset,text.length())).split("\n",-1)){
+            List<Cell> row=cells(line,offset);offset+=line.length()+1;
+            if(row.size()!=width)break;
+            String value=row.get(column).value();
+            if(value.isEmpty()||value.matches("[:—-]+"))continue;
+            if(!value.matches("[A-Za-z0-9][A-Za-z0-9()（）/-]{3,79}"))break;
+            numbers.putIfAbsent(normalizeCertificateNumber(value),row.get(column));
+        }
+        return numbers;
     }
 
     /** A source-bound navigation request, not evidence that a blank cell inherits another row.
@@ -237,16 +263,57 @@ Map<String,Object> audit(){return linked("value",value,"sourceId",source.id(),"s
             String rawCategory=str(categoryCell,"text"),actualCategory=categoryWithoutGrade(rawCategory);if(!DomainBindings.sameCertificateCategory(actualCategory,category(category)))continue;
             int row=RunSession.number(categoryCell.get("row"),0);List<Map<String,Object>> members=cn.bidcheck.compat.Java8Api.toList(cells.stream().filter(c->sameGrid(categoryCell,c)&&!Boolean.TRUE.equals(c.get("header"))&&RunSession.number(c.get("row"),0)<=row&&RunSession.number(c.get("row"),0)+RunSession.number(c.get("rowSpan"),1)>row));
             java.util.List<java.util.Map<java.lang.String, java.lang.Object>> numbers=cn.bidcheck.compat.Java8Api.toList(members.stream().filter(c->cn.bidcheck.compat.Java8Api.setOf("资质证书号", "资质证书编号", "证书编号", "证书号码").contains(cellLabel(c,cells))));
+            if(numbers.isEmpty()){
+                List<Map<String,Object>> sameTable=new ArrayList<>();
+                for(Map<String,Object> cell:cells)if(sameGrid(categoryCell,cell)&&
+                    cn.bidcheck.compat.Java8Api.setOf("资质证书号","资质证书编号","证书编号","证书号码").contains(cellLabel(cell,cells))&&
+                    !clean(str(cell,"text")).isEmpty())sameTable.add(cell);
+                // A cropped layout does not prove that the full table has only one number.
+                // For a missing rowspan require the complete, contiguous source table as well.
+                if(!sameTable.isEmpty()&&sameTable.stream().map(c->normalizeCertificateNumber(str(c,"text"))).distinct().count()==1
+                        &&literalTableOwnsUniqueNumber(text,rawCategory,str(sameTable.get(0),"text")))
+                    numbers=Collections.singletonList(sameTable.get(0));
+            }
             if(numbers.size()!=1)continue;java.util.Map<java.lang.String, java.lang.Object> numberCell=numbers.get(0);String number=normalizeCertificateNumber(str(numberCell,"text"));if(!number.matches("[A-Z0-9][A-Z0-9()/\\[\\]-]{3,79}"))continue;
             java.util.List<java.util.Map<java.lang.String, java.lang.Object>> ranks=cn.bidcheck.compat.Java8Api.toList(members.stream().filter(c->cn.bidcheck.compat.Java8Api.setOf("等级", "资质等级").contains(cellLabel(c,cells))));if(ranks.size()>1)continue;java.util.Map<java.lang.String, java.lang.Object> rankCell=ranks.isEmpty()?categoryCell:ranks.get(0);String rank=grade(str(rankCell,"text"));if(cn.bidcheck.compat.Java8Api.isBlank(rank))continue;
             List<String> refs=new ArrayList<>();for(java.util.Map<java.lang.String, java.lang.Object> cell:cn.bidcheck.compat.Java8Api.listOf(categoryCell, numberCell, rankCell))refs.addAll(ProofVerifier.strings(cell.get("_sourceIds")));
             List<Source> used=cn.bidcheck.compat.Java8Api.toList(refs.stream().distinct().map(corpus.byId::get).filter(Objects::nonNull));if(used.isEmpty())continue;List<Field> urls=urls(text,sources);
             List<Evidence> evidence=new ArrayList<>(cn.bidcheck.compat.Java8Api.listOf(owner.evidence()));used.forEach(s->evidence.add(s.evidence()));urls.forEach(u->evidence.add(u.evidence()));
             result.add(new QualificationProofAssociation.Record(used.get(0),clean(company),actualCategory,number,rank,true,cn.bidcheck.compat.Java8Api.toList(urls.stream().map(Field::value)),cn.bidcheck.compat.Java8Api.toList(evidence.stream().distinct()),
-                linked("SUBJECT",owner.audit(),"CATEGORY",categoryCell,"CERTIFICATE_NUMBER",numberCell,"GRADE",rankCell,"binding","SOURCE_BOUND_TABLE_ROW_WITH_EXPLICIT_SPAN","row",row,"inheritedCertificateNumber",RunSession.number(numberCell.get("row"),0)<row,"crossPageInheritance",false)));
+                linked("SUBJECT",owner.audit(),"CATEGORY",categoryCell,"CERTIFICATE_NUMBER",numberCell,"GRADE",rankCell,"binding",members.contains(numberCell)?"SOURCE_BOUND_TABLE_ROW_WITH_EXPLICIT_SPAN":"UNIQUE_NUMBER_IN_SAME_VALIDATED_GRID","row",row,"inheritedCertificateNumber",RunSession.number(numberCell.get("row"),0)<row,"crossPageInheritance",false)));
         }return result;
     }
     private static boolean sameGrid(Map<String,Object> left,Map<String,Object> right){return cn.bidcheck.compat.Java8Api.listOf("documentId", "documentHash", "documentVersion", "locationType", "location", "tableId", "frameId").stream().allMatch(k->Objects.equals(left.get(k),right.get(k)));}
+    private static boolean literalTableOwnsUniqueNumber(String text,String rawCategory,String expected){
+        int offset=0,col=-1,category=-1,width=0;
+        Cell only=null;
+        for(String line:text.split("\n",-1)){
+            List<Cell> row=cells(line,offset);offset+=line.length()+1;
+            if(row.isEmpty()){
+                only=null;
+                if(!line.contains("|")&&line.matches(".*(?:证书编号|资质证书号|证书号码).*资质(?:名称|类别).*")){
+                    StringBuilder grid=new StringBuilder();
+                    for(String body:text.substring(Math.min(offset,text.length())).split("\n",-1)){
+                        if(body.trim().isEmpty()||body.contains("://")||body.contains("证书编号")||body.contains("|"))break;
+                        grid.append(body).append('\n');
+                    }
+                    Set<String> numbers=new HashSet<>();
+                    Matcher number=Pattern.compile("(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9-]*[0-9][A-Za-z0-9-]{2,})(?![A-Za-z0-9])").matcher(grid);
+                    while(number.find())numbers.add(normalizeCertificateNumber(number.group(1)));
+                    if(clean(grid.toString()).contains(clean(rawCategory))&&numbers.equals(Collections.singleton(normalizeCertificateNumber(expected))))return true;
+                }
+                continue;
+            }
+            int num=column(row,cn.bidcheck.compat.Java8Api.setOf("证书编号","资质证书号","资质证书编号","证书号码"));
+            if(num>=0){
+                col=num;width=row.size();category=column(row,cn.bidcheck.compat.Java8Api.setOf("资质名称","资质类别及等级","资质类别","证书类别"));
+                only=soleNumberCell(text,offset,col,width);continue;
+            }
+            if(only!=null&&row.size()==width&&category>=0&&row.get(category).value().equals(clean(rawCategory))&&row.get(col).value().isEmpty()
+                    &&normalizeCertificateNumber(only.value()).equals(normalizeCertificateNumber(expected)))return true;
+        }
+        return false;
+    }
     private static String cellLabel(Map<String,Object> cell,List<Map<String,Object>> cells){
         if(Boolean.TRUE.equals(cell.get("header"))||RunSession.number(cell.get("columnSpan"),1)!=1)return "";List<String> refs=ProofVerifier.strings(cell.get("headerCellIds"));if(refs.isEmpty())return "";
         List<Map<String,Object>> headers=cn.bidcheck.compat.Java8Api.toList(cells.stream().filter(h->sameGrid(cell,h)&&Boolean.TRUE.equals(h.get("header"))&&refs.contains(str(h,"cellId"))&&RunSession.number(h.get("row"),0)+RunSession.number(h.get("rowSpan"),1)<=RunSession.number(cell.get("row"),0)&&RunSession.number(h.get("column"),0)<=RunSession.number(cell.get("column"),0)&&RunSession.number(h.get("column"),0)+RunSession.number(h.get("columnSpan"),1)>RunSession.number(cell.get("column"),0)));

@@ -161,7 +161,7 @@ final class SourceScoringRules {
         List<String> persons=evaluator.resolvedSubjects(rule);Map<String,Object> proof=linked("executor",VERSION,"decisionScope","TITLE_TIER_AND_ALL_COMMON_PROOF",
                 "gradeScores",linked("高级",rule.parameters().get("highScore"),"中级",rule.parameters().get("middleScore"),"未提交",0),"scoreProduced",false);
         if(persons.size()!=1)return evaluator.unknown(rule,"CURRENT_APPOINTMENT_REQUIRED","职称评分须先由本次拟派原文唯一关联项目负责人",cn.bidcheck.compat.Java8Api.listOf(),proof);
-        String person=persons.get(0);List<Fact> candidates=cn.bidcheck.compat.Java8Api.toList(evaluator.facts.stream().filter(f->"CERTIFICATE".equals(f.kind())&&person.equals(f.subject()))
+        String person=persons.get(0);List<Fact> candidates=cn.bidcheck.compat.Java8Api.toList(evaluator.facts.stream().filter(f->"CERTIFICATE".equals(f.kind())&&(person.equals(f.subject())||ConfirmedSubjectBindings.matches(person,f,evaluator.facts,evaluator.corpus)))
                 .filter(DomainBindings::certificateIdentity).filter(f->str(f.attributes(),"category").matches(".*(?:职称|专业技术|工程师).*"))
                 .filter(f->!CertificateEvidenceRecords.certificates(f,evaluator.corpus).isEmpty()));
         List<Fact> accepted=cn.bidcheck.compat.Java8Api.toList(candidates.stream().filter(f->str(f.attributes(),"profession").replaceFirst("类$","").equals(str(rule.parameters(),"profession").replaceFirst("类$","")))
@@ -182,9 +182,9 @@ final class SourceScoringRules {
         Source form=sources.stream().filter(s->s.evidence().quote().contains(str(rule.parameters(),"formReference"))
                 &&roleLinks.stream().anyMatch(link->person.equals(DomainBindings.roleTarget(link,rule.subject()))&&link.sourceIds().contains(s.id()))).findFirst().orElse(null);
         if(form==null)missing.add("附表6-1中同一拟派人员的实填记录");else proofEvidence.add(form.evidence());
-        Source query=sources.stream().filter(s->sameQuery(s.evidence().quote(),person,number)).findFirst().orElse(null);
+        Source query=sources.stream().filter(s->sameQuery(s,person,number,roleLinks,evaluator)).findFirst().orElse(null);
         if(query==null)missing.add("同一人员、同一职称证号的查询网址及截图");else proofEvidence.add(query.evidence());
-        List<Source> invalidStatus=cn.bidcheck.compat.Java8Api.toList(sources.stream().filter(s->accepted.stream().anyMatch(f->f.sourceIds().contains(s.id()))||sameQuery(s.evidence().quote(),person,number))
+        List<Source> invalidStatus=cn.bidcheck.compat.Java8Api.toList(sources.stream().filter(s->accepted.stream().anyMatch(f->f.sourceIds().contains(s.id()))||sameQuery(s,person,number,roleLinks,evaluator))
                 .filter(s->Pattern.compile("(?:证书状态|状态|有效性)[\\s:：|]*(?:已撤销|撤销|已注销|注销|无效|已失效|失效|已过期|过期)(?=[\\s|，,。；;]|$)").matcher(s.evidence().quote()).find()));
         if(!invalidStatus.isEmpty()){
             proof.putAll(linked("certificateStatusConflict",true,"invalidStatusSources",cn.bidcheck.compat.Java8Api.toList(invalidStatus.stream().map(Source::id))));
@@ -214,6 +214,16 @@ final class SourceScoringRules {
         return new Decision(out.id(),out.description(),out.status(),out.reason(),cn.bidcheck.compat.Java8Api.toList(evidences.stream().distinct()),out.gaps(),out.proof());
     }
     private static String grade(String value){return value.matches("高级(?:工程师)?")?"高级":value.matches("中级(?:工程师)?|工程师")?"中级":null;}
+    private static boolean sameQuery(Source source,String person,String number,List<Fact> roles,RuleEvaluator evaluator){
+        if(sameQuery(source.evidence().quote(),person,number))return true;
+        for(Fact edge:evaluator.facts){
+            if(!InferenceClaims.humanConfirmed(edge)||!"RELATION".equals(edge.kind())||!"同一人".equals(edge.field())||!person.equals(edge.subject())
+                    ||!edge.sourceIds().contains(source.id())||!roles.stream().anyMatch(r->r.value().equals(person)&&edge.sourceIds().containsAll(r.sourceIds())))continue;
+            String masked=str(edge.attributes(),"object");
+            if(masked.matches(".*[*＊×●_].*")&&sameQuery(source.evidence().quote(),masked,number))return true;
+        }
+        return false;
+    }
     private static boolean sameQuery(String text,String person,String number){
         if(!text.matches("(?s).*(?:职称|专业技术|工程师).*")||!text.matches("(?s).*(?:查询结果|查询截图|查询详情|证书查询).*"))return false;
         Set<String> names=new LinkedHashSet<>(),numbers=new LinkedHashSet<>();Matcher namesMatcher=Pattern.compile("(?:姓名|持证人)[\\s:：|]*([^\\s|，,。；;:：]{2,12})(?=[\\s|，,。；;]|$)").matcher(text);

@@ -12,7 +12,7 @@ final class EngineText {
     static final String VIN_PATTERN = "(?i)(?:VIN|车架号|车架号码|车辆识别代号|车辆识别代码)\\s*[:：=]?\\s*([A-HJ-NPR-Z0-9]{8,17})(?![A-Z0-9])";
     static final String ENGINE_PATTERN = "(?i)(?:发动机号|发动机号码)\\s*[:：=]?\\s*([A-Z0-9-]{4,24})";
     static final String PLATE_PATTERN = "(?:车牌号(?:码)?|号牌号码|车牌)\\s*[:：=]?\\s*([\\u4e00-\\u9fff][A-Za-z][A-Za-z0-9·・]{5,7})";
-    static final Pattern DATE = Pattern.compile("(20\\d{2})[年/.-](\\d{1,2})[月/.-](\\d{1,2})日?");
+    static final Pattern DATE = Pattern.compile("(20\\d{2})\\s*[年/.-]\\s*(\\d{1,2})\\s*[月/.-]\\s*(\\d{1,2})(?!\\d)\\s*日?");
     static final List<String> MATERIALS = cn.bidcheck.compat.Java8Api.listOf("营业执照", "授权委托书", "法定代表人身份证明", "财务审计报告", "财务报告", "纳税证明", "社保证明", "资质证书", "业绩合同", "投标保证金", "投标函", "车辆行驶证");
     private EngineText() {}
 

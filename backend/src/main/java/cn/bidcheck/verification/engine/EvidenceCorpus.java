@@ -21,6 +21,7 @@ final class EvidenceCorpus {
     private static final Pattern OCR_ANOMALY=Pattern.compile("\uFFFD|锟斤拷|烫烫烫|(?:\\?){4,}|[\\uE000-\\uF8FF]");
     final List<Document> documents;final List<Source> all=new ArrayList<>();final Map<String,Source> byId=new CertificateRecordBindings.SourceIndex();
     final Map<String,Page> pages=new HashMap<>();
+    final Set<String> identityPacketRejections=java.util.concurrent.ConcurrentHashMap.newKeySet();
     final Map<String,DocumentSubjectScope> documentScopes=new HashMap<>();
     final List<Map<String,Object>> visualAdmission=new ArrayList<>();
     EvidenceCorpus(List<Document> documents){this.documents=cn.bidcheck.compat.Java8Api.listCopyOf(documents);for(Document doc:documents){DocumentSubjectScope subjectScope=new DocumentSubjectScope(doc);documentScopes.put(doc.id(),subjectScope);boolean historical=false;for(Page page:doc.pages()){
@@ -64,7 +65,7 @@ final class EvidenceCorpus {
     private List<Source> select(List<Rule> rules,List<Fact> facts,List<Source> prior,int round,HybridRetriever retriever,RunSession session,boolean byPage,List<Rule> anchorRules)throws InterruptedIOException{
         LinkedHashSet<Source> chosen=new LinkedHashSet<>();Map<Source,Integer> ranking=new HashMap<>();Map<Source,Integer> hitRanks=new HashMap<>();Map<String,Integer> pageRanks=new HashMap<>();Set<String> materialBodyPages=new LinkedHashSet<>();
         for(Rule r:rules){List<String> sections=r.predicate().equals("SECTION")?cn.bidcheck.compat.Java8Api.listOf(r.expected()):SourceScoringRules.programOnly(r)||cn.bidcheck.compat.Java8Api.setOf("QUALITY", "QUALITY_ADVISORY").contains(r.predicate())?qualitySections(r):r.predicate().equals("TEXT_ANOMALY")?cn.bidcheck.compat.Java8Api.listOf(str(r.parameters(),"textScope")):cn.bidcheck.compat.Java8Api.listOf();for(String section:sections)if(!wholeScope(section))chosen.addAll(SectionCoverage.locate(section,this).sources());}
-        for(Rule rule:rules)if(cn.bidcheck.compat.Java8Api.setOf("MATERIAL", "SECTION").contains(rule.predicate())){
+        for(Rule rule:anchorRules)if(cn.bidcheck.compat.Java8Api.setOf("MATERIAL", "SECTION").contains(rule.predicate())){
             String title=cn.bidcheck.compat.Java8Api.isBlank(rule.expected())?rule.field():rule.expected();List<Source> body=materialBodyAnchors(title);chosen.addAll(body);
             // At most four independent body pages reserve space; directories remain locators.
             for(Source source:body){String key=pageKey(source.evidence().documentId(),source.evidence().page(),source.evidence().locationType());if(materialBodyPages.size()<4||materialBodyPages.contains(key))materialBodyPages.add(key);}
@@ -128,11 +129,18 @@ final class EvidenceCorpus {
         return selected;
     }
     /** A retrieval anchor is an exact original heading plus substantive body, never a PASS receipt. */
+    private final Map<String,List<Source>> structuredMaterials = new java.util.concurrent.ConcurrentHashMap<>();
     List<Source> materialBodyAnchors(String title){
-        if(title==null||title.length()<2||title.length()>80)return cn.bidcheck.compat.Java8Api.listOf();cn.bidcheck.verification.engine.SectionCoverage.Extent extent=SectionCoverage.locate(title,this);if(!extent.sources().isEmpty())return cn.bidcheck.compat.Java8Api.toList(extent.sources().stream().filter(s->!s.index()));
+        if(title==null)return cn.bidcheck.compat.Java8Api.listOf();
+        return structuredMaterials.computeIfAbsent(title,this::locateMaterialBodyAnchors);
+    }
+    private List<Source> locateMaterialBodyAnchors(String title){
+        if (MaterialTitleAliases.structured(title))
+            return SubmittedMaterialStructure.locate(title,this);
+        if(title==null||title.length()<2||title.length()>80)return cn.bidcheck.compat.Java8Api.listOf();cn.bidcheck.verification.engine.SectionCoverage.Extent extent=SectionCoverage.locate(title,this);if(extent.complete()&&!extent.sources().isEmpty())return cn.bidcheck.compat.Java8Api.toList(extent.sources().stream().filter(s->!s.index()||MaterialTitleAliases.navigation(title)));
         List<Source> result=new ArrayList<>();for(Document document:documents){if(!document.role().equals("BID"))continue;for(Page page:document.pages()){
-            List<Source> original=cn.bidcheck.compat.Java8Api.toList(all.stream().filter(s->s.evidence().documentId().equals(document.id())&&s.evidence().page()==page.number()&&s.evidence().locationType().equals(page.locationType())&&!s.id().startsWith("V")));if(original.isEmpty()||original.stream().anyMatch(Source::index))continue;
-            Matcher line=Pattern.compile("(?m)^.*$").matcher(page.text());while(line.find()){String heading=cn.bidcheck.compat.Java8Api.strip(line.group()).replaceFirst("^#{1,6}\\s*","");if(!SectionCoverage.strip(heading).equals(title)||heading.matches(".*(?:详见|见附件|拟提供|承诺提供|索引|目录|清单|\\.{3,}|…{2,}).*"))continue;
+            List<Source> original=cn.bidcheck.compat.Java8Api.toList(all.stream().filter(s->s.evidence().documentId().equals(document.id())&&s.evidence().page()==page.number()&&s.evidence().locationType().equals(page.locationType())&&!s.id().startsWith("V")));if(original.isEmpty()||!MaterialTitleAliases.navigation(title)&&original.stream().anyMatch(Source::index))continue;
+            Matcher line=Pattern.compile("(?m)^.*$").matcher(page.text());while(line.find()){String heading=cn.bidcheck.compat.Java8Api.strip(line.group()).replaceFirst("^#{1,6}\\s*","");if(!MaterialTitleAliases.matches(title,heading)||!MaterialTitleAliases.navigation(title)&&heading.matches(".*(?:索引|目录).*")||heading.matches(".*(?:详见|见附件|拟提供|承诺提供|清单|\\.{3,}|…{2,}).*"))continue;
                 int start=line.end(),end=page.text().length();Matcher next=Pattern.compile("(?m)^.*$").matcher(page.text());next.region(start,end);while(next.find())if(SectionCoverage.level(cn.bidcheck.compat.Java8Api.strip(next.group()))>0){end=next.start();break;}
                 String body=page.text().substring(start,end);if(clean(body).length()<80||body.matches("(?s)^\\s*[（(]?填写说明.*"))continue;
                 int headingStart=line.start(),bodyEnd=end;result.addAll(cn.bidcheck.compat.Java8Api.toList(original.stream().filter(s->{int[] range=SectionCoverage.range(s);return range[0]<bodyEnd&&range[1]>headingStart;})));break;
@@ -181,7 +189,13 @@ final class EvidenceCorpus {
             result.addAll(NativeCertificateFacts.extract(r,s));
             for(String selector:AgentRuleSubjects.selectors(r))if(PersonnelRoles.personRole(selector))result.addAll(DocumentSubjectScope.nativeAppointments(s,selector));
             if(cn.bidcheck.compat.Java8Api.setOf("SECTION", "MATERIAL").contains(r.predicate())){String name=!cn.bidcheck.compat.Java8Api.isBlank(r.expected())?r.expected():r.field();if(name.length()>80||name.length()<2||!cn.bidcheck.compat.Java8Api.isBlank(r.subject()))continue;
-                int at=text.indexOf(name);if(at<0)continue;int line=text.lastIndexOf('\n',at)+1,end=text.indexOf('\n',at);if(end<0)end=text.length();String heading=cn.bidcheck.compat.Java8Api.strip(text.substring(line,end));String body=text.substring(end);
+                int at=text.indexOf(name);if(at<0)continue;int line=text.lastIndexOf('\n',at)+1,end=text.indexOf('\n',at);if(end<0)end=text.length();String heading=cn.bidcheck.compat.Java8Api.strip(text.substring(line,end));
+                // Child headings belong to this material; the next peer/parent begins another one.
+                // Keep the existing forty-character native proof threshold within that boundary.
+                int bodyEnd=text.length(),headingLevel=SectionCoverage.level(heading.replaceFirst("^#{1,6}\\s*",""));
+                Matcher nextHeading=Pattern.compile("(?m)^.*$").matcher(text);nextHeading.region(end,text.length());
+                while(nextHeading.find()){if(MaterialTitleAliases.matches(name,nextHeading.group()))continue;int nextLevel=SectionCoverage.level(cn.bidcheck.compat.Java8Api.strip(nextHeading.group()).replaceFirst("^#{1,6}\\s*",""));if(nextLevel>0&&(headingLevel==0||nextLevel<=headingLevel)){bodyEnd=nextHeading.start();break;}}
+                String body=text.substring(end,bodyEnd);
                 if(heading.length()>name.length()+30||heading.matches(".*(?:\\.{3,}|…{2,}|详见|见附件|承诺提供|拟提供).*"))continue;
                 // A bidder-authored index/checklist is only a locator. Text that follows it may
                 // belong to the next section and must never be promoted to the requested material.

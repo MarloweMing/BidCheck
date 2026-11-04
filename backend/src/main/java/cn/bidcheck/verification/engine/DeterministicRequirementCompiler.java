@@ -41,7 +41,7 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
  * discarded. It is retained as a source-bound pending condition for an explicit rule update.</p>
  */
 final class DeterministicRequirementCompiler {
-    static final String VERSION = "deterministic-requirement-compiler-14-typed-social-proof";
+    static final String VERSION = "deterministic-requirement-compiler-16-exact-architect-category";
 
     /** All registered mapping templates have a server-owned conversion. */
     static final Set<String> SUPPORTED_TEMPLATE_IDS = cn.bidcheck.compat.Java8Api.setOf("MATERIAL_PRESENT", "COMMITMENT_WITH_SEAL", "MATERIAL_ALTERNATIVE", "CERTIFICATE_VALIDITY", "PRICE_COMPARE", "PERSONNEL_ROSTER", "SECTION_CHECKLIST", "ENTITY_FIELD_MATCH", "PERSONNEL_CREDENTIAL", "CONSORTIUM_RESPONSIBILITY", "PRICE_RECONCILE", "DURATION_COMPARE", "CROSS_DOCUMENT_CONSISTENCY", "FORM_FIELD_COMPLETENESS", "DATE_RELATION", "TEXT_ANOMALY", "OBJECTIVE_SCORING", "QUALITY_ADVISORY", "EXTERNAL_CHECK");
@@ -406,6 +406,10 @@ switch (comparator) {case "不少于":case "不低于":case "至少":case "不�
         Map<String, Object> params = new LinkedHashMap<>(p);
         params.put("category", text(p, "certificateType"));
         if (!cn.bidcheck.compat.Java8Api.isBlank(text(p, "requiredLevel"))) params.put("grade", text(p, "requiredLevel"));
+        String architect=exactArchitectCategory(quote);
+        if(text(p,"certificateType").equals("注册建筑师")&&!architect.isEmpty()){
+            params.put("category",architect);params.put("grade",architect.substring(0,2));
+        }
         if (Boolean.TRUE.equals(p.get("requireEmployerMatch"))) params.put("employer", "投标人");
         return rule(id, quote, "CERTIFICATE", text(p, "role"), "certificate", "", "", "", params, quote);
     }
@@ -722,6 +726,7 @@ switch (comparator) {case "不少于":case "不低于":case "至少":case "不�
             // numbered actor sentence; other categories retain their bounded span.
             String categoryQuote=cn.bidcheck.compat.Java8Api.setOf("质量管理体系认证", "职业健康安全管理体系认证", "环境管理体系认证").contains(category)
                     &&!quote.matches("(?s).*(?:一级|二级|三级|甲级|乙级|丙级|壹级|贰级|叁级).*")?quote:category;
+            if(category.equals(exactArchitectCategory(quote)))categoryQuote=quote;
             leaves.add(rule(base + "-CERT-" + (++at), "证照资格：" + category, "CERTIFICATE", subject,
                     "certificate", "", "", "", p, categoryQuote));
         }
@@ -763,9 +768,17 @@ switch (comparator) {case "不少于":case "不低于":case "至少":case "不�
     }
 
     private static String normalizeCategory(String value){
+        String architect=exactArchitectCategory(value);if(!architect.isEmpty())return architect;
         String specific=certificateCategory(value);
         if(!cn.bidcheck.compat.Java8Api.isBlank(specific)&&value.matches("(?s).*(?:安全生产许可证|营业执照|登记证书|管理体系认证)(?:证书)?$"))return specific;
         return value;
+    }
+
+    /** A single explicit architect grade is a source requirement, never inferred from a retrieved certificate. */
+    static String exactArchitectCategory(String value){
+        Matcher m=Pattern.compile("([一二壹贰]级)注册建筑师(?:执业资格证书|注册证书|证书)").matcher(value);
+        if(!m.find())return "";String category=m.group(1).replace('壹','一').replace('贰','二')+"注册建筑师";
+        if(m.find())return "";return category;
     }
 
     private Rule qualificationTree(String source){

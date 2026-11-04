@@ -77,7 +77,15 @@ final class PerformanceInventoryProof {
             String quote=str(row,"quote");boolean numbered=numbers.stream().anyMatch(number->Pattern.compile("(?<![A-Za-z0-9/-])"+Pattern.quote(number)+"(?![A-Za-z0-9/-])").matcher(quote).find());
             // A name shared by two distinct contracts is not a unique link without its number.
             if(!uniqueName&&!numbered)continue;
-            Map<String,Object> record=new LinkedHashMap<>(row);record.putAll(linked("documentId",table.document().id(),"documentHash",table.document().sha256(),"documentVersion",table.document().version(),"page",table.page().number(),"scope",table.scope(),"contractName",name,"contractNumberMatched",numbered,"linkScope","LIST_ROW_TO_CONTRACT_ONLY","issuerBindingRequiredSeparately",true));records.add(record);
+            Map<String,Object> record=new LinkedHashMap<>(row);record.putAll(linked("documentId",table.document().id(),"documentHash",table.document().sha256(),"documentVersion",table.document().version(),"page",table.page().number(),"scope",table.scope(),"contractName",name,"contractNumberMatched",numbered,"linkScope","LIST_ROW_TO_CONTRACT_ONLY","issuerBindingRequiredSeparately",true));
+            for(Map<String,Object> parsed:DeclaredPerformanceRows.rows(table.body()))if(str(parsed,"row").equals(str(row,"row"))&&normalized(str(parsed,"contractName")).equals(wanted)&&!str(parsed,"signedDate").isEmpty()){
+                // Preserve the original row and every amount label. Repair only the unique
+                // date/title column swap; it cannot establish the contract's own date or fee.
+                if(ProofVerifier.strings(record.get("signedDates")).isEmpty())record.put("signedDates",Collections.singletonList(str(parsed,"signedDate")));
+                if(parsed.containsKey("columnCorrection"))record.put("columnCorrection",parsed.get("columnCorrection"));
+                record.put("typedAmounts",parsed.get("typedAmounts"));record.put("sourceRowFieldQuote",parsed.get("rowQuote"));
+            }
+            records.add(record);
             evidence.add(new Evidence(table.document().id(),table.document().name(),table.page().number(),table.page().locationType(),quote,"performance-row:"+row.get("row"),1));
         }
         // Duplicate or competing submitted records stay ambiguous; do not silently pick a row.
@@ -116,6 +124,10 @@ final class PerformanceInventoryProof {
         return covered.cardinality()==quote.length()?cn.bidcheck.compat.Java8Api.listCopyOf(ids):cn.bidcheck.compat.Java8Api.listOf();
     }
     private static Map<String,Object> rowMetadata(String quote){Set<String> dates=new LinkedHashSet<>(),amounts=new LinkedHashSet<>();for(String label:cn.bidcheck.compat.Java8Api.listOf("签订时间", "签订日期"))cn.bidcheck.verification.source.DateFieldValues.read(quote,label,1).forEach(d->dates.add(d.toString()));Matcher m=Pattern.compile("(?:合同金额|金额)[:：]\\s*([0-9][0-9,.]*)(万元|元)").matcher(quote);while(m.find()){java.math.BigDecimal n=RuleEvaluator.normalize(ProofVerifier.decimal(m.group(1)),m.group(2));if(n!=null)amounts.add(n.toPlainString());}return linked("signedDates",cn.bidcheck.compat.Java8Api.listCopyOf(dates),"listedAmounts",cn.bidcheck.compat.Java8Api.listCopyOf(amounts));}
+    static int declaredSectionEnd(Document doc,Page list){
+        Map<String,Object> scope=mappedScope(doc,list);
+        return scope.isEmpty()?-1:proofRange(new Table(doc,list,list.text(),scope))[1];
+    }
     private static int[] proofRange(Table table){
         if(!(table.scope().get("navigation") instanceof Map<?,?>))return new int[]{-1,-1};Object begin=((Map<?,?>) (table.scope().get("navigation"))).get("proofPage");if(!(begin instanceof Number))return new int[]{-1,-1};int first=((Number) (begin)).intValue(),last=table.document().pages().stream().mapToInt(Page::number).max().orElse(first);
         String section=str(table.scope(),"sectionTitle").replaceFirst("\\s.*$","");if(cn.bidcheck.compat.Java8Api.isBlank(section))return new int[]{-1,-1};int depth=section.split("\\.").length;

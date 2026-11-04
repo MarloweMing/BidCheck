@@ -478,7 +478,7 @@ public final class FactLedgerService {
             if(bySubject&&!CanonicalFactLookup.subjectMatches(map(entry.get("fact")),strings(request.get("subjects"))))continue;
             Map<String,Map<String,Object>> byAlias=new LinkedHashMap<>();sources.forEach(s->byAlias.put(text(s,"id"),s));
             try{fact(map(entry.get("fact")),byAlias);}catch(IllegalArgumentException invalid){throw new CanonicalLookupInvalid("LOOKUP_FACT_UNGROUNDED");}
-            itemOccurrences.put(text(item,"id"),occurrence);if(accepted.size()>=limit&&!accepted.containsKey(occurrence))continue;
+            itemOccurrences.put(text(item,"id"),occurrence);if(!Boolean.TRUE.equals(request.get("paged"))&&accepted.size()>=limit&&!accepted.containsKey(occurrence))continue;
             Map<String,Object> value=of("occurrenceId",occurrence,"fact",entry.get("fact"),"sources",sources,"engineVersion",item.get("engineVersion"),"observationPolicy",item.get("observationPolicy"),"operationIdentity",item.get("operationIdentity"),"batchId",item.get("batchId"),"batchFactCount",1,"coverageComplete",false,"lookupItemId",item.get("id"));
             putIdentity(value,EntityIdentity.resolve(map(entry.get("fact")),sources,maps(item.get("layoutCells"))));accepted.putIfAbsent(occurrence,value);
         }
@@ -496,14 +496,43 @@ public final class FactLedgerService {
             Map<String,Object> checked=copy(receipt);checked.put("sourceIds",cn.bidcheck.compat.Java8Api.toList(sources.stream().map(s->text(s,"id"))));checked.put("factIds",facts);
             List<Map<String,Object>> validatedFacts=cn.bidcheck.compat.Java8Api.toList(facts.stream().map(id->of("originalFactId",id,"fact",accepted.get(id).get("fact"))));
             if(FieldCoverage.validate(cn.bidcheck.compat.Java8Api.listOf(checked),byAlias,validatedFacts).size()!=1)throw new CanonicalLookupInvalid("LOOKUP_FIELD_DEPENDENCY_INVALID");
-            candidateReceipts++;if(receipts.size()>=fieldLimit)continue;
+            candidateReceipts++;if(!Boolean.TRUE.equals(request.get("paged"))&&receipts.size()>=fieldLimit)continue;
             Map<String,Object> row=of("recordType","FIELD_COVERAGE","engineVersion",item.get("engineVersion"),"observationPolicy",item.get("observationPolicy"),"operationIdentity",item.get("operationIdentity"),"batchId",item.get("batchId"),"fieldCoverage",cn.bidcheck.compat.Java8Api.listOf(checked),"fieldCoverageSources",sources,"factReferenceType","OCCURRENCE_ID","lookupItemId",item.get("id"));
             receipts.putIfAbsent(canonical(checked),row);
         }
         List<Map<String,Object>> result=new ArrayList<>(accepted.values());result.addAll(receipts.values());boolean factTruncated=itemOccurrences.values().stream().distinct().count()>accepted.size(),fieldTruncated=candidateReceipts>fieldLimit;
         annotateLookupLimits(result,request,factTruncated,fieldTruncated);
         LOG.info("bidcheck.fact_lookup runId={} checkpointId={} phase={} mode={} durationMs={} readinessMs={} sourceValidationMs={} bucketLookupMs={} itemLookupMs={} occurrenceLookupMs={} validationAndAssemblyMs={} sourceBuckets={} candidateRefs={} uniqueItems={} occurrenceLoads={} occurrenceCacheHits={} batchLoads=0 uniqueFacts={} fieldReceipts={} factTruncated={} fieldTruncated={}",safeLogId(request.get("runId")),safeLogId(request.get("checkpointId")),safeLogId(request.get("lookupPhase")),bySubject?"CANONICAL_SUBJECT":"CANONICAL_SOURCE",(System.nanoTime()-started+readinessNanos)/1_000_000,readinessNanos/1_000_000,(sourceValidationDone-started)/1_000_000,(bucketLookupDone-sourceValidationDone)/1_000_000,(itemLookupDone-bucketLookupDone)/1_000_000,(occurrenceLookupDone-itemLookupDone)/1_000_000,(System.nanoTime()-occurrenceLookupDone)/1_000_000,factBuckets.size()+fieldBuckets.size(),refs.size(),items.size(),fetched.size(),ids.size()-missing.size(),accepted.size(),receipts.size(),factTruncated,fieldTruncated);
-        return result;
+        return Boolean.TRUE.equals(request.get("paged"))?canonicalPage(request,result,limit,current,bySubject):result;
+    }
+    private static List<Map<String,Object>> canonicalPage(Map<String,Object> request,List<Map<String,Object>> rows,int limit,
+            Map<String,Map<String,Object>> current,boolean bySubject){
+        // Bind the cursor to both the verified query and the immutable item set. Concurrent
+        // publications invalidate a continuation instead of silently skipping counterevidence.
+        rows.sort(Comparator.comparing(row->text(row,"lookupItemId")));
+        List<String> itemIds=new ArrayList<>();
+        for(Map<String,Object> row:rows)itemIds.add(text(row,"lookupItemId"));
+        String signature=hash(canonical(Arrays.asList(current.keySet(),request.get("observationKeys"),request.get("subjects"),request.get("factKinds"),itemIds)));
+        int offset=0;
+        String cursor=text(request,"cursor");
+        if(!cursor.isEmpty()){
+            String[] parts=cursor.split(":",-1);
+            if(parts.length==2&&signature.equals(parts[0]))try{offset=Integer.parseInt(parts[1]);}catch(NumberFormatException invalid){offset=-1;}
+            else offset=-1;
+            if(offset<=0||offset>=rows.size()){
+                List<Map<String,Object>> stale=new ArrayList<>();annotateLookupLimits(stale,request,true,true);return stale;
+            }
+        }
+        int end=Math.min(rows.size(),offset+limit);
+        List<Map<String,Object>> page=new ArrayList<>(rows.subList(offset,end));
+        if(page.isEmpty())page.add(of("recordType","LOOKUP_METADATA"));
+        for(Map<String,Object> row:page){
+            row.remove("lookupTruncated");row.remove("factLookupTruncated");row.remove("fieldLookupTruncated");row.remove("lookupTruncation");
+        }
+        Map<String,Object> receipt=page.get(0);
+        if(end<rows.size())receipt.put("nextCursor",signature+":"+end);
+        else {receipt.put("lookupPagesComplete",true);if(!bySubject)receipt.put("coveredSourceIds",new ArrayList<>(current.keySet()));}
+        return page;
     }
     private static void annotateLookupLimits(List<Map<String,Object>> rows,Map<String,Object> request,boolean factTruncated,boolean fieldTruncated){
         if(!factTruncated&&!fieldTruncated)return;
