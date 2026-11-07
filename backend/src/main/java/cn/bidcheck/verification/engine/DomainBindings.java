@@ -17,12 +17,15 @@ final class DomainBindings {
     static boolean role(String value){return memberSelector(value)||PersonnelRoles.known(value);}
     static boolean memberSelector(String value){return clean(value).matches("(?:本项目|本次)?(?:联合体成员(?:单位)?|(?:联合体)?(?:各成员|所有成员|全部成员))");}
     static boolean known(String value){return !cn.bidcheck.compat.Java8Api.isBlank(value)&&!cn.bidcheck.compat.Java8Api.setOf("UNKNOWN", "UNRESOLVED", "未知", "待确认", "未明确", "-", "/").contains(value);}
-    /** Only three named management-system certifications admit the optional document suffix. */
     static boolean sameCertificateCategory(String actual,String required){
-        if(actual.equals(required))return true;
-        if(CertificateEvidenceRecords.category(actual).equals(CertificateEvidenceRecords.category(required)))return true;
-        String a=clean(actual),b=clean(required),known="(?:质量管理体系|职业健康安全管理体系|环境管理体系)认证(?:证书)?";
-        return a.matches(known)&&b.matches(known)&&a.replaceFirst("证书$","").equals(b.replaceFirst("证书$",""));
+        return canonicalCategory(actual).equals(canonicalCategory(required));
+    }
+    private static String canonicalCategory(String category) {
+        String value = CertificateEvidenceRecords.category(category);
+        if (value.matches("(?:质量管理体系|职业健康安全管理体系|环境管理体系)认证证书")) {
+            return value.substring(0,value.length()-2);
+        }
+        return value;
     }
     static List<Fact> roleLinks(String selector,List<Fact> facts,EvidenceCorpus corpus){
         if(!role(selector))return cn.bidcheck.compat.Java8Api.listOf();
@@ -149,7 +152,42 @@ final class DomainBindings {
     static String amountBasis(String value){switch (clean(value)) {case "投标总报价":case "投标总价":case "投标报价合计":return "BID_TOTAL";case "合同总价":case "合同金额":return "CONTRACT_TOTAL";case "最高投标限价":case "最高限价":case "招标控制价":return "PRICE_CEILING";default:return clean(value);}}
     static String lot(String value){switch (clean(value)) {case "不划分标段":case "不分标段":case "本项目不划分标段":case "本项目不分标段":return "EXPLICIT_UNDIVIDED_PROJECT";default:return clean(value);}}
     static Map<String,String> priceDimensions(Fact f){return cn.bidcheck.compat.Java8Api.mapOf("subject", f.subject(), "lot", lot(str(f.attributes(),"lot")), "amountBasis", amountBasis(f.basis()), "taxBasis", tax(str(f.attributes(),"taxBasis")), "currency", currency(str(f.attributes(),"currency")));}
-    static String certificateKey(Fact f){return f.subject()+"|"+str(f.attributes(),"category")+"|"+str(f.attributes(),"number")+"|"+str(f.attributes(),f.kind().equals("DATE_RANGE")?"field":"validityField");}
+    /** Fold alternate names only when every candidate for this holder/category/number is
+     * anchored to a single original page in a single immutable document version. */
+    static Set<List<String>> sameOriginalCertificates(List<Fact> facts, Map<String,Source> sources) {
+        Map<List<String>,Set<List<String>>> origins = new HashMap<>();
+        Set<List<String>> unknown = new HashSet<>();
+        for (Fact fact : facts) {
+            if (!certificateIdentity(fact)) continue;
+            List<String> identity = categoryIdentity(fact);
+            if (fact.sourceIds().isEmpty()) unknown.add(identity);
+            for (String id : fact.sourceIds()) {
+                Source source = sources.get(id);
+                if (source == null || source.documentVersion() < 1 || source.documentHash().isEmpty()
+                        || source.evidence().documentId().isEmpty() || source.evidence().page() < 1) {
+                    unknown.add(identity);
+                    continue;
+                }
+                origins.computeIfAbsent(identity, ignored -> new HashSet<>()).add(Arrays.asList(
+                    source.evidence().documentId(), source.documentHash(), String.valueOf(source.documentVersion()),
+                    source.evidence().locationType(), String.valueOf(source.evidence().page())));
+            }
+        }
+        Set<List<String>> keys = new HashSet<>();
+        origins.forEach((identity,pages) -> { if (pages.size() == 1 && !unknown.contains(identity)) keys.add(identity); });
+        return keys;
+    }
+    private static List<String> categoryIdentity(Fact fact) {
+        return Arrays.asList(fact.subject(),canonicalCategory(str(fact.attributes(),"category")),str(fact.attributes(),"number"));
+    }
+    static String certificateIdentityKey(Fact fact,Set<List<String>> sameOriginal) {
+        List<String> identity = categoryIdentity(fact);
+        String category = sameOriginal.contains(identity) ? identity.get(1) : str(fact.attributes(),"category");
+        return fact.subject()+"|"+category+"|"+str(fact.attributes(),"number");
+    }
+    static String certificateKey(Fact fact, Set<List<String>> sameOriginal) {
+        return certificateIdentityKey(fact,sameOriginal)+"|"+str(fact.attributes(),fact.kind().equals("DATE_RANGE")?"field":"validityField");
+    }
     static boolean certificateIdentity(Fact f){return known(f.subject())&&!role(f.subject())&&known(str(f.attributes(),"category"))&&known(str(f.attributes(),"number"))&&known(str(f.attributes(),"numberField"));}
     static boolean validityField(String value){return VALIDITY_FIELD.matcher(value).matches();}
     static Set<String> validityFields(Fact f,Map<String,Source> sources,List<Map<String,Object>> layout){Set<String> labels=new LinkedHashSet<>();

@@ -77,6 +77,7 @@ final class RuleEvaluator {
             else out=new Decision(out.id(),out.description(),"UNDETERMINED","已复用有原文的事实，但本轮新增或未覆盖来源的反证检查尚未完成，不能沿用已有结论",out.evidences(),cn.bidcheck.compat.Java8Api.listOf(gap("SHARED_SOURCE_REVIEW_REQUIRED","需要完成本轮候选原文的冲突及缺口检查")),out.proof());
         }
         out=plannedCoverage(r,out);
+        if(r.children().isEmpty())out=IdentityNumberEvidence.attach(r,out,facts,corpus);
         out=RecoveryCoverageDependencies.guard(r,out,this);
         out=InferenceClaims.discover(r,out,facts,corpus,context);
         out=InferenceClaims.pending(r,out,context);
@@ -161,6 +162,9 @@ final class RuleEvaluator {
         if(LegalRegistrationProof.applies(r))return LegalRegistrationProof.evaluate(r,this);
         if(RequirementBusinessRouting.applies(r))return RequirementBusinessRouting.evaluate(r,this);
         if(SourceRequirementInventory.applies(r))return SourceRequirementInventory.evaluate(r,this);
+        if(Boolean.TRUE.equals(r.parameters().get("sourceInventory")))return unknown(r,"REQUIREMENT_INVENTORY_VERSION_REQUIRED",
+            "要求清单的执行版本已过期，须按当前冻结原文重新编译；未执行材料缺失判断",cn.bidcheck.compat.Java8Api.listOf(),
+            linked("compiledInventoryVersion",r.parameters().get("inventoryVersion"),"requiredInventoryVersion",SourceRequirementInventory.VERSION,"businessProof",false));
         if(SourceSignatureRequirements.applies(r))return SourceSignatureRequirements.evaluate(r,this);
         if(PersonnelCredentialProof.applies(r)){cn.bidcheck.verification.engine.PersonnelCredentialProof.SelectedEvaluation selected=PersonnelCredentialProof.evaluateSelected(r,this);if(selected.selection()!=null)personnelSelections.put(selected.decision(),selected.selection());return selected.decision();}
         if(BidLetterResponse.applies(r))return BidLetterResponse.evaluate(r,this);
@@ -247,7 +251,8 @@ switch (r.predicate()) {case "VALIDITY":kinds = cn.bidcheck.compat.Java8Api.setO
             }
             if (SubmittedMaterialStructure.volumeNotProvided(r.expected(),corpus)) {
                 String volume=MaterialTitleAliases.volume(r.expected());
-                return unknown(r,"BID_VOLUME_NOT_UPLOADED","当前已上传文件未定位"+volume+"的封面或目录，请补充该分册。",Collections.emptyList(),linked("requestedVolume",volume));
+                String requested=r.expected().matches("^第[一二三四五六七八九十百0-9]+分册\\s*"+java.util.regex.Pattern.quote(volume)+"$")?r.expected():volume;
+                return unknown(r,"BID_VOLUME_NOT_UPLOADED","当前已上传文件未定位"+requested+"的封面或目录，请补充该分册。",Collections.emptyList(),linked("requestedVolume",requested));
             }
             return unknown(r,"CONTENT_EVIDENCE_REQUIRED","尚未在上传文件中定位相应标题与有效正文："+r.expected(),Collections.emptyList());
         }
@@ -297,10 +302,11 @@ switch (r.predicate()) {case "VALIDITY":kinds = cn.bidcheck.compat.Java8Api.setO
         if(!cn.bidcheck.compat.Java8Api.isBlank(employer)){if(employers.isEmpty())return unknown(r,"SUBJECT_RELATION_UNPROVEN","有效期要求的证照单位角色尚未解析为具体单位",matched);matched=cn.bidcheck.compat.Java8Api.toList(matched.stream().filter(f->employers.contains(str(f.attributes(),"employer"))));if(matched.isEmpty())return unknown(r,"CERTIFICATE_EMPLOYER_REQUIRED","尚未取得归属于要求单位的同一证照，不用其他成员单位的证件有效期替代",cn.bidcheck.compat.Java8Api.listOf());}
         String requiredField=str(r.parameters(),"validityField");boolean inferredField=false;
         if(cn.bidcheck.compat.Java8Api.isBlank(requiredField)&&DomainBindings.validityField(r.field())&&r.sourceQuote().contains(r.field()))requiredField=r.field();
+        Set<List<String>> sameOriginal=DomainBindings.sameOriginalCertificates(matched,corpus.byId);
         if(cn.bidcheck.compat.Java8Api.isBlank(requiredField)){
             List<Fact> candidates=cn.bidcheck.compat.Java8Api.toList(matched.stream().filter(DomainBindings::certificateIdentity).filter(f->certificateSelected(r,f)));
             Set<String> certificates=new LinkedHashSet<>(),labels=new LinkedHashSet<>(),declared=new LinkedHashSet<>();
-            for(Fact f:candidates){certificates.add(f.subject()+"|"+str(f.attributes(),"category")+"|"+str(f.attributes(),"number"));String field=str(f.attributes(),f.kind().equals("CERTIFICATE")?"validityField":"field");if(DomainBindings.validityField(field))declared.add(field);labels.addAll(DomainBindings.validityFields(f,corpus.byId,maps(context.get("_validatedLayoutCells"))));}
+            for(Fact f:candidates){certificates.add(DomainBindings.certificateIdentityKey(f,sameOriginal));String field=str(f.attributes(),f.kind().equals("CERTIFICATE")?"validityField":"field");if(DomainBindings.validityField(field))declared.add(field);labels.addAll(DomainBindings.validityFields(f,corpus.byId,maps(context.get("_validatedLayoutCells"))));}
             if(certificates.size()==1&&labels.size()==1&&declared.equals(labels)){requiredField=labels.iterator().next();inferredField=true;}
         }
         if(cn.bidcheck.compat.Java8Api.isBlank(requiredField))return unknown(r,"VALIDITY_FIELD_REQUIRED","适用的有效期字段未明确，不能混用注册期、使用期或其他证件日期",matched);
@@ -308,7 +314,7 @@ switch (r.predicate()) {case "VALIDITY":kinds = cn.bidcheck.compat.Java8Api.setO
         List<Map<String,Object>> dateProofs=new ArrayList<>();List<CertificateValidityDates.Result> dateGaps=new ArrayList<>();
         Set<String> keys=new HashSet<>(),ranges=new HashSet<>();for(Fact f:matched){String field=str(f.attributes(),f.kind().equals("CERTIFICATE")?"validityField":"field");if(!field.equals(requiredField)||!DomainBindings.certificateIdentity(f)||!certificateSelected(r,f))continue;boolean compatible=true;for(String key:cn.bidcheck.compat.Java8Api.listOf("category", "profession", "number")){String expected=str(r.parameters(),key);if(!cn.bidcheck.compat.Java8Api.isBlank(expected)&&!(key.equals("category")?DomainBindings.sameCertificateCategory(str(f.attributes(),key),expected):expected.equals(str(f.attributes(),key))))compatible=false;}if(!compatible)continue;
             CertificateValidityDates.Result dates=CertificateValidityDates.fact(f,corpus,field,ref,false,maps(context.get("_validatedLayoutCells")));dateProofs.add(linked("factId",f.id(),"dateSemantics",dates.proof()));
-            if(!dates.complete()){dateGaps.add(dates);continue;}complete.add(f);keys.add(DomainBindings.certificateKey(f));ranges.add(normalizedDateRange(dates));if(!Boolean.TRUE.equals(dates.valid()))invalid.add(f);}
+            if(!dates.complete()){dateGaps.add(dates);continue;}complete.add(f);keys.add(DomainBindings.certificateKey(f,sameOriginal));ranges.add(normalizedDateRange(dates));if(!Boolean.TRUE.equals(dates.valid()))invalid.add(f);}
         if(complete.isEmpty()){CertificateValidityDates.Result gap=dateGaps.isEmpty()?null:dateGaps.get(0);return unknown(r,gap==null?"VALIDITY_RANGE_REQUIRED":gap.code(),gap==null?"该有效期字段尚未形成可核验的日期记录":gap.reason(),matched,cn.bidcheck.compat.Java8Api.mapOf("dateSemantics", dateProofs));}
         if(keys.size()>1)return unknown(r,"CERTIFICATE_SELECTION_REQUIRED","已定位多个持有人、类别或证号，须明确本条件适用的具体证件，不能混合判断有效或过期",complete);
         if(ranges.size()>1)return unknown(r,"CERTIFICATE_VERSION_REQUIRED","同一证号的同一有效期字段存在不同范围，适用版本或延期关系尚未证明",complete,linked("normalizedDateRanges",ranges,"dateSemantics",dateProofs));
@@ -325,12 +331,13 @@ switch (r.predicate()) {case "VALIDITY":kinds = cn.bidcheck.compat.Java8Api.setO
      * independently.  It may prove an observed expiry, but it passes only with a separately
      * established complete certificate set; a partial retrieval can never establish coverage. */
     private Decision validityCoverage(Rule r,List<Fact> matched){LocalDate ref=referenceDate(r);if(ref==null)return unknown(r,"REFERENCE_TIME_UNCONFIRMED","尚未取得与检查项参考事件对应且已核对招标原文的日期",matched);
+        Set<List<String>> sameOriginal=DomainBindings.sameOriginalCertificates(matched,corpus.byId);
         List<Fact> complete=new ArrayList<>(),invalid=new ArrayList<>();Map<String,Set<String>> ranges=new LinkedHashMap<>();
         List<Map<String,Object>> dateProofs=new ArrayList<>();List<CertificateValidityDates.Result> dateGaps=new ArrayList<>();
         for(Fact fact:matched){if(!"CURRENT_PROJECT".equals(fact.scope())||!DomainBindings.certificateIdentity(fact))continue;String field=str(fact.attributes(),fact.kind().equals("CERTIFICATE")?"validityField":"field");
             if(!DomainBindings.validityField(field))continue;
             CertificateValidityDates.Result dates=CertificateValidityDates.fact(fact,corpus,field,ref,false,maps(context.get("_validatedLayoutCells")));dateProofs.add(linked("factId",fact.id(),"dateSemantics",dates.proof()));
-            if(!dates.complete()){dateGaps.add(dates);continue;}complete.add(fact);String key=DomainBindings.certificateKey(fact)+"|"+field;
+            if(!dates.complete()){dateGaps.add(dates);continue;}complete.add(fact);String key=DomainBindings.certificateKey(fact,sameOriginal)+"|"+field;
             ranges.computeIfAbsent(key,ignored->new LinkedHashSet<>()).add(normalizedDateRange(dates));if(!Boolean.TRUE.equals(dates.valid()))invalid.add(fact);}
         Map<String,Object> proof=linked("referenceDate",ref.toString(),"referenceEvent",referenceEvent(r),"referenceDateEvidence",referenceEvidence(r),
                 "observedCertificateCount",ranges.size(),"certificateSetComplete",Boolean.TRUE.equals(context.get("certificateSetComplete")),"decisionBasis","CHECKPOINT_METADATA_AND_SOURCE_GROUNDED_CERTIFICATE_RANGES","dateSemantics",dateProofs);

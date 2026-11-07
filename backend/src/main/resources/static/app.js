@@ -16,7 +16,7 @@ const state = {
   resultVersionView: 'source', resultVersionRunId: null,
 };
 const statuses = { PASS: '符合', FAIL: '高风险', WARNING: '有风险', UNDETERMINED: '待核实', NEEDS_CONFIRMATION: '需你确认', NOT_APPLICABLE: '不适用' };
-const businessStates = { SATISFIED: '满足要求', RISK: '存在风险', SYSTEM_INCOMPLETE: '系统未完成', EVIDENCE_PENDING: '系统取证中', MATERIAL_REQUIRED: '请补充材料', NOTICE: '全文提示', WAIT_EXTERNAL: '待外部条件', USER_ACTION: '需你确认', UNDETERMINED: '未形成结论', NOT_APPLICABLE: '不适用' };
+const businessStates = { SATISFIED: '满足要求', RISK: '存在风险', SYSTEM_INCOMPLETE: '系统未完成', EVIDENCE_PENDING: '证据待核', MATERIAL_REQUIRED: '请补充材料', NOTICE: '全文提示', WAIT_EXTERNAL: '待外部条件', USER_ACTION: '需你确认', UNDETERMINED: '未形成结论', NOT_APPLICABLE: '不适用' };
 const purposeLabels = { MANDATORY: '必备要求', SCORING: '评分优化', INFORMATIONAL: '信息提示' };
 const verificationModeLabels = { DOCUMENT: '文件核验', EXTERNAL: '外部核验', HUMAN_JUDGMENT: '需专业判断' };
 const templateParameterLabels = {
@@ -742,7 +742,7 @@ function templateBusinessPresentation(finding, projection) {
     proofScope: conclusion.proofScope || '', evidenceState: evidence.state || '', executionState: projection.execution?.state || '', projection,
   };
 }
-const currentBusinessResultVersion = 'business-result-10-document-scope';
+const currentBusinessResultVersion = 'business-result-13-action-specific-copy';
 const legacyBusinessResultVersions = new Set(['business-result-1','business-result-2','business-result-3','business-result-4-proof-scope','business-result-5-failure-origin']);
 function adaptLegacyBusinessPresentation(saved, computed, status) {
   const version = saved?.version;
@@ -822,6 +822,62 @@ function unresolvedProcessingFailure(atomic) {
     ||['ENGINE_FAILURE','ERROR','PROCESSING_FAILED'].includes(atomic?.workflowState)||atomic?.compilationAudit?.state==='REPAIR_RETRY_PENDING'
     ||atomic?.agentInvestigation?.status==='FAILED'||(atomic?.gaps||[]).some(gap=>gap.code==='AGENT_INVESTIGATION_FAILED');
 }
+function titleProfessionQuestion(atomic) {
+  const code='SCORING_TITLE_PROFESSION_SCOPE_REQUIRED';
+  if(!atomic?.gaps?.length || atomic.gaps.some(g=>g.code!==code))return '';
+  const c=(atomic.conditions||[]).find(c=>c.evaluated && c.conditionRole==='REQUIREMENT' && c.evidences?.length
+    && c.proof?.scoreProduced===false && c.proof?.decisionBasis==='SOURCE_BOUND_TITLE_PROFESSION_REVIEW'
+    && c.gaps?.some(g=>g.code===code));
+  return c?.proof?.professionScopeReview?.question||'';
+}
+function sourceLocations(evidence) {
+  const labels=[...new Set((Array.isArray(evidence)?evidence:[]).map(e=>{
+    const n=Number(e?.page??e?.location);return Number.isInteger(n)&&n>0?'第'+n+(e.locationType==='PAGE'?'页':'段'):'';
+  }).filter(Boolean))];
+  return labels.length?'（'+labels.join('、')+'）':'';
+}
+function reviewQuestions(cards) {
+  const questions=[];
+  for(const c of cards||[]){
+    if(c?.status!=='NEEDS_CONFIRMATION')continue;
+    let q=(c.question||c.claim||'').replace(/第\[(\d+)\]页/g,'第$1页');if(!q)continue;
+    const where=sourceLocations(c.evidences);
+    if(where&&!q.includes(where.slice(1,-1)))q='请核对'+where+'。'+q;
+    if(!q.startsWith('请')&&!/[？?]$/.test(q))q='请确认：'+q;
+    questions.push(q);
+  }
+  return [...new Set(questions)].join(' ');
+}
+function actionSpecificCopy(finding,atomic,display) {
+  const gaps=atomic?.gaps||[],conditions=atomic?.conditions||[];
+  if(display.state==='EVIDENCE_PENDING'){
+    const assessment=finding.assessment||{},coverage=assessment.coverage||{};
+    const recorded=Boolean(atomic&&Object.keys(atomic).length || assessment.adjustments?.length || assessment.guards?.length
+      || Object.keys(coverage.semanticGap||{}).length || Object.keys(coverage.completeness||{}).length
+      || finalResultProjectionOf(finding) || finding.evaluation?.evidences?.length || resolutionJobOf(finding)?.status==='BLOCKED_NO_PROGRESS');
+    if(!recorded)return {...display,label:'系统取证中'};
+  }
+  if(display.state==='MATERIAL_REQUIRED'){
+    const gap=gaps.find(g=>g.code==='BID_VOLUME_NOT_UPLOADED');
+    const volume=gap?.requestedVolume||conditions.find(c=>c.proof?.requestedVolume&&c.gaps?.some(g=>g.code==='BID_VOLUME_NOT_UPLOADED'))?.proof?.requestedVolume
+      ||(/^[^，。；;\n]{1,60}$/.test(gap?.requiredInput||'')?gap.requiredInput:'');
+    if(gap)return {...display,reason:'未上传'+(volume?'《'+volume+'》':'招标要求的分册')+'，本项需要'+(volume.includes('报价')?'其中的报价或报价清单':'该分册中的资料')+'才能核对。',nextStep:'请补充该分册后重新检测。'};
+  }
+  if(display.state==='USER_ACTION'){
+    const question=reviewQuestions([...(atomic?.inferredFacts||[]),...conditions.flatMap(c=>c.proof?.inferredFacts||[])]);
+    if(question)return {...display,reason:question,nextStep:question};
+    const variant=finding.assessment?.nameVariantAttribution;
+    if(variant?.code==='OCR_ONLY_SINGLE_CHARACTER_NAME_DIFFERENCE')return {...display,reason:variant.reason||variant.nextStep,nextStep:variant.nextStep||variant.question};
+    const base=conditions.map(c=>c.proof).find(p=>p?.executor==='source-extra-personnel-score-1' && p.baseConfiguration?.gaps?.some(g=>g.code==='SCORING_BASE_REQUIREMENT_SOURCE_REQUIRED'));
+    if(base){const ask='请核对招标文件的人员要求'+sourceLocations(base.baseRequirementSources)+'，确认本项增员评分采用哪些基础岗位、人数和资格条件。';return {...display,reason:ask,nextStep:ask};}
+    if(!display.nextStep||display.nextStep.startsWith('按下方说明')||display.nextStep.startsWith('请核对待确认条件')){
+      const items=conditions.filter(c=>c.gaps?.length||['UNDETERMINED','NEEDS_CONFIRMATION'].includes(c.status))
+        .map(c=>{const name=c.title||c.description;return name?'请核对'+name+(sourceLocations(c.evidences)||sourceLocations([c.requirementContext?.identity]))+'。':'';}).filter(Boolean);
+      if(items.length){const ask=[...new Set(items)].join(' ');return {...display,reason:ask,nextStep:ask};}
+    }
+  }
+  return display;
+}
 function verifiedScoringReview(atomic) {
   const reviewCodes=['QUALITY_GRADE_REVIEW_REQUIRED','SCORE_SOURCE_LIST_AMBIGUOUS'],gaps=atomic?.gaps||[];
   return gaps.length>0&&gaps.every(g=>reviewCodes.includes(g.code))&&(atomic?.conditions||[]).some(c=>c.evaluated===true&&c.conditionRole==='REQUIREMENT'&&c.proof?.decisionBasis==='PROGRAM_STRUCTURAL_COVERAGE'&&c.proof.coverageComplete===true&&c.evidences?.length&&(c.gaps||[]).some(g=>reviewCodes.includes(g.code)));
@@ -895,13 +951,13 @@ function businessPresentation(finding, includeReview = false) {
   if(currentSaved)automatic=saved;
   const projection = finalResultProjectionOf(finding);
   if(!automatic&&projection&&!visualReview.reviewed&&!(status==='UNDETERMINED'&&(externalState||unresolvedProcessingFailure(atomic))))automatic=templateBusinessPresentation(finding, projection);
-  if(automatic)return includeReview?applyManualReviewPresentation(automatic,reviewOf(finding)):automatic;
+  if(automatic){automatic=actionSpecificCopy(finding,atomic,automatic);return includeReview?applyManualReviewPresentation(automatic,reviewOf(finding)):automatic;}
   const codes = [...(assessment.adjustments || []), ...(assessment.guards || []), ...(atomic?.gaps || [])].map(item => item?.code || '');
   const gap=assessment.coverage?.semanticGap||{},gapKind=gap.validated===true?gap.kind:'';
   const completeness = assessment.coverage?.completeness || {}, resolvedInventory = codes.includes('REQUIREMENT_COMPLETENESS_UNPROVEN') && completeness.inventoryResolved === true && completeness.coreRequirementDeferred !== true;
   const finalMismatch = status === 'UNDETERMINED' && atomic?.workflowState === 'COMPLETED' && atomic.complete === true;
   const processing = externalState?.systemOwned || recoveryFailed || codes.includes('EXTERNAL_CONNECTOR_FAILED') || projection&&templateBusinessState(projection.conclusion?.state,projection)==='SYSTEM_INCOMPLETE' || unresolvedProcessingFailure(atomic) || codes.includes('UNIQUE_PRICE_SCOPE_REQUIRED') || codes.some(atomicMappingPending) || ['SYSTEM_REQUIREMENT','SYSTEM_RETRIEVAL','SYSTEM_RELATION'].includes(gapKind) || fieldIncomplete || assessment.model?.decision==='RULE_UNSUPPORTED' || finalMismatch || (completeness.itemResults||[]).some(item=>item.status==='REQUIREMENT_UNRESOLVED') || ['PROCESSING_FAILED','REQUIREMENT_UNPARSED'].includes(atomic && atomicPresentation(atomic).state) || ['ENGINE_FAILURE','ERROR'].includes(atomic?.workflowState) || assessment.model?.state === 'UNAVAILABLE' || ocr.incomplete === true || codes.filter(code=>!resolvedInventory||code!=='REQUIREMENT_COMPLETENESS_UNPROVEN').some(code => /^MODEL_|^HTTP_|COMPILATION|^REQUIREMENT_|GROUNDING|UNGROUNDED$/.test(code) || ['CONTEXT_BUDGET_EXCEEDED','CHECKLIST_BATCH_REQUIRED','INPUT_INVALID','EVIDENCE_SCOPE_INCOMPLETE','OCR_COVERAGE_DEFERRED','OCR_SOURCE_DEFERRED','OUTPUT_SCHEMA_INVALID','OUTPUT_JSON_INVALID'].includes(code));
-  const scoringReview=verifiedScoringReview(atomic);
+  const scoringReview=verifiedScoringReview(atomic), professionQuestion=titleProfessionQuestion(atomic);
   const external = scoringReview || gapKind==='EXTERNAL_INPUT' || (atomic?.externalRequests || []).length > 0 || atomic?.workflowState === 'WAIT_STAGE' || codes.some(code => ['EXTERNAL_RECORD_REQUIRED','EXTERNAL_VERIFICATION_REQUIRED','USER_INPUT_REQUIRED','REFERENCE_TIME_REQUIRED','APPLICABILITY_TIME_PENDING','MISSING_TENDER_ATTACHMENT','COST_APPLICABILITY_REQUIRED','CAPABILITY_CRITERIA_REQUIRED'].includes(code));
   const beforeVisual = (assessment.preOcrEvaluation || assessment.rawEvaluation)?.status;
   const evidencePending = assessment.model?.decision==='EXTERNAL_INPUT_REQUIRED' || resolvedInventory || beforeVisual === 'UNDETERMINED' || codes.includes('VISUAL_MARK_UNREADABLE')&&!visualReview.unreadableOnly || ['RELATION_UNCONFIRMED','EVIDENCE_NOT_FOUND'].includes(atomic && atomicPresentation(atomic).state) || codes.some(code=>['EVIDENCE_MISSING','PERSONNEL_COVERAGE_INCOMPLETE','NO_CANDIDATE_EVIDENCE','EVIDENCE_NOT_FOUND'].includes(code));
@@ -909,14 +965,17 @@ function businessPresentation(finding, includeReview = false) {
   let resultState = ({PASS:'SATISFIED',FAIL:'RISK',WARNING:'RISK',NOT_APPLICABLE:'NOT_APPLICABLE'})[status] || (processing ? 'SYSTEM_INCOMPLETE' : status === 'NEEDS_CONFIRMATION' ? 'USER_ACTION' : externalState ? 'WAIT_EXTERNAL' : external || visualReview.unreadableOnly ? 'USER_ACTION' : evidencePending ? 'EVIDENCE_PENDING' : visual ? 'USER_ACTION' : 'EVIDENCE_PENDING');
   const inventory = (atomic?.conditions || []).map(row=>row.proof).find(p=>p && Number.isInteger(p.inventoryTotalMembers));
   if(status==='UNDETERMINED'){
+    if(professionQuestion&&!processing&&!externalState)resultState='USER_ACTION';
     if(inventory && !recoveryFailed && !externalState)resultState='EVIDENCE_PENDING';
     if(assessment.consistencyGroupId || finding.checkpoint?.type==='FULL_TEXT_REVIEW')resultState='NOTICE';
     if(externalState?.state==='WAIT_OWNER_DATA')resultState='WAIT_EXTERNAL';
+    if(Number(atomic?.proof?.pendingConfirmationCount)>0)resultState='USER_ACTION';
+    if(job?.semanticGate?.reasonCode==='NO_EXECUTABLE_EVIDENCE_TARGET'&&!recoveryFailed&&!job.processingFailed&&!unresolvedProcessingFailure(atomic)&&!ocr.incomplete)resultState='USER_ACTION';
     if(codes.includes('BID_VOLUME_NOT_UPLOADED'))resultState='MATERIAL_REQUIRED';
     if(job?.strategy==='WAIT_TAX_REFERENCE_DATE')resultState='USER_ACTION';
   }
   const userActionRequired = resultState === 'MATERIAL_REQUIRED' || resultState === 'USER_ACTION' || resultState === 'RISK' || resultState === 'SATISFIED' && visual;
-  let nextStep = ({SYSTEM_INCOMPLETE:'需继续处理条款、证据校验或失败请求；当前不要求补交材料，也不计入人工核对待办。',EVIDENCE_PENDING:'需继续检索并关联现有文件中的证据；只有确认具体缺口后才要求补充材料。',USER_ACTION:'按下方说明补充外部信息、确认核验时点或核对原图。',RISK:'对照所列原文确认风险，并记录复核结论。',SATISFIED:visual?'文字要求已得到支持；另有原图复核事项，请核对下方指定位置。':'本项已形成满足要求的结论，依据保留供追溯。',NOT_APPLICABLE:'本项不适用于当前条件，适用依据保留供追溯。'})[resultState];
+  let nextStep = ({SYSTEM_INCOMPLETE:'需继续处理条款、证据校验或失败请求；当前不要求补交材料，也不计入人工核对待办。',EVIDENCE_PENDING:'需继续检索并关联现有文件中的证据；只有确认具体缺口后才要求补充材料。',USER_ACTION:'按下方说明补充外部信息、确认核验时点或核对原图。',RISK:'对照所列原文确认风险，并记录复核结论。',SATISFIED:visual?'文字要求已得到支持；另有原图复核事项，请核对下方指定位置。':'本项已形成满足要求的结论，依据保留供追溯。',MATERIAL_REQUIRED:'请补充所列分册后重新检测。',NOTICE:'查看已有出处和比较范围。',WAIT_EXTERNAL:externalState?.nextStep||'待外部记录就绪后继续核验。',NOT_APPLICABLE:'本项不适用于当前条件，适用依据保留供追溯。'})[resultState];
   if(stopped&&['SYSTEM_INCOMPLETE','EVIDENCE_PENDING'].includes(resultState))nextStep='本轮自动补查已停止，需修复处理环节或补足检索条件后再启动；当前不据此要求补交材料。';
   if(resultState==='USER_ACTION'&&gapKind==='EXTERNAL_INPUT')nextStep='需取得招标条款要求的外部记录或现场核验结果；现有文件检索不能替代该记录。';
   if(resultState==='USER_ACTION'&&status==='NEEDS_CONFIRMATION')nextStep='对照下方原文确认或否定系统提出的关联，确认后将重新计算本项结论。';
@@ -957,7 +1016,9 @@ function businessPresentation(finding, includeReview = false) {
   }
   if(resultState==='MATERIAL_REQUIRED')Object.assign(automatic,{owner:'USER',userActionRequired:true,nextStep:reason});
   if(resultState==='USER_ACTION' && job?.strategy==='WAIT_TAX_REFERENCE_DATE')automatic.nextStep=job.nextAction;
+  if(resultState==='USER_ACTION' && professionQuestion)Object.assign(automatic,{label:'职称专业范围待确认',nextStep:professionQuestion+' 请在复核记录中注明口径和依据。职称计分仍须核对招标要求的共同证明。'});
   automatic=adaptLegacyBusinessPresentation(saved,automatic,status);
+  automatic=actionSpecificCopy(finding,atomic,automatic);
   return includeReview?applyManualReviewPresentation(automatic,reviewOf(finding)):automatic;
 }
 function resultMatchesFilter(finding) {
@@ -1539,12 +1600,17 @@ function renderFinding(f, sourcePanel = '') {
   const processing = f.assessment?.businessPresentation;
   const serviceNote = processing?.processingFailed ? ' '+processing.processingMessage+'（'+processing.processingError+'）' : '';
   const evidenceMissing=findingDimensions(f).evidence.state!=='SUFFICIENT',analysis=(businessAnalysisReason(f,presentation,business)||'未提供分析说明。')+serviceNote;
-  return `<div class="finding-detail-header"><div class="detail-kicker">${e(findingCategory(f))} / ${e(types[cp.type]||cp.type)}</div><h2>${e(cp.title)}</h2><div class="detail-tags"><span class="pill ${e(business.state)}">${e(business.label)}</span>${renderResultScopeTags(f)}${review?badge(review.status,`人工：${statuses[review.status]||review.status}`):''}</div></div><div class="panel-body">${renderFindingDimensions(f)}<div class="result-reason ${e(business.state)}"><strong>检查结论</strong><p>${e(analysis)}</p></div><p class="suggestion result-next-step"><b>下一步</b><span>${e(confirmationNextStep(f,business))}</span></p>${renderTaxReferenceConfirmation(f)}${renderInferenceConfirmations(f)}${renderTemplateSubchecks(f)}${renderCompleteness(f)}${originalReviewIsSourceRecord(f)?'':renderOriginalReview(f,presentation)}<div class="evidence-title"><span>${isConsistency?'多处信息与依据对照':'招标要求与投标证据'}</span><small>原文可追溯</small></div><div class="evidence-grid">${renderEvidence(references.source,'招标依据',cp.source?'未取得本次招标文件的有效依据。':'该项为手动或全文通用检查，无独立招标条款。')}${renderEvidence(evidences[0],isConsistency?'证据位置 1':'投标证据',evidenceMissing?'本项尚未取得足够原文依据；当前不据此认定投标材料缺失。':'未返回可展示的投标原文，请按证据引用继续追溯。')}</div>${references.tender.length?`<div class="more-evidence">${references.tender.map(item=>renderEvidence(item,'补充招标依据')).join('')}</div>`:''}${evidences.length>1?`<div class="more-evidence">${evidences.slice(1).map((item,i)=>renderEvidence(item,`证据位置 ${i+2}`)).join('')}</div>`:''}${sourcePanel}${renderInheritedReviews(f)}<details class="business-processing-details result-diagnostics"><summary>处理详情与诊断</summary><div class="result-diagnostics-body">${renderAgentInvestigationDetails(f)}${renderTargetProgressDetails(f)}${renderExternalCheckDetails(f)}${renderTemplateDiagnostics(f)}<p class="preview-caption">条款风险等级：${e(({HIGH:'高',MEDIUM:'中',LOW:'低'})[cp.severity]||'未设置')} · ${e(methodLabel(ev.method))}</p>${renderAtomicCheck(f)}${renderFieldCoverage(f)}${originalReviewIsSourceRecord(f)?renderOriginalReview(f,presentation):''}${renderOriginalExplanation(presentation)}${renderAssessmentDetails(f)}</div></details><details class="business-manual-details" ${disclosureAttributes(`manual-finding-${f.id}`,!!review||state.reviewDrafts.has(f.id))}><summary>记录人工复核${review?' · 已有记录':''}</summary>${renderManualReview(f)}</details></div>`;
+  return `<div class="finding-detail-header"><div class="detail-kicker">${e(findingCategory(f))} / ${e(types[cp.type]||cp.type)}</div><h2>${e(cp.title)}</h2><div class="detail-tags"><span class="pill ${e(business.state)}">${e(business.label)}</span>${renderResultScopeTags(f)}${review?badge(review.status,`人工：${statuses[review.status]||review.status}`):''}</div></div><div class="panel-body">${renderFindingDimensions(f)}<div class="result-reason ${e(business.state)}"><strong>检查结论</strong><p>${e(analysis)}</p></div><p class="suggestion result-next-step"><b>下一步</b><span>${e(confirmationNextStep(f,business))}</span></p>${renderProfessionReviewAction(f)}${renderTaxReferenceConfirmation(f)}${renderInferenceConfirmations(f)}${renderTemplateSubchecks(f)}${renderCompleteness(f)}${originalReviewIsSourceRecord(f)?'':renderOriginalReview(f,presentation)}<div class="evidence-title"><span>${isConsistency?'多处信息与依据对照':'招标要求与投标证据'}</span><small>原文可追溯</small></div><div class="evidence-grid">${renderEvidence(references.source,'招标依据',cp.source?'未取得本次招标文件的有效依据。':'该项为手动或全文通用检查，无独立招标条款。')}${renderEvidence(evidences[0],isConsistency?'证据位置 1':'投标证据',evidenceMissing?'本项尚未取得足够原文依据；当前不据此认定投标材料缺失。':'未返回可展示的投标原文，请按证据引用继续追溯。')}</div>${references.tender.length?`<div class="more-evidence">${references.tender.map(item=>renderEvidence(item,'补充招标依据')).join('')}</div>`:''}${evidences.length>1?`<div class="more-evidence">${evidences.slice(1).map((item,i)=>renderEvidence(item,`证据位置 ${i+2}`)).join('')}</div>`:''}${sourcePanel}${renderInheritedReviews(f)}<details class="business-processing-details result-diagnostics"><summary>处理详情与诊断</summary><div class="result-diagnostics-body">${renderAgentInvestigationDetails(f)}${renderTargetProgressDetails(f)}${renderExternalCheckDetails(f)}${renderTemplateDiagnostics(f)}<p class="preview-caption">条款风险等级：${e(({HIGH:'高',MEDIUM:'中',LOW:'低'})[cp.severity]||'未设置')} · ${e(methodLabel(ev.method))}</p>${renderAtomicCheck(f)}${renderFieldCoverage(f)}${originalReviewIsSourceRecord(f)?renderOriginalReview(f,presentation):''}${renderOriginalExplanation(presentation)}${renderAssessmentDetails(f)}</div></details><details class="business-manual-details" ${disclosureAttributes(`manual-finding-${f.id}`,!!review||state.reviewDrafts.has(f.id))}><summary>记录人工复核${review?' · 已有记录':''}</summary>${renderManualReview(f)}</details></div>`;
 }
 function renderInferenceFact(record) {
   const fact = record.proposedFact || {};
   const field = fields[fact.field] || ({ role: '岗位', employer: '所属单位', certificate: '证书', qualification: '资质', amount: '金额', expiry: '有效期' })[fact.field] || fact.field || '对应内容';
   return `<div class="inference-fact"><span>确认后采用的内容</span><strong>${e(fact.subject || '所引材料')} · ${e(field)}：${e(fact.value || '')}${fact.unit ? ` ${e(unitLabel(fact.unit))}` : ''}</strong>${fact.basis ? `<small>口径：${e(fact.basis)}</small>` : ''}</div>`;
+}
+function renderProfessionReviewAction(finding) {
+  if(titleProfessionQuestion(atomicCheckOf(finding)) && businessPresentation(finding).state==='USER_ACTION')
+    return '<button type="button" class="button button-secondary button-small" data-action="review-title-profession">记录专业口径</button>';
+  return '';
 }
 function renderTaxReferenceConfirmation(finding) {
   const cards=new Map();
@@ -1592,7 +1658,7 @@ function confirmationNextStep(finding,business) {
   const records=state.inferenceConfirmations.filter(item=>item.runId===state.run?.run?.id && item.checkpointId===finding.checkpoint?.id);
   if (!records.length) return business.nextStep;
   const pending=records.filter(item=>item.status==='NEEDS_CONFIRMATION').length;
-  return pending ? `还差 ${pending} 个待确认的证据关系，请对照卡片原文核对。` : '证据关联卡已处理，可查看该事项的重算结果。';
+  return pending ? (reviewQuestions(records)||business.nextStep) : '证据关联卡已处理，可查看该事项的重算结果。';
 }
 function renderInferenceConfirmations(finding) {
   const runId = state.run?.run?.id;
@@ -1673,13 +1739,17 @@ async function submitInferenceAttachment(form) {
 function openInferenceDecision(record, decision) {
   if (!record || record.runId !== state.run?.run?.id || record.status !== 'NEEDS_CONFIRMATION' || !['CONFIRMED', 'REJECTED'].includes(decision)) { toast('确认记录已变化，请刷新后重试。', true); return; }
   const confirm = decision === 'CONFIRMED';
-  openModal(confirm ? '确认证据关联' : '否定证据关联', '请对照原文说明判断依据。该操作会保留确认记录。', `<form id="inference-decision-form" class="modal-body" data-run="${e(record.runId)}" data-record="${e(record.id)}" data-decision="${decision}" data-revision="${Number(record.revision)}"><blockquote class="evidence-quote">${e(record.claim)}</blockquote>${renderInferenceFact(record)}<label class="field-label" for="inference-reviewer">确认人</label><input id="inference-reviewer" name="reviewer" maxlength="80" required placeholder="请输入姓名"><label class="field-label" for="inference-note">判断依据</label><textarea id="inference-note" name="note" maxlength="3000" required placeholder="填写所核对的原文和判断依据"></textarea><p class="modal-note">${confirm ? '已确认的事实将参与重算，检查是否通过仍取决于其他要求和证据。' : '否定后不采用这条推断，并根据其余证据重新计算。'}</p><div class="modal-footer"><button type="button" class="button button-secondary" data-action="close-modal">取消</button><button type="submit" class="button button-primary">${confirm ? '确认并重算' : '保存否定记录'}</button></div></form>`);
+  const dates = record.proposedFact?.attributes?.dateOptions;
+  const dateChoice = confirm && record.inferenceType === 'CONTRACT_SIGNING_DATE_CONFLICT' && Array.isArray(dates)
+    ? `<label class="field-label" for="signing-date-choice">以哪个签署日期为准</label><select id="signing-date-choice" name="selectedSigningDate" required><option value="">请选择日期</option>${dates.map(date => `<option value="${e(date)}">${e(date)}</option>`).join('')}</select>` : '';
+  openModal(confirm ? '确认证据关联' : '否定证据关联', '请对照原文说明判断依据。该操作会保留确认记录。', `<form id="inference-decision-form" class="modal-body" data-run="${e(record.runId)}" data-record="${e(record.id)}" data-decision="${decision}" data-revision="${Number(record.revision)}"><blockquote class="evidence-quote">${e(record.claim)}</blockquote>${renderInferenceFact(record)}${dateChoice}<label class="field-label" for="inference-reviewer">确认人</label><input id="inference-reviewer" name="reviewer" maxlength="80" required placeholder="请输入姓名"><label class="field-label" for="inference-note">判断依据</label><textarea id="inference-note" name="note" maxlength="3000" required placeholder="填写所核对的原文和判断依据"></textarea><p class="modal-note">${confirm ? '已确认的事实将参与重算，检查是否通过仍取决于其他要求和证据。' : '否定后不采用这条推断，并根据其余证据重新计算。'}</p><div class="modal-footer"><button type="button" class="button button-secondary" data-action="close-modal">取消</button><button type="submit" class="button button-primary">${confirm ? '确认并重算' : '保存否定记录'}</button></div></form>`);
 }
 async function submitInferenceDecision(form) {
   const runId = form.dataset.run, pid = projectId(), key = `inference:${form.dataset.record}`;
   if (state.run?.run?.id !== runId || state.busy.has(key)) { toast('请刷新当前检查后重试。', true); return; }
   const data = Object.fromEntries(new FormData(form)), button = form.querySelector('button[type="submit"]');
   const body = {decision: form.dataset.decision, reviewer: String(data.reviewer || '').trim(), note: String(data.note || '').trim(), expectedRevision: Number(form.dataset.revision)};
+  if (data.selectedSigningDate) body.selectedSigningDate = String(data.selectedSigningDate);
   if (!body.reviewer || !body.note) { toast('请填写确认人和判断依据。', true); return; }
   state.busy.add(key); if (button) button.disabled = true;
   try {
@@ -2325,6 +2395,7 @@ async function handleAction(action, el) {
   if (action === 'consistency-evidence-page') { state.consistencyEvidencePage = Math.max(1, Number(el.dataset.page) || 1); render(); document.querySelector('.consistency-detail .consistency-evidence-heading')?.scrollIntoView({ block: 'start' }); return; }
   if (action === 'consistency-facts-page') { state.consistencyFactsPage = Math.max(1, Number(el.dataset.page) || 1); setDisclosureOpen('consistency-facts', true); render(); document.querySelector('#consistency-facts')?.scrollIntoView({ block: 'start' }); return; }
   if (action === 'consistency-kind') { state.consistencyFilter = el.dataset.kind || 'ALL'; state.selectedConsistencyGroup = null; render(); return; }
+  if (action === 'review-title-profession') { const details=document.querySelector('.business-manual-details'); if(details){details.open=true;details.scrollIntoView({block:'center'});details.querySelector('[name=note]')?.focus();}return; }
   if (action === 'consistency-review-open') { const details = document.querySelector('.consistency-manual-details'); if (!details) return; details.open = true; const input = details.querySelector('[name=status]'); if (el.dataset.ignore === 'true' && input) { input.value = 'NOT_APPLICABLE'; rememberReviewDraft(input); } details.scrollIntoView({block:'center'}); details.querySelector(el.dataset.ignore === 'true' ? '[name=note]' : '[name=reviewer]')?.focus(); return; }
   if (action === 'select-consistency-group') { state.selectedConsistencyGroup = id; render(); if (window.matchMedia('(max-width: 800px)').matches) document.querySelector('.consistency-detail')?.scrollIntoView({ block: 'start' }); return; }
   if (action === 'clear-consistency-filters') { state.consistencyFilter = 'ALL'; state.consistencyField = 'ALL'; state.consistencyCategory = 'ALL'; state.consistencyRelation = 'ALL'; state.consistencyReview = 'ALL'; state.consistencyQuery = ''; render(); return; }

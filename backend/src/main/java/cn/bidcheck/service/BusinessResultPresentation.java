@@ -8,7 +8,7 @@ import java.util.*;
 
 /** Read-only business presentation, always based on the published evaluation after guards. */
 public final class BusinessResultPresentation {
-    public static final String VERSION="business-result-11-inventory-dependencies";
+    public static final String VERSION="business-result-13-action-specific-copy";
     private static final ObjectMapper JSON=new ObjectMapper();
     private BusinessResultPresentation() {}
 
@@ -61,7 +61,8 @@ public final class BusinessResultPresentation {
             ||"SUPPLEMENT_ANALYSIS_REQUIRED".equals(evaluation.method())||"SUPPLEMENT_EVALUATOR_UNAVAILABLE".equals(text(map(a.get("publicationGuard")),"code"))
             ||Boolean.TRUE.equals(ocr.get("incomplete"));
         boolean scoringReview=verifiedScoringReview(atomic);
-        boolean external=scoringReview||templateFinal&&(template.verificationMode()==TemplateTypes.VerificationMode.EXTERNAL||template.action()!=null&&template.action().owner()==TemplateTypes.ActionOwner.EXTERNAL)
+        String professionQuestion=titleProfessionQuestion(atomic);
+        boolean external=!professionQuestion.isEmpty()||scoringReview||templateFinal&&(template.verificationMode()==TemplateTypes.VerificationMode.EXTERNAL||template.action()!=null&&template.action().owner()==TemplateTypes.ActionOwner.EXTERNAL)
             ||"EXTERNAL_INPUT".equals(gapKind)||!maps(atomic.get("externalRequests")).isEmpty()||"WAIT_STAGE".equals(atomic.get("workflowState"))
             ||codes.stream().anyMatch(code->cn.bidcheck.compat.Java8Api.setOf("EXTERNAL_RECORD_REQUIRED", "EXTERNAL_VERIFICATION_REQUIRED", "USER_INPUT_REQUIRED", "REFERENCE_TIME_REQUIRED", "APPLICABILITY_TIME_PENDING", "MISSING_TENDER_ATTACHMENT", "COST_APPLICABILITY_REQUIRED", "CAPABILITY_CRITERIA_REQUIRED").contains(code));
         String beforeVisual=statusOf(a.containsKey("preOcrEvaluation")?a.get("preOcrEvaluation"):a.get("rawEvaluation"));
@@ -85,15 +86,34 @@ switch (status) {case "PASS":state = "SATISFIED"; break;case "FAIL":case "WARNIN
                 && !RecoveryTransition.hasProcessingFailure(new cn.bidcheck.domain.Domain.Finding("","",null,evaluation,a)))state="WAIT_EXTERNAL";
         if(pending && fullText && pendingCards==0)state="NOTICE";
         if(pending && "WAIT_OWNER_DATA".equals(text(externalState,"state")))state="WAIT_EXTERNAL";
+        boolean manualTarget=pending && "NO_EXECUTABLE_EVIDENCE_TARGET".equals(text(map(resolutionJob.get("semanticGate")),"reasonCode"))
+            && !recoveryFailed && !Boolean.TRUE.equals(resolutionJob.get("processingFailed"))
+            && !RecoveryTransition.hasProcessingFailure(new cn.bidcheck.domain.Domain.Finding("","",null,evaluation,a))
+            && !Boolean.TRUE.equals(ocr.get("incomplete"));
+        if(manualTarget)state="USER_ACTION";
         if(pending && codes.contains("BID_VOLUME_NOT_UPLOADED"))state="MATERIAL_REQUIRED";
         if(pending && "WAIT_TAX_REFERENCE_DATE".equals(text(resolutionJob,"strategy")))state="USER_ACTION";
+        if(pending && codes.contains("ID_NUMBER_PAIR_CONFLICT") && codes.contains("SUBJECT_IDENTITY_CONFLICT"))state="RISK";
+        boolean evidenceAssessmentRecorded=!atomic.isEmpty()||!codes.isEmpty()||!semanticGap.isEmpty()||!completeness.isEmpty()
+            ||templateFinal||(evaluation.evidences()!=null&&!evaluation.evidences().isEmpty())||"BLOCKED_NO_PROGRESS".equals(text(resolutionJob,"status"));
         String label;
-switch (state) {case "SATISFIED":label = "满足要求"; break;case "RISK":label = "存在风险"; break;case "SYSTEM_INCOMPLETE":label = "系统未完成"; break;case "USER_ACTION":label = "需你确认"; break;case "WAIT_EXTERNAL":label = "待外部条件"; break;case "NOT_APPLICABLE":label = "不适用"; break;case "NOTICE":label = "全文提示"; break;case "MATERIAL_REQUIRED":label = "请补充材料"; break;default:label = "系统取证中"; break;}
+switch (state) {case "SATISFIED":label = "满足要求"; break;case "RISK":label = "存在风险"; break;case "SYSTEM_INCOMPLETE":label = "系统未完成"; break;case "USER_ACTION":label = "需你确认"; break;case "WAIT_EXTERNAL":label = "待外部条件"; break;case "NOT_APPLICABLE":label = "不适用"; break;case "NOTICE":label = "全文提示"; break;case "MATERIAL_REQUIRED":label = "请补充材料"; break;case "EVIDENCE_PENDING":label = evidenceAssessmentRecorded?"证据待核":"系统取证中"; break;default:label = "查看处理记录"; break;}
         boolean userAction="MATERIAL_REQUIRED".equals(state)||"USER_ACTION".equals(state)||"RISK".equals(state)||"SATISFIED".equals(state)&&visual;
         String owner;
 switch (state) {case "SYSTEM_INCOMPLETE":case "EVIDENCE_PENDING":owner = "SYSTEM"; break;case "WAIT_EXTERNAL":owner = "EXTERNAL"; break;case "USER_ACTION":case "RISK":owner = "USER"; break;default:owner = userAction?"USER":"NONE"; break;}
         String next;
-switch (state) {case "SYSTEM_INCOMPLETE":next = "需继续处理条款、证据校验或失败请求；当前不要求补交材料，也不计入人工核对待办。"; break;case "EVIDENCE_PENDING":next = "需继续检索并关联现有文件中的证据；只有确认具体缺口后才要求补充材料。"; break;case "USER_ACTION":next = "按下方说明补充外部信息、确认核验时点或核对原图。"; break;case "WAIT_EXTERNAL":next = text(externalState,"nextStep"); break;case "RISK":next = "对照所列原文确认风险，并记录复核结论。"; break;case "SATISFIED":next = visual?"文字要求已得到支持；另有原图复核事项，请核对下方指定位置。":"本项已形成满足要求的结论，依据保留供追溯。"; break;default:next = "本项不适用于当前条件，适用依据保留供追溯。"; break;}
+        switch(state) {
+            case "SYSTEM_INCOMPLETE": next="需继续处理条款、证据校验或失败请求；当前不要求补交材料，也不计入人工核对待办。"; break;
+            case "EVIDENCE_PENDING": next="需继续检索并关联现有文件中的证据；只有确认具体缺口后才要求补充材料。"; break;
+            case "USER_ACTION": next="请核对待确认条件和所引原文，并记录复核依据。"; break;
+            case "WAIT_EXTERNAL": next=text(externalState,"nextStep"); break;
+            case "RISK": next="对照所列原文确认风险，并记录复核结论。"; break;
+            case "SATISFIED": next=visual?"文字要求已得到支持；另有原图复核事项，请核对下方指定位置。":"本项已形成满足要求的结论，依据保留供追溯。"; break;
+            case "MATERIAL_REQUIRED": next="请补充所列分册后重新检测。"; break;
+            case "NOTICE": next="查看已有出处和比较范围。"; break;
+            case "NOT_APPLICABLE": next="本项不适用于当前条件，适用依据保留供追溯。"; break;
+            default: next="查看该项的原文和处理记录。";
+        }
         boolean stopped=resolutionJob!=null&&!cn.bidcheck.compat.Java8Api.isBlank(text(resolutionJob,"id"))&&cn.bidcheck.compat.Java8Api.setOf("BLOCKED_NO_PROGRESS", "FAILED").contains(text(resolutionJob,"status"));
         if(stopped&&cn.bidcheck.compat.Java8Api.setOf("SYSTEM_INCOMPLETE", "EVIDENCE_PENDING").contains(state))
             next="本轮自动补查已停止，需修复处理环节或补足检索条件后再启动；当前不据此要求补交材料。";
@@ -149,8 +169,53 @@ switch (state) {case "SYSTEM_INCOMPLETE":next = "需继续处理条款、证据�
             reason=progressLabel+"。"+reason;
             if("EVIDENCE_PENDING".equals(state)){label=progressLabel;next="查看对应子事项和仍未覆盖的招标要求。";}
         }
-        if("MATERIAL_REQUIRED".equals(state))next=reason;
+        if("MATERIAL_REQUIRED".equals(state)){
+            String volume=missingVolume(atomic);
+            String material=volume.contains("报价")?"其中的报价或报价清单":"该分册中的资料";
+            reason="未上传"+(volume.isEmpty()?"招标要求的分册":"《"+volume+"》")+"，本项需要"+material+"才能核对。";
+            next="请补充该分册后重新检测。";
+        }
+        if(manualTarget && "USER_ACTION".equals(state)){
+            LinkedHashSet<String> steps=new LinkedHashSet<>();
+            for(Map<String,Object> gap:maps(atomic.get("gaps"))){
+                String code=text(gap,"code");
+                if("FORM_CONDITION_COVERAGE_REQUIRED".equals(code))steps.add("请逐一核对各成员的文书和要求签署的位置。");
+                else if("VISUAL_MARK_UNREADABLE".equals(code))steps.add("请对照所列原图确认签字或盖章。");
+                else if("DIRECT_SIGNER_EXEMPTION_PROOF_REQUIRED".equals(code))steps.add("请确认是否由法定代表人本人直接签署，以判断授权书免交条件。");
+                else if("SCORING_BASE_CONFIGURATION_REQUIRED".equals(code)&&!baseScopeQuestion(atomic).isEmpty())steps.add(baseScopeQuestion(atomic));
+                else if(!text(gap,"description").isEmpty())steps.add(text(gap,"description"));
+            }
+            if(!steps.isEmpty())next=String.join(" ",steps);
+        }
         if("USER_ACTION".equals(state) && "WAIT_TAX_REFERENCE_DATE".equals(text(resolutionJob,"strategy")))next=text(resolutionJob,"nextAction");
+        if("USER_ACTION".equals(state)&&pendingCards==0&&!professionQuestion.isEmpty()) {
+            label="职称专业范围待确认"; next=professionQuestion+" 请在复核记录中注明口径和依据。职称计分仍须核对招标要求的共同证明。";
+        }
+        if("USER_ACTION".equals(state)){
+            String cardQuestion=cardQuestions(atomic);
+            Map<String,Object> variant=map(a.get("nameVariantAttribution"));
+            if(!cardQuestion.isEmpty()){reason=cardQuestion;next=cardQuestion;}
+            else if("OCR_ONLY_SINGLE_CHARACTER_NAME_DIFFERENCE".equals(text(variant,"code"))){
+                next=text(variant,"nextStep");if(next.isEmpty())next=text(variant,"question");
+                reason=text(variant,"reason").isEmpty()?next:text(variant,"reason");
+            }else if(manualTarget){reason=next;}
+            else if(!professionQuestion.isEmpty()){reason=professionQuestion;}
+            else {
+                String conditions=openConditions(atomic);
+                if(!conditions.isEmpty()){reason=conditions;
+                    if(!scoringReview&&!visualReview.unreadableOnly()&&!"WAIT_TAX_REFERENCE_DATE".equals(text(resolutionJob,"strategy"))
+                            &&!codes.contains("MISSING_TENDER_ATTACHMENT")&&!codes.contains("COST_APPLICABILITY_REQUIRED")&&!codes.contains("CAPABILITY_CRITERIA_REQUIRED"))
+                        next=conditions;
+                }
+            }
+        }
+        if("EVIDENCE_PENDING".equals(state)&&codes.contains("CERTIFICATE_SET_COVERAGE_REQUIRED")){
+            for(Map<String,Object> condition:maps(atomic.get("conditions")))if(map(condition.get("proof")).get("observedCertificateCount") instanceof Number){
+                Map<String,Object> p=map(condition.get("proof"));
+                reason="已核对 "+p.get("observedCertificateCount")+" 份证照"+locations(condition.get("evidences"))+"。当前适用证照清单尚未核全。";
+                next="请按当前项目和投标主体继续核对其余适用证照的有效期。";break;
+            }
+        }
         Map<String,Object> out=new LinkedHashMap<>();out.put("version",VERSION);out.put("state",state);out.put("label",label);out.put("owner",owner);
         out.put("reason",reason);out.put("nextStep",next);out.put("userActionRequired",userAction);out.put("finalStatus",status);
         if(!externalState.isEmpty())out.put("externalState",externalState);
@@ -233,6 +298,72 @@ switch (scope) {case "MATERIAL_SUBMISSION":label = "材料提交要求已满足"
         if(conditions.stream().allMatch(c->written.contains(text(c,"predicate"))))return cn.bidcheck.compat.Java8Api.mapOf("state", "WRITTEN_RESPONSE", "label", "书面要求已满足");
         if(conditions.stream().allMatch(c->factual.contains(text(c,"predicate"))))return cn.bidcheck.compat.Java8Api.mapOf("state", "BUSINESS_CONDITIONS", "label", "业务条件已验证");
         return unknown;
+    }
+    private static String missingVolume(Map<String,Object> atomic){
+        for(Map<String,Object> g:maps(atomic.get("gaps")))if("BID_VOLUME_NOT_UPLOADED".equals(text(g,"code"))&&!text(g,"requestedVolume").isEmpty())return text(g,"requestedVolume");
+        for(Map<String,Object> c:maps(atomic.get("conditions")))if(maps(c.get("gaps")).stream().anyMatch(g->"BID_VOLUME_NOT_UPLOADED".equals(text(g,"code")))){
+            String name=text(map(c.get("proof")),"requestedVolume");if(!name.isEmpty())return name;}
+        for(Map<String,Object> g:maps(atomic.get("gaps")))if("BID_VOLUME_NOT_UPLOADED".equals(text(g,"code"))){
+            String name=text(g,"requiredInput");if(name.matches("[^，。；;\\n]{1,60}"))return name;}
+        return "";
+    }
+    private static String locations(Object raw){
+        if(!(raw instanceof Collection<?>))return "";
+        Set<String> locations=new LinkedHashSet<>();
+        for(Object value:(Collection<?>)raw){
+            Map<String,Object> e=value instanceof cn.bidcheck.domain.Domain.Evidence?JSON.convertValue(value,Map.class):map(value);
+            Object page=e.containsKey("page")?e.get("page"):e.get("location");
+            if(!(page instanceof Number)||((Number)page).intValue()<1)continue;
+            locations.add("第"+page+("PAGE".equals(text(e,"locationType"))?"页":"段"));
+        }
+        return locations.isEmpty()?"":"（"+String.join("、",locations)+"）";
+    }
+    private static String cardQuestions(Map<String,Object> atomic){
+        Set<String> questions=new LinkedHashSet<>();
+        List<Map<String,Object>> candidates=new ArrayList<>(maps(atomic.get("inferredFacts")));
+        for(Map<String,Object> c:maps(atomic.get("conditions")))candidates.addAll(maps(map(c.get("proof")).get("inferredFacts")));
+        for(Map<String,Object> card:candidates)if("NEEDS_CONFIRMATION".equals(text(card,"status"))){
+            String q=text(card,"question");if(q.isEmpty())q=text(card,"claim");if(q.isEmpty())continue;
+            q=q.replaceAll("第\\[([0-9]+)\\]页","第$1页");
+            String where=locations(card.get("evidences"));
+            if(!where.isEmpty()&&!q.contains(where.substring(1,where.length()-1)))q="请核对"+where+"。"+q;
+            if(!q.startsWith("请")&&!q.endsWith("？")&&!q.endsWith("?"))q="请确认："+q;
+            questions.add(q);
+        }
+        return String.join(" ",questions);
+    }
+    private static String baseScopeQuestion(Map<String,Object> atomic){
+        for(Map<String,Object> c:maps(atomic.get("conditions"))){
+            Map<String,Object> proof=map(c.get("proof")),base=map(proof.get("baseConfiguration"));
+            if(!"source-extra-personnel-score-1".equals(text(proof,"executor"))||maps(base.get("gaps")).stream().noneMatch(g->"SCORING_BASE_REQUIREMENT_SOURCE_REQUIRED".equals(text(g,"code"))))continue;
+            return "请核对招标文件的人员要求"+locations(proof.get("baseRequirementSources"))+"，确认本项增员评分采用哪些基础岗位、人数和资格条件。";
+        }
+        return "";
+    }
+    private static String openConditions(Map<String,Object> atomic){
+        Set<String> steps=new LinkedHashSet<>();
+        for(Map<String,Object> c:maps(atomic.get("conditions")))if(!maps(c.get("gaps")).isEmpty()||Arrays.asList("UNDETERMINED","NEEDS_CONFIRMATION").contains(text(c,"status"))){
+            String title=text(c,"title");if(title.isEmpty())title=text(c,"description");if(title.isEmpty())continue;
+            String where=locations(c.get("evidences"));
+            if(where.isEmpty())where=locations(Collections.singletonList(map(map(c.get("requirementContext")).get("identity"))));
+            steps.add("请核对"+title+where+"。");
+        }
+        return String.join(" ",steps);
+    }
+    static String titleProfessionQuestion(Map<String,Object> atomic) {
+        String code="SCORING_TITLE_PROFESSION_SCOPE_REQUIRED";
+        List<Map<String,Object>> gaps=maps(atomic.get("gaps"));
+        if(gaps.isEmpty()||gaps.stream().anyMatch(g->!code.equals(text(g,"code")))) return "";
+        for(Map<String,Object> condition:maps(atomic.get("conditions"))) {
+            Map<String,Object> proof=map(condition.get("proof")), review=map(proof.get("professionScopeReview"));
+            if(Boolean.TRUE.equals(condition.get("evaluated"))&&"REQUIREMENT".equals(text(condition,"conditionRole"))
+                    &&"SOURCE_BOUND_TITLE_PROFESSION_REVIEW".equals(text(proof,"decisionBasis"))
+                    &&Boolean.FALSE.equals(proof.get("scoreProduced"))&&condition.get("evidences") instanceof Collection<?>
+                    &&!((Collection<?>)condition.get("evidences")).isEmpty()
+                    &&maps(condition.get("gaps")).stream().anyMatch(g->code.equals(text(g,"code"))))
+                return text(review,"question");
+        }
+        return "";
     }
     private static boolean verifiedScoringReview(Map<String,Object> atomic){
         Set<String> reviewCodes=cn.bidcheck.compat.Java8Api.setOf("QUALITY_GRADE_REVIEW_REQUIRED", "SCORE_SOURCE_LIST_AMBIGUOUS");

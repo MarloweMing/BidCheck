@@ -60,6 +60,7 @@ final class ProofVerifier {
             } else {
                 Map<String,Object> rejection = linked("id", id, "kind", f.kind(), "subject", redact(f.subject()),
                     "field", f.field(), "code", issue, "sourceIds", refs);
+                if ("RAW_VALUE_UNGROUNDED".equals(issue)) rejection.put("fieldPath","/fact/rawValue");
                 if ("CONTRACT".equals(f.kind()) && issue.startsWith("CONTRACT_")
                         && refs.stream().allMatch(sources::containsKey)) {
                     Map<String,Object> detail = contractFailure(f, cn.bidcheck.compat.Java8Api.toList(refs.stream().map(sources::get)));
@@ -118,6 +119,17 @@ final class ProofVerifier {
             references.stream().map(source -> source.evidence().quote())));
         String name = str(fact.attributes(), "contractName");
         String number = str(fact.attributes(), "contractNumber");
+        boolean anchored = fact.attributes().containsKey("recordAnchorSourceIds") || fact.attributes().containsKey("contractRecordId");
+        if(!anchored && fact.attributes().containsKey(ContractEvidenceRecord.FIELD_SOURCES))
+            return contractFailure("CONTRACT_RECORD_NOT_HOST_ISSUED", "attributes/"+ContractEvidenceRecord.FIELD_SOURCES);
+        if (anchored && (contractBindings == null || !contractBindings.revalidateRecord(fact, references)))
+            return contractFailure("CONTRACT_PAGE_LINK_UNPROVEN", "sourceIds");
+        Set<String> fieldSources=ContractEvidenceRecord.fieldSourceIds(fact);
+        List<Source> fields = anchored ? cn.bidcheck.compat.Java8Api.toList(references.stream().filter(s -> fieldSources.contains(s.id()))) : references;
+        String fieldText = String.join("\n",cn.bidcheck.compat.Java8Api.toList(fields.stream().map(s -> s.evidence().quote())));
+        if (anchored && ContractCandidateFields.identityAttribute(fact.field()).isEmpty()
+                && fields.stream().noneMatch(s -> contains(s.evidence().quote(),fact.rawValue())))
+            return contractFailure("RAW_VALUE_UNGROUNDED", "rawValue");
         if (cn.bidcheck.compat.Java8Api.isBlank(name) && cn.bidcheck.compat.Java8Api.isBlank(number))
             return contractFailure("CONTRACT_IDENTITY_UNPROVEN", "attributes");
         String identityConflict = ContractCandidateFields.conflict(fact);
@@ -126,7 +138,7 @@ final class ProofVerifier {
         for (String key : cn.bidcheck.compat.Java8Api.listOf("contractName", "contractNumber", "party", "person", "personRole")) {
             String value = str(fact.attributes(), key);
             if (!cn.bidcheck.compat.Java8Api.isBlank(value)
-                    && !("contractName".equals(key) ? ContractCandidateFields.containsTitle(text, value) : contains(text, value)))
+                    && !("contractName".equals(key) ? ContractCandidateFields.containsTitle(text, value) : contains("contractNumber".equals(key) ? text : fieldText, value)))
                 return contractFailure("CONTRACT_ATTRIBUTE_UNGROUNDED", "attributes/" + key);
         }
         // Preserve the existing cross-page identity gate and its validation order.
@@ -134,44 +146,110 @@ final class ProofVerifier {
             !(ContractCandidateFields.containsTitle(source.evidence().quote(), name) || contains(source.evidence().quote(), number)));
         if (requiresRecordBinding && (contractBindings == null || !contractBindings.matches(fact, references)))
             return contractFailure("CONTRACT_PAGE_LINK_UNPROVEN", "sourceIds");
+        text = fieldText;
+        references = fields;
         String amount = str(fact.attributes(), "amount");
         String basis = str(fact.attributes(), "amountBasis");
         if (!cn.bidcheck.compat.Java8Api.isBlank(amount)) {
             if (!numberPresent(text, amount))
                 return contractFailure("CONTRACT_AMOUNT_BASIS_UNPROVEN", "attributes/amount");
-            if (cn.bidcheck.compat.Java8Api.isBlank(basis)
-                    || references.stream().noneMatch(source -> near(source.evidence().quote(), basis, amount)))
+            List<String> amountContexts=new ArrayList<>();
+            for(Source source:references) {
+                String quote=source.evidence().quote();
+                if(near(quote,basis,amount))amountContexts.add(numericContext(quote,basis,amount));
+                else if(fact.attributes().containsKey(ContractEvidenceRecord.FIELD_SOURCES)
+                        && strings(fact.attributes().get("recordAnchorSourceIds")).contains(source.id())){
+                    Matcher m=NEXT_LINE_CONTRACT_PRICE.matcher(quote);
+                    while(m.find())if(basis.equals(m.group(1))&&decimal(amount).compareTo(decimal(m.group(2)))==0)
+                        amountContexts.add(m.group());
+                }
+            }
+            if (cn.bidcheck.compat.Java8Api.isBlank(basis) || amountContexts.isEmpty())
                 return contractFailure("CONTRACT_AMOUNT_BASIS_UNPROVEN", "attributes/amountBasis");
+            String unit=str(fact.attributes(),"unit");
+            if(cn.bidcheck.compat.Java8Api.isBlank(unit)||amountContexts.stream().noneMatch(line->unitBound(line,amount,unit)))
+                return contractFailure("CONTRACT_AMOUNT_UNIT_UNPROVEN", "attributes/unit");
         }
-        if (!cn.bidcheck.compat.Java8Api.isBlank(amount)
-                && (cn.bidcheck.compat.Java8Api.isBlank(str(fact.attributes(), "unit"))
-                    || references.stream().noneMatch(source -> near(source.evidence().quote(), basis, amount)
-                        && unitBound(numericContext(source.evidence().quote(), basis, amount), amount, str(fact.attributes(), "unit")))))
-            return contractFailure("CONTRACT_AMOUNT_UNIT_UNPROVEN", "attributes/unit");
         String tax = str(fact.attributes(), "taxBasis");
         if (!cn.bidcheck.compat.Java8Api.isBlank(tax) && !taxBound(text, basis, amount, tax))
             return contractFailure("CONTRACT_TAX_BASIS_UNPROVEN", "attributes/taxBasis");
         String signed = str(fact.attributes(), "signedDate");
         if (!datePresent(text, signed)) return contractFailure("CONTRACT_DATE_UNGROUNDED", "attributes/signedDate");
-        if (requiresRecordBinding && !signed.isEmpty() && !ContractRecordBindings.signingDate(signed, references))
+        if (!signed.isEmpty() && SigningDateBlock.read(references).status==SigningDateBlock.Status.CONFLICT)
+            return contractFailure("CONTRACT_SIGNING_DATE_CONFLICT", "attributes/signedDate");
+        if ((requiresRecordBinding || anchored) && !signed.isEmpty() && !ContractRecordBindings.signingDate(signed, references))
             return contractFailure("CONTRACT_SIGNING_DATE_ROLE_UNPROVEN", "attributes/signedDate");
         return Collections.emptyMap();
     }
     private static Map<String,Object> contractFailure(String code, String path) {
         return linked("code", code, "fieldPath", "/fact/" + path);
     }
+    /** A line-wrapped printed RMB price, ending before any following tax breakdown. */
+    private static final Pattern NEXT_LINE_CONTRACT_PRICE=Pattern.compile(
+        "(?m)^[ \\t#]*(?:[0-9一二三四五六七八九十]{1,3}[.．、][ \\t]*)?"
+        +"(签约合同价|签约合同金额|合同金额|合同总价|暂定签约合同价)(?:为)?[ \\t]*[：:][ \\t]*(?:\\R[ \\t]*)+"
+        +"人民币[（(]大写[）)][ \\t：:]*[零〇壹贰叁肆伍陆柒捌玖拾佰仟万萬亿億元圆圓角分整正]+[ \\t]*[（(][ \\t]*[¥￥]"
+        +"([0-9]+(?:[,，][0-9]{3})*(?:\\.[0-9]+)?)[ \\t]*(?:万元|元)[ \\t]*[）)](?=[ \\t。；;，,]|$)");
     static boolean contains(String text,String value){return value!=null&&!clean(value).isEmpty()&&clean(text).contains(clean(value));}
     static boolean near(String text,String a,String b){if(cn.bidcheck.compat.Java8Api.isBlank(a)||cn.bidcheck.compat.Java8Api.isBlank(b))return false;int p=text.indexOf(a);while(p>=0){String window=text.substring(Math.max(0,p-12),Math.min(text.length(),p+a.length()+120));if(b.matches("[0-9,，.]+")){String tail=text.substring(p+a.length(),Math.min(text.length(),p+a.length()+100)).split("[;；。\\n|]",2)[0];Matcher first=Pattern.compile("(?:\\d{1,3}(?:[,，]\\d{3})+|\\d+)(?:\\.\\d+)?").matcher(tail);if(first.find()&&decimal(first.group()).compareTo(decimal(b))==0)return true;}else if(contains(window,b))return true;p=text.indexOf(a,p+1);}return false;}
     static boolean numberPresent(String text,String value){BigDecimal expected=decimal(value);if(expected==null)return false;Matcher m=Pattern.compile("(?<![\\d.])(?:\\d{1,3}(?:[,，]\\d{3})+|\\d+)(?:\\.\\d+)?(?![\\d.])").matcher(text);while(m.find()){BigDecimal parsed=decimal(m.group());if(parsed!=null&&parsed.compareTo(expected)==0)return true;}return false;}
     static BigDecimal decimal(Object text){try{return new BigDecimal(cn.bidcheck.compat.Java8Api.strip(String.valueOf(text)).replace(",","").replace("，",""));}catch(Exception ignored){return null;}}
-    static boolean unitBound(String text,String value,String unit){BigDecimal v=decimal(value);if(v==null)return false;Matcher m=Pattern.compile("(?<![\\d.])((?:\\d{1,3}(?:[,，]\\d{3})+|\\d+)(?:\\.\\d+)?)\\s*(亿元|万元|美元|欧元|港元|CNY|RMB|USD|EUR|HKD|元|个月|月|年|天|日|项|个)(?![\\p{IsHan}]*元)").matcher(text);while(m.find())if(decimal(m.group(1)).compareTo(v)==0&&(m.group(2).equals(unit)||RequirementGrounding.unitEquals(m.group(2),unit)))return true;return false;}
+    static boolean unitBound(String text,String value,String unit){BigDecimal v=decimal(value);if(v==null)return false;Matcher m=Pattern.compile("(?<![\\d.\\[【(（])((?:\\d{1,3}(?:[,，]\\d{3})+|\\d+)(?:\\.\\d+)?)\\s*(亿元|万元|美元|欧元|港元|CNY|RMB|USD|EUR|HKD|元|个月|月|年|天|日|项|个)(?![\\p{IsHan}]*元)").matcher(unbracketAmount(text));while(m.find())if(decimal(m.group(1)).compareTo(v)==0&&(m.group(2).equals(unit)||RequirementGrounding.unitEquals(m.group(2),unit)))return true;return false;}
+    private static String unbracketAmount(String text){
+        Matcher m=Pattern.compile("([【\\[(（])[ \\t]*((?:\\d{1,3}(?:[,，]\\d{3})+|\\d+)(?:\\.\\d+)?)[ \\t]*([】\\])）])").matcher(text);
+        StringBuffer out=new StringBuffer();
+        while(m.find()){
+            String open=m.group(1),close=m.group(3);
+            boolean paired="【".equals(open)&&"】".equals(close)||"[".equals(open)&&"]".equals(close)
+                ||"(".equals(open)&&")".equals(close)||"（".equals(open)&&"）".equals(close);
+            m.appendReplacement(out,Matcher.quoteReplacement(paired?m.group(2):m.group()));
+        }
+        m.appendTail(out);return out.toString();
+    }
     static String[] segments(String text){return text.split("[；;。\\n|]|(?<!\\d)[,，]|[,，](?!\\d{3}(?!\\d))");}
     static String numericContext(String text,String label,String value){if(cn.bidcheck.compat.Java8Api.isBlank(label))return "";for(String segment:segments(text)){if(near(segment,label,value))return segment.substring(segment.indexOf(label));}return "";}
-    static boolean taxBound(String text,String basis,String value,String tax){for(String line:segments(text)){if(!near(line,basis,value))continue;String actual=line.contains("不含税")||line.contains("未税")||line.contains("税前")?"不含税":line.contains("含税")||line.contains("税后")?"含税":"";String desired=tax.contains("不含税")||tax.contains("未税")||tax.contains("税前")?"不含税":tax.contains("含税")||tax.contains("税后")?"含税":tax;if(actual.equals(desired))return true;}return false;}
+    static boolean taxBound(String text,String basis,String value,String tax){
+        String desired=taxKey(tax);BigDecimal expected=decimal(value);
+        if(desired.isEmpty()||expected==null)return false;
+        Pattern numbers=Pattern.compile("(?<![\\d.])(?:\\d{1,3}(?:[,，]\\d{3})+|\\d+)(?:\\.\\d+)?(?![\\d.])");
+        Pattern labels=Pattern.compile("不含税|含税|未税|税前|税后");
+        for(String line:segments(text)){
+            if(!near(line,basis,value))continue;
+            Matcher n=numbers.matcher(line);
+            while(n.find()){
+                if(decimal(n.group()).compareTo(expected)!=0)continue;
+                Matcher label=labels.matcher(line.substring(0,n.start()));
+                String actual="";int end=-1;
+                while(label.find()){actual=taxKey(label.group());end=label.end();}
+                if(end>=0&&(n.start()-end>60||numbers.matcher(line.substring(end,n.start())).find()))actual="";
+                // A trailing tax qualification must be attached to this same amount.
+                Matcher trailing=Pattern.compile("^[ \\t]*(?:亿元|万元|美元|欧元|港元|元|CNY|RMB)?[ \\t]*[（(]?[ \\t]*(不含税|含税|未税|税前|税后)(?=[ \\t）);；。]|$)").matcher(line.substring(n.end()));
+                if(trailing.find()){
+                    String suffix=taxKey(trailing.group(1));
+                    if(!actual.isEmpty()&&!actual.equals(suffix))continue;
+                    actual=suffix;
+                }
+                if(desired.equals(actual))return true;
+            }
+        }
+        return false;
+    }
+    private static String taxKey(String tax){
+        if(tax==null)return "";
+        String upper=tax.trim().toUpperCase(java.util.Locale.ROOT);
+        if(Arrays.asList("TAX_EXCLUSIVE","EXCLUDING_TAX","EXCLUSIVE","EXCLUSIVE_TAX").contains(upper)
+                ||tax.contains("不含税")||tax.contains("未税")||tax.contains("税前"))return "不含税";
+        if(Arrays.asList("TAX_INCLUSIVE","INCLUDING_TAX","INCLUSIVE","INCLUSIVE_TAX").contains(upper)
+                ||tax.contains("含税")||tax.contains("税后"))return "含税";
+        return "";
+    }
     static String subjectBlock(String text,String subject){if(cn.bidcheck.compat.Java8Api.isBlank(subject))return "";int p=text.indexOf(subject);if(p<0)return "";int start=Math.max(0,p-120),end=Math.min(text.length(),p+800);Matcher labels=Pattern.compile("(?:姓名|持证人|企业名称|单位名称)\\s*[:：]").matcher(text);while(labels.find()){if(labels.start()<p&&labels.end()<=p&&p-labels.end()<30)start=Math.max(start,labels.start());if(labels.start()>p+subject.length()){end=Math.min(end,labels.start());break;}}return text.substring(start,end);}
     /** A title/number immediately above a labelled holder belongs to the same certificate.
      * Never extend a general person/price block, or cross another holder or a second certificate. */
     static String certificateBlock(String text,Fact fact){
+        return CertificateRecordBindings.selectSegment(certificateHolderBlock(text,fact),fact);
+    }
+    private static String certificateHolderBlock(String text,Fact fact){
         String professionalTitle=ProfessionalTitleCertificate.block(text,fact);if(!cn.bidcheck.compat.Java8Api.isBlank(professionalTitle))return professionalTitle;
         String subject=fact.subject(),category=str(fact.attributes(),"category"),base=subjectBlock(text,subject);
         if(cn.bidcheck.compat.Java8Api.isBlank(base)||cn.bidcheck.compat.Java8Api.isBlank(category))return base;

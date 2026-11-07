@@ -23,13 +23,20 @@ final class ConfirmedSubjectBindings {
                 if(role.sourceIds().isEmpty()||role.sourceIds().stream().anyMatch(id->{Source s=corpus.byId.get(id);return s==null||s.index()||s.historical()||s.scopeContext().blocked();}))continue;
                 Set<String> documents=new HashSet<>();role.sourceIds().forEach(id->documents.add(corpus.byId.get(id).evidence().documentId()));proof.sourceIds().forEach(id->documents.add(corpus.byId.get(id).evidence().documentId()));if(documents.size()!=1)continue;
                 // Approval cannot silently erase a contradictory explicit identity number.
-                Set<String> identifiers=new HashSet<>();identifiers.addAll(identifiers(role,corpus));identifiers.addAll(identifiers(proof,corpus));if(identifiers.size()>1)continue;
+                Set<String> identifiers=new HashSet<>();identifiers.addAll(identifiers(role,corpus));identifiers.addAll(identifiers(proof,corpus));if(identifiers.size()>1||IdentityNumberEvidence.compare(role,proof,corpus)==IdentityNumberEvidence.Match.CONFLICT)continue;
                 return linked("method","HUMAN_CONFIRMED_CITED_IDENTITY_PAIR","confirmation",relation.attributes().get("humanConfirmation"),"confirmationFactId",relation.id(),"appointmentFactId",role.id(),"proofFactId",proof.id(),"person",person,"originalHolder",owner,"appointmentSourceIds",role.sourceIds(),"proofSourceIds",proof.sourceIds(),"fieldsRewritten",false,"doesNotProveCredentialValidity",true);
             }
-        }return cn.bidcheck.compat.Java8Api.mapOf();
+        }
+        for(Fact role:facts){
+            if(!role.kind().equals("PERSON_ROLE")||!role.value().equals(person)||(!roleId.isEmpty()&&!roleId.equals(role.id()))||!role.scope().equals("CURRENT_PROJECT")||!DomainBindings.currentRoleSource(role,corpus.byId))continue;
+            if(person.equals(owner)&&IdentityNumberEvidence.compare(role,proof,corpus)==IdentityNumberEvidence.Match.SAME)
+                return linked("method","ID_NUMBER_MATCH","businessProof",false,"person",person,"appointmentSourceIds",role.sourceIds(),"proofSourceIds",proof.sourceIds(),"fieldsRewritten",false);
+        }
+        return cn.bidcheck.compat.Java8Api.mapOf();
     }
-    static Set<String> identifiers(Fact fact,EvidenceCorpus corpus){Map<String,Object> entity=cn.bidcheck.verification.facts.EntityIdentity.resolvePerson(SubjectIdentity.person(fact),LayoutBinding.sources(fact,corpus.byId));Set<String> result=new HashSet<>();for(java.util.Map<java.lang.String, java.lang.Object> claim:RuleEvaluator.maps(entity.get("identityClaims")))if("CN_ID".equals(str(claim,"field"))&&!cn.bidcheck.compat.Java8Api.isBlank(str(claim,"valueFingerprint")))result.add(str(claim,"valueFingerprint"));
-        if(fact.kind().equals("CERTIFICATE")){Fact numbered=new Fact(fact.id(),fact.kind(),fact.subject(),fact.field(),fact.rawValue(),str(fact.attributes(),"number"),fact.unit(),fact.basis(),fact.scope(),fact.sourceIds(),fact.attributes());cn.bidcheck.verification.engine.CertificateSourceComparison.Record record=CertificateRecordBindings.matching(numbered,corpus.byId);if(record!=null&&record.value("PERSON_ID").matches("[0-9]{17}[0-9Xx]"))result.add(identity(record.value("PERSON_ID").toUpperCase(Locale.ROOT)));}return result;}
+    static Set<String> identifiers(Fact fact,EvidenceCorpus corpus){
+        Set<String> result=new HashSet<>(IdentityNumberEvidence.read(fact,corpus).complete);
+        if(fact.kind().equals("CERTIFICATE")){Fact numbered=new Fact(fact.id(),fact.kind(),fact.subject(),fact.field(),fact.rawValue(),str(fact.attributes(),"number"),fact.unit(),fact.basis(),fact.scope(),fact.sourceIds(),fact.attributes());cn.bidcheck.verification.engine.CertificateSourceComparison.Record record=CertificateRecordBindings.matching(numbered,corpus.byId);if(record!=null&&cn.bidcheck.verification.source.CitizenId.valid(record.value("PERSON_ID")))result.add(identity(record.value("PERSON_ID").toUpperCase(Locale.ROOT)));}return result;}
     static Fact recordIdentity(CertificateSourceComparison.Record record){cn.bidcheck.verification.engine.CertificateSourceComparison.Field number=record.fields().get("CERTIFICATE_NUMBER");if(number==null)number=record.fields().get("REGISTRATION_NUMBER");if(number==null)return null;return new Fact("personnel-record:"+record.id(),"CERTIFICATE",record.owner(),"证书",number.raw(),number.value(),"","","UNRESOLVED",cn.bidcheck.compat.Java8Api.toList(record.sources().stream().map(Source::id)),cn.bidcheck.compat.Java8Api.mapOf("category", record.category(), "number", number.value(), "numberField", number.label()));}
     static boolean recordMatches(String person,CertificateSourceComparison.Record record,RuleEvaluator evaluator){if(record.owner().equals(person))return true;Fact identity=recordIdentity(record);return identity!=null&&matches(person,identity,evaluator.facts,evaluator.corpus);}
 }

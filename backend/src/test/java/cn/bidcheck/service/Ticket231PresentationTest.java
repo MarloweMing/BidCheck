@@ -22,6 +22,13 @@ class Ticket231PresentationTest {
         assertEquals(true,view("UNDETERMINED",a).get("userActionRequired"));
         assertEquals("系统取证中",view("UNDETERMINED",Collections.emptyMap()).get("label"));
     }
+    @Test void recordedEvidenceGapAndAwaitingFirstEvidenceKeepDistinctLabelsUnderSameState() {
+        Map<String,Object> awaiting=view("UNDETERMINED",Collections.emptyMap());
+        Map<String,Object> investigated=view("UNDETERMINED",mapOf("atomicCheck",mapOf("gaps",listOf(mapOf("code","CERTIFICATE_SET_COVERAGE_REQUIRED")))));
+        assertEquals("EVIDENCE_PENDING",awaiting.get("state"));assertEquals("EVIDENCE_PENDING",investigated.get("state"));
+        assertEquals("系统取证中",awaiting.get("label"));assertEquals("证据待核",investigated.get("label"));
+        assertEquals("SYSTEM",awaiting.get("owner"));assertEquals("SYSTEM",investigated.get("owner"));
+    }
     @Test void ownerDataDoesNotRequireAnOperatorToRepairAConnector() {
         Map<String,Object> a=mapOf("atomicCheck",mapOf("gaps",listOf(mapOf("code","EXTERNAL_OWNER_DATA_REQUIRED"))));
         assertEquals("WAIT_EXTERNAL",view("UNDETERMINED",a).get("state"));

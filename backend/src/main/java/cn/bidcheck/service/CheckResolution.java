@@ -139,7 +139,7 @@ public final class CheckResolution {
         if(unresolved(f)&&Boolean.TRUE.equals(retained.get("retainedCompletedProof"))&&retained.get("processingFailed") instanceof Boolean
             &&!map(retained.get("latestPlan")).isEmpty())return new LinkedHashMap<>(map(retained.get("latestPlan")));
         List<Map<String,Object>> gaps=maps(a.get("gaps"));
-        Set<String> codes=new LinkedHashSet<>();gaps.forEach(g->codes.add(text(g,"code")));
+        Set<String> codes=new LinkedHashSet<>();gaps.stream().filter(g->!RequirementFailureOwnership.inherited(f,g)).forEach(g->codes.add(text(g,"code")));
         maps(assessment.get("adjustments")).forEach(g->codes.add(text(g,"code")));
         maps(assessment.get("externalQueryDiagnostics")).forEach(g->codes.add(text(g,"code")));
         Map<String,Object> externalState=ExternalCheckState.describe(assessment,cn.bidcheck.compat.Java8Api.mapOf());
@@ -148,11 +148,20 @@ public final class CheckResolution {
             return fields("strategy","NONE","status","SUCCEEDED","reason","全文扫描已结束，当前记录保留为提示","nextAction","查看扫描范围和已有原文");
         if(!unresolved(f))return fields("strategy","NONE","status","SUCCEEDED","reason","已形成结论","nextAction","查看判断依据");
         if(codes.contains("BID_VOLUME_NOT_UPLOADED"))return fields("strategy","WAIT_VOLUME_UPLOAD","status","WAITING_USER","reason","尚未提供条款要求的分册","nextAction",f.evaluation().reason());
+        List<String> failedDependencies=RequirementFailureOwnership.failedDependencies(f);
+        if(!failedDependencies.isEmpty()&&!RecoveryTransition.hasProcessingFailure(f)){
+            org.slf4j.LoggerFactory.getLogger(CheckResolution.class).info("bidcheck.dependency_failure_owner runId={} checkpointId={} sourceCheckpointIds={} strategy=WAIT_REQUIREMENT_DEPENDENCIES modelAllowed=false",
+                f.runId(),f.checkpoint().id(),failedDependencies);
+            return fields("strategy","WAIT_REQUIREMENT_DEPENDENCIES","status","BLOCKED_NO_PROGRESS",
+                "reason","子事项仍有待处理诊断；技术重试属于源子事项，父清单不重复调用取证。",
+                "nextAction","源子事项结果更新后，在本地重新汇总；其他缺材料或业务缺口分别保留。","dependencyFailureOwners",failedDependencies);
+        }
         Map<String,Object> compilation=map(a.get("compilationAudit"));
         TrustedVisualReview.Result visualReview=TrustedVisualReview.inspect(assessment);
         List<Map<String,Object>> pendingVisual=TrustedVisualReview.pendingRequests(a,visualReview.observations());
         boolean invalidCompilation=cn.bidcheck.compat.Java8Api.setOf("UNRESOLVED", "VALIDATION_FAILED", "REPAIR_RETRY_PENDING").contains(text(compilation,"state"))
             ||codes.stream().anyMatch(RecoveryFailureRouting::requirement);
+        String professionQuestion=BusinessResultPresentation.titleProfessionQuestion(a);
         if(!invalidCompilation&&(map(a.get("proof")).get("pendingConfirmationCount") instanceof Number&&((Number)map(a.get("proof")).get("pendingConfirmationCount")).intValue()>0||
             "NEEDS_CONFIRMATION".equals(f.evaluation().status())&&codes.equals(cn.bidcheck.compat.Java8Api.setOf("INFERENCE_CONFIRMATION_REQUIRED"))))
             return fields("strategy","WAIT_INFERENCE_CONFIRMATION","status","WAITING_USER","reason","已有带原文引用的推断需要确认，尚未构成业务通过。","nextAction","确认或否定下方推断后重算；相同证据不再自动重复调查。");
@@ -172,6 +181,12 @@ public final class CheckResolution {
                 &&codes.stream().allMatch(c->Arrays.asList("CURRENT_TAXPAYER_PROOF_REQUIRED","VISUAL_MARK_UNREADABLE","VISUAL_OBSERVATION_REQUIRED").contains(c))){
             strategy="WAIT_TAX_REFERENCE_DATE";status="WAITING_USER";reason="尚未取得适用当前时点的纳税人证明。";
             next="请核对当前单位税务证明的查询时点，或补充带查询日期的截图。";
+        }else if(!invalidCompilation&&!professionQuestion.isEmpty()&&pendingVisual.isEmpty()
+                &&codes.equals(Collections.singleton("SCORING_TITLE_PROFESSION_SCOPE_REQUIRED"))){
+            boolean socialPending=maps(a.get("conditions")).stream().anyMatch(c->Boolean.TRUE.equals(map(c.get("proof")).get("titleSocialReadPending")));
+            strategy=socialPending?"TARGETED_EVIDENCE":"WAIT_TITLE_PROFESSION_SCOPE";status=socialPending?"QUEUED":"WAITING_USER";
+            reason=socialPending?"专业口径需确认，同时仍须单独读取同一人员的社保记录。":"人员与证书已对应，需依据招标评分标准明确专业范围。";
+            next=professionQuestion;
         }else if(agentStalledWithRemainingTargets(f)){
             strategy="WAIT_AGENT_INPUT_CHANGE";status="FAILED";
             reason="自动查证在重复无收益路径上停止，仍有目标尚未处理；这属于系统未完成，不能认定相关材料缺失。";
@@ -185,9 +200,12 @@ public final class CheckResolution {
             reason="招标正文引用的技术规范书附件尚未上传，系统无法确定该附件要求的完整文件清单。";
             next="补充招标文件引用的《技术规范书》及其附件；这是招标依据缺口，不表示投标文件缺材料。";
         }else if(codes.contains("CAPABILITY_CRITERIA_REQUIRED")&&!invalidCompilation){
-            strategy="WAIT_REQUIREMENT_CRITERIA";status="WAITING_USER";
+            boolean sourcePending=maps(a.get("conditions")).stream().map(c->map(map(c.get("proof")).get("registrationHostRead")))
+                .anyMatch(read->"CURRENT_HOST_TEXT_READ".equals(text(read,"authority"))&&read.get("pendingSourceIds") instanceof Collection
+                    &&!((Collection<?>)read.get("pendingSourceIds")).isEmpty());
+            strategy=sourcePending?"TARGETED_EVIDENCE":"WAIT_REQUIREMENT_CRITERIA";status=sourcePending?"QUEUED":"WAITING_USER";
             reason="原文要求具备履约能力，但没有给出具体指标或认可的证明方式，营业执照不能代替能力证明。";
-            next="依据招标澄清明确核验标准及证明方式后重算；保留已核登记证照，不重复提取相同文件。";
+            next=sourcePending?"独立登记声明或证照仍有可读来源。仅核对这些来源；履约能力标准另待澄清。":"依据招标澄清明确核验标准及证明方式后重算；保留已核登记证照，不重复提取相同文件。";
         }else if(codes.stream().anyMatch(c->c.startsWith("REQUIREMENT_INVENTORY_"))){
             strategy="WAIT_REQUIREMENT_DEPENDENCIES";status="BLOCKED_NO_PROGRESS";
             reason="招标要求清单或其子事项仍有未完成范围，不能用部分材料证明全部要求。";
@@ -273,9 +291,9 @@ public final class CheckResolution {
         return value instanceof Collection<?>&&((Collection<?>) (value)).stream().anyMatch(CheckResolution::retryable);
     }
     public static Finding attach(Finding f,Map<String,Object> job){
-        if(job==null||job.isEmpty())return f;
+        if(job==null||job.isEmpty())return FocusedCheckEvaluator.publishedFinding(f,f.assessment());
         Map<String,Object> assessment=new LinkedHashMap<>(map(f.assessment()));assessment.put("resolutionJob",job);
-        return new Finding(f.id(),f.runId(),f.checkpoint(),f.evaluation(),FocusedCheckEvaluator.reconcileAssessment(f.evaluation(),assessment));
+        return FocusedCheckEvaluator.publishedFinding(f,assessment);
     }
     public static Map<String,Object> summary(Map<String,Object> run,List<Finding> findings,List<Map<String,Object>> jobs,String currentPolicy){
         return summary(run,findings,jobs,currentPolicy,0);

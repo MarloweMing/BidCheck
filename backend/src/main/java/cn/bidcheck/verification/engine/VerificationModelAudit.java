@@ -64,7 +64,7 @@ public final class VerificationModelAudit {
             if(!enabled())return cn.bidcheck.compat.Java8Api.mapOf("status", "DISABLED");
             try{
                 Path folder=java.nio.file.Paths.get(directory).toAbsolutePath().normalize().resolve("java-model");Files.createDirectories(folder);
-                JsonNode raw=JSON.valueToTree(payload),sanitized=sanitize(raw,secret,0);byte[] payloadBytes=JSON.writeValueAsBytes(sanitized);
+                JsonNode raw=JSON.valueToTree(payload),sanitized=sanitize(raw,secret,0);String encodedPayload=JSON.writeValueAsString(sanitized),maskedPayload=cn.bidcheck.verification.source.CitizenId.maskJson(encodedPayload);if(!encodedPayload.equals(maskedPayload))sanitized=JSON.readTree(maskedPayload);byte[] payloadBytes=maskedPayload.getBytes(java.nio.charset.StandardCharsets.UTF_8);
                 Map<String,Object> document=new LinkedHashMap<>(context);document.put("version",VERSION);document.put("direction",direction);document.put("savedAt",Instant.now().toString());document.putAll(metadata);
                 document.put("credentialsRedacted",!raw.equals(sanitized));document.put("payloadBytes",payloadBytes.length);document.put("payloadSha256",sha(payloadBytes));document.put("payload",sanitized);
                 byte[] encoded=JSON.writerWithDefaultPrettyPrinter().writeValueAsBytes(document);boolean omitted=encoded.length>limit;

@@ -112,7 +112,14 @@ final class SourceExtraPersonnelScore {
         }
         if(candidates.isEmpty())return missingBase(rule,e,"冻结招标文件中尚未唯一定位完整基础人员配置要求");
         Set<String> configurations=new HashSet<>();for(java.util.Map.Entry<cn.bidcheck.domain.Domain.Document, cn.bidcheck.domain.Domain.Page> candidate:candidates)configurations.add(clean(ScoringSourceSegments.body(candidate.getValue().text())));
-        if(configurations.size()!=1)return missingBase(rule,e,"招标文件存在不同的基础配置口径，须先确定适用版本");
+        if(configurations.size()!=1){
+            List<Map<String,Object>> references=new ArrayList<>();
+            for(Map.Entry<Document,Page> candidate:candidates){Page section=candidate.getValue();Document document=candidate.getKey();
+                references.add(linked("documentId",document.id(),"documentHash",document.sha256(),"documentVersion",document.version(),
+                    "location",section.number(),"locationType",section.locationType(),"sourceHash",identity(section.text()),"lotScope",lot));}
+            return new Base(e.unknown(rule,"SCORING_BASE_REQUIREMENT_SOURCE_REQUIRED","招标文件存在不同的基础配置口径，须先确定适用版本",Collections.emptyList()),
+                Collections.emptyList(),references);
+        }
         java.util.Map.Entry<cn.bidcheck.domain.Domain.Document, cn.bidcheck.domain.Domain.Page> selected=candidates.stream().min(Comparator.comparingInt(v->v.getValue().number())).orElseThrow(java.util.NoSuchElementException::new);Document tender=selected.getKey();Page page=selected.getValue();String quote=page.text();
         List<String> roles=cn.bidcheck.compat.Java8Api.toList(PersonCountRequirement.matches(quote).stream().map(PersonCountRequirement.Match::role).distinct());Map<String,Object> source=linked("documentId",tender.id(),"documentHash",tender.sha256(),"documentVersion",tender.version(),"location",page.number(),"locationType",page.locationType(),"sourceQuote",quote,"sourceHash",identity(quote),"lotScope",lot);
         Checkpoint cp=new Checkpoint("score-base:"+identity(quote).substring(0,16),"增员计分基础人员配置","资格检查","HIGH","SEMANTIC_RESPONSE","compliance","RESPONDS",quote,"",true,true,true,new Evidence(tender.id(),tender.name(),page.number(),page.locationType(),quote,"chars:0-"+quote.length(),1));

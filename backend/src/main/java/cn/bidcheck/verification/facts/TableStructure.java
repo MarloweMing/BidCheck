@@ -113,7 +113,7 @@ public final class TableStructure {
                 String rawId=fields.getOrDefault("CN_ID","");String idValue=rawId.replaceAll("[\\s\\p{Z}]+","").toUpperCase(Locale.ROOT);
                 // Only fragments inside this one source-bound identity cell may be joined.
                 // Never read an adjacent role cell, strip arbitrary punctuation or borrow digits.
-                if(!cn.bidcheck.compat.Java8Api.isBlank(rawId)&&(!idValue.matches("[0-9]{17}[0-9X]")||!cn.bidcheck.compat.Java8Api.strip(rawId).equalsIgnoreCase(idValue)&&!validIdentifier(idValue)))return new Result(records,"STRUCTURE_IDENTITY_FIELD_INVALID",cn.bidcheck.compat.Java8Api.listOf());
+                if(!cn.bidcheck.compat.Java8Api.isBlank(rawId)&&!cn.bidcheck.verification.source.CitizenId.valid(idValue))return new Result(records,"STRUCTURE_IDENTITY_FIELD_INVALID",cn.bidcheck.compat.Java8Api.listOf());
                 String idFingerprint=idValue.matches("[0-9]{17}[0-9X]")?hash(idValue):"";
                 boolean nativeRow=used.stream().allMatch(Cell::nativeCell),strong=nativeRow&&!cn.bidcheck.compat.Java8Api.isBlank(idFingerprint);
                 if(!nativeRow&&!cn.bidcheck.compat.Java8Api.isBlank(idFingerprint)){
@@ -182,5 +182,4 @@ public final class TableStructure {
         }return cn.bidcheck.compat.Java8Api.listCopyOf(refs);
     }
     private static String label(String raw){String value=clean(raw).replaceAll("[：:]$","");switch (value) {case "姓名":case "人员姓名":case "参保人":case "参保人姓名":case "持证人":case "员工姓名":return "NAME";case "身份证号":case "身份证号码":case "公民身份号码":case "公民身份证号码":return "CN_ID";case "缴费单位":case "参保单位":case "单位名称":case "工作单位":case "聘用单位":return "EMPLOYER";case "缴费月份":case "缴费年月":case "缴费所属期":case "所属年月":case "月份":case "缴纳月份":return "MONTHS";case "证书编号":case "注册编号":case "执业印章号":case "证件编号":return value;case "证书名称":case "证书类别":case "证书类型":return "CATEGORY";case "等级":case "级别":case "证书等级":return "GRADE";case "专业":case "注册专业":return "PROFESSION";case "拟任岗位":case "本项目任职":case "拟在本合同任职":case "在本项目担任职务":case "岗位":case "职务":return "ROLE";case "有效期":case "注册有效期":case "使用有效期":case "证书有效期":return "DATE:"+value;default:return "";}}
-    private static boolean validIdentifier(String id){try{java.time.LocalDate.of(Integer.parseInt(id.substring(6,10)),Integer.parseInt(id.substring(10,12)),Integer.parseInt(id.substring(12,14)));}catch(RuntimeException invalid){return false;}int[] weights={7,9,10,5,8,4,2,1,6,3,7,9,10,5,8,4,2};int sum=0;for(int i=0;i<17;i++)sum+=(id.charAt(i)-'0')*weights[i];return "10X98765432".charAt(sum%11)==id.charAt(17);}
 }

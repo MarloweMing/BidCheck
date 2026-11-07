@@ -31,6 +31,16 @@ final class RequirementArtifact {
         if(request.entrySet().stream().anyMatch(e->!Objects.equals(e.getValue(),saved.get(e.getKey()))))return cn.bidcheck.compat.Java8Api.mapOf();
         if(!cn.bidcheck.compat.Java8Api.setOf("VALIDATED", "UNRESOLVED", "REPAIR_RETRY_PENDING").contains(str(saved,"state"))||!(saved.get("rawResponse") instanceof Map<?,?>))return cn.bidcheck.compat.Java8Api.mapOf();
         if("SERVER_OWNED".equals(request.get("modelIdentity"))&&!identity(canonical(saved.get("rawResponse"))).equals(str(saved,"responseDigest")))return cn.bidcheck.compat.Java8Api.mapOf();
+        if(SourceScoringRules.outdatedFormula(session.json.valueToTree(saved.get("rawResponse")))){
+            session.record("REQUIREMENT_PACKAGE",linked("artifactId",request.get("artifactId")),linked("state","STALE_SCORING_ARTIFACT_REJECTED","executorVersion",SourceScoringRules.VERSION));
+            return Collections.emptyMap();
+        }
+        if(SourceRequirementInventory.outdatedFormula(session.json.valueToTree(saved.get("rawResponse")))){
+            session.record("REQUIREMENT_PACKAGE",linked("artifactId",request.get("artifactId")),linked("state","STALE_INVENTORY_ARTIFACT_REJECTED","executorVersion",SourceRequirementInventory.VERSION));
+            org.slf4j.LoggerFactory.getLogger(RequirementArtifact.class).info("bidcheck.requirement_executor_upgrade runId={} artifactId={} source=SHARED_ARTIFACT executorVersion={} modelCalls=0",
+                str(session.context,"sourceRunId"),request.get("artifactId"),SourceRequirementInventory.VERSION);
+            return Collections.emptyMap();
+        }
         return saved;
     }
     @SuppressWarnings("unchecked") void publish(JsonNode raw,Plan plan,boolean repairFailed,int repairs){

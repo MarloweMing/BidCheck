@@ -35,6 +35,11 @@ final class AgentInvestigationScope {
         if(decision!=null&&"COMPOUND_EVIDENCE_READ".equals(str(decision.proof(),"decisionScope"))
                 &&Boolean.TRUE.equals(decision.proof().get("awaitingReadPrerequisite")))return false;
         if(decision!=null&&awaitingRequirementSource(decision.proof()))return false;
+        if(SourceScoringRules.professionReviewRequired(decision))return false;
+        if(LegalRegistrationProof.hostTextExamined(decision))return false;
+        if(decision!=null&&"CAPABILITY_STANDARD_NOT_SPECIFIED".equals(str(decision.proof(),"proofScope"))
+                &&Boolean.TRUE.equals(decision.proof().get("requiresRequirementConfirmation"))
+                &&!decision.gaps().isEmpty()&&decision.gaps().stream().allMatch(g->"CAPABILITY_CRITERIA_REQUIRED".equals(g.code())))return false;
         if(decision==null||decision.gaps().isEmpty())return true;
         for(Gap gap:decision.gaps())if(!Arrays.asList("CURRENT_TAXPAYER_PROOF_REQUIRED","VISUAL_MARK_UNREADABLE",
                 "VISUAL_OBSERVATION_REQUIRED","BID_VOLUME_NOT_UPLOADED","EXTERNAL_OWNER_DATA_REQUIRED","EXTERNAL_RECORD_REQUIRED","EVIDENCE_LOOKUP_INCOMPLETE").contains(gap.code()))return true;
@@ -214,9 +219,16 @@ final class AgentInvestigationScope {
         Map<String,Object> out=SharedFactReuse.value(fact);out.put("id",fact.id());out.put("attributes",attrs);return out;
     }
     static Set<String> kinds(Rule r){
+        if(Boolean.TRUE.equals(r.parameters().get("sourceInventory"))&&!SourceRequirementInventory.applies(r))return Collections.emptySet();
+        if(LegalRegistrationProof.applies(r))return cn.bidcheck.compat.Java8Api.setOf("CERTIFICATE","FIELD","DECLARATION");
+        if(SourceScoringRules.applies(r)){
+            if(SourceScoringRules.issue(r)!=null)return Collections.emptySet();
+            if(SourceScoringRules.programOnly(r))return cn.bidcheck.compat.Java8Api.setOf("SECTION");
+            Set<String> reads=new LinkedHashSet<>();
+            SourceScoringRules.evidenceRules(r).forEach(read->reads.addAll(kinds(read)));
+            return reads;
+        }
         if (PersonnelNameConsistency.applies(r)) return cn.bidcheck.compat.Java8Api.setOf("PERSON_ROLE", "FIELD");
-        if (SourceScoringRules.programOnly(r) && SourceScoringRules.issue(r) == null)
-            return cn.bidcheck.compat.Java8Api.setOf("SECTION");
         if(RegistrationEmployerProof.applies(r))return cn.bidcheck.compat.Java8Api.setOf("PERSON_ROLE", "RELATION", "CERTIFICATE");switch (r.predicate()) {case "PERSON_COUNT":case "ENTITY_COUNT":return cn.bidcheck.compat.Java8Api.setOf("PERSON_ROLE", "RELATION");case "VALIDITY":return cn.bidcheck.compat.Java8Api.setOf("DATE_RANGE", "CERTIFICATE");case "SAME_FIELD":return cn.bidcheck.compat.Java8Api.setOf("FIELD", "NUMBER", "CERTIFICATE");case "PRICE_RECONCILE":return cn.bidcheck.compat.Java8Api.setOf("NUMBER", "FIELD");case "DATE_RELATION":case "VISUAL":return cn.bidcheck.compat.Java8Api.setOf("FIELD");case "SCORE_COUNT":return cn.bidcheck.compat.Java8Api.setOf("CONTRACT");default:return ProofVerifier.KINDS.contains(r.predicate())?cn.bidcheck.compat.Java8Api.setOf(r.predicate()):cn.bidcheck.compat.Java8Api.setOf();}}
     private static Set<String> relationFields(Rule r){Set<String> fields=new LinkedHashSet<>();
         if(RegistrationEmployerProof.applies(r))return cn.bidcheck.compat.Java8Api.setOf("聘用", "受聘", "任职于", "就职于", "供职于", "劳动关系", "用人单位", "雇佣", "所属单位");

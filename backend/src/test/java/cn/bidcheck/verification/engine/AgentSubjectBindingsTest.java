@@ -53,9 +53,9 @@ class AgentSubjectBindingsTest {
         Map<String,Object> hints=contract(local,cn.bidcheck.compat.Java8Api.listOf(appointment(local,1,"同名甲",cn.bidcheck.compat.Java8Api.mapOf()), appointment(local,2,"同名甲",cn.bidcheck.compat.Java8Api.mapOf())));
         List<Map<String,Object>> occurrences=RuleEvaluator.maps(hints.get("resolvedSubjects"));assertEquals(2,occurrences.size());
         assertNotEquals(occurrences.get(0).get("personId"),occurrences.get(1).get("personId"));
-        EvidenceCorpus strong=corpus(prefix+" 身份证号码：110101199001010011",prefix+" 身份证号码：110101199202020022");
+        EvidenceCorpus strong=corpus(prefix+" 身份证号码：110101199001010015",prefix+" 身份证号码：110101199202020025");
         Map<String,Object> conflict=contract(strong,cn.bidcheck.compat.Java8Api.listOf(appointment(strong,1,"同名甲",cn.bidcheck.compat.Java8Api.mapOf()), appointment(strong,2,"同名甲",cn.bidcheck.compat.Java8Api.mapOf())));
-        assertEquals("IDENTITY_CONFLICT",conflict.get("bindingStatus"));assertFalse(conflict.toString().contains("110101199001010011"));
+        assertEquals("IDENTITY_CONFLICT",conflict.get("bindingStatus"));assertFalse(conflict.toString().contains("110101199001010015"));
     }
     @Test void multipleRoleHoldersAreNeverCollapsedToAnArbitraryFirstName(){
         EvidenceCorpus corpus=corpus("本项目人员配置\n项目负责人：测试甲\n拟在本合同任职：项目负责人","本项目人员配置\n项目负责人：测试乙\n拟在本合同任职：项目负责人");

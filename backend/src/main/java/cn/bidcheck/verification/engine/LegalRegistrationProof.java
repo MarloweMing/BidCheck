@@ -10,6 +10,8 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 /** Registration is proved by a registration document, never by an unrelated design certificate. */
 final class LegalRegistrationProof {
     static final String VERSION="legal-registration-proof-3-bounded-document-and-criteria-input";
+    static final String READ_VERSION="registration-host-text-1";
+    private static final List<String> STATUS_VALUES=Arrays.asList("经营范围未受限","经营范围受限","吊销","注销");
     private LegalRegistrationProof(){}
     private static boolean closed(String source){return clean(source).matches("(?:资格评审)?注册要求[:：]?具备履约能力的在中华人民共和国境内行政主管部门登记注册、根据中华人民共和国有关法律合法成立的独立法人或其他组织，经营范围未受限。须提交有效的营业执照或登记证书或其他有效证照。");}
     static Rule compile(String source){return closed(source)?new Rule("LEGAL-"+identity(source).substring(0,16),"登记证照、经营范围及履约能力","CERTIFICATE","投标人","registrationStatus","","","",linked("deterministicFamily","LEGAL_REGISTRATION","registrationProofVersion",VERSION),source,"",cn.bidcheck.compat.Java8Api.listOf()):null;}
@@ -20,9 +22,32 @@ final class LegalRegistrationProof {
         List<String> parties=DomainBindings.subjects(r.subject(),e.facts,e.corpus);
         if(parties.isEmpty())return e.unknown(r,"SUBJECT_RELATION_UNPROVEN","尚未将登记要求对应到本次投标的具体单位",cn.bidcheck.compat.Java8Api.listOf());
         List<Decision> children=new ArrayList<>();
+        List<Map<String,Object>> reads=new ArrayList<>();
+        Set<String> pendingSourceIds=new LinkedHashSet<>();
+        boolean everyPartyRead=true;
         for(String party:parties){
             List<Registration> records=records(e.corpus,party);
-            if(records.isEmpty()){children.add(e.unknown(r,"REGISTRATION_DOCUMENT_REQUIRED","需该投标主体的营业执照、登记证书或其他明确登记证明，资质证书不能替代",cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.mapOf("subject", party)));continue;}
+            if(records.isEmpty()){everyPartyRead=false;children.add(e.unknown(r,"REGISTRATION_DOCUMENT_REQUIRED","需该投标主体的营业执照、登记证书或其他明确登记证明，资质证书不能替代",cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.mapOf("subject", party)));continue;}
+            Set<String> originals=new LinkedHashSet<>();
+            for(Registration record:records){
+                List<String> ids=ProofVerifier.strings(record.binding().get("sourceIds")); originals.addAll(ids);
+                reads.add(linked("subject",party,"documentId",record.evidence().documentId(),"page",record.evidence().page(),
+                    "documentHash",record.binding().get("documentHash"),"documentVersion",record.binding().get("documentVersion"),
+                    "sourceIds",ids,"periodPrinted",!record.period().isEmpty()));
+            }
+            // Distinguish the bounded license pages already read by the host from a separate
+            // status declaration or registry proof which still needs acquisition.
+            for(Source source:e.corpus.all){
+                if(!CertificateEvidenceRecords.usable(source))continue;
+                String quote=source.evidence().quote();if(!quote.contains(party))continue;
+                if(!originals.contains(source.id())&&(records.stream().anyMatch(record->quote.contains(record.number()))&&quote.contains("营业期限")
+                        ||quote.matches("(?sm).*^[ \\t#*]*(?:营业执照|事业单位法人证书|社会团体法人登记证书|民办非企业单位登记证书)[ \\t*]*(?:[（(]副本[）)])?[ \\t]*$.*")))
+                    pendingSourceIds.add(source.id());
+                for(String value:STATUS_VALUES)if(explicitStatus(quote,party,value)&&e.facts.stream().noneMatch(f->
+                        party.equals(f.subject())&&value.equals(f.value())&&"CURRENT_PROJECT".equals(f.scope())&&
+                        Arrays.asList("FIELD","DECLARATION").contains(f.kind())&&f.sourceIds().contains(source.id())&&new ProofVerifier().issue(f,e.corpus.byId)==null))
+                    pendingSourceIds.add(source.id());
+            }
             List<Decision> alternatives=new ArrayList<>();
             for(Registration record:records){
                 String number=record.number();
@@ -44,7 +69,28 @@ final class LegalRegistrationProof {
             children.add(RuleEvaluator.combine(r.id()+":party:"+identity(party).substring(0,12),"该主体的登记证照","ANY",alternatives));
         }
         Decision result=RuleEvaluator.combine(r.id(),r.description(),"ALL",children);Map<String,Object> proof=new LinkedHashMap<>(result.proof());proof.put("executor",VERSION);proof.put("doesNotProveLiveRegistryStatus",true);
+        boolean incomplete=e.corpus.documents.stream().anyMatch(doc->doc.warnings()!=null&&doc.warnings().stream().anyMatch(LegalRegistrationProof::incompleteOcr)
+            ||doc.pages().stream().anyMatch(p->incompleteOcr(p.warning())));
+        proof.put("registrationHostRead",linked("version",READ_VERSION,"authority","CURRENT_HOST_TEXT_READ","businessProof",false,
+            "sourceRevision",identity(e.corpus.all.stream().map(Source::id).collect(java.util.stream.Collectors.joining("|"))),
+            "sourceCount",e.corpus.all.size(),"parties",parties,"records",reads,"allPartiesRead",everyPartyRead,
+            "ocrIncomplete",incomplete,"pendingSourceIds",new ArrayList<>(pendingSourceIds)));
         return new Decision(result.id(),result.description(),result.status(),result.reason(),result.evidences(),result.gaps(),proof);
+    }
+    private static boolean incompleteOcr(String warning){return warning!=null&&(warning.contains("[OCR未完成]")||warning.contains("[OCR_DEFERRED]"));}
+    /** A source read concludes only acquisition from this immutable text snapshot. A missing
+     * member, incomplete OCR, another unvisited certificate/statement, or a changed source
+     * must still use its normal evidence/retry path. No business decision is closed here. */
+    static boolean hostTextExamined(Decision decision){
+        if(decision==null||!"UNDETERMINED".equals(decision.status())||!VERSION.equals(str(decision.proof(),"executor")))return false;
+        Object raw=decision.proof().get("registrationHostRead");
+        if(!(raw instanceof Map))return false;
+        Map<?,?> read=(Map<?,?>)raw;
+        return READ_VERSION.equals(read.get("version"))&&Boolean.TRUE.equals(read.get("allPartiesRead"))
+            &&Boolean.FALSE.equals(read.get("ocrIncomplete"))&&read.get("pendingSourceIds") instanceof Collection
+            &&((Collection<?>)read.get("pendingSourceIds")).isEmpty()&&!RuleEvaluator.maps(read.get("records")).isEmpty()
+            &&!decision.gaps().isEmpty()&&decision.gaps().stream().allMatch(g->
+                Arrays.asList("CAPABILITY_CRITERIA_REQUIRED","REGISTRATION_OPERATING_SCOPE_REQUIRED","VALIDITY_RANGE_REQUIRED","REFERENCE_TIME_UNCONFIRMED").contains(g.code()));
     }
     /** This closed source has no measurable capacity criterion or authorized substitute declaration.
      * Keep an explicit input obligation, rather than claim an implemented check is missing bid material.
@@ -77,8 +123,10 @@ Map<String,Object> audit(){return linked("party",party,"category",category,"numb
     /** The credit code belongs to one labelled registration document, not to a design qualification table. */
     static List<Registration> records(EvidenceCorpus corpus,String party){
         List<Registration> result=new ArrayList<>();Map<String,CertificateEvidenceRecords.ScopeResolver> resolvers=new HashMap<>();
+        Map<String,List<Source>> pages=new HashMap<>();
+        for(Source s:corpus.all)pages.computeIfAbsent(EvidenceCorpus.pageKey(s.evidence().documentId(),s.evidence().page(),s.evidence().locationType()),key->new ArrayList<>()).add(s);
         for(cn.bidcheck.domain.Domain.Document document:corpus.documents)for(cn.bidcheck.domain.Domain.Page page:document.pages()){
-            String text=page.text();List<Source> sources=cn.bidcheck.compat.Java8Api.toList(corpus.all.stream().filter(s->s.evidence().documentId().equals(document.id())&&s.evidence().page()==page.number()&&s.evidence().locationType().equals(page.locationType())));
+            String text=page.text();List<Source> sources=pages.getOrDefault(EvidenceCorpus.pageKey(document.id(),page.number(),page.locationType()),Collections.emptyList());
             if(sources.isEmpty()||sources.stream().anyMatch(s->!CertificateEvidenceRecords.usable(s,corpus,resolvers)))continue;
             if(text.matches("(?s).*(?:填写示例|空白模板|尚未取得|拟取得|历史项目营业执照).*"))continue;
             for(DocumentBlock block:blocks(text)){

@@ -18,6 +18,24 @@ class CertificateQueryProofTest {
     @Test void sameCategoryDifferentCertificateCannotBeJoined(){assertEquals("UNDETERMINED",evaluate(certificate("CERT-A001"),query("CERT-A002",COMPANY,CATEGORY),"查询截图").status());}
     @Test void categoryMentionOutsideActualQueryFieldCannotReplaceItsValue(){String wrong=query("CERT-A001",COMPANY,"环境管理体系认证")+"\n质量管理体系认证资料索引";assertEquals("UNDETERMINED",evaluate(certificate("CERT-A001"),wrong,"查询截图").status());}
     @Test void conflictingQueryCategoryFieldsCannotBeJoined(){String wrong=query("CERT-A001",COMPANY,CATEGORY)+"\n认证类别：环境管理体系认证";assertEquals("UNDETERMINED",evaluate(certificate("CERT-A001"),wrong,"查询截图").status());}
+    @Test void searchFormPlaceholdersDoNotConfuseThePrintedResultCategory() {
+        for (String placeholder: Arrays.asList("[下拉菜单]","【请选择】","（下拉选择）","［请选择］")) {
+            String form="查询条件\n| 认证项目 | "+placeholder+" |\n";
+            String result=form+query("CERT-A001",COMPANY,"中国"+CATEGORY);
+            Decision decision=evaluate(certificate("CERT-A001"),result,"查询截图");
+            assertEquals("PASS",decision.status(),placeholder);
+            assertEquals(false,decision.proof().get("validityVerified"));
+            String conflicting=result+"\n认证类别：职业健康安全管理体系认证";
+            assertEquals("UNDETERMINED",evaluate(certificate("CERT-A001"),conflicting,"查询截图").status());
+        }
+    }
+    @Test void placeholderByItselfOrBracketsContainingAnotherCategoryDoNotProveAResult() {
+        for(String printed: Arrays.asList("[下拉菜单]","【环境管理体系认证】",
+                "[下拉菜单]环境管理体系认证","[环境管理体系认证]")) {
+            assertEquals("UNDETERMINED",evaluate(certificate("CERT-A001"),
+                query("CERT-A001",COMPANY,printed),"查询截图").status(),printed);
+        }
+    }
     @Test void anotherCompanyCannotBeJoined(){assertEquals("UNDETERMINED",evaluate(certificate("CERT-A001"),query("CERT-A001","北京另一建设有限公司",CATEGORY),"查询截图").status());}
     @Test void mixedQueryRowsCannotBorrowAnotherRowsIdentity(){String mixed=query("CERT-A001",COMPANY,CATEGORY)+"\n| 证书编号 | CERT-A002 |";assertEquals("UNDETERMINED",evaluate(certificate("CERT-A001"),mixed,"查询截图").status());}
     @Test void certificateWithAWebsiteIsNotAQueryScreenshot(){assertEquals("UNDETERMINED",evaluate(certificate("CERT-A001"),"无查询材料","查询截图").status());}

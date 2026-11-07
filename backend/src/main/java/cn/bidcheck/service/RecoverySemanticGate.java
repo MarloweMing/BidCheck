@@ -8,7 +8,7 @@ import static cn.bidcheck.service.CheckResolution.*;
 /** Per-target consumed evidence, not a model-call budget or a business verdict. */
 final class RecoverySemanticGate {
     static final String VERSION="recovery-semantic-gate-1-consumed-target-inputs";
-    static final String POLICY="recovery-admission-3-executable-target-prerequisites";
+    static final String POLICY="recovery-admission-8-completed-packet-work";
     private static final String LEGACY_TARGET="__CHECKPOINT__";
     private static final String FIRST_ROUND="first-round-target-inputs-1";
     private RecoverySemanticGate() {}
@@ -16,6 +16,7 @@ final class RecoverySemanticGate {
     /** Carry consumption history across local recomputation, never an earlier business verdict. */
     static Finding preserveFirstRound(Finding before, Finding after) {
         if (before == after) return after;
+        after=PendingTableWork.preserve(before,after);
         Map<String,Object> original = atomic(before);
         Map<String,Object> receipt = map(original.get("firstRoundSemanticInputs"));
         if (!FIRST_ROUND.equals(text(receipt, "version")) || text(receipt, "requestId").isEmpty()
@@ -42,7 +43,7 @@ final class RecoverySemanticGate {
                 ||((Number)audit.get("failedToolCount")).longValue()!=0)return finding;
         Set<String> remaining=new HashSet<>(stringList(audit.get("remainingTargetObligationIds")));
         remaining.removeAll(stringList(audit.get("pendingConfirmationTargetObligationIds")));
-        Set<String> serverConsumed = serverConsumedTargets(audit);
+        Set<String> serverConsumed = serverConsumedTargets(finding, audit);
         boolean repeated = "REPEATED_ACTION_WITHOUT_NEW_EVIDENCE".equals(text(audit, "code"));
         if (!repeated && serverConsumed.isEmpty()) return finding;
         Set<String> visited=new TreeSet<>();
@@ -64,15 +65,19 @@ final class RecoverySemanticGate {
         return new Finding(finding.id(),finding.runId(),finding.checkpoint(),finding.evaluation(),assessment);
     }
 
-    private static boolean requiresPacketCoverage(Finding finding, String target) {
+    private static Map<String,Object> packetRule(Finding finding, String target) {
         Object rules = map(atomic(finding).get("plan")).get("rules");
         Map<String,Map<String,Object>> indexed = new LinkedHashMap<>();
         index(maps(rules), indexed);
         Map<String,Object> rule = indexed.get(target);
         if (rule == null) rule = map(cn.bidcheck.verification.engine.RecoveryTargets.readDependencies(rules)
             .getOrDefault(target, Collections.emptyMap()).get("rule"));
-        return "CONTRACT".equals(text(rule, "predicate"))
-            && map(rule.get("parameters")).get("declaredPerformanceRow") instanceof Map<?,?>;
+        Object row=map(rule.get("parameters")).get("declaredPerformanceRow");
+        return "CONTRACT".equals(text(rule,"predicate")) && row instanceof Map<?,?> ? map(row) : null;
+    }
+
+    private static boolean requiresPacketCoverage(Finding finding, String target) {
+        return packetRule(finding,target)!=null;
     }
 
     private static boolean serverCoverageComplete(Map<String,Object> audit, String targetId) {
@@ -140,13 +145,121 @@ final class RecoverySemanticGate {
         return row.get("noEvidenceProgressRounds") instanceof Number
             && ((Number) row.get("noEvidenceProgressRounds")).longValue() >= 3;
     }
+    /** Re-reading a bounded record after a validation rejection needs a new page, fact or
+     * repair action. The host receipt only consumes this input revision. */
+    private static boolean completedPacketReread(Map<String,Object> audit, Map<String,Object> receipt,
+            Map<String,Object> work) {
+        if (work.containsKey("contractFieldWorkPlan")) return verifiedContractWorkStop(audit, work);
+        if (!"SEMANTIC_REJECTION_WITHOUT_NEW_EVIDENCE".equals(text(audit, "code"))
+                || !"host-repair-action-origin-1".equals(text(receipt, "repairActionOriginVersion"))
+                || !"VALIDATION_REPAIR".equals(text(work, "repairActionOrigin"))
+                || !Collections.singletonList("READ_COMPLETE_RECORD").equals(stringList(work.get("remainingRepairActions")))
+                || !Boolean.TRUE.equals(work.get("readCoverageComplete"))
+                || !(work.get("pendingReadActions") instanceof Collection<?>)
+                || !((Collection<?>) work.get("pendingReadActions")).isEmpty()) return false;
+        String target = text(work, "targetObligationId");
+        Map<String,Object> packet = map(work.get("readCoverage"));
+        if (!"CURRENT_SERVER_PROOF".equals(text(packet, "authority")) || !Boolean.FALSE.equals(packet.get("businessProof"))
+                || !Boolean.TRUE.equals(packet.get("scopeAvailable")) || !Boolean.TRUE.equals(packet.get("complete"))
+                || target.isEmpty() || text(work, "evidenceRevision").isEmpty()
+                || !target.equals(text(packet, "targetObligationId")) || text(packet, "documentId").isEmpty()
+                || !(packet.get("documentVersion") instanceof Number) || ((Number)packet.get("documentVersion")).intValue() < 1
+                || text(packet, "documentHash").isEmpty() || stringList(packet.get("availablePages")).isEmpty()
+                || stringList(packet.get("readSourceIds")).isEmpty()
+                || !Collections.emptyList().equals(packet.get("pendingPages"))
+                || !Collections.emptyList().equals(packet.get("missingSourcePages"))) return false;
+        return maps(audit.get("targetProgressLedger")).stream().anyMatch(row ->
+            target.equals(text(row, "targetObligationId")) && Boolean.TRUE.equals(row.get("visited"))
+            && "java-agent-target-rounds-1".equals(text(row, "noNewFactCounterVersion"))
+            && text(work, "evidenceRevision").equals(text(row, "relevantEvidenceRevision"))
+            && text(audit, "serverPlanRevision").equals(text(row, "ruleVersion"))
+            && stableRoundCount(audit, row));
+    }
+
+    /** A budget stop is global. This independent, witnessed repair plan is for one
+     * submitted record and one bounded packet revision; it never closes the business rule. */
+    private static boolean verifiedContractWorkStop(Map<String,Object> audit, Map<String,Object> work) {
+        Map<String,Object> plan = map(work.get("contractFieldWorkPlan"));
+        Map<String,Object> coverage = map(work.get("readCoverage"));
+        List<Map<String,Object>> tasks = maps(plan.get("tasks"));
+        if (!"bounded-contract-field-work-1".equals(text(plan,"version"))
+                || !"CURRENT_SERVER_PROOF".equals(text(plan,"authority"))
+                || !"NO_EXECUTABLE_CORRECTION".equals(text(plan,"status"))
+                || !Boolean.FALSE.equals(plan.get("businessProof"))
+                || !Boolean.TRUE.equals(plan.get("targetWorkComplete"))
+                || !(plan.get("rejectedFieldCount") instanceof Number) || ((Number)plan.get("rejectedFieldCount")).longValue()<0
+                || !(plan.get("attemptedFieldCount") instanceof Number) || ((Number)plan.get("attemptedFieldCount")).longValue()<1
+                || tasks.isEmpty() || tasks.size()!=((Number)plan.get("attemptedFieldCount")).longValue()
+                || tasks.stream().anyMatch(task -> text(task,"field").isEmpty()
+                    || !Boolean.FALSE.equals(task.get("businessProof")) || !text(task,"fieldPath").startsWith("/contractFields/")
+                    || !Arrays.asList("ACCEPTED_OR_KNOWN","NO_GROUNDED_CORRECTION").contains(text(task,"status")))
+                || !emptyCollection(plan.get("remainingActions"))
+                || !emptyCollection(work.get("remainingRepairActions")) || !emptyCollection(work.get("pendingReadActions"))
+                || !Boolean.TRUE.equals(work.get("terminalForRevision")) || !Boolean.TRUE.equals(work.get("consumed"))
+                || !Boolean.TRUE.equals(work.get("readCoverageComplete")) || !Boolean.TRUE.equals(coverage.get("complete"))
+                || !Boolean.TRUE.equals(coverage.get("scopeAvailable")) || !Boolean.FALSE.equals(coverage.get("businessProof"))
+                || !"CURRENT_SERVER_PROOF".equals(text(coverage,"authority"))
+                || !emptyCollection(coverage.get("pendingPages")) || !emptyCollection(coverage.get("missingSourcePages"))
+                || stringList(coverage.get("availablePages")).isEmpty() || stringList(coverage.get("readSourceIds")).isEmpty()) return false;
+        Set<String> workedFields=new HashSet<>();
+        for(Map<String,Object> task:tasks) {
+            String field=text(task,"field");
+            if("person".equals(field))field="personRole";
+            if(Arrays.asList("amount","signedDate","party","personRole").contains(field))workedFields.add(field);
+        }
+        // Zero rejections is valid only when every submitted field has an actual accept/reuse receipt.
+        if(((Number)plan.get("rejectedFieldCount")).longValue()==0
+                &&(workedFields.size()<2||Collections.disjoint(workedFields,Arrays.asList("amount","signedDate","personRole"))
+                    ||tasks.stream().anyMatch(task->!"ACCEPTED_OR_KNOWN".equals(text(task,"status")))))return false;
+        String target=text(work,"targetObligationId"), revision=text(work,"evidenceRevision");
+        if (target.isEmpty() || revision.isEmpty() || !revision.equals(map(audit.get("targetEvidenceRevisions")).get(target))
+                || !revision.equals(text(plan,"evidenceRevision")) || !target.equals(text(plan,"targetObligationId"))
+                || !target.equals(text(coverage,"targetObligationId")) || !text(audit,"requestId").equals(text(plan,"requestId"))
+                || !text(audit,"serverPlanRevision").equals(text(plan,"serverPlanRevision"))
+                || text(plan,"documentId").isEmpty() || !text(plan,"documentId").equals(text(coverage,"documentId"))
+                || text(plan,"documentHash").isEmpty() || !text(plan,"documentHash").equals(text(coverage,"documentHash"))
+                || !(plan.get("documentVersion") instanceof Number) || ((Number)plan.get("documentVersion")).longValue()<1
+                || !Objects.equals(plan.get("documentVersion"),coverage.get("documentVersion"))) return false;
+        return maps(audit.get("targetProgressLedger")).stream().anyMatch(row -> target.equals(text(row,"targetObligationId"))
+            && Boolean.TRUE.equals(row.get("visited")) && revision.equals(text(row,"relevantEvidenceRevision"))
+            && text(audit,"serverPlanRevision").equals(text(row,"ruleVersion")));
+    }
+
+    private static boolean emptyCollection(Object value) {
+        return value instanceof Collection<?> && ((Collection<?>)value).isEmpty();
+    }
+
+    private static boolean validatedOriginalsAlreadyRead(Map<String,Object> audit,Map<String,Object> receipt,Map<String,Object> work) {
+        if (!cn.bidcheck.compat.Java8Api.setOf("REPEATED_ACTION_WITHOUT_NEW_EVIDENCE","SEMANTIC_REJECTION_WITHOUT_NEW_EVIDENCE").contains(text(audit,"code"))
+            || !"host-repair-action-origin-1".equals(text(receipt,"repairActionOriginVersion"))
+            || !"VALIDATION_REPAIR".equals(text(work,"repairActionOrigin"))
+            || !Collections.singletonList("READ_COMPLETE_RECORD").equals(stringList(work.get("remainingRepairActions")))
+            || !Boolean.TRUE.equals(work.get("readCoverageComplete")) || !Collections.emptyList().equals(work.get("pendingReadActions"))) return false;
+        Map<String,Object> record=map(work.get("validationReadWork"));
+        String id=text(work,"targetObligationId"),revision=text(work,"evidenceRevision");
+        List<String> required=stringList(record.get("requiredSourceIds"));
+        if (!"validated-read-work-1".equals(text(record,"version")) || !"CURRENT_SERVER_PROOF".equals(text(record,"authority"))
+            || !Boolean.FALSE.equals(record.get("businessProof")) || id.isEmpty() || revision.isEmpty()
+            || !id.equals(text(record,"targetObligationId")) || !revision.equals(text(record,"evidenceRevision"))
+            || !cn.bidcheck.compat.Java8Api.setOf("APPOINTMENT_ENDPOINT_UNCITED","OBSERVED_CERTIFICATE_RECORDS_READ").contains(text(record,"reason"))
+            || required.isEmpty() || !stringList(record.get("readSourceIds")).containsAll(required)
+            || !Collections.emptyList().equals(record.get("pendingSourceIds"))) return false;
+        return maps(audit.get("targetProgressLedger")).stream().anyMatch(row -> id.equals(text(row,"targetObligationId"))
+            && Boolean.TRUE.equals(row.get("visited")) && revision.equals(text(row,"relevantEvidenceRevision"))
+            && text(audit,"serverPlanRevision").equals(text(row,"ruleVersion"))
+            && "java-agent-target-rounds-1".equals(text(row,"noNewFactCounterVersion")) && stableRoundCount(audit,row));
+    }
+
     private static Set<String> verifiedRepairActions(Map<String,Object> audit, String targetId) {
         Set<String> actions = new TreeSet<>();
         Map<String,Object> receipt = verifiedConsumptionReceipt(audit);
         for (Map<String,Object> work : maps(receipt.get("targets"))) {
             if (!targetId.equals(text(work, "targetObligationId"))
                     || !Objects.equals(map(audit.get("targetEvidenceRevisions")).get(targetId), work.get("evidenceRevision"))) continue;
-            if (!stableDefaultGuidance(audit, receipt, work)) actions.addAll(stringList(work.get("remainingRepairActions")));
+            if (!stableDefaultGuidance(audit, receipt, work) && !completedPacketReread(audit, receipt, work)
+                    && !validatedOriginalsAlreadyRead(audit,receipt,work))
+                actions.addAll(stringList(work.get("remainingRepairActions")));
+            for(String id : stringList(map(work.get("validationReadWork")).get("pendingSourceIds"))) actions.add("PENDING_ORIGINAL:"+id);
             for (Map<String,Object> read : maps(work.get("pendingReadActions")))
                 actions.add("PENDING_READ:" + RecoveryEvidenceIdentity.canonical(read));
         }
@@ -163,6 +276,7 @@ final class RecoverySemanticGate {
     }
 
     private static boolean targetConsumptionSafe(Finding finding, Map<String,Object> audit, String targetId) {
+        if(!PendingTableWork.pending(finding,targetId).isEmpty())return false;
         Map<String,Object> current = map(atomic(finding).get("agentInvestigation"));
         // A real failed attempt is not the model-disabled local recomputation above.
         // Its recovery must not be suppressed by an older successful read receipt.
@@ -172,11 +286,26 @@ final class RecoverySemanticGate {
         Map<String,Object> receipt = verifiedConsumptionReceipt(audit);
         // An invalid supplied receipt must not silently fall back to legacy admission.
         if (audit.containsKey("serverTargetInputConsumption") && receipt.isEmpty()) return false;
+        for (Map<String,Object> work : maps(receipt.get("targets"))) {
+            if (targetId.equals(text(work,"targetObligationId")) && work.containsKey("contractFieldWorkPlan")) {
+                Map<String,Object> rule = packetRule(finding,targetId);
+                Map<String,Object> coverage = map(work.get("readCoverage"));
+                if (rule==null || !text(rule,"documentId").equals(text(coverage,"documentId"))
+                        || !text(rule,"documentHash").equals(text(coverage,"documentHash"))
+                        || !Objects.equals(rule.get("documentVersion"),coverage.get("documentVersion"))
+                        || !(rule.get("proofPageStart") instanceof Number) || !(rule.get("proofPageEnd") instanceof Number)) return false;
+                long start=((Number)rule.get("proofPageStart")).longValue(), end=((Number)rule.get("proofPageEnd")).longValue();
+                if (!(coverage.get("availablePages") instanceof Collection<?>) || start<1 || end<start
+                        || ((Collection<?>)coverage.get("availablePages")).stream().anyMatch(p -> !(p instanceof Number)
+                            || ((Number)p).longValue()<start || ((Number)p).longValue()>end)) return false;
+            }
+        }
         if ("INVESTIGATION_CALL_LIMIT".equals(text(audit, "code")))
-            return callLimitedStableTarget(audit, receipt, targetId);
+            return callLimitedStableTarget(finding, audit, receipt, targetId);
         for (Map<String,Object> work : maps(receipt.get("targets"))) {
             if (!targetId.equals(text(work, "targetObligationId"))) continue;
             if (!Objects.equals(map(audit.get("targetEvidenceRevisions")).get(targetId), work.get("evidenceRevision"))) return false;
+            if (work.containsKey("contractFieldWorkPlan") && !verifiedContractWorkStop(audit, work)) return false;
             if ("host-repair-action-origin-1".equals(text(receipt, "repairActionOriginVersion"))
                     && !Boolean.TRUE.equals(work.get("readCoverageComplete"))) return false;
         }
@@ -186,25 +315,75 @@ final class RecoverySemanticGate {
 
     /** A whole-investigation budget is not exhaustion. Only a separately stopped,
      * fully read target may retain its current input snapshot under that budget code. */
-    private static boolean callLimitedStableTarget(Map<String,Object> audit,
+    private static boolean callLimitedStableTarget(Finding finding, Map<String,Object> audit,
             Map<String,Object> receipt, String targetId) {
         if (!"INVESTIGATION_CALL_LIMIT".equals(text(audit, "code")) || receipt.isEmpty()) return false;
         for (Map<String,Object> work : maps(receipt.get("targets"))) {
+            if (targetId.equals(text(work, "targetObligationId")) && work.containsKey("contractFieldWorkPlan"))
+                return verifiedContractWorkStop(audit, work);
             if (targetId.equals(text(work, "targetObligationId"))
                     && Objects.equals(map(audit.get("targetEvidenceRevisions")).get(targetId), work.get("evidenceRevision"))
-                    && serverCoverageComplete(audit, targetId)
+                    && (serverCoverageComplete(audit, targetId)
+                        || flatCertificateUrlEvidence(finding, audit, work, targetId))
                     && stableDefaultGuidance(audit, receipt, work)) return true;
         }
         return false;
     }
 
-    private static Set<String> serverConsumedTargets(Map<String,Object> audit) {
+    /** A certificate URL may have a flat receipt instead of a contract packet. Three
+     * empty recomputations are insufficient: the host must attest an actual returned
+     * original or a fact accepted for this exact target and immutable source. */
+    private static boolean flatCertificateUrlEvidence(Finding finding, Map<String,Object> audit,
+            Map<String,Object> work, String targetId) {
+        if (!(work.get("readCoverage") instanceof Map<?,?>) || !map(work.get("readCoverage")).isEmpty()) return false;
+        Map<String,Map<String,Object>> indexed=new LinkedHashMap<>();
+        Object rules=map(atomic(finding).get("plan")).get("rules");
+        index(maps(rules),indexed);
+        Map<String,Object> rule=indexed.get(targetId);
+        if(rule==null)rule=map(cn.bidcheck.verification.engine.RecoveryTargets.readDependencies(rules)
+            .getOrDefault(targetId,Collections.emptyMap()).get("rule"));
+        if(!"MATERIAL".equals(text(rule,"predicate"))
+                || text(map(rule.get("parameters")),"certificateProofCategory").isEmpty()
+                || !"查询网址".equals(text(rule,"expected")) && !"查询网址".equals(text(rule,"targetExpected")))return false;
+        Map<String,Object> witness=map(work.get("flatReadEvidence"));
+        if(!"server-flat-target-read-1".equals(text(witness,"version"))
+                || !"CURRENT_SERVER_PROOF".equals(text(witness,"authority")) || !Boolean.FALSE.equals(witness.get("businessProof"))
+                || !targetId.equals(text(witness,"targetObligationId")) || !text(audit,"requestId").equals(text(witness,"requestId"))
+                || !text(audit,"serverPlanRevision").equals(text(witness,"serverPlanRevision"))
+                || text(work,"evidenceRevision").isEmpty() || !text(work,"evidenceRevision").equals(text(witness,"evidenceRevision")))return false;
+        Set<String> originals=new HashSet<>();
+        for(Map<String,Object> source:maps(witness.get("sources"))){
+            String id=text(source,"id");
+            if(id.isEmpty()||!originals.add(id)||text(source,"documentId").isEmpty()
+                    ||!text(source,"documentHash").matches("[a-fA-F0-9]{64}") || text(source,"parserFingerprint").isEmpty()
+                    || !(source.get("documentVersion") instanceof Number)||((Number)source.get("documentVersion")).longValue()<1
+                    || !(source.get("page") instanceof Number)||((Number)source.get("page")).longValue()<1
+                    || !Arrays.asList("PAGE","BLOCK").contains(text(source,"locationType")))return false;
+        }
+        Set<String> used=new HashSet<>(stringList(witness.get("readSourceIds"))),factIds=new HashSet<>();
+        for(Map<String,Object> fact:maps(witness.get("acceptedFacts"))){
+            String id=text(fact,"factId");List<String> sources=stringList(fact.get("sourceIds"));
+            if(id.isEmpty()||!factIds.add(id)||sources.isEmpty()||!originals.containsAll(sources))return false;
+            used.addAll(sources);
+        }
+        return !originals.isEmpty()&&!used.isEmpty()&&originals.equals(used)
+            &&factIds.equals(new HashSet<>(stringList(witness.get("acceptedFactIds"))))
+            &&new HashSet<>(stringList(audit.get("acceptedFactIds"))).containsAll(factIds);
+    }
+
+    private static Set<String> serverConsumedTargets(Finding finding, Map<String,Object> audit) {
         Map<String,Object> receipt = verifiedConsumptionReceipt(audit);
         Map<String,Object> revisions = map(audit.get("targetEvidenceRevisions"));
         Set<String> consumed = new TreeSet<>();
         for (Map<String,Object> target : maps(receipt.get("targets"))) {
             String id = text(target, "targetObligationId");
-            if (!id.isEmpty() && callLimitedStableTarget(audit, receipt, id)) {
+            if (target.containsKey("contractFieldWorkPlan")) {
+                if (verifiedContractWorkStop(audit, target)) consumed.add(id);
+                continue;
+            }
+            if (!id.isEmpty() && (callLimitedStableTarget(finding, audit, receipt, id)
+                    || Objects.equals(revisions.get(id), target.get("evidenceRevision")) && (completedPacketReread(audit, receipt, target)
+                        || validatedOriginalsAlreadyRead(audit,receipt,target)))) {
                 consumed.add(id);
                 continue;
             }
@@ -297,6 +476,7 @@ final class RecoverySemanticGate {
             Map<String,Object> read=reads.getOrDefault(targetId,Collections.emptyMap());
             String parentId=text(read,"parentId");
             Map<String,Object> rule=rules.getOrDefault(targetId,map(read.get("rule")));
+            String inventory=text(map(map(rule.get("parameters")).get("declaredPerformanceRow")),"inventoryIdentity");
             List<Map<String,Object>> bindings=new ArrayList<>();collectBindings(rule,dependencies,bindings);
             if(bindings.isEmpty()&&dependencies.containsKey(targetId))bindings.add(dependencies.get(targetId));
             Set<String> relevantFacts=new TreeSet<>();
@@ -310,7 +490,10 @@ final class RecoverySemanticGate {
             List<Map<String,Object>> conditions=new ArrayList<>(maps(atomic.get("conditions")));conditions.addAll(maps(atomic.get("obligations")));
             for(Map<String,Object> condition:conditions)if(targetId.equals(text(condition,"id"))||(!parentId.isEmpty()&&parentId.equals(text(condition,"id")))){
                 maps(condition.get("gaps")).forEach(g->gapCodes.add(text(g,"code")));
-                collectFactIds(condition.get("proof"),proofFactIds);
+                if(!parentId.isEmpty()&&!inventory.isEmpty()){
+                    for(Map<String,Object> row:maps(map(condition.get("proof")).get("contractChecks")))
+                        if(inventory.equals(text(map(row.get("declaredRow")),"inventoryIdentity")))collectFactIds(row,proofFactIds);
+                }else collectFactIds(condition.get("proof"),proofFactIds);
             }
             if(LEGACY_TARGET.equals(targetId))maps(atomic.get("gaps")).forEach(g->gapCodes.add(text(g,"code")));
             gapCodes.remove("");
@@ -325,10 +508,16 @@ final class RecoverySemanticGate {
             // inputRevision or the global fact clock: raw observations change those too.
             if(!"".equals(targetId)){
                 Map<String,Object> trigger=map(context.get("recoveryDependencyTrigger"));
-                if(stringList(context.get("recoveryTargetObligationIds")).contains(targetId))relevantFacts.addAll(stringList(trigger.get("semanticEvidenceKeys")));
+                if(stringList(context.get("recoveryTargetObligationIds")).contains(targetId)){
+                    Map<String,Object> selected=trigger.containsKey("byTarget")?map(map(trigger.get("byTarget")).get(targetId)):trigger;
+                    relevantFacts.addAll(stringList(selected.get("semanticEvidenceKeys")));
+                }
             }
             Map<String,Object> base=fields("policy",policy,"status",finding.evaluation().status(),"rule",ruleInput(rule),"gapCodes",gapCodes,
                 "sourceRevision",sourceRevision,"validationIdentity",validationIdentity);
+            Map<String,Object> priorWork=map(map(context.get("gapWorkByTarget")).get(targetId));
+            String gapKey=RecoveryGapKeys.key(finding,targetId,RecoveryGapKeys.workReceipt(finding,targetId,priorWork));
+            if(!gapKey.isEmpty())base.put("gapKey",gapKey);
             // A new host-validated repair path is executable input even if accepted facts did not change.
             base.put("serverRepairActions", verifiedRepairActions(audit, targetId));
             if(!parentId.isEmpty())base.put("parentRule",ruleInput(rules.getOrDefault(parentId,Collections.emptyMap())));
@@ -345,7 +534,14 @@ final class RecoverySemanticGate {
     /** Raw observations authorize local revalidation, never a second investigation by themselves. */
     static void applyTargets(Map<String,Object> context,Map<String,Object> receipt){
         List<String> eligible=stringList(receipt.get("eligibleTargetIds"));
-        if(!eligible.isEmpty())context.put("recoveryTargetObligationIds",eligible);
+        if(!eligible.isEmpty()){
+            context.put("recoveryTargetObligationIds",eligible);
+            Map<String,Object> trigger=map(context.get("recoveryDependencyTrigger"));
+            if(trigger.containsKey("byTarget")){
+                context.put("recoveryChangedSourceIds",RecoveryInputs.triggerValues(trigger,eligible,"sourceIds"));
+                context.put("recoveryDependencyRevision",RecoveryInputs.dependencyKey(context));
+            }
+        }
     }
     private static void collectBindings(Map<String,Object> rule,Map<String,Map<String,Object>> dependencies,List<Map<String,Object>> out){
         if(rule.isEmpty())return;

@@ -202,6 +202,37 @@ class SemanticRejectionConsumptionTest {
         return fields("recoveryTargetObligationIds", Collections.singletonList(TARGET));
     }
 
+    @Test void fullyReadContractPacketWithStableRereadStopsOnlyThatInputRevision() {
+        Finding before = finding("SEMANTIC_REJECTION_WITHOUT_NEW_EVIDENCE", true, true);
+        Map<String,Object> audit = mutableAudit(before);
+        Map<String,Object> packet = fields("targetObligationId", TARGET, "authority", "CURRENT_SERVER_PROOF",
+            "businessProof", false, "scopeAvailable", true, "complete", true,
+            "documentId", "doc", "documentHash", "hash-1", "documentVersion", 1,
+            "availablePages", Arrays.asList(153,154,155,156,157,158,159), "readSourceIds", Arrays.asList("source-153","source-159"),
+            "pendingPages", Collections.emptyList(), "missingSourcePages", Collections.emptyList());
+        Map<String,Object> work = fields("targetObligationId", TARGET, "evidenceRevision", "evidence-1",
+            "terminalForRevision", false, "consumed", false, "readCoverageComplete", true, "readCoverage", packet,
+            "repairActionOrigin", "VALIDATION_REPAIR", "pendingReadActions", Collections.emptyList(),
+            "remainingRepairActions", Collections.singletonList("READ_COMPLETE_RECORD"));
+        audit.put("targetProgressLedger", Collections.singletonList(fields("targetObligationId", TARGET, "visited", true,
+            "navigationCount", 3, "relevantEvidenceRevision", "evidence-1", "ruleVersion", "plan-1",
+            "noNewFactCounterVersion", "java-agent-target-rounds-1", "noNewFactRequestId", audit.get("requestId"),
+            "noNewFactStopReason", "THREE_ROUNDS_NO_NEW_FACT", "noNewFactModelRounds", 3)));
+        audit.put("serverTargetInputConsumption", fields("version", "server-target-input-consumption-1",
+            "repairActionOriginVersion", "host-repair-action-origin-1", "authority", "CURRENT_SERVER_PROOF",
+            "requestId", audit.get("requestId"), "serverPlanRevision", "plan-1", "targets", Collections.singletonList(work),
+            "businessProof", false));
+        Finding captured = RecoverySemanticGate.captureFirstRound(before, context(), "policy");
+        assertEquals(false, inspect(captured).get("allowed"));
+        assertEquals("UNDETERMINED", captured.evaluation().status());
+        assertEquals(true, RecoverySemanticGate.inspect(captured,"TARGETED_EVIDENCE",context(),Collections.emptyList(),"new-policy").get("allowed"));
+        packet.put("pendingPages", Collections.singletonList(159));
+        assertEquals(true, inspect(captured).get("allowed"));
+        packet.put("pendingPages", Collections.emptyList());
+        work.put("remainingRepairActions", Collections.singletonList("RESOLVE_SUBJECT_FIRST"));
+        assertEquals(true, inspect(captured).get("allowed"));
+    }
+
     private Map<String,Object> inspect(Finding finding) {
         return RecoverySemanticGate.inspect(finding, "TARGETED_EVIDENCE", context(), Collections.emptyList(), "policy");
     }

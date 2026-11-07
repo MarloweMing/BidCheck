@@ -22,7 +22,9 @@ final class EvidenceCorpus {
     final List<Document> documents;final List<Source> all=new ArrayList<>();final Map<String,Source> byId=new CertificateRecordBindings.SourceIndex();
     final Map<String,Page> pages=new HashMap<>();
     final Set<String> identityPacketRejections=java.util.concurrent.ConcurrentHashMap.newKeySet();
+    final Map<String,IdentityNumberEvidence.Numbers> identityNumbers=new java.util.concurrent.ConcurrentHashMap<>();
     final Map<String,DocumentSubjectScope> documentScopes=new HashMap<>();
+    final Map<String,Map<String,Object>> sourceBoundContractRows=new HashMap<>();
     final List<Map<String,Object>> visualAdmission=new ArrayList<>();
     EvidenceCorpus(List<Document> documents){this.documents=cn.bidcheck.compat.Java8Api.listCopyOf(documents);for(Document doc:documents){DocumentSubjectScope subjectScope=new DocumentSubjectScope(doc);documentScopes.put(doc.id(),subjectScope);boolean historical=false;for(Page page:doc.pages()){
         String text=Objects.toString(page.text(),""),opening=text.substring(0,Math.min(180,text.length()));
@@ -41,18 +43,26 @@ final class EvidenceCorpus {
     static String pageKey(String id,int page,String type){return id+":"+type+":"+page;}
     void addVisualObservations(Object observations){for(Map<String,Object> o:RuleEvaluator.maps(observations)){
         if(!"FIELD".equals(str(o,"type")))continue;
-        cn.bidcheck.verification.source.VisualObservationPolicy.Assessment assessment=VisualObservationPolicy.assess(o);visualAdmission.add(linked("observationId",str(o,"id"),"assessment",assessment.audit()));
-        if(!assessment.valueUsable()||cn.bidcheck.compat.Java8Api.isBlank(str(o,"value"))||!(o.get("source") instanceof Map<?,?>)||!VisualObservationPolicy.validSourceBounds(o))continue;
+        VisualObservationPolicy.Assessment assessment=VisualObservationPolicy.assess(o);
+        visualAdmission.add(linked("observationId",str(o,"id"),"assessment",assessment.audit()));
+        Source source=assessment.valueUsable()?visualFieldSource(o):null;
+        if(source!=null&&!byId.containsKey(source.id())){all.add(source);byId.put(source.id(),source);}
+    }}
+
+    /** Materialize only the immutable image location; admission for any particular use is separate. */
+    Source visualFieldSource(Map<String,Object> o){
+        if(!"FIELD".equals(str(o,"type")))return null;
+        if(cn.bidcheck.compat.Java8Api.isBlank(str(o,"value"))||!(o.get("source") instanceof Map<?,?>)||!VisualObservationPolicy.validSourceBounds(o))return null;
         List<?> box=(List<?>)o.get("sourceBbox");
-        Document doc=documents.stream().filter(d->d.id().equals(str(o,"documentId"))&&d.sha256().equals(((Map<?,?>) (o.get("source"))).get("documentHash"))).findFirst().orElse(null);if(doc==null)continue;int location=RunSession.number(o.get("location"),RunSession.number(o.get("page"),-1));String type=str(o,"locationType");Page page=doc.pages().stream().filter(p->p.number()==location&&p.locationType().equals(type)).findFirst().orElse(null);if(page==null)continue;
-        if(((Map<?,?>) (o.get("source"))).containsKey("documentVersion")&&RunSession.number(((Map<?,?>) (o.get("source"))).get("documentVersion"),-1)!=doc.version()||((Map<?,?>) (o.get("source"))).containsKey("documentId")&&!doc.id().equals(((Map<?,?>) (o.get("source"))).get("documentId"))||((Map<?,?>) (o.get("source"))).containsKey("page")&&RunSession.number(((Map<?,?>) (o.get("source"))).get("page"),-1)!=location)continue;
-        String image=str(o,"imageHash");if(cn.bidcheck.compat.Java8Api.isBlank(image)||!image.equals(((Map<?,?>) (o.get("source"))).get("renderedSha256")))continue;String quote=str(o,"label")+"："+str(o,"value");String id="V"+identity(doc.sha256()+location+image+quote).substring(0,20);
+        Document doc=documents.stream().filter(d->d.id().equals(str(o,"documentId"))&&d.sha256().equals(((Map<?,?>) (o.get("source"))).get("documentHash"))).findFirst().orElse(null);if(doc==null)return null;int location=RunSession.number(o.get("location"),RunSession.number(o.get("page"),-1));String type=str(o,"locationType");Page page=doc.pages().stream().filter(p->p.number()==location&&p.locationType().equals(type)).findFirst().orElse(null);if(page==null)return null;
+        if(((Map<?,?>) (o.get("source"))).containsKey("documentVersion")&&RunSession.number(((Map<?,?>) (o.get("source"))).get("documentVersion"),-1)!=doc.version()||((Map<?,?>) (o.get("source"))).containsKey("documentId")&&!doc.id().equals(((Map<?,?>) (o.get("source"))).get("documentId"))||((Map<?,?>) (o.get("source"))).containsKey("page")&&RunSession.number(((Map<?,?>) (o.get("source"))).get("page"),-1)!=location)return null;
+        String image=str(o,"imageHash");if(cn.bidcheck.compat.Java8Api.isBlank(image)||!image.equals(((Map<?,?>) (o.get("source"))).get("renderedSha256")))return null;String quote=str(o,"label")+"："+str(o,"value");String id="V"+identity(doc.sha256()+location+image+quote).substring(0,20);
         // A clear transcription is not an appointment or certificate-owner edge. Preserve the server
         // document boundary, but do not synthesize a row by concatenating independent visual fields.
         DocumentSubjectScope.Context outer=documentScopes.get(doc.id()).context(page,0,Objects.toString(page.text(),"").length());
         DocumentSubjectScope.Context scope=new DocumentSubjectScope.Context(outer.blocked()?outer.status():"VISUAL_FIELD_ONLY",outer.projectName(),outer.anchor(),cn.bidcheck.compat.Java8Api.listOf());
-        Source source=new Source(id,new Evidence(doc.id(),doc.name(),location,type,quote,"image:"+image+":"+box,0),"经定位的原图字段观察；只证明文字，不证明主体关系",false,outer.blocked(),doc.sha256(),doc.version(),scope);if(!byId.containsKey(id)){all.add(source);byId.put(id,source);}
-    }}
+        return new Source(id,new Evidence(doc.id(),doc.name(),location,type,quote,"image:"+image+":"+box,0),"经定位的原图字段观察；只证明文字，不证明主体关系",false,outer.blocked(),doc.sha256(),doc.version(),scope);
+    }
     List<Source> select(List<Rule> rules,List<Fact> facts,List<Source> prior,int round,HybridRetriever retriever,RunSession session)throws InterruptedIOException{
         return select(rules,facts,prior,round,retriever,session,false,rules);
     }

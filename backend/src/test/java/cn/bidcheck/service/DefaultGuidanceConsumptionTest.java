@@ -32,6 +32,33 @@ class DefaultGuidanceConsumptionTest {
         }
     }
 
+    @Test void verifiedValidationRereadStopsOnlyForReturnedOriginalsAndUnchangedEvidence() {
+        for(String disposition:Arrays.asList("APPOINTMENT_ENDPOINT_UNCITED","OBSERVED_CERTIFICATE_RECORDS_READ")) {
+            Finding before=finding("VALIDATION_REPAIR",3);
+            Map<String,Object> audit=audit(before);
+            audit.put("status","EVIDENCE_UPDATED");
+            Map<String,Object> row=(Map<String,Object>)((List<?>)audit.get("targetProgressLedger")).get(0);
+            row.putAll(fields("noNewFactCounterVersion","java-agent-target-rounds-1","noNewFactRequestId","request",
+                "noNewFactStopReason","THREE_ROUNDS_NO_NEW_FACT","noNewFactModelRounds",3));
+            Map<String,Object> originals=fields("version","validated-read-work-1","authority","CURRENT_SERVER_PROOF",
+                "targetObligationId",TARGET,"evidenceRevision","evidence","reason",disposition,"businessProof",false,
+                "requiredSourceIds",Arrays.asList("original","independent"),"readSourceIds",Arrays.asList("original","independent"),
+                "pendingSourceIds",Collections.emptyList());
+            work(before).put("validationReadWork",originals);
+            Finding captured=capture(before);
+            assertEquals(false,gate(captured,context()).get("allowed"),disposition);
+            assertEquals("UNDETERMINED",captured.evaluation().status());
+            Map<String,Object> changed=context();changed.put("recoverySourceRevision","new-bid-document");
+            assertEquals(true,gate(captured,changed).get("allowed"),disposition);
+            originals.put("pendingSourceIds",Collections.singletonList("unread"));
+            assertEquals(true,gate(captured,context()).get("allowed"),disposition);
+            originals.put("pendingSourceIds",Collections.emptyList());originals.put("readSourceIds",Collections.singletonList("original"));
+            assertEquals(true,gate(captured,context()).get("allowed"),disposition);
+            originals.put("readSourceIds",Arrays.asList("original","independent"));audit.put("status","FAILED");
+            assertEquals(true,gate(captured,context()).get("allowed"),"a transport retry is independent");
+        }
+    }
+
     @Test void fewerRoundsUnknownOriginAndRealValidationRemainExecutable() {
         for (String origin : Arrays.asList("", "VALIDATION_REPAIR", "UNKNOWN")) {
             assertEquals(true, gate(capture(finding(origin, 3)), context()).get("allowed"));
@@ -93,6 +120,83 @@ class DefaultGuidanceConsumptionTest {
         rule.put("parameters", fields("declaredPerformanceRow", fields("documentId", "doc", "proofPageStart", 2, "proofPageEnd", 4)));
         work(before).put("readCoverage", fields("complete", false, "pendingPages", Arrays.asList(3, 4)));
         assertEquals(true, gate(capture(before), context()).get("allowed"));
+    }
+
+    @Test void callLimitRetainsIndependentlyStoppedFlatCertificateUrlOnly() {
+        Finding before=flatUrl();
+        Finding captured=capture(before);
+        assertEquals(false,gate(captured,context()).get("allowed"));
+        assertEquals("UNDETERMINED",captured.evaluation().status());
+        assertEquals(atomic(before).get("gaps"),atomic(captured).get("gaps"));
+        assertEquals(false,work(captured).get("consumed"));
+        assertEquals(Collections.singletonList("unvisited-screenshot"),gate(captured,
+            fields("recoveryTargetObligationIds",Arrays.asList(TARGET,"unvisited-screenshot"))).get("eligibleTargetIds"));
+        Map<String,Object> changed=context();changed.put("recoverySourceRevision","new-original-version");
+        assertEquals(true,gate(captured,changed).get("allowed"));
+    }
+
+    @Test void flatCallLimitNeedsSameHostPlanRevisionAndThreeTargetRounds() {
+        for(String invalid:Arrays.asList("ruleVersion","relevantEvidenceRevision","noNewFactRequestId","short-rounds",
+                "pending-read","unknown-authority","missing-flat-shape","incomplete-nested-shape",
+                "no-evidence","wrong-target","foreign-fact","unlocated-source")) {
+            Finding before=flatUrl();
+            Map<String,Object> ledger=(Map<String,Object>)((List<?>)audit(before).get("targetProgressLedger")).get(0);
+            if(Arrays.asList("ruleVersion","relevantEvidenceRevision","noNewFactRequestId").contains(invalid))ledger.put(invalid,"stale");
+            if("short-rounds".equals(invalid))ledger.put("noNewFactModelRounds",2);
+            if("pending-read".equals(invalid))work(before).put("pendingReadActions",Collections.singletonList(fields("action","READ_SECTION_CONTINUATION")));
+            if("unknown-authority".equals(invalid))receipt(before).put("authority","MODEL");
+            if("missing-flat-shape".equals(invalid))work(before).remove("readCoverage");
+            if("incomplete-nested-shape".equals(invalid))work(before).put("readCoverage",fields("complete",false));
+            Map<String,Object> witness=(Map<String,Object>)work(before).get("flatReadEvidence");
+            if("no-evidence".equals(invalid))work(before).remove("flatReadEvidence");
+            if("wrong-target".equals(invalid))witness.put("targetObligationId","another-target");
+            if("foreign-fact".equals(invalid))audit(before).put("acceptedFactIds",Collections.singletonList("unrelated-fact"));
+            if("unlocated-source".equals(invalid))((Map<String,Object>)((List<?>)witness.get("sources")).get(0)).put("documentVersion",0);
+            assertEquals(true,gate(capture(before),context()).get("allowed"),invalid);
+        }
+    }
+
+    @Test void actuallyReturnedBoundQueryOriginalCanWitnessAReadWithoutNewFacts() {
+        Finding before=flatUrl();
+        Map<String,Object> witness=(Map<String,Object>)work(before).get("flatReadEvidence");
+        witness.put("acceptedFacts",Collections.emptyList());witness.put("acceptedFactIds",Collections.emptyList());
+        witness.put("readSourceIds",Collections.singletonList("query-original"));
+        assertEquals(false,gate(capture(before),context()).get("allowed"));
+        witness.put("readSourceIds",Collections.emptyList());witness.put("sources",Collections.emptyList());
+        assertEquals(true,gate(capture(before),context()).get("allowed"));
+    }
+
+    @Test void contractCannotUseFlatCoverageEvenWhenAllThreeRoundsStopped() {
+        for(boolean declared:Arrays.asList(true,false)) {
+            Finding before=flatUrl();
+            Map<String,Object> rule=(Map<String,Object>)((List<?>)map(body(before).get("plan")).get("rules")).get(0);
+            rule.put("predicate","CONTRACT");
+            if(declared)rule.put("parameters",fields("declaredPerformanceRow",fields("documentId","doc","proofPageStart",2,"proofPageEnd",4)));
+            assertEquals(true,gate(capture(before),context()).get("allowed"));
+        }
+    }
+
+    /** Reduced shape of the host URL receipt from 115a7b00 (full109-04).
+     * The other three certificate targets were unvisited and remain independent. */
+    private Finding flatUrl() {
+        Finding before=finding("DEFAULT_GUIDANCE",1);
+        Map<String,Object> rule=(Map<String,Object>)((List<?>)map(body(before).get("plan")).get("rules")).get(0);
+        rule.put("predicate","MATERIAL");rule.put("field","material");rule.put("expected","查询网址");
+        rule.put("parameters",fields("certificateProofCategory","职业健康安全管理体系认证"));
+        audit(before).put("status","EVIDENCE_UPDATED");audit(before).put("code","INVESTIGATION_CALL_LIMIT");
+        work(before).put("readCoverage",Collections.emptyMap());
+        audit(before).put("acceptedFactIds",Collections.singletonList("url-fact"));
+        work(before).put("flatReadEvidence",fields("version","server-flat-target-read-1","authority","CURRENT_SERVER_PROOF",
+            "businessProof",false,"requestId","request","serverPlanRevision","plan","targetObligationId",TARGET,
+            "evidenceRevision","evidence","readSourceIds",Collections.emptyList(),"acceptedFactIds",Collections.singletonList("url-fact"),
+            "acceptedFacts",Collections.singletonList(fields("factId","url-fact","sourceIds",Collections.singletonList("query-original"))),
+            "sources",Collections.singletonList(fields("id","query-original","documentId","bid",
+                "documentHash","0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","documentVersion",1,
+                "page",454,"locationType","PAGE","parserFingerprint","frozen-parser"))));
+        Map<String,Object> ledger=(Map<String,Object>)((List<?>)audit(before).get("targetProgressLedger")).get(0);
+        ledger.putAll(fields("navigationCount",0,"noNewFactCounterVersion","java-agent-target-rounds-1",
+            "noNewFactModelRounds",3,"noNewFactRequestId","request","noNewFactStopReason","THREE_ROUNDS_NO_NEW_FACT"));
+        return before;
     }
 
     private Finding capture(Finding f) { return RecoverySemanticGate.captureFirstRound(f, context(), "policy"); }

@@ -176,13 +176,15 @@ final class SourcePerformanceScore {
         }
         boolean closed=matching.size()==1&&strings(matching.get(0).get("missing")).isEmpty()
             &&(Boolean.TRUE.equals(matching.get(0).get("counted"))||!strings(matching.get(0).get("excluded")).isEmpty())
-            &&parent.gaps().stream().allMatch(g->"PERFORMANCE_PROOF_COVERAGE_REQUIRED".equals(g.code()));
+            &&parent.gaps().stream().allMatch(g->Arrays.asList("PERFORMANCE_PROOF_COVERAGE_REQUIRED","CONTRACT_SIGNING_DATE_CONFLICT").contains(g.code()));
         Map<String,Object> proof=new LinkedHashMap<>(parent.proof());proof.put("contractChecks",matching);
         proof.put("parentBusinessStatus",parent.status());proof.put("rowEvidenceClosed",closed);proof.put("businessProof",false);
         // Acquisition completion is not a new score and never replaces the parent's decision.
         proof.remove("score");proof.put("scoreProduced",false);
         List<Map<String,Object>> actions=new ArrayList<>();for(Map<String,Object> action:RuleEvaluator.maps(parent.proof().get("requiredEvidenceActions")))if(read.id().equals(str(action,"targetId")))actions.add(action);proof.put("requiredEvidenceActions",actions);
-        return new Decision(read.id(),read.description(),closed?"PASS":"UNDETERMINED",closed?"本申报行的合同证据已逐项核验；其余申报行及总评分保持独立":"本申报行仍有未闭合的合同证据",parent.evidences(),closed?Collections.emptyList():parent.gaps().isEmpty()?Collections.singletonList(gap("PERFORMANCE_PROOF_COVERAGE_REQUIRED","本行尚未取得唯一完整合同回执")):parent.gaps(),proof);
+        boolean conflict=matching.stream().anyMatch(c->strings(c.get("missing")).contains("双方签署日期不一致，待确认"));
+        List<Gap> rowGaps=cn.bidcheck.compat.Java8Api.toList(parent.gaps().stream().filter(g->!"CONTRACT_SIGNING_DATE_CONFLICT".equals(g.code())||conflict));
+        return new Decision(read.id(),read.description(),closed?"PASS":"UNDETERMINED",closed?"本申报行的合同证据已逐项核验；其余申报行及总评分保持独立":"本申报行仍有未闭合的合同证据",parent.evidences(),closed?Collections.emptyList():rowGaps.isEmpty()?Collections.singletonList(gap("PERFORMANCE_PROOF_COVERAGE_REQUIRED","本行尚未取得唯一完整合同回执")):rowGaps,proof);
     }
     static Map<String,Object> declaredOwnerScope(Rule read,Decision parent){
         if(parent==null||!(read.parameters().get("declaredPerformanceRow") instanceof Map<?,?>))return Collections.emptyMap();
@@ -243,7 +245,7 @@ final class SourcePerformanceScore {
         List<Fact> validated=cn.bidcheck.compat.Java8Api.toList(e.facts.stream().filter(f->f.kind().equals("CONTRACT")&&validContract(f,e,contractVerifier)));Map<String,Map<String,Object>> identityLinks = new LinkedHashMap<>();
         Map<String,List<Fact>> globalGroups=contractGroups(validated, declared, e.corpus, identityLinks);
         Set<String> ambiguousNumbers=ambiguousNumberCandidates(globalGroups);
-        RowContractGroups scoped = rowContractGroups(validated, declared, e.corpus, globalGroups, identityLinks);
+        RowContractGroups scoped = rowContractGroups(rule,e,validated, declared, globalGroups, identityLinks);
         Map<String,List<Fact>> groups = scoped.groups;
         if (scoped.active) proof.put("contractObservations", contractObservations(validated, scoped, e.corpus));
         Inventory inventory=inventory(rule,target,e);proof.put("submittedInventory",inventory.proof());
@@ -266,10 +268,16 @@ final class SourcePerformanceScore {
                 missing.add("同一申报行有多个尚未唯一关联的合同记录");
             if (calculationRow != null && scoped.overlappingRows(facts, e.corpus) != 1)
                 missing.add("合同来源同时落入多个申报行，尚未唯一归属");
+            if(facts.stream().allMatch(f->"ORDER_PARENT_REFERENCE".equals(str(f.attributes(),"identitySourceMethod"))))
+                missing.add("订单打印的母协议编号尚待与框架合同原件身份对应");
             if(facts.stream().map(f->numberCandidate(str(f.attributes(),"contractNumber"))).anyMatch(ambiguousNumbers::contains))missing.add("合同编号去除分隔符后存在同号候选，名称或日期未能证明同一合同，暂不重复计分");
             Set<String> numbers=new LinkedHashSet<>();facts.forEach(f->{if(!cn.bidcheck.compat.Java8Api.isBlank(str(f.attributes(),"contractNumber")))numbers.add(str(f.attributes(),"contractNumber"));});
             if(inventory.complete()&&numbers.stream().noneMatch(inventory.numbers()::contains))continue;
-            facts.forEach(f->{if(!cn.bidcheck.compat.Java8Api.isBlank(str(f.attributes(),"party")))parties.add(str(f.attributes(),"party"));if(!cn.bidcheck.compat.Java8Api.isBlank(str(f.attributes(),"signedDate")))dates.add(str(f.attributes(),"signedDate"));if(!cn.bidcheck.compat.Java8Api.isBlank(str(f.attributes(),"contractName")))names.add(str(f.attributes(),"contractName"));});
+            facts.forEach(f->{if(!cn.bidcheck.compat.Java8Api.isBlank(str(f.attributes(),"party")))parties.add(str(f.attributes(),"party"));
+                String signed=str(f.attributes(),"signedDate");
+                if(!cn.bidcheck.compat.Java8Api.isBlank(signed))dates.add(date(signed)==null?signed:date(signed).toString());
+                String title=str(f.attributes(),"contractName");
+                if(!cn.bidcheck.compat.Java8Api.isBlank(title) && names.stream().noneMatch(prior->ContractCandidateFields.sameTitle(prior,title)))names.add(title);});
             Map<String,Object> packet=DeclaredPerformanceRows.packet(facts,declared,e.corpus);
             if(personal&&!candidates.isEmpty()){
                 List<Map<String,Object>> ownerRows=new ArrayList<>();for(Map<String,Object> row:declared)if(!facts.isEmpty()&&facts.stream().flatMap(f->f.sourceIds().stream()).allMatch(id->DeclaredPerformanceRows.contains(row,e.corpus.byId.get(id))))ownerRows.add(row);
@@ -278,31 +286,57 @@ final class SourcePerformanceScore {
             List<Source> sources=contractSources(facts,e);
             if (calculationRow != null) sources = cn.bidcheck.compat.Java8Api.toList(sources.stream().filter(source -> DeclaredPerformanceRows.contains(calculationRow, source)));
             String text=sources.stream().map(s->s.evidence().quote()).reduce((a,b)->a+'\n'+b).orElse("");
-            if(names.size()!=1)missing.add("同一合同名称");if(parties.isEmpty())missing.add("签约单位");else if(!personal&&!parties.contains(target))excluded.add("非本次施工单位业绩");
-            if(parties.stream().anyMatch(party->!Pattern.compile("(?:承包人|承包方|乙方|施工单位|设计单位)[\\s:：|（(盖章）)]*"+Pattern.quote(party)+"(?=[\\s|，,。；;（）()]|$)").matcher(text).find()))missing.add("各签约单位与同一合同承包方的原文关系");
-            if(dates.size()!=1)missing.add("同一合同签订日期");else {LocalDate date=date(dates.iterator().next());if(date==null)missing.add("签订日期格式");else if(date.isBefore(LocalDate.parse(str(rule.parameters(),"sinceDate")))||date.isAfter(deadline))excluded.add("签订日期不在招标窗口");}
-            if (dates.size() == 1) {
-                String signingDate = dates.iterator().next();
-                if (!boundSigningDate(text, signingDate)
-                        && !ContractRecordBindings.signingDate(signingDate, sources)) {
-                    missing.add("签订日期标签与日期的对应关系");
-                }
+            ContractParticipants participants=new ContractParticipants(parties,sources);
+            if(names.size()!=1)missing.add("同一合同名称");
+            if(parties.isEmpty())missing.add("签约单位");
+            else if(!participants.unassigned.isEmpty()||participants.performers.isEmpty())missing.add("各签约单位与同一合同承包方的原文关系");
+            else if(!personal&&!participants.performers.contains(target))excluded.add("非本次施工单位业绩");
+            List<Source> signedPages = signingPages(facts,sources,calculationRow,numbers,e);
+            SigningDateBlock signature=SigningDateBlock.read(signedPages);
+            ContractSigningOriginal.Review original=ContractSigningOriginal.inspect(rule,
+                calculationRow!=null && scoped.groupCount(calculationRow)==1 && scoped.overlappingRows(facts,e.corpus)==1?calculationRow:null,facts,e);
+            if(!original.days.isEmpty()) {
+                SigningDateBlock image=SigningDateBlock.result(original.days);
+                if(image.status!=SigningDateBlock.Status.CONFIRMED || signature.status!=SigningDateBlock.Status.NOT_FOUND
+                        && !signature.confirms(image.first))missing.add("签订日期原文与原图观察存在歧义，需核对原图");
+                else if(signature.status==SigningDateBlock.Status.NOT_FOUND) signature=image;
+            }
+            if(original.differentPrintedMonth)missing.add("合同封面所载月份与原图签订日期不一致，待核对");
+            String contract=numbers.size()==1 ? numbers.iterator().next() : names.size()==1 ? names.iterator().next() : "";
+            String selected="";
+            if(signature.status==SigningDateBlock.Status.CONFLICT && !contract.isEmpty()) {
+                selected=confirmedSigningDate(contract,signature,e.facts);
+                if(selected.isEmpty()) {
+                    missing.add("双方签署日期不一致，待确认");
+                    confirmationCandidates.add(signature.choice(rule.id(),contract));
+                } else {dates.clear();dates.add(selected);}
+            } else if(signature.status==SigningDateBlock.Status.CONFIRMED) dates.add(signature.first);
+            if(dates.size()!=1) {
+                if(signature.status!=SigningDateBlock.Status.CONFLICT)missing.add("同一合同签订日期");
+            } else if(signature.status!=SigningDateBlock.Status.CONFLICT || !selected.isEmpty()) {
+                LocalDate date=date(dates.iterator().next());
+                if(date==null)missing.add("签订日期格式");
+                else if(selected.isEmpty() && !signature.confirms(dates.iterator().next()))missing.add("签订日期标签与日期的对应关系");
+                else if(date.isBefore(LocalDate.parse(str(rule.parameters(),"sinceDate")))||date.isAfter(deadline))excluded.add("签订日期不在招标窗口");
             }
             if(text.matches("(?s).*(?:示范文本|填写示例|空白合同|拟签订).*"))missing.add("非模板的已签合同原文");
             if(!text.contains("装饰装修")&&!text.contains("装修工程"))missing.add("装饰装修项目性质");
             boolean epc=Pattern.compile("(?i)(?:EPC|工程总承包)").matcher(text).find();String type=str(rule.parameters(),"performanceType");
             List<Map<String,Object>> workRoles=new ArrayList<>();
-            if(!personal)workRoles.addAll(workRole(sources,target,type,epc,names,parties.size()));
-            else {List<Map<String,Object>> membership=personalMembership(sources,target,str(rule.parameters(),"personRole"),parties);Set<String> members=new LinkedHashSet<>();membership.forEach(m->members.add(str(m,"party")));
-                if(membership.isEmpty()||members.size()!=1||members.contains("")||!parties.contains(members.iterator().next()))missing.add("历史任职人员与同一合同成员单位的局部归属尚未唯一证明");
-                else {String member=members.iterator().next();workRoles.addAll(workRole(sources,member,type,epc,names,parties.size()));workRoles.forEach(m->m.put("personMembershipProof",membership));}}
+            if(!personal&&participants.performers.contains(target))workRoles.addAll(workRole(sources,target,type,epc,names,participants.performers.size()));
+            else if(personal){List<Map<String,Object>> membership=personalMembership(sources,target,str(rule.parameters(),"personRole"),participants.performers);Set<String> members=new LinkedHashSet<>();membership.forEach(m->members.add(str(m,"party")));
+                if(membership.isEmpty()||members.size()!=1||members.contains("")||!participants.performers.contains(members.iterator().next()))missing.add("历史任职人员与同一合同成员单位的局部归属尚未唯一证明");
+                else {String member=members.iterator().next();workRoles.addAll(workRole(sources,member,type,epc,names,participants.performers.size()));workRoles.forEach(m->m.put("personMembershipProof",membership));}}
             if(workRoles.isEmpty())missing.add("同一合同中签约主体明确承担的"+type+"工作；其他成员分工不能借用");
             if(sources.stream().noneMatch(s->s.evidence().quote().matches("(?s).*(?:甲方|发包人|建设单位).*(?:签字|签章|盖章).*" )&&s.evidence().quote().matches("(?s).*(?:乙方|承包人|施工单位|设计单位).*(?:签字|签章|盖章).*")))missing.add("同一合同签字盖章页");
             if(personal){
-                List<Fact> individual=cn.bidcheck.compat.Java8Api.toList(facts.stream().filter(f->target.equals(str(f.attributes(),"person"))&&PersonnelRoles.canonical(str(f.attributes(),"personRole")).equals(PersonnelRoles.canonical(str(rule.parameters(),"personRole")))));
+                participants.linkAppointment(str(rule.parameters(),"personRole"),target,facts,sources);
+                List<Fact> individual=new ArrayList<>(cn.bidcheck.compat.Java8Api.toList(facts.stream().filter(f->target.equals(str(f.attributes(),"person"))&&PersonnelRoles.canonical(str(f.attributes(),"personRole")).equals(PersonnelRoles.canonical(str(rule.parameters(),"personRole"))))));
+                individual.addAll(participants.appointedPeople);
                 if(individual.isEmpty())missing.add("该合同中的同一负责人任职证明");
                 else if(individual.stream().noneMatch(f->roles.stream().anyMatch(r->e.identities.samePerson(r,f))))missing.add("当前任职与历史合同人员身份关联");
-                if(individual.stream().noneMatch(f->Pattern.compile(Pattern.quote(str(f.attributes(),"personRole"))+"[\\s:：|]*"+Pattern.quote(target)+"(?=[\\s|，,。；;（）()]|$)").matcher(text).find()))missing.add("合同任职岗位与该姓名的直接对应");
+                if(participants.appointments.isEmpty() && individual.stream().noneMatch(f->!str(f.attributes(),"personRole").isEmpty()
+                    && Pattern.compile(Pattern.quote(str(f.attributes(),"personRole"))+"[\\s:：|]*"+Pattern.quote(target)+"(?=[\\s|，,。；;（）()]|$)").matcher(text).find()))missing.add("合同任职岗位与该姓名的直接对应");
                 if(social==null||!social.status().equals("PASS"))missing.add("同一人员在本单位连续社保或已核特殊证明");
             }
             List<Map<String,Object>> formRecords=cn.bidcheck.compat.Java8Api.listOf(),formCandidates=cn.bidcheck.compat.Java8Api.listOf();if(submittedForm!=null){
@@ -318,7 +352,12 @@ final class SourcePerformanceScore {
                 if(listed.size()!=1||totals.size()!=1)missing.add("业绩清单金额与合同同口径金额尚未逐行核对");else if(listed.iterator().next().compareTo(totals.iterator().next())!=0)missing.add("业绩清单金额与合同同口径金额矛盾");}
             if(missing.isEmpty()&&excluded.isEmpty()){counted.add(scoped.identity(group.getKey()));accepted.addAll(facts);sources.forEach(s->evidence.add(s.evidence()));}
             List<Map<String,Object>> amounts=new ArrayList<>();for(Fact fact:facts)if(fact.attributes().containsKey("amount"))amounts.add(linked("factId",fact.id(),"amount",fact.attributes().get("amount"),"unit",fact.attributes().get("unit"),"amountBasis",fact.attributes().get("amountBasis"),"taxBasis",factTaxBasis(fact),"sourceIds",fact.sourceIds()));
-            checks.add(linked("contractIdentity",scoped.identity(group.getKey()),"externalConflicts",externalConflicts,"contractNumbers",cn.bidcheck.compat.Java8Api.listCopyOf(numbers),"factIds",cn.bidcheck.compat.Java8Api.toList(facts.stream().map(Fact::id)),"sourceIds",cn.bidcheck.compat.Java8Api.toList(sources.stream().map(Source::id)),"recordIdentityLinks",cn.bidcheck.compat.Java8Api.toList(facts.stream().map(f->identityLinks.get(f.id())).filter(Objects::nonNull)),"submittedFormRecords",formRecords,"submittedFormCandidates",formCandidates,"partyWorkRoleProof",workRoles,"amountBasis",amount.basis(),"amount",amount.value(),"amountObservations",amounts,"amountEvidence",amount.proof(),"missing",missing,"excluded",excluded,"counted",missing.isEmpty()&&excluded.isEmpty()));
+            checks.add(linked("contractIdentity",scoped.identity(group.getKey()),"externalConflicts",externalConflicts,"contractNumbers",cn.bidcheck.compat.Java8Api.listCopyOf(numbers),"factIds",cn.bidcheck.compat.Java8Api.toList(facts.stream().map(Fact::id)),"sourceIds",cn.bidcheck.compat.Java8Api.toList(sources.stream().map(Source::id)),"signingDateEvidence",linked("state",signature.status.toString(),"dates",Arrays.asList(signature.first,signature.second),"sourceIds",cn.bidcheck.compat.Java8Api.toList(signature.sources.stream().map(Source::id)),"reviewerSelected",selected),"recordIdentityLinks",cn.bidcheck.compat.Java8Api.toList(facts.stream().map(f->identityLinks.get(f.id())).filter(Objects::nonNull)),"submittedFormRecords",formRecords,"submittedFormCandidates",formCandidates,"partyWorkRoleProof",workRoles,"amountBasis",amount.basis(),"amount",amount.value(),"amountObservations",amounts,"amountEvidence",amount.proof(),"missing",missing,"excluded",excluded,"counted",missing.isEmpty()&&excluded.isEmpty()));
+            checks.get(checks.size()-1).put("partySideEvidence",participants.sides);
+            checks.get(checks.size()-1).put("historicalAppointmentEvidence",participants.appointments);
+            if(calculationRow!=null && scoped.originalNumbers.containsKey(str(calculationRow,"inventoryIdentity")))
+                checks.get(checks.size()-1).put("originalNumberCheck",scoped.originalNumbers.get(str(calculationRow,"inventoryIdentity")));
+            if(!original.checks.isEmpty())checks.get(checks.size()-1).put("originalSigningDateChecks",original.checks);
         }
         if(!declared.isEmpty()){
             for(Map<String,Object> declaration:declared){
@@ -328,7 +367,26 @@ final class SourcePerformanceScore {
                     if(ids.isEmpty()||!ids.stream().map(e.corpus.byId::get).allMatch(source->DeclaredPerformanceRows.contains(declaration,source)))continue;
                     if(matched!=null){matched=null;break;}matched=candidate;
                 }
-                if(matched==null)checks.addAll(DeclaredPerformanceRows.unverifiedChecks(Collections.singletonList(declaration)));
+                if(matched==null){
+                    Map<String,Object> pending=DeclaredPerformanceRows.unverifiedChecks(Collections.singletonList(declaration)).get(0);
+                    Map<String,Object> header=scoped.originalNumbers.get(str(declaration,"inventoryIdentity"));
+                    if(header!=null){
+                        // Expose the actual separately validated groups, retaining their distinct identities.
+                        // A purchase order reference alone must not make this row a verified agreement.
+                        List<Map<String,Object>> observations=new ArrayList<>();
+                        for(Map<String,Object> candidate:checks){
+                            List<String> ids=strings(candidate.get("sourceIds"));
+                            if(!ids.isEmpty()&&ids.stream().map(e.corpus.byId::get).allMatch(s->DeclaredPerformanceRows.contains(declaration,s))){
+                                FrameworkNumberEvidence.attachOrderNavigation(candidate,declaration,declared,header,e.corpus);
+                                observations.add(linked("contractIdentity",candidate.get("contractIdentity"),"contractNumbers",candidate.get("contractNumbers"),
+                                    "sourceIds",ids,"factIds",candidate.get("factIds"),"signingDateEvidence",candidate.get("signingDateEvidence")));
+                            }
+                        }
+                        pending.put("originalNumberCheck",header);pending.put("unmergedObservations",observations);
+                        pending.put("missing",Collections.singletonList("框架原件与订单引用分别有原文；须核对原件编号后关联两组事实"));
+                    }
+                    checks.add(pending);
+                }
                 else matched.put("declaredRow",declaration);
             }
         }
@@ -343,10 +401,20 @@ final class SourcePerformanceScore {
         // A cached/model boolean contractSetComplete is not proof of a complete submitted list.
         proof.put("confirmationCandidates",confirmationCandidates);
         proof.put("confirmationCoversAllGaps",inventory.complete()&&!confirmationCandidates.isEmpty()&&checks.stream().allMatch(c->strings(c.get("missing")).stream().allMatch(m->m.contains("唯一实填企业业绩记录")||m.equals("同一合同金额存在不同取值，需核清版本"))));
-        return result(rule,"UNDETERMINED","已计算有完整证明的业绩分值下限；尚未证明全部申报合同及共同材料覆盖，不把未召回合同计为0分",evidence,proof,cn.bidcheck.compat.Java8Api.listOf(gap("PERFORMANCE_PROOF_COVERAGE_REQUIRED","逐合同缺口和已排除原因见 contractChecks；需闭合申报清单或继续核证至评分上限")));
+        List<Gap> gaps=new ArrayList<>();
+        gaps.add(gap("PERFORMANCE_PROOF_COVERAGE_REQUIRED","逐合同缺口和已排除原因见 contractChecks；需闭合申报清单或继续核证至评分上限"));
+        if(checks.stream().flatMap(c->RuleEvaluator.maps(c.get("originalSigningDateChecks")).stream())
+                .anyMatch(c->"ORIGINAL_IMAGE_REQUIRED".equals(str(c,"status"))))
+            gaps.add(gap("VISUAL_CONTRACT_SIGNING_DATE_REQUIRED","签订日期原文含损坏字符，请定位签订时间行核读当前文档原图。"));
+        if(scoped.originalNumbers.values().stream().anyMatch(c->"ORIGINAL_IMAGE_REQUIRED".equals(str(c,"status"))))
+            gaps.add(gap("VISUAL_FRAMEWORK_ORIGINAL_NUMBER_REQUIRED","订单列出了母协议号；须核对当前框架合同原件封面的合同编号。"));
+        if(checks.stream().anyMatch(c->strings(c.get("missing")).contains("双方签署日期不一致，待确认")))
+            gaps.add(gap("CONTRACT_SIGNING_DATE_CONFLICT","双方签署日期不一致，待确认"));
+        return result(rule,"UNDETERMINED","已计算有完整证明的业绩分值下限；尚未证明全部申报合同及共同材料覆盖，不把未召回合同计为0分",evidence,proof,gaps);
     }
     /** Row business evidence and the complete observation set have separate roles. */
     private static final class RowContractGroups {
+        final Map<String,Map<String,Object>> originalNumbers=new LinkedHashMap<>();
         final Map<String,List<Fact>> groups = new LinkedHashMap<>();
         final Map<String,Map<String,Object>> rows = new LinkedHashMap<>();
         final Map<String,String> identities = new LinkedHashMap<>();
@@ -383,9 +451,10 @@ final class SourcePerformanceScore {
             .allMatch(id -> DeclaredPerformanceRows.contains(row, corpus.byId.get(id)));
     }
 
-    private static RowContractGroups rowContractGroups(List<Fact> facts, List<Map<String,Object>> declarations,
-            EvidenceCorpus corpus, Map<String,List<Fact>> globalGroups,
+    private static RowContractGroups rowContractGroups(Rule rule,RuleEvaluator evaluator,List<Fact> facts, List<Map<String,Object>> declarations,
+            Map<String,List<Fact>> globalGroups,
             Map<String,Map<String,Object>> identityLinks) {
+        EvidenceCorpus corpus=evaluator.corpus;
         RowContractGroups result = new RowContractGroups(declarations);
         if (!result.active) {
             result.groups.putAll(globalGroups);
@@ -396,6 +465,8 @@ final class SourcePerformanceScore {
             List<Fact> local = cn.bidcheck.compat.Java8Api.toList(facts.stream()
                 .filter(fact -> insideRow(fact, row, corpus)));
             Map<String,List<Fact>> groups = contractGroups(local, declarations, corpus, identityLinks);
+            Map<String,Object> original=FrameworkNumberEvidence.reconcile(rule,row,groups,evaluator);
+            if(!original.isEmpty()) result.originalNumbers.put(str(row,"inventoryIdentity"),original);
             groups.forEach((identity, members) -> {
                 String key = identity("row-contract:" + str(row, "inventoryIdentity") + ":" + identity);
                 result.groups.put(key, members);
@@ -619,7 +690,30 @@ final class SourcePerformanceScore {
             &&DomainBindings.issue(fact,evaluator.corpus.byId,RuleEvaluator.maps(evaluator.context.get("_validatedLayoutCells")))==null;
     }
     static boolean valid(Fact f,RuleEvaluator e){return new ProofVerifier().issue(f,e.corpus.byId)==null&&DomainBindings.issue(f,e.corpus.byId,RuleEvaluator.maps(e.context.get("_validatedLayoutCells")))==null;}
-    private static boolean boundSigningDate(String text,String date){Matcher m=Pattern.compile("(?:合同签订日期|签订日期|合同签订时间|签订时间|签署日期)[\\s:：|]*([^\\n;；|]{1,70})").matcher(text);while(m.find())if(datePresent(m.group(1),date))return true;return false;}
+    private static List<Source> signingPages(List<Fact> facts,List<Source> sources,Map<String,Object> row,
+            Set<String> numbers,RuleEvaluator evaluator) {
+        Map<String,Source> pages=new LinkedHashMap<>();
+        Set<String> anchors=new HashSet<>();
+        facts.forEach(f->anchors.addAll(strings(f.attributes().get("recordAnchorSourceIds"))));
+        Set<String> explicitSigningPages=new HashSet<>();
+        for(Fact fact:facts)if("signedDate".equals(fact.field()))explicitSigningPages.addAll(ContractEvidenceRecord.fieldSourceIds(fact));
+        sources.forEach(s->{if(!anchors.contains(s.id())||explicitSigningPages.contains(s.id()))pages.put(s.id(),s);});
+        if(row!=null && numbers.size()==1)for(Source source:evaluator.corpus.all) {
+            if(!anchors.contains(source.id()) && DeclaredPerformanceRows.contains(row,source)
+                    && new HashSet<>(ContractRecordBindings.numbersOn(source)).equals(numbers))
+                pages.put(source.id(),source);
+        }
+        return new ArrayList<>(pages.values());
+    }
+    private static String confirmedSigningDate(String contract,SigningDateBlock signature,List<Fact> facts) {
+        Set<String> ids=new HashSet<>();
+        signature.sources.forEach(s->ids.add(s.id()));
+        Set<String> choices=new HashSet<>();
+        for(Fact fact:facts)if(InferenceClaims.humanConfirmed(fact) && fact.field().equals("CONTRACT_SIGNING_DATE_CHOICE")
+                && fact.subject().equals(contract) && ids.equals(new HashSet<>(fact.sourceIds()))
+                && Arrays.asList(signature.first,signature.second).contains(fact.value()))choices.add(fact.value());
+        return choices.size()==1?choices.iterator().next():"";
+    }
     private static String numberExact(String value){return java.text.Normalizer.normalize(clean(value),java.text.Normalizer.Form.NFKC).toUpperCase(Locale.ROOT).replaceAll("[‐‑‒–—―−]","-");}
     private static String numberCandidate(String value){return numberExact(value).replaceAll("[^\\p{L}\\p{N}]","");}
     static String contractIdentity(Fact f){String number=numberExact(str(f.attributes(),"contractNumber")),name=clean(str(f.attributes(),"contractName"));return cn.bidcheck.compat.Java8Api.isBlank(number)&&cn.bidcheck.compat.Java8Api.isBlank(name)?"":identity(cn.bidcheck.compat.Java8Api.isBlank(number)?"name:"+name:"number:"+number);}

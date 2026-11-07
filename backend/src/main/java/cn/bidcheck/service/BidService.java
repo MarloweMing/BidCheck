@@ -942,7 +942,7 @@ public class BidService {
         });
     }
     private static void copyConsistencyLocation(Map<String,Object> target,Map<String,Object> source){
-        for(String key:cn.bidcheck.compat.Java8Api.listOf("consistencyGroupId", "categoryId", "relationType", "ruleId", "comparisonContext"))
+        for(String key:cn.bidcheck.compat.Java8Api.listOf("consistencyGroupId", "categoryId", "relationType", "ruleId", "comparisonContext", "nameVariantAttribution"))
             if(source.containsKey(key))target.put(key,source.get(key));
     }
     private static void copyConsistencyGroupLocation(Map<String,Object> target,Map<String,Object> group){
@@ -987,6 +987,7 @@ public class BidService {
                 }
             }
         }
+        evaluation=cn.bidcheck.consistency.NameVariantAttribution.evaluation(group,evaluation);
         return new Finding(finding.id(),finding.runId(),checkpoint,evaluation,FocusedCheckEvaluator.reconcileAssessment(evaluation,assessment));
     }
     private Checkpoint withProjectDate(Checkpoint c,Map<String,Object> project) {
@@ -1493,6 +1494,7 @@ public class BidService {
             for(int i=0;i<checkpoints.size();i++) persist.accept(i,evaluate.apply(i));
         } else checkpointExecutor.forEachCompleted(checkpoints.size(),evaluate,persist);
         checkPhase(task,runId,"CHECKPOINTS",checkpointsStarted,completed[0]);
+        publishMissingVolumeDependencies(task,runId,d);
         long resolutionStarted=System.nanoTime();
         continueResolution(task,runId,d,tender,facts,consistency,modelBudget,atomicContexts);
         checkPhase(task,runId,"RESOLUTION",resolutionStarted,store.maps("check_resolution",task.projectId,runId).size());
@@ -1507,6 +1509,27 @@ public class BidService {
             finish(task,stage);updateRun(task,"COMPLETED",100,stage,null);
         });
         LOG.info("bidcheck.check_run taskId={} runId={} attempt={} state=COMPLETED checkpointCount={} durationMs={}",task.id,runId,task.attempt,checkpoints.size(),(System.nanoTime()-checkStarted)/1_000_000);
+    }
+    private void publishMissingVolumeDependencies(TaskRow task,String runId,Document bid){
+        List<Finding> findings=store.list("finding",task.projectId,runId,Finding.class);
+        Map<String,List<String>> inventory=RunVolumeDependencies.inventory(findings);
+        if(inventory.isEmpty())return;
+        tx.executeWithoutResult(s->{
+            Map<String,Object> run=store.getMap("run",runId);
+            run.put("missingVolumes",inventory);
+            store.save("run",runId,task.projectId,bid.id(),run);
+            for(Finding f:findings){
+                if(hasScopedSupplement(run,f.checkpoint().id()))continue;
+                Finding adjusted=RunVolumeDependencies.apply(f,CheckResolution.map(inventory));
+                if(adjusted==f)continue;
+                store.save("finding",adjusted.id(),task.projectId,runId,adjusted);
+                recordResolution(task,runId,adjusted);
+            }
+        });
+    }
+    private static boolean hasScopedSupplement(Map<String,Object> run,String checkpointId){
+        return CheckResolution.maps(run.get("supplementManifest")).stream().anyMatch(row->
+            checkpointId.equals(text(row,"checkpointId"))||stringList(row.get("affectedCheckpointIds")).contains(checkpointId));
     }
     private static void checkPhase(TaskRow task,String runId,String phase,long started,int count){
         LOG.info("bidcheck.check_phase taskId={} runId={} phase={} state=COMPLETED count={} durationMs={}",task.id,runId,phase,count,(System.nanoTime()-started)/1_000_000);
@@ -1665,6 +1688,7 @@ public class BidService {
                 AgentGroupRecovery.carryChangedInputs(groupRecovery,initialContext);
                 List<Map<String,Object>> semanticHistory=store.maps("check_resolution_attempt",task.projectId,jobId);
                 Map<String,Object> semanticGate=RecoverySemanticGate.inspect(before,strategy,initialContext,semanticHistory,resolutionPolicyIdentity());
+                RecoveryGapKeys.retainUnconsumed(before,pending,semanticGate);
                 if(Boolean.FALSE.equals(semanticGate.get("allowed"))){
                     tx.executeWithoutResult(s->{progress(task,96,"停止缺少新相关证据的重复调查");Map<String,Object> job=new LinkedHashMap<>(pending);
                         job.putAll(fields("status","BLOCKED_NO_PROGRESS","semanticGate",semanticGate,"stopReason",text(semanticGate,"description"),"updatedAt",now()));
@@ -1679,8 +1703,10 @@ public class BidService {
                         job.put("status","BLOCKED_NO_PROGRESS");job.put("stopReason","相同策略和证据已经执行，未再次重复请求。");job.put("updatedAt",now());store.save("check_resolution",jobId,task.projectId,runId,job);});continue;
                 }
                 long recoveryStarted=System.nanoTime();
+                Map<String,Object> startedJob=new LinkedHashMap<>(pending);
+                RecoveryGapKeys.beginTechnicalRetry(startedJob,before,semanticGate);
                 tx.executeWithoutResult(s->{progress(task,96,"首轮已完成，定向补查："+before.checkpoint().title());updateRun(task,"RUNNING",96,task.stage,null);
-                    Map<String,Object> job=new LinkedHashMap<>(pending);job.put("status","RUNNING");job.put("inputFingerprint",input);job.put("updatedAt",now());
+                    Map<String,Object> job=new LinkedHashMap<>(startedJob);job.put("status","RUNNING");job.put("inputFingerprint",input);job.put("updatedAt",now());
                     job.put("attempts",((Number)job.getOrDefault("attempts",0)).intValue()+1);store.save("check_resolution",jobId,task.projectId,runId,job);
                     store.save("check_resolution_attempt",attemptId,task.projectId,jobId,fields("id",attemptId,"strategy",strategy,"inputFingerprint",input,"status","RUNNING","startedAt",now()));});
                 Map<String,Object> context=initialContext;
@@ -1699,6 +1725,7 @@ public class BidService {
                     // An empty/failed call with old observations in storage is not new evidence.
                     newObservations=RecoveryInputs.changedObservations(previousObservations,context.get("visualObservations"));
                     RecoveryInputs.changedInputs(context,newObservations);
+                    VisualContractRecovery.bind(before,newObservations,context);
                 }
                 if("QUERY_EXTERNAL".equals(strategy)&&verification!=null){
                     List<Map<String,Object>> previousRecords=CheckResolution.maps(context.get("externalRecords"));
@@ -1743,20 +1770,34 @@ public class BidService {
                 Map<String,Object> requirementsProgress=RecoveryInputs.requirementProgress(before,preserved);
                 boolean requirementsRepaired=cn.bidcheck.verification.engine.RequirementRepairPolicy.requirementWork(strategy)&&Boolean.TRUE.equals(requirementsProgress.get("progressMade"));
                 Map<String,Object> nextPlan=CheckResolution.plan(published);
-                Map<String,Object> dependencyContinuation=RecoveryInputs.dependencyContinuation(pending,published,nextPlan);
+                Map<String,Object> dependencyContinuation=RecoveryInputs.dependencyContinuation(startedJob,before,published,nextPlan);
+                Map<String,Object> visualScope=CheckResolution.map(context.get("visualContractRecoveryScope"));
+                if(!visualScope.isEmpty())recoveryInput.put("visualContractRecoveryScope",visualScope);
+                final Map<String,Object> nextContinuation=VisualContractRecovery.continuation(before,published,visualScope,nextPlan,
+                    dependencyContinuation,diagnostics,resolutionPolicyIdentity());
+                if(!visualScope.isEmpty())LOG.info("bidcheck.visual_contract_recovery runId={} checkpointId={} affected={} followUpTargets={} nextStrategy={} nextStatus={}",
+                    runId,checkpointId,visualScope.get("byTarget"),nextContinuation.get("dependencyTargetObligationIds"),nextPlan.get("strategy"),nextPlan.get("status"));
                 Map<String,Object> transition=RecoveryTransition.afterAttempt(before,published,strategy,nextPlan,progressMade,requirementsRepaired,businessRecomputed,diagnostics);
+                if("BLOCKED".equals(text(nextPlan,"strategy"))&&"BLOCKED_NO_PROGRESS".equals(text(nextPlan,"status")))
+                    transition.put("stopReason",text(nextPlan,"reason"));
                 List<Map<String,Object>> semanticConsumedInputs=RecoverySemanticGate.inputs(published,context,resolutionPolicyIdentity());
                 List<Map<String,Object>> nextHistory=new ArrayList<>(semanticHistory);
                 nextHistory.add(fields("strategy",strategy,"status","FINISHED","semanticConsumedInputs",semanticConsumedInputs));
                 Map<String,Object> nextGateContext=RecoveryInputs.context(published,text(nextPlan,"strategy"),context);
-                if(dependencyContinuation.containsKey("dependencyTargetObligationIds"))nextGateContext.put("recoveryTargetObligationIds",dependencyContinuation.get("dependencyTargetObligationIds"));
-                Map<String,Object> nextSemanticGate=RecoverySemanticGate.inspect(published,text(nextPlan,"strategy"),nextGateContext,nextHistory,resolutionPolicyIdentity());
+                if(nextContinuation.containsKey("dependencyTargetObligationIds"))nextGateContext.put("recoveryTargetObligationIds",nextContinuation.get("dependencyTargetObligationIds"));
+                Map<String,Object> nextSemanticGate="NO_NEW_TEXT_INPUT".equals(text(nextPlan,"visualFieldFollowUp"))
+                    ?fields("version",RecoverySemanticGate.VERSION,"allowed",false,"reasonCode","VISUAL_FIELD_RECOMPUTED_WITH_NO_NEW_TEXT_INPUT",
+                        "blockedTargetIds",CheckResolution.map(visualScope.get("byTarget")).keySet(),"eligibleTargetIds",Collections.emptyList(),
+                        "description",nextPlan.get("reason"),"businessProof",false)
+                    :RecoverySemanticGate.inspect(published,text(nextPlan,"strategy"),nextGateContext,nextHistory,resolutionPolicyIdentity());
                 RecoveryTransition.applySemanticGate(transition,nextSemanticGate);
                 Map<String,Object> failedOutcome=preserved==after?cn.bidcheck.compat.Java8Api.mapOf():fields("evaluation",after.evaluation(),"assessment",after.assessment());
                 tx.executeWithoutResult(s->{progress(task,96,"保存定向补查结果");store.save("finding",published.id(),task.projectId,runId,published);
                     OrdinaryRecoveryDependencies.bind(store,task.projectId,runId,published);
                     Map<String,Object> job=store.getMap("check_resolution",jobId);job.putAll(nextPlan);job.put("updatedAt",now());
-                    job.remove("dependencyTargetObligationIds");job.remove("dependencyTrigger");job.putAll(dependencyContinuation);
+                    Object calls=recoveryInput.get("newModelCalls");
+                    RecoveryGapKeys.persist(job,before,published,strategy,semanticGate,calls instanceof Number&&((Number)calls).longValue()>0);
+                    job.remove("dependencyTargetObligationIds");job.remove("dependencyTrigger");job.putAll(nextContinuation);
                     job.put("newEvidenceCount",Math.max(0,(published.evaluation().evidences()==null?0:published.evaluation().evidences().size())-(before.evaluation().evidences()==null?0:before.evaluation().evidences().size())));
                     job.put("outcomeFingerprint",outcome);job.put("diagnostics",diagnostics);job.put("proofProgress",proofProgress);job.put("requirementsProgress",requirementsProgress);job.put("recoveryInput",recoveryInput);
                     job.put("status",transition.get("status"));job.put("lastAttemptOutcome",transition);
@@ -1838,13 +1879,18 @@ public class BidService {
                     insufficient?"补充或核对比较所需的对象、单位和适用条件；证据不足不表示材料不存在。":"对照以下各处原文，确认是否属于同一对象和范围；合理差异可单独记录复核说明。",
                     ConsistencyRunSupport.evidences(store,group.get("evidences")),"CONFLICT".equals(text(group,"status"))?1:0.6,"FULL_TEXT_CONSISTENCY");
             OcrReviewPolicy.Decision decision=OcrReviewPolicy.assess(raw,checkpoint,doc,tender);
+            Evaluation attributed=cn.bidcheck.consistency.NameVariantAttribution.evaluation(group,decision.evaluation());
+            if(!attributed.status().equals(decision.evaluation().status()))
+                LOG.info("bidcheck.name_variant_attribution runId={} checkpointId={} groupId={} code={} imagePages={} priorStatus={} status={}",
+                    runId,checkpointId,group.get("id"),cn.bidcheck.consistency.NameVariantAttribution.CODE,
+                    ConsistencyRunSupport.map(group.get("nameVariantAttribution")).get("imagePages"),decision.evaluation().status(),attributed.status());
             String findingId=stableId(runId+":"+checkpointId);
-            group.put("findingId",findingId);group.put("evaluationStatus",decision.evaluation().status());
+            group.put("findingId",findingId);group.put("evaluationStatus",attributed.status());
             if("CONFLICT".equals(text(group,"status"))&&"UNDETERMINED".equals(decision.evaluation().status())) group.put("status","SUSPECTED");
             group.put("reason",decision.evaluation().reason());groups.add(group);
-            findings.add(new Finding(findingId,runId,checkpoint,decision.evaluation(),fields("consistencyGroupId",text(group,"id"),
+            findings.add(new Finding(findingId,runId,checkpoint,attributed,fields("consistencyGroupId",text(group,"id"),
                     "categoryId",text(group,"categoryId"),"relationType",text(group,"relationType"),"ruleId",text(group,"ruleId"),
-                    "comparisonContext",ConsistencyRunSupport.map(group.get("comparisonContext")),
+                    "comparisonContext",ConsistencyRunSupport.map(group.get("comparisonContext")),"nameVariantAttribution",ConsistencyRunSupport.map(group.get("nameVariantAttribution")),
                     "policyVersion","full-text-consistency-v2","rawEvaluation",raw,"ocrReview",decision.review(),"adjustments",decision.adjustments())));
         }
         report.put("groups",groups);
@@ -2026,7 +2072,8 @@ public class BidService {
             Evaluation deterministic=engine.evaluate(c,d,facts,tender);
             assessment=new SemanticAssessment(deterministic,deterministic,cn.bidcheck.compat.Java8Api.mapOf());
         }
-        List<Map<String,Object>> scopedSupplements=cn.bidcheck.compat.Java8Api.toList(CheckResolution.maps(store.getMap("run",runId).get("supplementManifest")).stream()
+        Map<String,Object> runSnapshot=store.getMap("run",runId);
+        List<Map<String,Object>> scopedSupplements=cn.bidcheck.compat.Java8Api.toList(CheckResolution.maps(runSnapshot.get("supplementManifest")).stream()
             .filter(row->c.id().equals(text(row,"checkpointId"))||stringList(row.get("affectedCheckpointIds")).contains(c.id())));
         if(!scopedSupplements.isEmpty()&&(!assessment.audit().containsKey("atomicCheck"))){
             // Legacy/template scanners accept a single BID document. They must not claim that an
@@ -2052,9 +2099,18 @@ public class BidService {
         trace.put("rawEvaluation",assessment.rawEvaluation());trace.put("preOcrEvaluation",beforeOcr);
         trace.put("adjustments",adjustments);trace.put("ocrReview",decision.review());
         trace.put("elapsedMillis",(System.nanoTime()-started)/1_000_000);
-        Finding finding=new Finding(stableId(runId+":"+c.id()),runId,c,e,FocusedCheckEvaluator.reconcileAssessment(e,trace));
-        LOG.info("bidcheck.checkpoint runId={} checkpointId={} state=COMPLETED method={} businessState={} evidenceCount={} durationMs={}",runId,c.id(),e.method(),
-            text(CheckResolution.map(finding.assessment().get("businessPresentation")),"state"),e.evidences()==null?0:e.evidences().size(),trace.get("elapsedMillis"));
+        Finding finding=FocusedCheckEvaluator.publishedFinding(new Finding(stableId(runId+":"+c.id()),runId,c,e,trace),trace);
+        if(scopedSupplements.isEmpty())finding=RunVolumeDependencies.apply(finding,CheckResolution.map(runSnapshot.get("missingVolumes")));
+        Map<String,Object> atomic=CheckResolution.atomic(finding);
+        Map<String,Object> investigation=CheckResolution.map(atomic.get("agentInvestigation"));
+        Map<String,Object> metrics=CheckResolution.map(atomic.get("metrics"));
+        // Local rechecks can inherit the original investigation receipt. Its tool and
+        // rejection totals belong to that original request, not this evaluation.
+        boolean localRecheck=Boolean.FALSE.equals(atomicContext.get("recoveryModelAllowed"));
+        LOG.info("bidcheck.checkpoint runId={} checkpointId={} state=COMPLETED method={} businessState={} evidenceCount={} durationMs={} modelCalls={} toolCalls={} rejectedSubmissions={} localRecheck={}",runId,c.id(),e.method(),
+            text(CheckResolution.map(finding.assessment().get("businessPresentation")),"state"),e.evidences()==null?0:e.evidences().size(),trace.get("elapsedMillis"),
+            metrics.getOrDefault("modelCalls",localRecheck?0:investigation.getOrDefault("modelCalls",0)),
+            localRecheck?0:investigation.getOrDefault("toolCalls",0),localRecheck?0:investigation.getOrDefault("rejectedSubmissions",0),localRecheck);
         return finding;
     }
     /** Explicit production boundary for a semantic checkpoint without executable atomic context. */

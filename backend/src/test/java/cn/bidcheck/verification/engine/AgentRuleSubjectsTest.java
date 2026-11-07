@@ -60,8 +60,8 @@ class AgentRuleSubjectsTest {
     }
     @Test void sameNameWithConflictingIdentifiersStillBlocksCompleteGroupBinding(){
         Rule r=rule();EvidenceCorpus c=new EvidenceCorpus(cn.bidcheck.compat.Java8Api.listOf(SharedFactReuseTest.doc("bid","project",1,
-            "本项目人员配置\n姓名：测试甲\n身份证号码：110101199001010011\n拟在本合同任职：施工企业主要负责人",
-            "本项目人员配置\n姓名：测试甲\n身份证号码：110101199202020022\n拟在本合同任职：施工企业主要负责人")));
+            "本项目人员配置\n姓名：测试甲\n身份证号码：110101199001010015\n拟在本合同任职：施工企业主要负责人",
+            "本项目人员配置\n姓名：测试甲\n身份证号码：110101199202020025\n拟在本合同任职：施工企业主要负责人")));
         List<Fact> facts=new ArrayList<>();for(Source source:c.all)facts.add(new Fact(source.id(),"PERSON_ROLE","施工企业主要负责人","姓名","测试甲","测试甲","","","CURRENT_PROJECT",cn.bidcheck.compat.Java8Api.listOf(source.id()),cn.bidcheck.compat.Java8Api.mapOf()));
         // The labelled ID must directly follow the name: an intervening field does not
         // establish identity, even when both strings occur on the same physical page.
@@ -72,7 +72,7 @@ class AgentRuleSubjectsTest {
         assertEquals("IDENTITY_CONFLICT",individual.get("bindingStatus"));
         Map<String,Object> binding=AgentRuleSubjects.resolve(r,facts,c,cn.bidcheck.compat.Java8Api.listOf());assertEquals("IDENTITY_CONFLICT",binding.get("bindingStatus"));
         assertEquals(false,binding.get("allRequiredSelectorsResolved"));assertTrue(((List<?>)binding.get("unresolvedSubjectSelectors")).contains("施工企业主要负责人"));
-        assertFalse(binding.toString().contains("110101199001010011"));
+        assertFalse(binding.toString().contains("110101199001010015"));
     }
     @Test void promptKeepsSourceContextAndValidatedRolesWithoutNestedReceipts(){
         Rule r=rule(),request=AgentInvestigationScope.requestRules(cn.bidcheck.compat.Java8Api.listOf(r)).get(0);Map<String,Object> p=request.parameters();

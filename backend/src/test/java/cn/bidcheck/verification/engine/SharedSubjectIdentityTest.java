@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class SharedSubjectIdentityTest {
     final ObjectMapper json=new ObjectMapper();
     // Synthetic identifiers, never user data. Only hashes of these identities may appear in proof metadata.
-    final String first="110101199001010011",second="110101199202020022";
+    final String first="110101199001010015",second="110101199202020025";
     Map<String,Object> evaluate(boolean social,String roleId,String proofId){
         String expected=social?"项目负责人应提供连续3个月社保":"项目负责人应提供一级注册证书";
         Checkpoint cp=new Checkpoint("identity","项目负责人证据核验","资格","HIGH","SEMANTIC_RESPONSE","","",expected,"",true,true,true,null);

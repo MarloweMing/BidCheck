@@ -19,6 +19,7 @@ import static cn.bidcheck.consistency.ConsistencyRunSupport.*;
 
 /** Bounded durable batches, followed by an atomically published immutable report. */
 public final class ConsistencyPublication {
+    private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(ConsistencyPublication.class);
     public static final String VERSION="consistency-publication-4-compact-records";
     public static final int TRANSACTION_TIMEOUT_SECONDS=10;
     public static final int FINAL_TRANSACTION_TIMEOUT_SECONDS=30;
@@ -26,9 +27,15 @@ public final class ConsistencyPublication {
     public static final String DIAGNOSTIC_KIND="consistency_publication_diag";
     public static final int MAX_TRANSACTION_ATTEMPTS=3;
     public static final int MAX_BATCH_FACTS=10,MAX_BATCH_SOURCES=32,TARGET_BATCH_BYTES=128*1024;
+    public static final int REUSE_MAX_BATCH_FACTS=40,REUSE_MAX_BATCH_SOURCES=128;
+    public static final String REUSE_PLAN_POLICY_VERSION="positive-immutable-preload-1";
     private static final com.fasterxml.jackson.databind.ObjectMapper CANONICAL_JSON=new com.fasterxml.jackson.databind.ObjectMapper()
         .enable(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
     private final Store store;private final FactLedgerService ledger;private final TransactionTemplate tx,finalTx;
+    private static final class PublicationPlan {
+        final List<FactLedgerService.PreparedBatch> batches;final int maxFacts,maxSources;final String mode;
+        PublicationPlan(List<FactLedgerService.PreparedBatch> batches,int maxFacts,int maxSources,String mode){this.batches=batches;this.maxFacts=maxFacts;this.maxSources=maxSources;this.mode=mode;}
+    }
     public ConsistencyPublication(Store store,FactLedgerService ledger,TransactionTemplate template) {
         this.store=store;this.ledger=ledger;this.tx=new TransactionTemplate(Objects.requireNonNull(template.getTransactionManager()));
         tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);tx.setTimeout(TRANSACTION_TIMEOUT_SECONDS);
@@ -40,12 +47,26 @@ public final class ConsistencyPublication {
         if(TransactionSynchronizationManager.isActualTransactionActive())throw new IllegalStateException("CONSISTENCY_PUBLICATION_REQUIRES_NO_TRANSACTION");
         checkInterrupted();List<Document> documents=cn.bidcheck.compat.Java8Api.listOf(document);
         cn.bidcheck.verification.facts.FactLedgerService.PreparedManifest manifest=ledger.prepareManifest(task.projectId,engine,documents);
-        java.util.List<cn.bidcheck.verification.facts.FactLedgerService.PreparedBatch> batches=cn.bidcheck.compat.Java8Api.toList(publicationBatches(store,runId,documents,report,MAX_BATCH_FACTS,MAX_BATCH_SOURCES,TARGET_BATCH_BYTES).stream()
-            .map(batch->ledger.prepareBatch(manifest,runId,"full-text-consistency",batch)));
-        if(batches.stream().anyMatch(batch->batch.rejected()||batch.acceptedCount()!=batch.inputCount()))
-            throw new IllegalStateException("一致性事实未通过原文验证，不能发布报告");
-        String planDigest=digest(values("version",VERSION,"runId",runId,"engine",engine,"manifest",manifest.identity(),
-            "batches",cn.bidcheck.compat.Java8Api.toList(batches.stream().map(FactLedgerService.PreparedBatch::digest))));
+        PublicationPlan reusePlan=preparePlan(manifest,runId,documents,report,REUSE_MAX_BATCH_FACTS,REUSE_MAX_BATCH_SOURCES,"IMMUTABLE_REUSE");validatePrepared(reusePlan);
+        FactLedgerService.PublicationReuse preload=ledger.preloadPublicationReuse(manifest,reusePlan.batches);
+        List<Stored> priorReceipts=store.mapper().list("consistency_publication_batch",task.projectId,runId);
+        PublicationPlan coldPlan=null,plan;String selectionReason;
+        if(priorReceipts.isEmpty()){
+            if(preload.allReusable()){plan=reusePlan;selectionReason="ALL_IMMUTABLE_OCCURRENCES_REUSED";}
+            else{coldPlan=preparePlan(manifest,runId,documents,report,MAX_BATCH_FACTS,MAX_BATCH_SOURCES,"COLD_OR_PARTIAL");validatePrepared(coldPlan);plan=coldPlan;selectionReason="COLD_OR_PARTIAL_FALLBACK";}
+        }else{
+            coldPlan=preparePlan(manifest,runId,documents,report,MAX_BATCH_FACTS,MAX_BATCH_SOURCES,"COLD_OR_PARTIAL");validatePrepared(coldPlan);
+            String reuseDigest=planDigest(runId,engine,manifest,reusePlan),coldDigest=planDigest(runId,engine,manifest,coldPlan);
+            boolean resumeReuse=receiptsMatch(priorReceipts,task,runId,reusePlan,reuseDigest),resumeCold=receiptsMatch(priorReceipts,task,runId,coldPlan,coldDigest);
+            if(!resumeReuse&&!resumeCold)throw new IllegalStateException("CONSISTENCY_BATCH_PLAN_MISMATCH");
+            if(resumeReuse&&!resumeCold){plan=reusePlan;selectionReason="RESUME_REUSE_PLAN";}
+            else if(resumeCold&&!resumeReuse){plan=coldPlan;selectionReason="RESUME_COLD_PLAN";}
+            else if(preload.allReusable()){plan=reusePlan;selectionReason="RESUME_EQUIVALENT_REUSE_PLAN";}
+            else{plan=coldPlan;selectionReason="RESUME_EQUIVALENT_COLD_PLAN";}
+        }
+        java.util.List<cn.bidcheck.verification.facts.FactLedgerService.PreparedBatch> batches=plan.batches;
+        String planDigest=planDigest(runId,engine,manifest,plan);
+        LOG.info("bidcheck.consistency_publication_plan runId={} mode={} reason={} batches={} facts={} maxBatchFacts={} maxBatchSources={} reuseRequested={} reuseConfirmed={} preloadMs={}",runId,plan.mode,selectionReason,batches.size(),batches.stream().mapToInt(FactLedgerService.PreparedBatch::inputCount).sum(),plan.maxFacts,plan.maxSources,preload.requested(),preload.reusable(),preload.durationMs());
         List<Map<String,Object>> receipts=new ArrayList<>(),timings=new ArrayList<>();int total=batches.stream().mapToInt(FactLedgerService.PreparedBatch::inputCount).sum(),saved=0;
         try {
         for(int index=0;index<batches.size();index++) {
@@ -75,7 +96,9 @@ public final class ConsistencyPublication {
         Map<String,Object> publishedReport=new LinkedHashMap<>(report);
         attachPublication(publishedReport,runId,documents,engine,prepared.metadata(),true);
         publishedReport.put("publication",values("policyVersion",VERSION,"planDigest",planDigest,"batchCount",batches.size(),"factsSaved",total,"complete",true,
-            "maxBatchFacts",MAX_BATCH_FACTS,"maxBatchSources",MAX_BATCH_SOURCES,"targetBatchBytes",TARGET_BATCH_BYTES,"oversizedSingleFactPolicy","ISOLATE_AND_VALIDATE",
+            "maxBatchFacts",plan.maxFacts,"maxBatchSources",plan.maxSources,"targetBatchBytes",TARGET_BATCH_BYTES,"oversizedSingleFactPolicy","ISOLATE_AND_VALIDATE",
+            "batchPlanMode",plan.mode,"batchPlanSelectionReason",selectionReason,"reusePlanPolicyVersion",REUSE_PLAN_POLICY_VERSION,
+            "reusePreload",values("requested",preload.requested(),"reusable",preload.reusable(),"loaded",preload.loaded(),"cacheHits",preload.cacheHits(),"invalid",preload.invalid(),"allReusable",preload.allReusable(),"durationMs",preload.durationMs()),
             "batchTransactionTimeoutSeconds",TRANSACTION_TIMEOUT_SECONDS,"finalTransactionTimeoutSeconds",FINAL_TRANSACTION_TIMEOUT_SECONDS,
             "transactionPolicyVersion",TRANSACTION_POLICY_VERSION,"maxTransactionAttempts",MAX_TRANSACTION_ATTEMPTS,"batchTransactionTimings",timings));
         cn.bidcheck.persistence.Store.PreparedRecord preparedReport=store.prepareRecord("consistency_report",reportId(runId),task.projectId,runId,publishedReport);
@@ -121,6 +144,27 @@ public final class ConsistencyPublication {
             throw failure;
         }
     }
+    private PublicationPlan preparePlan(FactLedgerService.PreparedManifest manifest,String runId,List<Document> documents,Map<String,Object> report,int maxFacts,int maxSources,String mode){
+        List<FactLedgerService.PreparedBatch> batches=cn.bidcheck.compat.Java8Api.toList(publicationBatches(store,runId,documents,report,maxFacts,maxSources,TARGET_BATCH_BYTES).stream()
+            .map(batch->ledger.prepareBatch(manifest,runId,"full-text-consistency",batch)));
+        return new PublicationPlan(batches,maxFacts,maxSources,mode);
+    }
+    private static void validatePrepared(PublicationPlan plan){
+        if(plan.batches.stream().anyMatch(batch->batch.rejected()||batch.acceptedCount()!=batch.inputCount()))throw new IllegalStateException("一致性事实未通过原文验证，不能发布报告");
+    }
+    private String planDigest(String runId,String engine,FactLedgerService.PreparedManifest manifest,PublicationPlan plan){
+        return digest(values("version",VERSION,"runId",runId,"engine",engine,"manifest",manifest.identity(),
+            "batches",cn.bidcheck.compat.Java8Api.toList(plan.batches.stream().map(FactLedgerService.PreparedBatch::digest))));
+    }
+    /** Existing receipts are a durable plan selector after a partial run; new reuse observations
+     * must never change the batch plan underneath already committed usage/origin rows. */
+    private boolean receiptsMatch(List<Stored> rows,TaskRow task,String runId,PublicationPlan plan,String planDigest){
+        if(rows.isEmpty()||rows.size()>plan.batches.size())return false;Map<String,Integer> indexes=new HashMap<>();
+        for(int index=0;index<plan.batches.size();index++)indexes.put(receiptId(runId,index),index);
+        for(Stored row:rows){Integer index=indexes.get(row.id);if(index==null||!"consistency_publication_batch".equals(row.kind)||!task.projectId.equals(row.projectId)||!runId.equals(row.parentId))return false;
+            Map<String,Object> receipt=store.map(row.body);FactLedgerService.PreparedBatch batch=plan.batches.get(index);if(!receiptMatches(receipt,planDigest,batch.digest(),batch.inputCount()))return false;
+        }return true;
+    }
     /** Each retry enters a new transaction after the previous execute() has rolled back/released locks. */
     private Map<String,Object> publishBatch(int index,int inputCount,List<Map<String,Object>> timings,Supplier<Map<String,Object>> action) {
         List<Map<String,Object>> attempts=new ArrayList<>();
@@ -165,11 +209,13 @@ public final class ConsistencyPublication {
     }
     private static String receiptId(String runId,int unit){return id("consistency-publication:"+runId+":"+unit);}
     private static void validateReceipt(Map<String,Object> receipt,String plan,String batch,int count) {
+        if(!receiptMatches(receipt,plan,batch,count))throw new IllegalStateException("CONSISTENCY_BATCH_PLAN_MISMATCH");
+    }
+    private static boolean receiptMatches(Map<String,Object> receipt,String plan,String batch,int count) {
         Map<String,Object> result=map(receipt.get("result"));
-        if(!VERSION.equals(receipt.get("policyVersion"))||!plan.equals(receipt.get("planDigest"))||!batch.equals(receipt.get("batchDigest"))
-            ||!(receipt.get("inputCount") instanceof Number)||((Number) (receipt.get("inputCount"))).intValue()!=count
-            ||!(result.get("accepted") instanceof Number)||((Number) (result.get("accepted"))).intValue()!=count||!maps(result.get("rejected")).isEmpty())
-            throw new IllegalStateException("CONSISTENCY_BATCH_PLAN_MISMATCH");
+        return VERSION.equals(receipt.get("policyVersion"))&&plan.equals(receipt.get("planDigest"))&&batch.equals(receipt.get("batchDigest"))
+            &&receipt.get("inputCount") instanceof Number&&((Number) (receipt.get("inputCount"))).intValue()==count
+            &&result.get("accepted") instanceof Number&&((Number) (result.get("accepted"))).intValue()==count&&maps(result.get("rejected")).isEmpty();
     }
     private void fence(TaskRow task) {
         checkInterrupted();TaskRow current=store.mapper().lockTask(task.id);

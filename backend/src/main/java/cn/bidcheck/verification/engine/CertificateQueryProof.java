@@ -13,6 +13,7 @@ final class CertificateQueryProof {
     static final String VERSION="certificate-query-proof-3-typed-license-result-row";
     private static final Pattern NUMBER=Pattern.compile("证书(?:编号|号码|号)[\\s:：|]*([A-Za-z0-9][A-Za-z0-9()（）/-]{4,79})");
     private static final Pattern URL=Pattern.compile("(?i)(?:https?://|www\\.)[A-Za-z0-9.-]+(?:/[^\\s<>]*)?");
+    private static final Pattern FORM_PLACEHOLDER = Pattern.compile("(?:下拉菜单|下拉选择|请选择)");
     private CertificateQueryProof(){}
     static boolean applies(Rule rule){return "MATERIAL".equals(rule.predicate())&&!cn.bidcheck.compat.Java8Api.isBlank(str(rule.parameters(),"certificateProofCategory"));}
     @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
@@ -121,9 +122,18 @@ final class CertificateQueryProof {
         Set<String> named=new LinkedHashSet<>();Matcher fields=Pattern.compile("(?:认证项目|认证类别)[\\t :：|]*([^\\r\\n|]+)").matcher(text);
         while(fields.find()){
             String value=clean(fields.group(1));
-            if(cn.bidcheck.compat.Java8Api.isBlank(value)||value.matches("[-—–]+")||value.matches("[（(]?(?:下拉菜单|下拉选择|请选择)[）)]?"))continue;
+            if(cn.bidcheck.compat.Java8Api.isBlank(value)||value.matches("[-—–]+")||formPlaceholder(value))continue;
             value=value.replaceFirst("^(?:建设施工行业|中国)","").replaceFirst("[（(]ISO[0-9:：-]+[）)]$","").replaceFirst("证书$","");
             named.add(value);
         }return named.equals(cn.bidcheck.compat.Java8Api.setOf(required));
+    }
+    private static boolean formPlaceholder(String value) {
+        if (value.length() >= 2) {
+            String ends = "" + value.charAt(0) + value.charAt(value.length()-1);
+            if (Arrays.asList("[]","【】","()","（）","［］").contains(ends)) {
+                value = value.substring(1,value.length()-1);
+            }
+        }
+        return FORM_PLACEHOLDER.matcher(value).matches();
     }
 }

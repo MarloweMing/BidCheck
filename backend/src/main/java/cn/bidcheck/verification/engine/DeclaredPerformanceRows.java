@@ -305,6 +305,7 @@ final class DeclaredPerformanceRows {
         for(Map<String,Object> row:rows){
             List<Map<String,String>> matches=new ArrayList<>();
             for(Map<String,String> fields:values.values())if(String.valueOf(row.get("row")).equals(fields.get("序号")))matches.add(fields);
+            if(!cells.isEmpty())corpus.sourceBoundContractRows.remove(str(row,"inventoryIdentity"));
             if(matches.size()!=1)continue;
             Map<String,String> fields=matches.get(0);
             String name=fields.getOrDefault("合同名称",""),date=fields.getOrDefault("签订时间",fields.getOrDefault("签订日期",""));
@@ -316,7 +317,25 @@ final class DeclaredPerformanceRows {
             if(d.matches())try{row.put("signedDate",java.time.LocalDate.of(Integer.parseInt(d.group(1)),Integer.parseInt(d.group(2)),Integer.parseInt(d.group(3))).toString());}catch(java.time.DateTimeException ignored){}
             Map<String,String> amounts=new LinkedHashMap<>();fields.forEach((k,v)->{if(k.contains("金额")||k.contains("建安费")||k.contains("设计费"))amounts.put(k,v);});
             row.put("declaredAmountFields",amounts);row.put("sourceBoundTableFields",fields);
+            if(!name.isEmpty() && !DATE.matcher(name).matches())
+                corpus.sourceBoundContractRows.put(str(row,"inventoryIdentity"),new LinkedHashMap<>(row));
         }
+    }
+
+    /** An issued row keeps its range and identity; the independently validated table grid can
+     * supply its missing name even when the plan was compiled before native layout was available. */
+    static Map<String,Object> rowWithOriginalTitle(Map<String,Object> frozen,EvidenceCorpus corpus) {
+        Map<String,Object> original=corpus.sourceBoundContractRows.get(str(frozen,"inventoryIdentity"));
+        if(original==null || !(original.get("sourceBoundTableFields") instanceof Map<?,?>))return frozen;
+        for(String key:Arrays.asList("documentId","documentHash","documentVersion","inventoryPage","sourceIds","row","rowQuote",
+                "separatorTitle","proofPageStart","proofPageEnd","separatorSourceIds"))
+            if(!Objects.equals(frozen.get(key),original.get(key)))return frozen;
+        String title=str(original,"contractName"),old=str(frozen,"contractName");
+        if(title.isEmpty() || title.equals(old))return frozen;
+        Map<String,Object> effective=new LinkedHashMap<>(frozen);
+        if(!old.isEmpty()&&!ContractCandidateFields.sameTitle(old,title))effective.put("conflictingOriginalTitle",true);
+        else effective.put("contractName",title);
+        return effective;
     }
 
     private static boolean sameGrid(Map<String,Object> a,Map<String,Object> b){

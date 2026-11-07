@@ -13,7 +13,10 @@ public final class RequirementRepairPolicy {
     public static boolean executableBusinessPredicate(String predicate){return VerificationTypes.PREDICATES.contains(Objects.toString(predicate,""))
         &&!cn.bidcheck.compat.Java8Api.setOf("UNSUPPORTED", "INPUT", "REFERENCE_TIME", "NOT_APPLICABLE").contains(predicate);}
     public static Map<String,Object> versions(){
-        return cn.bidcheck.compat.Java8Api.mapOf("requirementRepairVersion", VERSION, "requirementCompilerRevision", DeterministicRequirementCompiler.VERSION, "requirementSourceRepairRevision", RequirementSourceRepair.VERSION, "requirementMappingRevision", MAPPING_VERSION, "requirementValidationRevision", CompilationRecovery.VERSION);
+        Map<String,Object> revisions=new LinkedHashMap<>(cn.bidcheck.compat.Java8Api.mapOf("requirementRepairVersion", VERSION, "requirementCompilerRevision", DeterministicRequirementCompiler.VERSION, "requirementSourceRepairRevision", RequirementSourceRepair.VERSION, "requirementMappingRevision", MAPPING_VERSION, "requirementValidationRevision", CompilationRecovery.VERSION));
+        revisions.put("requirementInventoryRevision",SourceRequirementInventory.VERSION);
+        revisions.put("compoundBusinessRevision",CompoundBusinessRequirements.VERSION);
+        return revisions;
     }
     static boolean recompile(Map<String,Object> context){
         return requirementWork(VerificationTypes.str(context,"recoveryStrategy"))

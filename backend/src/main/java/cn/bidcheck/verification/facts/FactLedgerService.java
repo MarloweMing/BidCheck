@@ -138,8 +138,15 @@ public final class FactLedgerService {
         // Run-scoped, bounded immutable payload caches. Index membership is always queried again:
         // a miss is never retained and newly committed observations remain visible after single-flight.
         private final Map<String,Map<String,Object>> batches=payloadCache(512,16_000_000),occurrences=payloadCache(2048,8_000_000);
+        // Publication preloading retains only committed positive immutable occurrences. Misses are
+        // deliberately not cached: cold/partial runs must query again inside their fenced batch.
+        private final Map<String,Map<String,Object>> publicationOccurrences=payloadCache(20_000,64_000_000);
         private final Map<String,Set<String>> sourceHints=boundedCache(20000);
         private final java.util.concurrent.locks.ReentrantLock sourceHintsLock=new java.util.concurrent.locks.ReentrantLock();
+        private volatile Map<String,Object> terminalMigration;
+        // Publication-only decision, not index readiness. Explicit maintenance and every lookup
+        // continue to read the actual canonical state; a deferred decision never proves absence.
+        private volatile Map<String,Object> reuseMaintenanceDecision;
         private PreparedManifest(Scope scope){this.scope=scope;}
         public String identity(){return scope.manifestIdentity;}
     }
@@ -155,13 +162,13 @@ public final class FactLedgerService {
         });
     }
     public static final class PreparedBatch {
-        private final FactLedgerService owner;private final Scope scope;
+        private final FactLedgerService owner;private final PreparedManifest manifest;private final Scope scope;
         private final String runId,checkpointId,operation,engineVersion,digest;
         private final Map<String,Object> batch,coverage;private final List<Map<String,Object>> entries,rejected;
         private final Map<String,Map<String,Object>> sources;
-        private PreparedBatch(FactLedgerService owner,Scope scope,String runId,String checkpointId,String operation,String engineVersion,
+        private PreparedBatch(FactLedgerService owner,PreparedManifest manifest,Scope scope,String runId,String checkpointId,String operation,String engineVersion,
                               Map<String,Object> batch,Map<String,Object> coverage,List<Map<String,Object>> entries,List<Map<String,Object>> rejected,Map<String,Map<String,Object>> sources){
-            this.owner=owner;this.scope=scope;this.runId=runId;this.checkpointId=checkpointId;this.operation=operation;this.engineVersion=engineVersion;
+            this.owner=owner;this.manifest=manifest;this.scope=scope;this.runId=runId;this.checkpointId=checkpointId;this.operation=operation;this.engineVersion=engineVersion;
             this.batch=batch;this.coverage=coverage;this.entries=entries;this.rejected=rejected;this.sources=sources;
             this.digest=hash(canonical(cn.bidcheck.compat.Java8Api.listOf(scope.project, scope.engine, scope.manifestIdentity, runId, checkpointId, batch)));
         }
@@ -193,7 +200,40 @@ public final class FactLedgerService {
             entries.add(of("occurrenceId",occurrenceId,"fact",fact,"sources",refs,"entity",entity,"originalFactId",originalId));
         }catch(IllegalArgumentException failure){rejected.add(of("index",index,"code",failure.getMessage()));}}
         Map<String,Object> coverage=coverage(batch.get("extractionCoverage"),sources.keySet(),originalFactIds,rejected,entries.size());
-        return new PreparedBatch(this,scope,runId,checkpointId,operation,engineVersion,batch,coverage,entries,rejected,sources);
+        return new PreparedBatch(this,manifest,scope,runId,checkpointId,operation,engineVersion,batch,coverage,entries,rejected,sources);
+    }
+    /** Result of one read-only, positive-only immutable occurrence preload. */
+    public static final class PublicationReuse {
+        private final int requested,reusable,loaded,cacheHits,invalid;
+        private final long durationMs;
+        private PublicationReuse(int requested,int reusable,int loaded,int cacheHits,int invalid,long durationMs){this.requested=requested;this.reusable=reusable;this.loaded=loaded;this.cacheHits=cacheHits;this.invalid=invalid;this.durationMs=durationMs;}
+        public int requested(){return requested;}public int reusable(){return reusable;}public int loaded(){return loaded;}public int cacheHits(){return cacheHits;}public int invalid(){return invalid;}public long durationMs(){return durationMs;}
+        public boolean allReusable(){return requested>0&&requested==reusable;}
+    }
+    /**
+     * Reads committed immutable occurrences in one bounded repository pass before publication.
+     * Only positive rows that still match the exact frozen manifest are retained. A miss or invalid
+     * row is never remembered, so cold/partial batches retain their original transactional checks.
+     */
+    public PublicationReuse preloadPublicationReuse(PreparedManifest manifest,Collection<PreparedBatch> batches){
+        if(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())throw new IllegalStateException("FACT_REUSE_PRELOAD_REQUIRES_NO_TRANSACTION");
+        Objects.requireNonNull(manifest);Objects.requireNonNull(batches);long started=System.nanoTime();Set<String> requested=new LinkedHashSet<>();
+        for(PreparedBatch batch:batches){if(batch==null||batch.owner!=this||batch.manifest!=manifest)throw new IllegalArgumentException("FACT_PREPARATION_OWNER_INVALID");for(Map<String,Object> entry:batch.entries)requested.add(text(entry,"occurrenceId"));}
+        if(requested.size()>50_000)throw new IllegalArgumentException("FACT_REUSE_PRELOAD_LIMIT");
+        List<String> missing=new ArrayList<>();int cacheHits=0;for(String id:requested){if(manifest.publicationOccurrences.containsKey(id))cacheHits++;else missing.add(id);}
+        Map<String,Map<String,Object>> loaded=core.getAll(missing);int invalid=0;
+        for(java.util.Map.Entry<java.lang.String, java.util.Map<java.lang.String, java.lang.Object>> row:loaded.entrySet()){
+            if(reusableOccurrence(manifest.scope,row.getKey(),row.getValue()))manifest.publicationOccurrences.put(row.getKey(),row.getValue());else invalid++;
+        }
+        int reusable=0;for(String id:requested)if(manifest.publicationOccurrences.containsKey(id))reusable++;
+        long duration=(System.nanoTime()-started)/1_000_000;
+        LOG.info("bidcheck.fact_reuse_preload projectId={} requested={} reusable={} loaded={} cacheHits={} invalid={} allReusable={} durationMs={}",safeLogId(manifest.scope.project),requested.size(),reusable,loaded.size(),cacheHits,invalid,requested.size()>0&&requested.size()==reusable,duration);
+        return new PublicationReuse(requested.size(),reusable,loaded.size(),cacheHits,invalid,duration);
+    }
+    private static boolean reusableOccurrence(Scope scope,String occurrenceId,Map<String,Object> row){
+        return row!=null&&!row.isEmpty()&&occurrenceId.equals(text(row,"id"))&&occurrenceId.equals(text(row,"occurrenceId"))
+            &&scope.project.equals(text(row,"projectId"))&&scope.engine.equals(text(row,"engineIdentity"))
+            &&!maps(row.get("sources")).isEmpty()&&maps(row.get("sources")).stream().allMatch(ref->validSource(scope,ref));
     }
     public Map<String,Object> publish(String projectId,String runId,String checkpointId,String engineIdentity,List<Document> manifestBidDocs,Map<String,Object> batch){
         return publishPrepared(prepareBatch(prepareManifest(projectId,engineIdentity,manifestBidDocs),runId,checkpointId,batch));
@@ -204,11 +244,16 @@ public final class FactLedgerService {
         long started=System.nanoTime();
         interrupted();Scope scope=prepared.scope;String runId=prepared.runId,checkpointId=prepared.checkpointId,operation=prepared.operation,engineVersion=prepared.engineVersion;
         if(!read("fact_snapshot",snapshotId(scope,runId)).isEmpty())throw new IllegalStateException("FACT_RUN_SNAPSHOT_FROZEN");
+        long snapshotGuardMs=(System.nanoTime()-started)/1_000_000;
         Map<String,Object> batch=prepared.batch,coverage=prepared.coverage;Map<String,Map<String,Object>> sources=prepared.sources;
         List<Map<String,Object>> rejected=new ArrayList<>(prepared.rejected),accepted=new ArrayList<>();int reused=0,index=0;
         List<String> occurrenceIds=cn.bidcheck.compat.Java8Api.toList(prepared.entries.stream().map(entry->text(entry,"occurrenceId")).distinct());
-        Map<String,Map<String,Object>> existingValues=core.getAll(occurrenceIds);Set<String> existing=existingValues.keySet();
+        long coreLookupStarted=System.nanoTime();Map<String,Map<String,Object>> existingValues=new LinkedHashMap<>();List<String> missingOccurrences=new ArrayList<>();int preloadedOccurrences=0;
+        for(String occurrenceId:occurrenceIds){Map<String,Object> cached=prepared.manifest.publicationOccurrences.get(occurrenceId);if(cached==null)missingOccurrences.add(occurrenceId);else{existingValues.put(occurrenceId,cached);preloadedOccurrences++;}}
+        existingValues.putAll(core.getAll(missingOccurrences));long coreLookupMs=(System.nanoTime()-coreLookupStarted)/1_000_000;Set<String> existing=existingValues.keySet();
+        long legacyLookupStarted=System.nanoTime();
         Map<String,Map<String,Object>> legacy=store.mapsByIds("fact_occurrence",scope.project,cn.bidcheck.compat.Java8Api.toList(occurrenceIds.stream().filter(id->!existing.contains(id))));
+        long legacyLookupMs=(System.nanoTime()-legacyLookupStarted)/1_000_000;
         Map<String,Map<String,Object>> pending=new LinkedHashMap<>();
         for(Map<String,Object> entry:prepared.entries){interrupted();index++;try{
             String occurrenceId=text(entry,"occurrenceId");Map<String,Object> fact=map(entry.get("fact"));List<Map<String,Object>> refs=maps(entry.get("sources"));
@@ -220,36 +265,42 @@ public final class FactLedgerService {
             }
             accepted.add(of("occurrenceId",occurrenceId,"fact",fact,"sources",refs,"originalFactId",entry.get("originalFactId")));
         }catch(IllegalArgumentException failure){rejected.add(of("index",index,"code",failure.getMessage()));}}
-        core.insertBatch(new ArrayList<>(pending.values()));
+        long coreInsertStarted=System.nanoTime();core.insertBatch(new ArrayList<>(pending.values()));long coreInsertMs=(System.nanoTime()-coreInsertStarted)/1_000_000;
         coverage=coverage(batch.get("extractionCoverage"),sources.keySet(),prepared.entries.stream().map(e->text(e,"originalFactId")).filter(id->!cn.bidcheck.compat.Java8Api.isBlank(id)).collect(java.util.stream.Collectors.toSet()),rejected,accepted.size());
         List<Map<String,Object>> fieldCoverage=FieldCoverage.validate(batch.get("fieldCoverage"),sources,accepted);
         boolean persisted=!accepted.isEmpty()||!fieldCoverage.isEmpty();
         String batchId=dbKey("fact-batch",canonical(cn.bidcheck.compat.Java8Api.listOf(scope.project, scope.engine, operation, engineVersion, accepted, sources, coverage, fieldCoverage)));
         boolean adoption=cn.bidcheck.compat.Java8Api.setOf("REUSED", "REUSED_OBSERVATION").contains(text(batch,"origin"));
         Map<String,Object> storedBatch=of("id",batchId,"projectId",scope.project,"engineIdentity",scope.engine,"engineVersion",engineVersion,"observationPolicy",text(batch,"observationPolicy"),"operationIdentity",operation,"entries",accepted,"sources",new ArrayList<>(sources.values()),"extractionCoverage",coverage,"fieldCoverage",fieldCoverage,"layoutCells",maps(batch.get("layoutCells")),"layoutIdentity",text(batch,"layoutIdentity"),"origin",text(batch,"origin"));
-        if(persisted&&read("fact_batch",batchId).isEmpty()){
+        long batchLedgerStarted=System.nanoTime();if(persisted&&read("fact_batch",batchId).isEmpty()){
             Map<String,Object> stored=storedBatch;
             store.save("fact_batch",batchId,scope.project,engineParent(scope),stored);
             if(!adoption&&(!accepted.isEmpty()||fieldCoverage.stream().anyMatch(FieldCoverage::completeRead)))for(String docId:cn.bidcheck.compat.Java8Api.toList(sources.values().stream().map(ref->text(map(ref.get("evidence")),"documentId")).distinct())){String parent=documentParent(scope,scope.documents.get(docId));String key=dbKey("fact-index",parent+batchId);store.save("fact_index",key,scope.project,parent,of("id",key,"batchId",batchId,"sourceIds",new ArrayList<>(sources.keySet()),"sourceIndexVersion",1));}
         }
-        CanonicalFactLookup.Publication lookupPublication=persisted&&!adoption?new CanonicalFactLookup(store).index(scope,storedBatch,accepted,fieldCoverage):new CanonicalFactLookup.Publication(0,cn.bidcheck.compat.Java8Api.listOf());
+        long batchLedgerMs=(System.nanoTime()-batchLedgerStarted)/1_000_000;
+        long canonicalStarted=System.nanoTime();CanonicalFactLookup.Publication lookupPublication=persisted&&!adoption?new CanonicalFactLookup(store).index(scope,storedBatch,accepted,fieldCoverage):new CanonicalFactLookup.Publication(0,cn.bidcheck.compat.Java8Api.listOf());
+        long canonicalMs=(System.nanoTime()-canonicalStarted)/1_000_000;
         int lookupWrites=lookupPublication.writes();
         // Migration is bounded and shares the publisher's transaction/fence. BUILDING/BLOCKED
         // readers retain the legacy path; no half-migrated index can claim evidence absence.
-        Map<String,Object> migration=persisted?migrateLookupIndex(scope,50):cn.bidcheck.compat.Java8Api.mapOf();
+        boolean immutableReuseOnly=!accepted.isEmpty()&&accepted.size()==prepared.entries.size()
+            &&preloadedOccurrences==accepted.size()&&pending.isEmpty();
+        long migrationStarted=System.nanoTime();Map<String,Object> migration=!persisted?cn.bidcheck.compat.Java8Api.mapOf()
+            :immutableReuseOnly?reuseLookupMaintenance(prepared.manifest,runId,checkpointId):migrateLookupIndex(prepared.manifest,50);
+        long migrationMs=(System.nanoTime()-migrationStarted)/1_000_000;
         List<String> usages=new ArrayList<>();List<Stored> usageRows=new ArrayList<>();
         List<String> usageKeys=cn.bidcheck.compat.Java8Api.toList(accepted.stream().map(entry->dbKey("fact-use",canonical(cn.bidcheck.compat.Java8Api.listOf(scope.project, scope.engine, runId, checkpointId, batchId, text(entry,"occurrenceId"))))));
-        Set<String> existingUses=store.mapsByIds("fact_usage",scope.project,usageKeys).keySet();Set<String> newUses=new HashSet<>();
+        long usageLookupStarted=System.nanoTime();Set<String> existingUses=store.mapsByIds("fact_usage",scope.project,usageKeys).keySet();long usageLookupMs=(System.nanoTime()-usageLookupStarted)/1_000_000;Set<String> newUses=new HashSet<>();
         for(Map<String,Object> entry:accepted){String occurrence=text(entry,"occurrenceId"),usageId=dbKey("fact-use",canonical(cn.bidcheck.compat.Java8Api.listOf(scope.project, scope.engine, runId, checkpointId, batchId, occurrence)));
             if(!existingUses.contains(usageId)&&newUses.add(usageId)){Map<String,Object> use=of("id",usageId,"usageId",usageId,"projectId",scope.project,"runId",runId,"checkpointId",checkpointId,"engineIdentity",scope.engine,"batchId",batchId,"occurrenceId",occurrence,"operationIdentity",operation,"manifestIdentity",scope.manifestIdentity);usageRows.add(store.newRow("fact_usage",usageId,scope.project,runId,use));usageRows.add(store.newRow("fact_origin",dbKey("fact-origin",usageId),scope.project,occurrence,use));}usages.add(usageId);}
-        store.insertRows(usageRows);
+        long usageWriteStarted=System.nanoTime();store.insertRows(usageRows);long usageWriteMs=(System.nanoTime()-usageWriteStarted)/1_000_000;
         List<String> coverageUsageIds=new ArrayList<>();if(!fieldCoverage.isEmpty()){
             String coverageUse=dbKey("field-use",canonical(cn.bidcheck.compat.Java8Api.listOf(scope.project, scope.engine, runId, checkpointId, batchId)));
             if(read("fact_coverage_usage",coverageUse).isEmpty())store.save("fact_coverage_usage",coverageUse,scope.project,runId,
                 of("id",coverageUse,"projectId",scope.project,"runId",runId,"checkpointId",checkpointId,"engineIdentity",scope.engine,"manifestIdentity",scope.manifestIdentity,"batchId",batchId));
             coverageUsageIds.add(coverageUse);
         }
-        LOG.info("bidcheck.fact_publish runId={} checkpointId={} batchId={} durationMs={} accepted={} reused={} inserted={} usageRows={} fieldObservations={} adoptionAuditOnly={} canonicalLookupWrites={} migrationProcessed={}",runId,checkpointId,batchId,(System.nanoTime()-started)/1_000_000,accepted.size(),reused,pending.size(),usageRows.size(),fieldCoverage.size(),adoption,lookupWrites,migration.getOrDefault("processed",0));
+        LOG.info("bidcheck.fact_publish runId={} checkpointId={} batchId={} durationMs={} accepted={} reused={} inserted={} usageRows={} fieldObservations={} adoptionAuditOnly={} canonicalLookupWrites={} migrationProcessed={} migrationCacheHit={} preloadedOccurrences={} coreLookupIds={} snapshotGuardMs={} coreLookupMs={} legacyLookupMs={} coreInsertMs={} batchLedgerMs={} canonicalMs={} migrationMs={} usageLookupMs={} usageWriteMs={}",runId,checkpointId,batchId,(System.nanoTime()-started)/1_000_000,accepted.size(),reused,pending.size(),usageRows.size(),fieldCoverage.size(),adoption,lookupWrites,migration.getOrDefault("processed",0),migration.getOrDefault("terminalCacheHit",false),preloadedOccurrences,missingOccurrences.size(),snapshotGuardMs,coreLookupMs,legacyLookupMs,coreInsertMs,batchLedgerMs,canonicalMs,migrationMs,usageLookupMs,usageWriteMs);
         return of("accepted",accepted.size(),"reused",reused,"rejected",rejected,"batchId",persisted?batchId:"","occurrenceIds",cn.bidcheck.compat.Java8Api.toList(accepted.stream().map(e->e.get("occurrenceId")).distinct()),"usageIds",usages,"coverageUsageIds",coverageUsageIds,"coveragePublished",!coverage.isEmpty()||!fieldCoverage.isEmpty(),"fieldCoverage",fieldCoverage,"changedEvidence",lookupPublication.changedEvidence());
     }
     public static final class PreparedSnapshot {
@@ -319,7 +370,7 @@ public final class FactLedgerService {
             if(canonicalIndex.ready(scope,requestedDocs.isEmpty()?scope.documents.keySet():requestedDocs)){
                 long readinessNanos=System.nanoTime()-started;
                 try{return lookupCanonical(manifest,req,limit,readinessNanos);}catch(CanonicalLookupInvalid invalid){
-                    LOG.warn("bidcheck.fact_lookup_fallback runId={} checkpointId={} reason={}",safeLogId(req.get("runId")),safeLogId(req.get("checkpointId")),invalid.getMessage());
+                    LOG.warn("bidcheck.fact_lookup_fallback runId={} checkpointId={} reason={} failureStage={} referenceId={} itemId={}",safeLogId(req.get("runId")),safeLogId(req.get("checkpointId")),invalid.getMessage(),safeLogId(invalid.stage),safeLogId(invalid.referenceId),safeLogId(invalid.itemId));
                 }
             }else LOG.info("bidcheck.fact_lookup_fallback runId={} checkpointId={} reason=CANONICAL_INDEX_NOT_READY",safeLogId(req.get("runId")),safeLogId(req.get("checkpointId")));
         }
@@ -353,7 +404,10 @@ public final class FactLedgerService {
         for(String batchId:batchIds)for(Map<String,Object> entry:eligibleByBatch.getOrDefault(batchId,cn.bidcheck.compat.Java8Api.listOf())){
             String id=text(entry,"occurrenceId");if(selectedEntries.size()<limit)selectedEntries.putIfAbsent(id,entry);
         }
-        Map<String,List<Map<String,Object>>> origins=store.mapsByParents("fact_origin",scope.project,selectedEntries.keySet());
+        // Historical callers omitted this flag and retain their provenance projection. The realtime
+        // verification path opts out explicitly; frozen run snapshots still use fact_usage below.
+        boolean includeOrigins=!req.containsKey("includeOrigins")||Boolean.TRUE.equals(req.get("includeOrigins"));
+        Map<String,List<Map<String,Object>>> origins=includeOrigins?store.mapsByParents("fact_origin",scope.project,selectedEntries.keySet()):cn.bidcheck.compat.Java8Api.mapOf();
         int fieldLimit=integer(req.get("fieldCoverageLimit"),limit);if(fieldLimit<1||fieldLimit>2000)throw new IllegalArgumentException("FIELD_COVERAGE_LOOKUP_LIMIT");
         List<Map<String,Object>> out=new ArrayList<>();Map<String,Map<String,Object>> completedFields=new LinkedHashMap<>(),pendingFields=new LinkedHashMap<>();Set<String> allCompleteFieldKeys=new HashSet<>();
         for(String batchId:batchIds){interrupted();Map<String,Object> batch=batches.getOrDefault(batchId,cn.bidcheck.compat.Java8Api.mapOf());if(!scope.engine.equals(text(batch,"engineIdentity"))||!scope.project.equals(text(batch,"projectId")))continue;
@@ -379,6 +433,7 @@ public final class FactLedgerService {
             }
             for(Map<String,Object> entry:represented){String occurrence=text(entry,"occurrenceId");Map<String,Object> value=of("occurrenceId",occurrence,"fact",entry.get("fact"),"sources",entry.get("sources"),"engineVersion",batch.get("engineVersion"),"operationIdentity",batch.get("operationIdentity"),"batchId",batchId,"batchFactCount",entries.size(),"coverageComplete",complete,
                     "origins",cn.bidcheck.compat.Java8Api.toList(origins.getOrDefault(occurrence,cn.bidcheck.compat.Java8Api.listOf()).stream().filter(o->scope.engine.equals(text(o,"engineIdentity"))).map(o->of("runId",o.get("runId"),"checkpointId",o.get("checkpointId"),"usageId",o.get("usageId")))));
+                if(req.containsKey("includeOrigins"))value.put("originsIncluded",includeOrigins);
                 putIdentity(value,EntityIdentity.resolve(map(entry.get("fact")),maps(entry.get("sources")),maps(batch.get("layoutCells"))));
                 value.put("observationPolicy",text(batch,"observationPolicy"));
                 if(complete&&!map(batch.get("extractionCoverage")).isEmpty()){value.put("extractionCoverage",batch.get("extractionCoverage"));value.put("coverageSources",allSources);}out.add(copy(value));}
@@ -386,11 +441,52 @@ public final class FactLedgerService {
         int uniqueFacts=out.size();out.addAll(completedFields.values());out.addAll(cn.bidcheck.compat.Java8Api.toList(pendingFields.values().stream().limit(fieldLimit-completedFields.size())));
         boolean factTruncated=eligibleByBatch.values().stream().flatMap(Collection::stream).map(entry->text(entry,"occurrenceId")).distinct().count()>selectedEntries.size();
         annotateLookupLimits(out,req,factTruncated,allCompleteFieldKeys.size()>fieldLimit);
-        LOG.info("bidcheck.fact_lookup runId={} checkpointId={} phase={} durationMs={} indexRows={} selectedBatches={} batchLoads={} batchCacheHits={} occurrenceLoads={} originParents={} returned={} uniqueFacts={} fieldReceipts={} sourceHintWaitMs={} sourceHintLoads={}",safeLogId(req.get("runId")),safeLogId(req.get("checkpointId")),safeLogId(req.get("lookupPhase")),(System.nanoTime()-started)/1_000_000,index.size(),batchIds.size(),loaded,cacheHits,loadedOccurrences.size(),selectedEntries.size(),out.size(),uniqueFacts,out.size()-uniqueFacts,selection.waitMs(),selection.loaded());
+        LOG.info("bidcheck.fact_lookup runId={} checkpointId={} phase={} durationMs={} indexRows={} selectedBatches={} batchLoads={} batchCacheHits={} occurrenceLoads={} originParents={} returned={} uniqueFacts={} fieldReceipts={} sourceHintWaitMs={} sourceHintLoads={}",safeLogId(req.get("runId")),safeLogId(req.get("checkpointId")),safeLogId(req.get("lookupPhase")),(System.nanoTime()-started)/1_000_000,index.size(),batchIds.size(),loaded,cacheHits,loadedOccurrences.size(),includeOrigins?selectedEntries.size():0,out.size(),uniqueFacts,out.size()-uniqueFacts,selection.waitMs(),selection.loaded());
         return out;
     }
     /** Maintenance entry point; caller must own the same fenced project transaction as publication. */
-    public Map<String,Object> migrateLookupIndex(PreparedManifest manifest,int maximum){return migrateLookupIndex(manifest.scope,maximum);}
+    public Map<String,Object> migrateLookupIndex(PreparedManifest manifest,int maximum){
+        Objects.requireNonNull(manifest);Map<String,Object> cached=manifest.terminalMigration;
+        if(cached!=null){Map<String,Object> result=copy(cached);result.put("processed",0);result.put("writes",0);result.put("terminalCacheHit",true);return result;}
+        Map<String,Object> result=migrateLookupIndex(manifest.scope,maximum);result.put("terminalCacheHit",false);
+        List<Map<String,Object>> documents=maps(result.get("documents"));boolean terminal=documents.size()==manifest.scope.documents.size()
+            &&documents.stream().allMatch(row->"READY".equals(text(row,"status")));
+        if(terminal){Map<String,Object> stable=copy(result);stable.remove("terminalCacheHit");Runnable remember=()->manifest.terminalMigration=stable;
+            if(!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())remember.run();
+            else if(org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive())
+                org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(new org.springframework.transaction.support.TransactionSynchronization(){@Override public void afterCommit(){remember.run();}});
+        }
+        return result;
+    }
+    /** A usage-only publication must not rebuild an unrelated historical query projection while
+     * holding the short publication transaction. All reused immutable occurrences have already
+     * passed the exact frozen manifest/source checks; usages/origins and final snapshot still write.
+     * This decision is never read by lookup/readiness or by explicit maintenance. */
+    private Map<String,Object> reuseLookupMaintenance(PreparedManifest manifest,String runId,String checkpointId){
+        Map<String,Object> cached=manifest.terminalMigration;
+        if(cached!=null){Map<String,Object> result=copy(cached);result.put("processed",0);result.put("writes",0);result.put("terminalCacheHit",true);return result;}
+        if(manifest.reuseMaintenanceDecision!=null)return copy(manifest.reuseMaintenanceDecision);
+        List<Map<String,Object>> documents=new ArrayList<>();boolean allReady=true;
+        CanonicalFactLookup index=new CanonicalFactLookup(store);
+        for(Document document:manifest.scope.documents.values()){
+            String parent=manifest.scope.documentParents.get(document.id()),id=CanonicalFactLookup.stateId(parent);
+            Map<String,Object> state=index.read("fact_lookup_state",id);
+            boolean ready=id.equals(text(state,"id"))&&CanonicalFactLookup.VERSION.equals(text(state,"version"))
+                &&manifest.scope.project.equals(text(state,"projectId"))&&parent.equals(text(state,"documentParent"))&&"READY".equals(text(state,"status"));
+            allReady&=ready;documents.add(of("documentId",document.id(),"status",ready?"READY":"DEFERRED_FOR_REUSE_PUBLICATION","errors",cn.bidcheck.compat.Java8Api.listOf()));
+        }
+        Map<String,Object> result=of("processed",0,"writes",0,"documents",documents,"terminalCacheHit",false,
+            "policy","immutable-reuse-publication-no-historical-migration-1","maintenanceDeferred",!allReady);
+        final boolean ready=allReady;Map<String,Object> stable=copy(result);
+        Runnable remember=()->{if(ready)manifest.terminalMigration=stable;else manifest.reuseMaintenanceDecision=stable;};
+        if(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(new org.springframework.transaction.support.TransactionSynchronization(){
+                @Override public void afterCommit(){remember.run();}
+            });
+        else remember.run();
+        LOG.info("bidcheck.fact_lookup_maintenance_deferred runId={} checkpointId={} reason=IMMUTABLE_REUSE_USAGE_ONLY allReady={} processed=0 writes=0 readinessUnchanged=true",runId,checkpointId,allReady);
+        return result;
+    }
     /** Empty means that no trustworthy complete revision is available yet. Never cache this read. */
     public String lookupRevision(PreparedManifest manifest){
         Scope scope=manifest.scope;CanonicalFactLookup index=new CanonicalFactLookup(store);
@@ -420,10 +516,14 @@ public final class FactLedgerService {
             return verified;
         });
         if(integer(result.get("processed"),0)>0||maps(result.get("documents")).stream().anyMatch(row->"BLOCKED".equals(row.get("status"))))
-            LOG.info("bidcheck.fact_lookup_migration projectId={} processed={} indexWrites={} documents={}",safeLogId(scope.project),result.get("processed"),result.get("writes"),result.get("documents"));
+            LOG.info("bidcheck.fact_lookup_migration projectId={} version={} repairPolicy=REBUILD_FROM_BATCH_OCCURRENCE_CURRENT_MANIFEST processed={} indexWrites={} documents={}",safeLogId(scope.project),CanonicalFactLookup.VERSION,result.get("processed"),result.get("writes"),result.get("documents"));
         return result;
     }
-    private static final class CanonicalLookupInvalid extends RuntimeException {CanonicalLookupInvalid(String message){super(message);}}
+    private static final class CanonicalLookupInvalid extends RuntimeException {
+        final String stage,referenceId,itemId;
+        CanonicalLookupInvalid(String message){this(message,"","","");}
+        CanonicalLookupInvalid(String message,String stage,String referenceId,String itemId){super(message);this.stage=stage;this.referenceId=referenceId;this.itemId=itemId;}
+    }
     /** Queries only current source/type/observation buckets, then hydrates canonical occurrences.
      * There is deliberately no document-wide batch enumeration and no cached negative lookup. */
     private List<Map<String,Object>> lookupCanonical(PreparedManifest manifest,Map<String,Object> request,int limit,long readinessNanos){
@@ -455,11 +555,12 @@ public final class FactLedgerService {
         readCanonicalRefs(scope,"fact_lookup_ref",factBuckets,refs);readCanonicalRefs(scope,"field_lookup_ref",fieldBuckets,refs);
         long bucketLookupDone=System.nanoTime();
         Map<String,Map<String,Object>> items=store.mapsByIds("fact_lookup_item",scope.project,refs.keySet());
-        for(java.util.Map.Entry<java.lang.String, java.util.Map<java.lang.String, java.lang.Object>> ref:refs.entrySet()){Map<String,Object> item=items.getOrDefault(ref.getKey(),cn.bidcheck.compat.Java8Api.mapOf());
-            if(!CanonicalFactLookup.validItem(item,scope)||!text(ref.getValue(),"itemDigest").equals(text(item,"digest")))throw new CanonicalLookupInvalid("LOOKUP_REFERENCE_CORRUPT");}
+        for(java.util.Map.Entry<java.lang.String, java.util.Map<java.lang.String, java.lang.Object>> ref:refs.entrySet()){String itemId=ref.getKey(),referenceId=text(ref.getValue(),"id");Map<String,Object> item=items.getOrDefault(itemId,cn.bidcheck.compat.Java8Api.mapOf());
+            if(!CanonicalFactLookup.validItem(item,scope))throw new CanonicalLookupInvalid("LOOKUP_REFERENCE_CORRUPT","ITEM_SEAL",referenceId,itemId);
+            if(!text(ref.getValue(),"itemDigest").equals(text(item,"digest")))throw new CanonicalLookupInvalid("LOOKUP_REFERENCE_CORRUPT","REFERENCE_DIGEST",referenceId,itemId);}
         Set<String> dependencies=new LinkedHashSet<>();for(Map<String,Object> item:items.values())dependencies.addAll(strings(item.get("dependencyItemIds")));
         dependencies.removeAll(items.keySet());Map<String,Map<String,Object>> dependencyItems=store.mapsByIds("fact_lookup_item",scope.project,dependencies);
-        for(String id:dependencies)if(!CanonicalFactLookup.validItem(dependencyItems.getOrDefault(id,cn.bidcheck.compat.Java8Api.mapOf()),scope))throw new CanonicalLookupInvalid("LOOKUP_DEPENDENCY_CORRUPT");
+        for(String id:dependencies)if(!CanonicalFactLookup.validItem(dependencyItems.getOrDefault(id,cn.bidcheck.compat.Java8Api.mapOf()),scope))throw new CanonicalLookupInvalid("LOOKUP_DEPENDENCY_CORRUPT","DEPENDENCY_ITEM","",id);
         items.putAll(dependencyItems);
         long itemLookupDone=System.nanoTime();
         Set<String> ids=new LinkedHashSet<>();for(Map<String,Object> item:items.values())if(!cn.bidcheck.compat.Java8Api.isBlank(text(item,"occurrenceId")))ids.add(text(item,"occurrenceId"));
@@ -482,7 +583,7 @@ public final class FactLedgerService {
             Map<String,Object> value=of("occurrenceId",occurrence,"fact",entry.get("fact"),"sources",sources,"engineVersion",item.get("engineVersion"),"observationPolicy",item.get("observationPolicy"),"operationIdentity",item.get("operationIdentity"),"batchId",item.get("batchId"),"batchFactCount",1,"coverageComplete",false,"lookupItemId",item.get("id"));
             putIdentity(value,EntityIdentity.resolve(map(entry.get("fact")),sources,maps(item.get("layoutCells"))));accepted.putIfAbsent(occurrence,value);
         }
-        boolean includeOrigins=Boolean.TRUE.equals(request.get("includeOrigins"));
+        boolean includeOrigins=!request.containsKey("includeOrigins")||Boolean.TRUE.equals(request.get("includeOrigins"));
         Map<String,List<Map<String,Object>>> origins=includeOrigins?store.mapsByParents("fact_origin",scope.project,accepted.keySet()):cn.bidcheck.compat.Java8Api.mapOf();
         for(java.util.Map.Entry<java.lang.String, java.util.Map<java.lang.String, java.lang.Object>> row:accepted.entrySet()){row.getValue().put("origins",cn.bidcheck.compat.Java8Api.toList(origins.getOrDefault(row.getKey(),cn.bidcheck.compat.Java8Api.listOf()).stream().filter(o->scope.engine.equals(text(o,"engineIdentity"))).map(o->of("runId",o.get("runId"),"checkpointId",o.get("checkpointId"),"usageId",o.get("usageId")))));row.getValue().put("originsIncluded",includeOrigins);}
         Map<String,Map<String,Object>> receipts=new LinkedHashMap<>();int candidateReceipts=0;
@@ -542,8 +643,9 @@ public final class FactLedgerService {
     }
     private void readCanonicalRefs(Scope scope,String kind,Collection<String> buckets,Map<String,Map<String,Object>> refs){
         for(java.util.Map.Entry<java.lang.String, java.util.List<java.util.Map<java.lang.String, java.lang.Object>>> bucket:store.mapsByParents(kind,scope.project,buckets).entrySet())for(Map<String,Object> row:bucket.getValue()){
-            if(!CanonicalFactLookup.VERSION.equals(text(row,"version"))||!scope.project.equals(text(row,"projectId"))||!bucket.getKey().equals(text(row,"bucket"))||cn.bidcheck.compat.Java8Api.isBlank(text(row,"itemId")))throw new CanonicalLookupInvalid("LOOKUP_BUCKET_CORRUPT");
-            Map<String,Object> previous=refs.putIfAbsent(text(row,"itemId"),row);if(previous!=null&&!text(previous,"itemDigest").equals(text(row,"itemDigest")))throw new CanonicalLookupInvalid("LOOKUP_REFERENCE_CONFLICT");
+            String referenceId=text(row,"id"),itemId=text(row,"itemId");
+            if(!CanonicalFactLookup.VERSION.equals(text(row,"version"))||!scope.project.equals(text(row,"projectId"))||!bucket.getKey().equals(text(row,"bucket"))||cn.bidcheck.compat.Java8Api.isBlank(itemId))throw new CanonicalLookupInvalid("LOOKUP_BUCKET_CORRUPT","REFERENCE_SCOPE",referenceId,itemId);
+            Map<String,Object> previous=refs.putIfAbsent(itemId,row);if(previous!=null&&!text(previous,"itemDigest").equals(text(row,"itemDigest")))throw new CanonicalLookupInvalid("LOOKUP_REFERENCE_CONFLICT","REFERENCE_CONFLICT",referenceId,itemId);
         }
     }
     private List<Map<String,Object>> currentAliases(Scope scope,List<Map<String,Object>> old,Map<String,Map<String,Object>> current,Set<String> selected,Set<String> docs){
@@ -620,7 +722,10 @@ public final class FactLedgerService {
         if(!fingerprint.equals(text(input,"parserFingerprint")))throw new IllegalArgumentException("SOURCE_PARSER_MISMATCH");
         double confidence=e.get("confidence") instanceof Number?((Number) (e.get("confidence"))).doubleValue():0;if(!Double.isFinite(confidence)||confidence<0||confidence>1)throw new IllegalArgumentException("SOURCE_CONFIDENCE_INVALID");
         Map<String,Object> canonicalEvidence=of("documentId",doc.id(),"documentName",doc.name(),"page",page,"locationType",original.locationType(),"quote",quote,"anchor",text(e,"anchor"),"confidence",confidence);
-        return of("id",text(input,"id"),"projectId",scope.project,"evidence",canonicalEvidence,"documentHash",doc.sha256(),"documentVersion",doc.version(),"parserFingerprint",fingerprint,"sourceFingerprint",hash(canonical(cn.bidcheck.compat.Java8Api.listOf(doc.id(), doc.sha256(), doc.version(), fingerprint, canonicalEvidence))));
+        Map<String,Object> result=of("id",text(input,"id"),"projectId",scope.project,"evidence",canonicalEvidence,"documentHash",doc.sha256(),"documentVersion",doc.version(),"parserFingerprint",fingerprint,"sourceFingerprint",hash(canonical(cn.bidcheck.compat.Java8Api.listOf(doc.id(), doc.sha256(), doc.version(), fingerprint, canonicalEvidence))));
+        Map<String,Object> witness=scope.pageCertificateWitnesses.computeIfAbsent(pageKey,key->PageCertificateWitness.create(doc,original,fingerprint));
+        if(!witness.isEmpty())result.put("pageCertificateWitness",new LinkedHashMap<>(witness));
+        return result;
     }
     static boolean validSource(Scope scope,Map<String,Object> source){try{return text(source(scope,source),"sourceFingerprint").equals(text(source,"sourceFingerprint"));}catch(IllegalArgumentException e){return false;}}
     static Map<String,Object> fact(Map<String,Object> input,Map<String,Map<String,Object>> sources){String kind=text(input,"kind"),raw=text(input,"rawValue");List<String> ids=strings(input.get("sourceIds"));if(!KINDS.contains(kind)||cn.bidcheck.compat.Java8Api.isBlank(raw)||raw.length()>8000||ids.isEmpty()||ids.size()>16||ids.stream().distinct().count()!=ids.size()||!sources.keySet().containsAll(ids))throw new IllegalArgumentException("FACT_SOURCE_OR_TYPE_INVALID");
@@ -685,6 +790,7 @@ public final class FactLedgerService {
         final Map<String,Document> documents=new LinkedHashMap<>();
         final Map<String,String> documentParents=new HashMap<>(),pageFingerprints=new HashMap<>();
         final Map<String,Page> pages=new HashMap<>();
+        final Map<String,Map<String,Object>> pageCertificateWitnesses=new java.util.concurrent.ConcurrentHashMap<>();
         Scope(String project,String engine,List<Document> docs){
             checkName(project);checkName(engine);if(project.length()>64)throw new IllegalArgumentException("FACT_SCOPE_ID_INVALID");this.project=project;this.engine=engine;
             if(docs==null||docs.size()>24)throw new IllegalArgumentException("FACT_MANIFEST_INVALID");

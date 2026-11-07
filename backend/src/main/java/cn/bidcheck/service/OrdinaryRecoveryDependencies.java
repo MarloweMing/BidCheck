@@ -48,6 +48,7 @@ public final class OrdinaryRecoveryDependencies {
     static void bind(Store store,String project,String run,Finding finding){
         String setId=stableId(run+":ordinary-binding-set:"+finding.checkpoint().id());Set<String> current=new LinkedHashSet<>();
         Map<String,Object> previousSet=stored(store,setId);
+        Set<String> tenderBlocked=RecoveryEventRelevance.targetsBlockedByTenderStandard(finding);
         for(Map<String,Object> dependency:maps(atomic(finding).get("recoveryEvidenceDependencies"))){
             // A previously completed condition must still be revalidated when genuinely new
             // counterevidence arrives. Only the later model escalation filters closed targets.
@@ -58,6 +59,7 @@ public final class OrdinaryRecoveryDependencies {
             value.putAll(fields("id",id,"version",VERSION,"runId",run,"checkpointId",finding.checkpoint().id(),"findingId",finding.id(),
                 "observedRevision",number(dependency.get("observedRevision")),"scheduledRevision",number(previous.get("scheduledRevision")),"active",true));
             value.put("scheduledEvidenceKeys",previous.getOrDefault("scheduledEvidenceKeys",cn.bidcheck.compat.Java8Api.listOf()));
+            if(tenderBlocked.contains(obligation))value.put("tenderStandardRequired",true);
             value.put("observedEvidenceKeys", observedEvidenceKeys(dependency, "inputs"));
             value.put("observedBidderProjectionKeys", observedEvidenceKeys(dependency, "bidderProjectionInputs"));
             store.save("ordinary_recovery_binding",id,project,run,value);
@@ -95,7 +97,9 @@ public final class OrdinaryRecoveryDependencies {
             // failed services still require their existing recovery path, not an evidence retry.
             if(failedJob&&!CheckResolution.agentStalledWithRemainingTargets(finding))continue;
             Set<String> targets=new TreeSet<>(),eventIds=new TreeSet<>(),sourceIds=new TreeSet<>(),evidenceKeys=new TreeSet<>();long revision=0;
+            Map<String,Object> perTargetInputs=new TreeMap<>();
             for(Map<String,Object> binding:bindings){
+                Set<String> rowEvents=new TreeSet<>(),rowSources=new TreeSet<>(),rowKeys=new TreeSet<>();
                 Set<String> seen=new TreeSet<>(stringList(binding.get("scheduledEvidenceKeys")));
                 Set<String> observed = new TreeSet<>(stringList(binding.get("observedEvidenceKeys")));
                 Set<String> projected = new TreeSet<>(stringList(binding.get("observedBidderProjectionKeys")));
@@ -114,22 +118,27 @@ public final class OrdinaryRecoveryDependencies {
                                 run, checkpoint, text(binding,"obligationId"), text(event,"id"), key, unchanged);
                             continue;
                         }
-                        novel=true;evidenceKeys.add(key);
-                        for(Map<String,Object> source:maps(change.get("sources")))if(!cn.bidcheck.compat.Java8Api.isBlank(text(source,"id")))sourceIds.add(text(source,"id"));
-                        if(map(change.get("fact")).get("sourceIds") instanceof Collection<?>)((Collection<?>) (map(change.get("fact")).get("sourceIds"))).forEach(ref->{if(!cn.bidcheck.compat.Java8Api.isBlank(Objects.toString(ref,"")))sourceIds.add(String.valueOf(ref));});}
+                        novel=true;rowKeys.add(key);
+                        for(Map<String,Object> source:maps(change.get("sources")))if(!cn.bidcheck.compat.Java8Api.isBlank(text(source,"id")))rowSources.add(text(source,"id"));
+                        rowSources.addAll(stringList(map(change.get("fact")).get("sourceIds")));}
                     latest=Math.max(latest,eventRevision);if(!novel)continue;
-                    targets.add(text(binding,"obligationId"));eventIds.add(text(event,"id"));revision=Math.max(revision,eventRevision);
+                    rowEvents.add(text(event,"id"));revision=Math.max(revision,eventRevision);
+                }
+                if(!rowEvents.isEmpty()){
+                    String target=text(binding,"obligationId");targets.add(target);
+                    perTargetInputs.put(target,fields("eventIds",new ArrayList<>(rowEvents),"sourceIds",new ArrayList<>(rowSources),"semanticEvidenceKeys",new ArrayList<>(rowKeys)));
+                    eventIds.addAll(rowEvents);sourceIds.addAll(rowSources);evidenceKeys.addAll(rowKeys);
                 }
                 if(latest>floor){binding.put("scheduledRevision",latest);binding.put("scheduledEvidenceKeys",cn.bidcheck.compat.Java8Api.listCopyOf(seen));store.save("ordinary_recovery_binding",text(binding,"id"),project,run,binding);}
             }
             if(targets.isEmpty())continue;
             if(failedJob)job.put("resumeReasonCode","NEW_RELEVANT_EVIDENCE_AFTER_AGENT_STALL");
             job.putAll(fields("status","QUEUED","strategy","RECOMPUTE_SHARED_EVIDENCE","dependencyTargetObligationIds",cn.bidcheck.compat.Java8Api.listCopyOf(targets),
-                "dependencyTrigger",fields("version",VERSION,"revision",revision,"eventIds",cn.bidcheck.compat.Java8Api.listCopyOf(eventIds),"sourceIds",cn.bidcheck.compat.Java8Api.listCopyOf(sourceIds),"semanticEvidenceKeys",cn.bidcheck.compat.Java8Api.listCopyOf(evidenceKeys),"businessProof",false),
+                "dependencyTrigger",fields("version",VERSION,"revision",revision,"eventIds",cn.bidcheck.compat.Java8Api.listCopyOf(eventIds),"sourceIds",cn.bidcheck.compat.Java8Api.listCopyOf(sourceIds),"semanticEvidenceKeys",cn.bidcheck.compat.Java8Api.listCopyOf(evidenceKeys),"byTarget",perTargetInputs,"businessProof",false),
                 "reason",unresolved(finding)?"其他事项新增了本项所需的字段或关系证据。":"其他事项新增了本项的相关事实，需重新核验已完成证明是否仍成立。",
                 "nextAction","只重算受影响的条件，复用已完成证明。","updatedAt",now()));
             job.remove("stopReason");store.save("check_resolution",text(job,"id"),project,run,job);scheduled++;
-            LOG.info("bidcheck.recovery_dependency_schedule runId={} checkpointId={} revision={} targets={} changes={} strategy=RECOMPUTE_SHARED_EVIDENCE semanticInputs={} modelAllowed=false resumeReason={}",run,checkpoint,revision,targets,eventIds.size(),evidenceKeys.size(),failedJob?"NEW_RELEVANT_EVIDENCE_AFTER_AGENT_STALL":"NEW_RELEVANT_EVIDENCE");
+            LOG.info("bidcheck.recovery_dependency_schedule runId={} checkpointId={} revision={} targets={} changes={} strategy=RECOMPUTE_SHARED_EVIDENCE semanticInputs={} modelAllowed=false resumeReason={} perTargetInputs={}",run,checkpoint,revision,targets,eventIds.size(),evidenceKeys.size(),failedJob?"NEW_RELEVANT_EVIDENCE_AFTER_AGENT_STALL":"NEW_RELEVANT_EVIDENCE",perTargetInputs);
         }
         return scheduled;
     }
@@ -222,6 +231,12 @@ public final class OrdinaryRecoveryDependencies {
             &&(cn.bidcheck.compat.Java8Api.isBlank(text(binding,"modelIdentity"))||text(binding,"modelIdentity").equals(text(change,"modelIdentity")));
         Map<String,Object> target=map(binding.get("target")),fact=map(change.get("fact"));
         if(target.isEmpty()||fact.isEmpty())return false;
+        String excluded=RecoveryEventRelevance.excluded(binding,change);
+        if(!excluded.isEmpty()){
+            LOG.info("bidcheck.recovery_irrelevant_input runId={} checkpointId={} obligationId={} sourceIds={} reason={}",
+                text(binding,"runId"),text(binding,"checkpointId"),text(binding,"obligationId"),fact.get("sourceIds"),excluded);
+            return false;
+        }
         String contractReason = cn.bidcheck.verification.engine.DeclaredContractRelevance.schedulingReason(
             binding, fact, maps(change.get("sources")));
         if (!"POSSIBLY_RELEVANT".equals(contractReason)) {

@@ -45,10 +45,10 @@ boolean complete(){return valid!=null;}}
         String sourceIssue=new ProofVerifier().issue(fact,corpus.byId);if(sourceIssue==null)sourceIssue=DomainBindings.issue(fact,corpus.byId,layout);
         if(sourceIssue!=null)return pending("CERTIFICATE_DATE_SOURCE_UNPROVEN","日期事实尚未通过同证原文校验，不能只凭候选到期日期计算有效",linked("dateContractVersion",VERSION,"sourceRejection",sourceIssue,"factId",fact.id()));
         LocalDate start=date(fact.attributes().get("start")),end=date(fact.attributes().get("end"));
-        List<Source> original=sameCertificateSources(fact,corpus,layout);
+        Map<Source,String> original=sameCertificateSources(fact,corpus,layout);
         List<Map<String,Object>> issuance=new ArrayList<>();Set<LocalDate> issued=new LinkedHashSet<>();
-        for(Source source:original)readIssue(source.evidence().quote(),source,issued,issuance);
-        boolean longTerm=start==null&&end==null&&original.stream().anyMatch(s->Pattern.compile(Pattern.quote(field)+"[\\t :：]*(?:长期|永久)(?=[\\s。；;]|$)").matcher(s.evidence().quote()).find());
+        original.forEach((source,text)->readIssue(text,source,issued,issuance));
+        boolean longTerm=start==null&&end==null&&original.values().stream().anyMatch(text->Pattern.compile(Pattern.quote(field)+"[\\t :：]*(?:长期|永久)(?=[\\s。；;]|$)").matcher(text).find());
         Result base;
         if(longTerm){Map<String,Object> proof=linked("dateContractVersion",VERSION,"semantics","LONG_TERM","field",field,"start","","end","","referenceDate",reference.toString(),"issuanceEvidence",issuance,"issueDateIsNotValidityStart",true);
             proof.put("issuanceRequiredByRule",requireIssuance);
@@ -63,7 +63,7 @@ boolean complete(){return valid!=null;}}
         // A known false mandatory period already disproves the conjunction. A category note
         // cannot conceal an electronic-use interval that starts after the tender event.
         List<Map<String,Object>> unresolvedCategoryLimits=new ArrayList<>();
-        for(Source source:original){String text=source.evidence().quote();
+        for(Map.Entry<Source,String> sourceText:original.entrySet()){Source source=sourceText.getKey();String text=sourceText.getValue();
             for(String label:cn.bidcheck.compat.Java8Api.listOf("使用有效期", "使用期限")){
                 if(!text.contains(label)||field.equals(label))continue;
                 List<LocalDate> dates=DateFieldValues.read(text,label,2);
@@ -120,17 +120,18 @@ boolean complete(){return valid!=null;}}
         return new Result(!reference.isBefore(issue),"","",proof);
     }
     private static Result pending(String code,String reason,Map<String,Object> proof){return new Result(null,code,reason,cn.bidcheck.compat.Java8Api.mapCopyOf(proof));}
-    private static List<Source> sameCertificateSources(Fact fact,EvidenceCorpus corpus,List<Map<String,Object>> layout){
-        if(new ProofVerifier().issue(fact,corpus.byId)!=null||DomainBindings.issue(fact,corpus.byId,layout)!=null)return cn.bidcheck.compat.Java8Api.listOf();
+    private static Map<Source,String> sameCertificateSources(Fact fact,EvidenceCorpus corpus,List<Map<String,Object>> layout){
+        Map<Source,String> result=new LinkedHashMap<>();
         cn.bidcheck.verification.engine.CertificateSourceComparison.Record record=CertificateRecordBindings.matching(fact,corpus.byId);
-        if(record!=null)return record.sources();
-        List<Source> result=new ArrayList<>();
+        if(record!=null){for(Source source:record.sources())result.put(source,source.evidence().quote());return result;}
         for(String id:fact.sourceIds()){
             Source source=corpus.byId.get(id);if(source==null)continue;String text=source.evidence().quote();
-            if(!text.contains(fact.subject())||!ProofVerifier.contains(text,str(fact.attributes(),"category")))continue;
-            Set<String> numbers=new LinkedHashSet<>();Matcher n=NUMBER.matcher(text);while(n.find())numbers.add(PersonnelCertificateRecords.normalNumber(n.group(1)));
+            if(!text.contains(fact.subject()))continue;
+            String selected=CertificateRecordBindings.selectSegment(text,fact);
+            if(!ProofVerifier.contains(selected,str(fact.attributes(),"category")))continue;
+            Set<String> numbers=new LinkedHashSet<>();Matcher n=NUMBER.matcher(selected);while(n.find())numbers.add(PersonnelCertificateRecords.normalNumber(n.group(1)));
             if(!numbers.equals(cn.bidcheck.compat.Java8Api.setOf(PersonnelCertificateRecords.normalNumber(str(fact.attributes(),"number")))))continue;
-            result.add(source);
+            result.put(source,selected);
         }return result;
     }
     private static void readIssue(String text,Source source,Set<LocalDate> dates,List<Map<String,Object>> evidence){

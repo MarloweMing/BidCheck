@@ -22,16 +22,16 @@ class PersonnelCountProofContractTest {
     }
 
     @Test void unrelatedEmployerCannotHideConflictingStrongIdentities(){
-        EvidenceCorpus corpus=data.corpus(data.appointment("专职安全员","张甲","110101199001010011","",""),
-                data.appointment("专职安全员","张甲","110101199001010022","甲公司",""));
+        EvidenceCorpus corpus=data.corpus(data.appointment("专职安全员","张甲","110101199001010015","",""),
+                data.appointment("专职安全员","张甲","110101199001010023","甲公司",""));
         List<Fact> facts=data.checked(corpus,data.role(corpus,1,"专职安全员","张甲","",""),data.role(corpus,2,"专职安全员","张甲","甲公司",""));
         Decision result=data.evaluate(corpus,facts,one());assertEquals("UNDETERMINED",result.status());
         assertEquals("PERSON_COUNT_IDENTITY_AMBIGUOUS",result.gaps().get(0).code());
     }
 
     @Test void contradictoryIdentifiersInsideOneFactAreNotJustMissingIdentity(){
-        EvidenceCorpus corpus=data.corpus(data.appointment("专职安全员","张甲","110101199001010011","",""),
-                data.appointment("专职安全员","张甲","110101199001010022","",""));
+        EvidenceCorpus corpus=data.corpus(data.appointment("专职安全员","张甲","110101199001010015","",""),
+                data.appointment("专职安全员","张甲","110101199001010023","",""));
         Fact fact=new Fact("joined","PERSON_ROLE","专职安全员","role","张甲","张甲","","","CURRENT_PROJECT",
                 cn.bidcheck.compat.Java8Api.toList(corpus.all.stream().map(Source::id)),cn.bidcheck.compat.Java8Api.mapOf());
         List<Fact> facts=data.checked(corpus,fact);Decision result=data.evaluate(corpus,facts,one());
@@ -41,8 +41,8 @@ class PersonnelCountProofContractTest {
     @Test void aPriorWitnessCannotHideNewStrongIdentityConflictsOnResume(){
         EvidenceCorpus before=data.corpus("本项目专职安全员：张甲");List<Fact> original=data.checked(before,data.role(before,1,"专职安全员","张甲","",""));
         Rule rule=one();Decision prior=data.evaluate(before,original,rule);assertEquals("PASS",prior.status());
-        EvidenceCorpus changed=data.corpus("本项目专职安全员：张甲",data.appointment("专职安全员","张甲","110101199001010011","",""),
-                data.appointment("专职安全员","张甲","110101199001010022","",""));
+        EvidenceCorpus changed=data.corpus("本项目专职安全员：张甲",data.appointment("专职安全员","张甲","110101199001010015","",""),
+                data.appointment("专职安全员","张甲","110101199001010023","",""));
         List<Fact> current=data.checked(changed,data.role(changed,1,"专职安全员","张甲","",""),
                 data.role(changed,2,"专职安全员","张甲","",""),data.role(changed,3,"专职安全员","张甲","",""));
         assertEquals(original.get(0).id(),current.get(0).id(),"unchanged witness is intentionally still replayable");

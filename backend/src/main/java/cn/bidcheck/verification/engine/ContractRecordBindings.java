@@ -28,6 +28,10 @@ final class ContractRecordBindings {
     static ProofVerifier verifier(EvidenceCorpus corpus, List<Rule> rules, List<Source> verifiedSources) {
         Set<String> sourceIds = new java.util.LinkedHashSet<>();
         verifiedSources.forEach(source -> sourceIds.add(source.id()));
+        return new ProofVerifier(corpus.byId, scope(corpus, rules, sourceIds));
+    }
+
+    static ContractRecordBindings scope(EvidenceCorpus corpus, List<Rule> rules, Set<String> sourceIds) {
         Map<String,Map<String,Object>> rows = new java.util.LinkedHashMap<>();
         java.util.Deque<Rule> pending = new java.util.ArrayDeque<>(rules);
         while (!pending.isEmpty()) {
@@ -41,8 +45,47 @@ final class ContractRecordBindings {
             }
         }
         List<ContractRecordBindings> bindings = new ArrayList<>();
-        rows.values().forEach(row -> bindings.add(new ContractRecordBindings(row, corpus.byId, sourceIds)));
-        return new ProofVerifier(corpus.byId, new ContractRecordBindings(bindings));
+        rows.values().forEach(row -> bindings.add(new ContractRecordBindings(
+            DeclaredPerformanceRows.rowWithOriginalTitle(row,corpus), corpus.byId, sourceIds)));
+        return new ContractRecordBindings(bindings);
+    }
+
+    ContractEvidenceRecord record(Fact verified, List<Source> references) {
+        ContractEvidenceRecord record = null;
+        if (ContractCandidateFields.identityAttribute(verified.field()).isEmpty()
+                || references.stream().anyMatch(s->!printedParentAgreements(s).isEmpty())) return null;
+        for (ContractRecordBindings binding : alternatives) {
+            if (!binding.matches(verified, references)) continue;
+            if (record != null) return null;
+            record = new ContractEvidenceRecord(binding.row, verified);
+        }
+        return record;
+    }
+
+    boolean revalidateRecord(Fact fact, List<Source> references) {
+        List<String> anchors = ProofVerifier.strings(fact.attributes().get("recordAnchorSourceIds"));
+        if (anchors.isEmpty() || !fact.sourceIds().containsAll(anchors)) return false;
+        if(fact.attributes().containsKey(ContractEvidenceRecord.FIELD_SOURCES)){
+            Object raw=fact.attributes().get(ContractEvidenceRecord.FIELD_SOURCES);
+            Set<String> fields=ContractEvidenceRecord.fieldSourceIds(fact);
+            if(!(raw instanceof List<?>)||fields.isEmpty()||fields.size()!=((List<?>)raw).size()
+                    ||!fields.containsAll((List<?>)raw)||Collections.disjoint(fields,anchors))return false;
+            if(references.stream().anyMatch(s->fields.contains(s.id())&&anchors.contains(s.id())
+                    &&!ContractEvidenceRecord.permitsOverlappingField(fact.field(),s)))return false;
+            Set<String> cited=new java.util.LinkedHashSet<>(fields);cited.addAll(anchors);
+            if(!cited.equals(new java.util.LinkedHashSet<>(fact.sourceIds())))return false;
+        }
+        String name = str(fact.attributes(),"recordAnchorName"), number = str(fact.attributes(),"recordAnchorNumber");
+        if (name.isEmpty() && number.isEmpty() || !name.isEmpty() && !name.equals(str(fact.attributes(),"contractName"))
+                || !number.isEmpty() && !number.equals(str(fact.attributes(),"contractNumber"))) return false;
+        List<Source> pages = new ArrayList<>();
+        for (Source source : references) if (anchors.contains(source.id())) pages.add(source);
+        if (!name.isEmpty() && pages.stream().noneMatch(source -> ContractCandidateFields.containsTitle(source.evidence().quote(), name))
+                || !number.isEmpty() && pages.stream().noneMatch(source -> ProofVerifier.contains(source.evidence().quote(), number))) return false;
+        Fact identity = new Fact("", "CONTRACT", "", number.isEmpty() ? "contractName" : "contractNumber",
+            number.isEmpty() ? name : number, "", "", "", fact.scope(), anchors, linked("contractName",name,"contractNumber",number));
+        ContractEvidenceRecord currentRecord = record(identity, pages);
+        return currentRecord != null && currentRecord.id.equals(str(fact.attributes(),"contractRecordId")) && matches(fact,references);
     }
 
     ContractRecordBindings(Map<String,Object> row, Map<String,Source> current, Set<String> actuallyRead) {
@@ -54,14 +97,18 @@ final class ContractRecordBindings {
 
     boolean matches(Fact fact, List<Source> references) {
         if (!alternatives.isEmpty()) return alternatives.stream().filter(binding -> binding.matches(fact, references)).count() == 1;
-        if (references.isEmpty() || !row.containsKey("documentHash")
+        if (references.isEmpty() || Boolean.TRUE.equals(row.get("conflictingOriginalTitle")) || !row.containsKey("documentHash")
                 || !row.containsKey("documentVersion")) return false;
         String name = str(fact.attributes(), "contractName");
         String number = str(fact.attributes(), "contractNumber");
         if (clean(name).isEmpty() && clean(number).isEmpty()) return false;
         String rowTitle = str(row, "contractName");
         if (rowTitle.isEmpty()) rowTitle = str(row, "separatorTitle");
-        if (!name.isEmpty() && !(ContractCandidateFields.sameTitle(name, rowTitle) || !rowTitle.endsWith("合同") && ContractCandidateFields.sameTitle(name, rowTitle + "合同"))) return false;
+        if (!name.isEmpty() && !(FrameworkOriginalFields.samePacketTitles(name, rowTitle) || !rowTitle.endsWith("合同") && ContractCandidateFields.sameTitle(name, rowTitle + "合同"))) return false;
+        // A PO continuation may have no number on this page. The original agreement ends
+        // before its order appendix, including unlabelled chunks of multi-page orders.
+        boolean framework=rowTitle.contains("框架合同");
+        java.util.Collection<Source> originals=framework ? FrameworkOriginalFields.originals(row,current.values()) : current.values();
         for (Source source : references) {
             Source frozen = current.get(source.id());
             if (frozen == null || !actuallyRead.contains(source.id())
@@ -69,7 +116,7 @@ final class ContractRecordBindings {
                     || !frozen.documentHash().equals(source.documentHash())
                     || frozen.documentVersion() != source.documentVersion()
                     || !frozen.evidence().quote().equals(source.evidence().quote())
-                    || isOrder(source.evidence().quote())) return false;
+                    || isOrder(source.evidence().quote()) || framework && !originals.contains(frozen)) return false;
         }
         boolean anchor = references.stream().anyMatch(source ->
             (!name.isEmpty() && ContractCandidateFields.containsTitle(source.evidence().quote(), name))
@@ -78,12 +125,23 @@ final class ContractRecordBindings {
 
         // A declared packet is navigation until the corpus itself rules out a second identity.
         // Orders keep the separate existing framework/order association path.
-        for (Source source : current.values()) {
+        String qualified="";
+        for (Source source : originals) {
             if (!DeclaredPerformanceRows.contains(row, source) || isOrder(source.evidence().quote())) continue;
             String quote = source.evidence().quote();
+            if(rowTitle.contains("框架合同")) {
+                for(String line:quote.split("\\R")){
+                    String header=line.trim().replaceFirst("^#{1,6}\\s*","");
+                    if(!FrameworkOriginalFields.qualifiedTitle(header,rowTitle))continue;
+                    if(!qualified.isEmpty()&&!ContractCandidateFields.sameTitle(qualified,header)
+                            || FrameworkOriginalFields.qualifiedTitle(name,rowTitle)&&!ContractCandidateFields.sameTitle(name,header))return false;
+                    qualified=header;
+                }
+            }
             for (String title : printedTitles(quote)) {
                 if (!ContractCandidateFields.sameTitle(title, name)
-                        && !ContractCandidateFields.sameTitle(title, rowTitle)) return false;
+                        && !ContractCandidateFields.sameTitle(title, rowTitle)
+                        && !numberedTitleOnAnchor(source, references, title, rowTitle, number)) return false;
             }
             for (String found : labels(quote, "(?:合同名称|合同名)")) {
                 if (!name.isEmpty() && !ContractCandidateFields.sameTitle(found, name)) return false;
@@ -95,6 +153,17 @@ final class ContractRecordBindings {
             }
         }
         return true;
+    }
+
+    private static boolean numberedTitleOnAnchor(Source source, List<Source> references, String title,
+            String rowTitle, String number) {
+        // Some inventories print the project name; the numbered original appends the word 合同.
+        // Require that exact formal title AND the single original number on the cited anchor.
+        if (number.isEmpty() || rowTitle.isEmpty() || rowTitle.endsWith("合同")
+                || !ContractCandidateFields.sameTitle(title, rowTitle + "合同")
+                || references.stream().noneMatch(page -> page.id().equals(source.id()))) return false;
+        List<String> printed = numbersOn(source);
+        return printed.size() == 1 && clean(printed.get(0)).equals(clean(number));
     }
 
 
@@ -190,18 +259,24 @@ final class ContractRecordBindings {
     }
 
     static boolean signingDate(String date, java.util.Collection<Source> sources) {
-        for (Source source : sources) {
-            String quote = source.evidence().quote();
-            Matcher labelled = Pattern.compile("(?:合同签订日期|合同签署日期|合同签约日期|签订日期|签署日期|签约日期|签订时间|签署时间|签约时间)[ \\t]*[:：][ \\t]*([^\\r\\n]{1,60})").matcher(quote);
-            while (labelled.find()) if (ProofVerifier.datePresent(labelled.group(1), date)) return true;
-            if (!quote.contains("签字") && !quote.contains("盖章")) continue;
-            Matcher footer = Pattern.compile("(?m)^[ \\t]*(?:时间|签字日期|盖章日期)[ \\t]*[:：][ \\t]*([^\\r\\n]{1,40})").matcher(quote);
-            while (footer.find()) if (ProofVerifier.datePresent(footer.group(1), date)) return true;
-        }
-        return false;
+        return SigningDateBlock.read(sources).confirms(date);
     }
 
-    private static boolean isOrder(String quote) {
+    static List<String> numbersOn(Source source) {
+        if (source.index() || isOrder(source.evidence().quote())) return Collections.emptyList();
+        return new ArrayList<>(new java.util.LinkedHashSet<>(labels(source.evidence().quote(), "(?:合同编号|合同号|协议编号|协议号)")));
+    }
+
+    static Set<String> printedParentAgreements(Source source) {
+        Set<String> numbers=new java.util.LinkedHashSet<>();
+        if (source.index()) return numbers;
+        Matcher m=Pattern.compile("(?m)^[ \\t|]*(?:协议|关联合同)[ \\t]*[:：][ \\t]*[\\[【]([A-Za-z0-9][A-Za-z0-9._/-]+)[\\]】][ \\t]*([^\\r\\n|]{4,180})").matcher(source.evidence().quote());
+        while(m.find())if(!m.group(1).toUpperCase(java.util.Locale.ROOT).startsWith("PO") && m.group(2).contains("框架合同"))
+            numbers.add(m.group(1));
+        return numbers;
+    }
+
+    static boolean isOrder(String quote) {
         return Pattern.compile("(?i)\\bPO(?:[-_：: ]+[A-Z0-9-]*|[A-Z0-9]*)[0-9][A-Z0-9-]*").matcher(quote).find();
     }
 

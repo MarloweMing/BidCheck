@@ -31,4 +31,21 @@ class CertificateMappedSectionScopeTest {
             List<Page> pages=pages();switch (mode) {case "historical":replace(pages,8,"证书编号：Q1001","历史项目证明\n证书编号：Q1001"); break;case "example":replace(pages,8,"证书编号：Q1001","填写示例\n证书编号：Q1001"); break;case "foreign":replace(pages,9,"组织名称：甲建设有限公司","组织名称：甲建设有限公司\n项目名称：南方旧楼历史装修工程"); break;case "missing-footer":replace(pages,9,"\n9\n","\n99\n"); break;case "broken-sibling":replace(pages,10,NEXT,"（3）其他说明"); break;case "missing-bidder":replace(pages,1,"投标人名称：（盖章）甲建设有限公司",""); break;case "missing-project-number":replace(pages,1,"（招标项目编号：HN-2025-001）",""); break;case "wrong-native-child":replace(pages,8,CHILD+"\n8\n",NEXT+"\n8\n"); break;}EvidenceCorpus c=corpus(pages);assertFalse(CertificateEvidenceRecords.usable(certificate(c),c,new HashMap<>()),mode);
         }
     }
+    @Test void lastCertificateSectionMayEndAtVerifiedOuterChapterButNotAtAmbiguousOrForeignBoundaries(){
+        for(String mode:Arrays.asList("verified","wrong-heading","wrong-footer","duplicate-heading","historical")){
+            List<Page> data=pages();String end="6.联合体协议书";
+            replace(data,2,NEXT+" ........ 10",NEXT+" ........ 10\n"+end+" ........ 12");
+            data.add(page(11,"查询网址及截图\n11"));data.add(page(12,end+"\n12"));
+            if(mode.equals("wrong-heading"))replace(data,12,end,"6.其他材料");
+            if(mode.equals("wrong-footer"))replace(data,11,"11","101");
+            if(mode.equals("duplicate-heading"))replace(data,2,end+" ........ 12",end+" ........ 12\n"+end+" ........ 12");
+            if(mode.equals("historical"))replace(data,11,"查询网址及截图","历史项目证明");
+            EvidenceCorpus c=corpus(data);Source s=c.all.stream().filter(v->v.evidence().page()==10).findFirst().get();
+            Map<String,Object> scope=CertificateEvidenceRecords.mappedScope(s,c,new HashMap<>());
+            assertEquals(mode.equals("verified"),!scope.isEmpty(),mode);if(!scope.isEmpty()){
+                Map<?,?> current=(Map<?,?>)scope.get("sourceScope");assertEquals(10,current.get("sectionStart"));assertEquals(11,current.get("sectionEnd"));
+                assertTrue(RuleEvaluator.maps(current.get("anchors")).stream().anyMatch(a->"NEXT_OUTER_BODY_BOUNDARY".equals(str(a,"kind"))));
+            }
+        }
+    }
 }

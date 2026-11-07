@@ -12,7 +12,7 @@ import java.util.regex.*;
 
 /** Source-bound whole-document occurrences. A completed scan never asserts that all facts were recognized. */
 public final class ConsistencyEngine {
-    public static final String VERSION = "consistency-9-enterprise-bound-legal-representatives";
+    public static final String VERSION = "consistency-10-source-bound-name-variants";
     private static final Set<String> FIELDS = cn.bidcheck.compat.Java8Api.setOf("companyName", "totalPrice", "openingTime", "personName", "personRole");
     private static final String ROLES = "项目负责人|项目经理|技术负责人|授权代表|被授权人|法定代表人|安全负责人|质量负责人|财务负责人";
     private static final String SEPARATOR = "[\\s:：=|｜]+";
@@ -117,6 +117,7 @@ public final class ConsistencyEngine {
         report=mergePersonCredentials(mergeExpanded(report, new ExpandedConsistencyEngine().scan(document, supplementalFacts,contextIndex,tableIndex)),
                 new PersonCredentialConsistency().scan(document));
         scopeLegalRepresentativeGroups(document,report);
+        NameVariantAttribution.apply(document,report);
         ConsistencyRunSupport.map(report.get("coverage")).put("tableRelations",tableIndex.summary());
         attachContextSummary(document,contextIndex,report);
         return report;

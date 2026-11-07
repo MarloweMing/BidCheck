@@ -5,6 +5,7 @@ import cn.bidcheck.domain.Domain.Page;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -148,7 +149,10 @@ final class MappedSectionScope {
             if(certificateConsumer&&!entry.title().matches(".*(?:质量管理体系|职业健康安全管理体系|环境管理体系)认证(?:证书)?"))continue;
             Navigation parent = cn.bidcheck.compat.Java8Api.isBlank(entry.parentPath()) ? null
                     : unique(byPath.getOrDefault(entry.parentPath(), cn.bidcheck.compat.Java8Api.listOf()));
-            boolean recognizedParent=certificateConsumer&&parent!=null&&recognizedSamePageParent(parent,entry,pages.get(parent.page()));
+            Navigation firstChild=parent==null?null:navigation.stream().filter(n->n.parentPath().equals(parent.path())&&"PAREN".equals(n.kind()))
+                    .min(Comparator.comparingInt(Navigation::order)).orElse(null);
+            boolean recognizedParent=certificateConsumer&&parent!=null&&firstChild!=null&&byPath.get(firstChild.path()).size()==1
+                    &&recognizedSamePageParent(parent,firstChild,pages.get(parent.page()));
             if (parent != null && (excludedTitle(parent.title()) || !bodyMapped(parent, pages.get(parent.page()))&&!recognizedParent))
                 continue;
             // A parenthesized child without a unique numbered parent is structurally ambiguous.
@@ -159,12 +163,28 @@ final class MappedSectionScope {
                             && candidate.parentPath().equals(entry.parentPath())
                             && candidate.kind().equals(entry.kind()))
                     .min(Comparator.comparingInt(Navigation::order)).orElse(null);
-            if (next == null || next.page() <= entry.page()
-                    || byPath.getOrDefault(next.path(), cn.bidcheck.compat.Java8Api.listOf()).size() != 1
-                    || excludedTitle(next.title())) continue;
+            boolean enclosingBoundary=false;
+            if(certificateConsumer&&parent!=null&&"PAREN".equals(entry.kind())){
+                // The last numbered attachment may end at the next chapter instead of a
+                // sibling attachment. Only the immediately following, hierarchically next
+                // heading can delimit it; its page is excluded from the certificate range.
+                Navigation immediate=navigation.stream().filter(n->n.order()>entry.order()).min(Comparator.comparingInt(Navigation::order)).orElse(null);
+                enclosingBoundary=immediate!=null&&"NUMBERED".equals(immediate.kind())&&nextOuterSection(parent.path(),immediate.path());
+                if(enclosingBoundary)next=immediate;
+                else if(next!=immediate)continue;
+            }
+            if (next == null || next.page() <= entry.page() || (!enclosingBoundary&&excludedTitle(next.title()))||adverse(next.title())) continue;
+            List<Navigation> boundaryNames=byPath.getOrDefault(next.path(),Collections.emptyList());
+            if(enclosingBoundary){
+                // Some earlier nested lists restart their numbering. An earlier, differently
+                // named and earlier physically printed entry cannot be this closing heading.
+                boolean ambiguous=false;
+                for(Navigation n:boundaryNames)if(n!=next&&(n.order()>=parent.order()||n.page()>=parent.page()||n.title().equals(next.title())))ambiguous=true;
+                if(ambiguous)continue;
+            }else if(boundaryNames.size()!=1)continue;
 
             Page first = pages.get(entry.page()), boundary = pages.get(next.page());
-            if (!bodyMapped(entry, first) || !bodyMapped(next, boundary)) continue;
+            if (!bodyMapped(entry, first) || !bodyMapped(next, boundary, enclosingBoundary)) continue;
             if (parent != null && parent.page() > entry.page()) continue;
 
             boolean safe = true;
@@ -189,8 +209,8 @@ final class MappedSectionScope {
             }
             anchors.add(anchor(entry.source(), "UNIQUE_SECTION_NAVIGATION", entry.quote()));
             anchors.add(anchor(first, "MAPPED_SECTION_BODY_TITLE_AND_PRINTED_PAGE", headingQuote(first)));
-            anchors.add(anchor(next.source(), "NEXT_SIBLING_NAVIGATION", next.quote()));
-            anchors.add(anchor(boundary, "NEXT_SIBLING_BODY_BOUNDARY", headingQuote(boundary)));
+            anchors.add(anchor(next.source(), enclosingBoundary?"NEXT_OUTER_NAVIGATION":"NEXT_SIBLING_NAVIGATION", next.quote()));
+            anchors.add(anchor(boundary, enclosingBoundary?"NEXT_OUTER_BODY_BOUNDARY":"NEXT_SIBLING_BODY_BOUNDARY", headingQuote(boundary)));
 
             Proof proof = new Proof(entry.page(), next.page() - 1, cover.project(), cover.number(),
                     cover.bidder(), entry.path(), cn.bidcheck.compat.Java8Api.listCopyOf(anchors));
@@ -206,7 +226,7 @@ final class MappedSectionScope {
                 || !Objects.toString(page.text(), "").contains(quote)) return cn.bidcheck.compat.Java8Api.mapOf();
         Proof proof = approved.get(page.number());
         if (proof == null) return cn.bidcheck.compat.Java8Api.mapOf();
-        return cn.bidcheck.compat.Java8Api.mapOf("status", "CURRENT_BID_SECTION", "projectName", proof.project(), "projectNumber", proof.projectNumber(), "bidder", proof.bidder(), "sectionPath", proof.sectionPath(), "sectionStart", proof.first(), "sectionEnd", proof.last(), "anchors", proof.anchors(), "derivedBy", certificateConsumer?"SERVER_MAPPED_CERTIFICATE_SECTION_SCOPE":"SERVER_MAPPED_SECTION_SCOPE", "boundary", "仅证明目录映射且由下一同级正文限定的当前投标章节；不证明人员归属、证书有效、签章真实性或业务条件满足");
+        return cn.bidcheck.compat.Java8Api.mapOf("status", "CURRENT_BID_SECTION", "projectName", proof.project(), "projectNumber", proof.projectNumber(), "bidder", proof.bidder(), "sectionPath", proof.sectionPath(), "sectionStart", proof.first(), "sectionEnd", proof.last(), "anchors", proof.anchors(), "derivedBy", certificateConsumer?"SERVER_MAPPED_CERTIFICATE_SECTION_SCOPE":"SERVER_MAPPED_SECTION_SCOPE", "boundary", "以目录及下一正文标题核验当前章节范围。人员、证照和业务条件仍须分别核验。");
     }
 
     private static Cover cover(Document document, Set<Integer> duplicatePages) {
@@ -261,10 +281,20 @@ final class MappedSectionScope {
     }
 
     private static boolean bodyMapped(Navigation navigation, Page page) {
+        return bodyMapped(navigation,page,false);
+    }
+    private static boolean bodyMapped(Navigation navigation,Page page,boolean permitNumberDelimiter){
         if (page == null || !printedMatches(page)) return false;
         String expected = heading(navigation.label() + navigation.title());
         return cn.bidcheck.compat.Java8Extras.lines(nativeText(page.text())).map(cn.bidcheck.compat.Java8Api::strip).filter(line -> !cn.bidcheck.compat.Java8Api.isBlank(line))
-                .limit(10).map(MappedSectionScope::heading).anyMatch(expected::equals);
+                .limit(10).map(MappedSectionScope::heading).anyMatch(line->line.equals(expected)||permitNumberDelimiter&&"NUMBERED".equals(navigation.kind())&&
+                    (line.equals(heading(navigation.label()+"."+navigation.title()))||line.equals(heading(navigation.label()+"、"+navigation.title()))));
+    }
+    private static boolean nextOuterSection(String parent,String candidate){
+        String[] from=parent.split("\\."),to=candidate.split("\\.");if(to.length>from.length)return false;
+        for(int i=0;i<to.length-1;i++)if(!to[i].equals(from[i]))return false;
+        try{return new java.math.BigInteger(to[to.length-1]).equals(new java.math.BigInteger(from[to.length-1]).add(java.math.BigInteger.ONE));}
+        catch(NumberFormatException ignored){return false;}
     }
 
     private static boolean recognizedSamePageParent(Navigation parent,Navigation child,Page page){

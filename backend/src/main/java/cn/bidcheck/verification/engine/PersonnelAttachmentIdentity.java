@@ -221,5 +221,5 @@ final class PersonnelAttachmentIdentity {
     }
 
     private static String date(Matcher m){try{return LocalDate.of(Integer.parseInt(m.group(1)),Integer.parseInt(m.group(2)),Integer.parseInt(m.group(3))).toString();}catch(Exception e){return "";}}
-    private static boolean validId(String id){if(!id.matches("[0-9]{17}[0-9X]"))return false;int[] weight={7,9,10,5,8,4,2,1,6,3,7,9,10,5,8,4,2};int sum=0;for(int i=0;i<17;i++)sum+=(id.charAt(i)-'0')*weight[i];return "10X98765432".charAt(sum%11)==id.charAt(17);}
+    private static boolean validId(String id){return cn.bidcheck.verification.source.CitizenId.valid(id);}
 }

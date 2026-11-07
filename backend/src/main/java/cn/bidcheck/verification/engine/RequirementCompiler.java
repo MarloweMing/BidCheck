@@ -85,6 +85,13 @@ switch (Objects.toString(cp.type(),"")) {case "VALUE_COMPARE":predicate = "NUMBE
         if(RecoveryReplay.localOnly(session.context)&&!RequirementRepairPolicy.recompile(session.context)){
             JsonNode previous=RecoveryReplay.plan(session.context,session.json);
             if(previous==null)return new Plan("ALL",cn.bidcheck.compat.Java8Api.listOf(),"RECOVERY_PLAN_MISSING",cn.bidcheck.compat.Java8Api.listOf("补查缺少可重新验证的规则计划，未再次调用模型"));
+            if(SourceScoringRules.outdatedFormula(previous)||SourceRequirementInventory.outdatedFormula(previous)){
+                boolean inventoryUpgrade=SourceRequirementInventory.outdatedFormula(previous);
+                session.record("REQUIREMENT_PACKAGE",linked("checkpointId",cp.id()),linked("state",inventoryUpgrade?"STALE_INVENTORY_RECOMPILED_LOCALLY":"STALE_SCORING_RECOMPILED_LOCALLY","executorVersion",inventoryUpgrade?SourceRequirementInventory.VERSION:SourceScoringRules.VERSION,"networkCalls",0));
+                if(inventoryUpgrade)log.info("bidcheck.requirement_executor_upgrade runId={} checkpointId={} source=PREVIOUS_PLAN executorVersion={} modelCalls=0",
+                    safeLog(str(session.context,"sourceRunId")),safeLog(cp.id()),SourceRequirementInventory.VERSION);
+                return deterministicPackage(cp,RequirementReferences.requirementText(scope.obligation(),sourceContext),original,sourceContext,scope,focused,focusedDomains,session);
+            }
             Plan parsed=compileResponse(cp,previous,original,focused,focusedDomains,sourceContext,scope);
             Plan replay=new Plan(parsed.logic(),parsed.rules(),"LOCAL_REVALIDATION",parsed.issues(),parsed.policyNotes(),parsed.requirementScope());
             session.compilationAudit=CompilationRecovery.audit(replay,0,cn.bidcheck.compat.Java8Api.listOf(linked("state","LOCAL_REVALIDATION","networkCalls",0)));
@@ -114,6 +121,7 @@ switch (Objects.toString(cp.type(),"")) {case "VALUE_COMPARE":predicate = "NUMBE
         Map<String,Object> input=linked("title",cp.title(),"requirement",groundedRequirement,"originalRequirement",cn.bidcheck.compat.Java8Api.isBlank(original)?"":groundedRequirement,"sourceContext",original,"requirementScope",scope.map(),"reviewedExpected",requirement,"category",cp.category(),"ruleVersion",VERSION,
             "scopeInstructions","只对requirement中的当前义务编译并检查覆盖。sourceContext用于定位标题、主体和定义，不得把相邻独立要求重新加入本项；sourceQuote仍须逐字来自requirement。纯逻辑组合使用predicate=GROUP；有业务含义的谓词必须自身核验，REFERENCE_TIME等辅助条件不能替代证书效期、材料或人数要求。");
         input.put("deterministicCompilerVersion",DeterministicRequirementCompiler.VERSION);
+        if("scoring".equals(cp.field()))input.put("sourceScoringExecutorVersion",SourceScoringRules.VERSION);
         input.put("deterministicCoverage",deterministic.audit());
         input.put("lockedRules",cn.bidcheck.compat.Java8Api.listOf());
         input.put("uncoveredSpans",cn.bidcheck.compat.Java8Api.listOf(linked("sourceQuote",groundedRequirement,"reasonCode","EXPLICIT_LEGACY_MODEL_COMPILER")));
@@ -215,6 +223,7 @@ switch (field) {case "amountAccuracy":detectors = cn.bidcheck.compat.Java8Api.li
                 "unit",cp.unit(),"expected",cp.expected(),"requirement",requirement,"sourceContext",source.map(),"scope",scope.map(),
                 "focused",focused,"domains",new TreeSet<>(domains),"externalAdapters",session.context.getOrDefault("externalAdapterBySource",cn.bidcheck.compat.Java8Api.mapOf()),
                 "requirementRevisions",RequirementRepairPolicy.versions());
+        if("scoring".equals(cp.field()))input.put("sourceScoringExecutorVersion",SourceScoringRules.VERSION);
         RequirementArtifact artifact=new RequirementArtifact(session,input,source,true);
         try{if(artifact.enabled())artifact.lock.lockInterruptibly();}catch(InterruptedException stopped){Thread.currentThread().interrupt();throw new InterruptedIOException("要求生成已中断");}
         try{
@@ -282,6 +291,7 @@ switch (field) {case "amountAccuracy":detectors = cn.bidcheck.compat.Java8Api.li
         Rule confirmedNumeric=new DeterministicRequirementCompiler(new ObjectMapper()).confirmedDuration(cp,groundedRequirement);
         RequirementContextBindings bindings=new RequirementContextBindings(cn.bidcheck.compat.Java8Api.isBlank(original)?requirement:sourceContext.bindingSource(),cn.bidcheck.compat.Java8Api.isBlank(original)?"REVIEWED_REQUIREMENT":"ORIGINAL_REQUIREMENT",sourceContext.sources().size()>1,confirmedNumeric);
         List<String> issues=new ArrayList<>(RequirementReferences.issues(sourceContext));String logic=root.path("logic").asText("ALL");if(!cn.bidcheck.compat.Java8Api.setOf("ALL", "ANY").contains(logic))issues.add("顶层组合不是 ALL 或 ANY");
+        if(SourceRequirementInventory.outdatedFormula(root))issues.add("REQUIREMENT_INVENTORY_VERSION_REQUIRED：要求清单须使用当前执行版本，不能按普通材料存在性运行");
         List<Rule> rules=new ArrayList<>();Set<String> ids=new HashSet<>();int[] count={0};
         List<Map<String,Object>> constants=TenderRequirementConstants.extract(groundedRequirement);
         if(root.path("rules").isArray())for(JsonNode row:root.path("rules")){Rule r=parse(row,groundedRequirement,issues,ids,0,count,bindings,cn.bidcheck.compat.Java8Api.listOf(),"ALL".equals(logic)?constants:cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.mapOf());if(r!=null){r=referenceGrounding(r,scope.obligation(),sourceContext,issues);rules.add(focused?focusedRule(r,focusedDomains,bindings):r);}}

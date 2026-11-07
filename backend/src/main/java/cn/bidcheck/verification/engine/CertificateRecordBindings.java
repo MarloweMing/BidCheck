@@ -13,6 +13,62 @@ final class CertificateRecordBindings {
     private static final Pattern TITLE=Pattern.compile("(?m)^[\\t #*]*(?:中华人民共和国)?[^\\r\\n:：|<>]{0,50}(?:注册证书|安全生产考核合格证书?)[\\t *]*\\r?$");
     private static final Pattern HOLDER=Pattern.compile("(?m)^[\\t ]*(?:#{1,6}[\\t ]*)?(?:姓\\s*名|持证人)\\s*[:：]\\s*[\\p{IsHan}·*＊×●]{2,12}[\\t ]*\\r?$");
     private CertificateRecordBindings(){}
+    private static final Pattern NUMBER_LABEL=Pattern.compile("(?:证书编号|证书号码|注册编号|注册证号|资格证号)\\s*[:：]\\s*([^\\s;；，,。|<>]{2,80})");
+    private static final Pattern VERSION_LABEL=Pattern.compile("(?:^|[；;。\\n])\\s*(旧证|新证|原证|续期证)(?=\\s*(?:注册|证书|使用|资格)?有效期)");
+
+    /** Work inside the already selected holder. An ambiguous boundary yields no evidence,
+     * and repeated validity labels without an explicit version marker stay ambiguous. */
+    static String selectSegment(String holderBlock,Fact fact){
+        String number=str(fact.attributes(),"number");
+        if(holderBlock.isEmpty()||number.isEmpty())return holderBlock;
+        Matcher marks=NUMBER_LABEL.matcher(holderBlock);
+        List<Integer> starts=new ArrayList<>();
+        List<String> numbers=new ArrayList<>();
+        int previousEnd=0;
+        while(marks.find()){
+            int start=0;
+            if(!numbers.isEmpty()){
+                start=recordStart(holderBlock,marks.start(),previousEnd);
+                if(start<0)return "";
+            }
+            starts.add(start);numbers.add(marks.group(1));previousEnd=marks.end();
+        }
+        if(numbers.isEmpty())return holderBlock;
+        List<String> matches=new ArrayList<>();
+        for(int i=0;i<numbers.size();i++){
+            if(!number.equals(numbers.get(i)))continue;
+            String record=holderBlock.substring(starts.get(i),i+1<starts.size()?starts.get(i+1):holderBlock.length());
+            String selected=versionSegment(record,fact);
+            if(!selected.isEmpty())matches.add(selected);
+        }
+        return matches.size()==1?matches.get(0):"";
+    }
+
+    private static int recordStart(String text,int at,int previousEnd){
+        for(int i=at-1;i>=previousEnd;i--)if("；;。\n".indexOf(text.charAt(i))>=0)return i+1;
+        return -1;
+    }
+
+    private static String versionSegment(String record,Fact fact){
+        Matcher labels=VERSION_LABEL.matcher(record);List<Integer> starts=new ArrayList<>();
+        while(labels.find())starts.add(labels.start(1));
+        if(starts.size()<2)return record;
+        String identity=record.substring(0,starts.get(0));
+        String field=str(fact.attributes(),"validityField"),start=str(fact.attributes(),"start"),end=str(fact.attributes(),"end");
+        if(field.isEmpty()||end.isEmpty())return "";
+        List<java.time.LocalDate> expected=new ArrayList<>();
+        if(!start.isEmpty())expected.add(ProofVerifier.date(start));
+        expected.add(ProofVerifier.date(end));
+        if(expected.contains(null))return "";
+        String result="";
+        for(int i=0;i<starts.size();i++){
+            String version=record.substring(starts.get(i),i+1<starts.size()?starts.get(i+1):record.length());
+            if(!cn.bidcheck.verification.source.DateFieldValues.read(version,field,2).equals(expected))continue;
+            if(!result.isEmpty())return "";
+            result=identity+version;
+        }
+        return result;
+    }
     @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
     static final class Original{
         private final String text;

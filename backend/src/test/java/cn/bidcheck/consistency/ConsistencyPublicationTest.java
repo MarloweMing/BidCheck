@@ -147,6 +147,46 @@ class ConsistencyPublicationTest {
     @Test void emptyScanCanFreezeAnEmptyLedgerWithoutInventingFacts()throws Exception {
         prepare(0);publish();assertEquals(0,count("qc_fact_occurrence"));assertEquals(0,map(report.get("publication")).get("batchCount"));assertEquals(1,records("consistency_report").size());
     }
+    @Test void fullyReusableImmutableFactsUseTheLargerPlanWithoutDroppingRunUsageOrOrigins()throws Exception {
+        Map<String,Object> prior=store.map(store.encode(report));ConsistencyRunSupport.publish(store,ledger,"prior-reuse",document,engine,prior);
+        clearInvocations(ledger,store);publish();Map<String,Object> publication=map(report.get("publication")),preload=map(publication.get("reusePreload"));
+        assertEquals("IMMUTABLE_REUSE",publication.get("batchPlanMode"));assertEquals(40,publication.get("maxBatchFacts"));assertEquals(128,publication.get("maxBatchSources"));assertEquals(3,publication.get("batchCount"));
+        assertEquals(81,preload.get("requested"));assertEquals(81,preload.get("reusable"));assertEquals(true,preload.get("allReusable"));
+        verify(ledger,times(3)).publishPrepared(any());verify(store,times(1)).getMap(eq("fact_lookup_state"),anyString());
+        assertEquals(81,count("qc_fact_occurrence"));assertEquals(81,records("fact_usage").size());
+        assertEquals(81,store.maps("fact_origin",project,null).stream().filter(row->run.equals(row.get("runId"))).count());
+        assertEquals(1,records("fact_snapshot").size());
+    }
+    @Test void aColdQueryProjectionCannotStartHistoricalMigrationInsideReusePublication()throws Exception {
+        Map<String,Object> prior=store.map(store.encode(report));ConsistencyRunSupport.publish(store,ledger,"prior-cold-index",document,engine,prior);
+        sql("DELETE FROM qc_record WHERE kind IN ('fact_lookup_state','fact_lookup_ref','field_lookup_ref','fact_lookup_item','fact_lookup_revision')");
+        clearInvocations(ledger,store);
+        doThrow(new IllegalStateException("historical migration entered short transaction")).when(ledger).migrateLookupIndex(any(FactLedgerService.PreparedManifest.class),anyInt());
+        publish();
+        verify(ledger,never()).migrateLookupIndex(any(FactLedgerService.PreparedManifest.class),anyInt());
+        assertEquals("IMMUTABLE_REUSE",map(report.get("publication")).get("batchPlanMode"));
+        assertEquals(81,records("fact_usage").size());assertEquals(1,records("fact_snapshot").size());
+        assertEquals(1,records("consistency_report").size());assertTrue(records("fact_lookup_item").isEmpty());
+    }
+    @Test void aPartiallyCommittedReusePlanResumesTheSameDurableBatchPlan()throws Exception {
+        Map<String,Object> prior=store.map(store.encode(report));ConsistencyRunSupport.publish(store,ledger,"prior-reuse",document,engine,prior);
+        AtomicInteger calls=new AtomicInteger();AtomicBoolean fail=new AtomicBoolean(true);
+        doAnswer(call->{if(calls.incrementAndGet()==2&&fail.get())throw new IllegalStateException("synthetic interrupted reuse batch");return call.callRealMethod();}).when(ledger).publishPrepared(any());
+        assertThrows(IllegalStateException.class,this::publish);assertEquals(1,records("consistency_publication_batch").size());assertEquals(40,records("fact_usage").size());assertNotPublished();
+        fail.set(false);publish();assertEquals(4,calls.get());assertEquals(3,records("consistency_publication_batch").size());assertEquals(81,records("fact_usage").size());
+        assertEquals("IMMUTABLE_REUSE",map(report.get("publication")).get("batchPlanMode"));assertEquals("RESUME_REUSE_PLAN",map(report.get("publication")).get("batchPlanSelectionReason"));
+    }
+    @Test void invalidExistingSourceCannotQualifyForTheReusePlanOrBypassBatchValidation()throws Exception {
+        Map<String,Object> prior=store.map(store.encode(report));ConsistencyRunSupport.publish(store,ledger,"prior-reuse",document,engine,prior);sql("UPDATE qc_evidence SET quote_text='not in current original'");
+        assertEquals("一致性事实未通过原文验证，不能发布报告",assertThrows(IllegalStateException.class,this::publish).getMessage());assertTrue(records("consistency_publication_batch").isEmpty());assertTrue(records("fact_usage").isEmpty());assertNotPublished();
+    }
+    @Test void terminalMigrationCacheStartsOnlyAfterCommitAndCacheHitsReportNoNewWork() {
+        FactLedgerService.PreparedManifest manifest=ledger.prepareManifest(project,engine,cn.bidcheck.compat.Java8Api.listOf(document));AtomicReference<Map<String,Object>> rolledBack=new AtomicReference<>();
+        tx.executeWithoutResult(status->{rolledBack.set(ledger.migrateLookupIndex(manifest,50));status.setRollbackOnly();});assertEquals(false,rolledBack.get().get("terminalCacheHit"));
+        Map<String,Object> committed=tx.execute(status->ledger.migrateLookupIndex(manifest,50));assertEquals(false,committed.get("terminalCacheHit"));
+        Map<String,Object> cached=tx.execute(status->ledger.migrateLookupIndex(manifest,50));assertEquals(true,cached.get("terminalCacheHit"));
+        assertEquals(0,cached.get("processed"));assertEquals(0,cached.get("writes"));assertEquals(committed.get("documents"),cached.get("documents"));
+    }
     private List<Map<String,Object>> boundedBatches(){return publicationBatches(store,run,cn.bidcheck.compat.Java8Api.listOf(document),report,ConsistencyPublication.MAX_BATCH_FACTS,ConsistencyPublication.MAX_BATCH_SOURCES,ConsistencyPublication.TARGET_BATCH_BYTES);}
     private int bytes(Object value){return store.encode(value).getBytes(StandardCharsets.UTF_8).length;}
     @Test void sourceLimitSplitsBeforeFactLimitWithoutDroppingOrRebindingFacts() {

@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 import static org.mockito.ArgumentMatchers.*;
 
-class InferenceConfirmationServiceTest {
+public class InferenceConfirmationServiceTest {
     final Map<String,Stored> rows=new LinkedHashMap<>();final RecordMapper mapper=mock(RecordMapper.class);
     final Store store=new Store(mapper,new ObjectMapper());final BidService bids=mock(BidService.class);
     final Document bid=new Document("bid","project","BID","a.pdf",1,"hash","",cn.bidcheck.compat.Java8Api.listOf(),cn.bidcheck.compat.Java8Api.listOf());
@@ -32,11 +32,27 @@ class InferenceConfirmationServiceTest {
         when(bids.recoverRun("project","run")).thenReturn(fields("id","next","status","PENDING"));
         store.save("project","project","project","",cn.bidcheck.compat.Java8Api.mapOf("id", "project"));run("run",cp);run("next",cp);
     }
-    void run(String id,Checkpoint point){store.save("run",id,"project","",fields("id",id,"projectId","project","documentId","bid","tenderDocumentId","tender","status","COMPLETED"));store.save("snapshot",id+"-snapshot","project",id,point);}
-    String capture(){service.capture("run","cp",bid,tender,fields("id","engine","claim","确认姓名","proposedFact",cn.bidcheck.compat.Java8Api.mapOf("value", "张国超")));return text(service.list("run").get(0),"id");}
+    void run(String id,Checkpoint point){store.save("run",id,"project","",fields("id",id,"projectId","project","documentId","bid","tenderDocumentId","tender","status","COMPLETED"));store.save("snapshot",id+"-snapshot","project",id,point);
+        pendingGap(id,point,"ENTITY_IDENTITY_AMBIGUOUS");}
+    void pendingGap(String id,Checkpoint point,String gap){
+        store.save("finding",id+"-finding","project",id,new Finding(id+"-finding",id,point,
+            new Evaluation("UNDETERMINED","仍需核对","",Collections.emptyList(),0,"RULE"),
+            fields("atomicCheck",fields("gaps",Collections.singletonList(fields("code",gap))))));}
+    void captureForGap(String run,String checkpoint,Document bid,Document tender,Map<String,Object> candidate){
+        Map<String,Object> inputs=new LinkedHashMap<>(candidate);inputs.put("unresolvedGapCodes",Collections.singletonList("ENTITY_IDENTITY_AMBIGUOUS"));
+        service.capture(run,checkpoint,bid,tender,inputs);
+    }
+    public static Map<String,Object> cardsForPassedCheckpoint(boolean confirmed){
+        InferenceConfirmationServiceTest f=new InferenceConfirmationServiceTest();String id=f.capture();
+        if(confirmed)f.service.decide("run",id,f.decision("CONFIRMED"));
+        f.store.save("finding","next-finding","project","next",new Finding("next-finding","next",f.cp,
+            new Evaluation("PASS","身份及其余条件已核实","",Collections.emptyList(),1,"RULE"),Collections.emptyMap()));
+        return f.service.exportRecords("next");
+    }
+    String capture(){captureForGap("run","cp",bid,tender,fields("id","engine","claim","确认姓名","proposedFact",cn.bidcheck.compat.Java8Api.mapOf("value", "张国超")));return text(service.list("run").get(0),"id");}
     @Test void twoTargetsSharingOneIdentityPairNeedOnlyOneDecisionAndOneRecomputation(){
         for(String target:Arrays.asList("credential","social")){
-            service.capture("run","cp",bid,tender,fields("id","old-"+target,"targetId",target,"claim","请核对两处姓名",
+            captureForGap("run","cp",bid,tender,fields("id","old-"+target,"targetId",target,"claim","请核对两处姓名",
                 "proposedFact",fields("kind","RELATION","subject","李明","field","同一人","value","李*"),
                 "evidences",Arrays.asList(fields("sourceId","appointment"),fields("sourceId","proof"))));
         }
@@ -57,7 +73,7 @@ class InferenceConfirmationServiceTest {
         run.put("inferenceConfirmationRecords",cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("id", id, "revision", 2)));store.save("run","next","project","",run);assertTrue(service.confirmedForRun("next","project",bid,tender).isEmpty());}
     @Test void frozenConfirmationDoesNotSurviveAChangedRequirementAndRevisionMustBeInteger(){String id=capture();Map<String,Object> invalid=decision("CONFIRMED");invalid.put("expectedRevision",0.9);assertThrows(RuntimeException.class,()->service.decide("run",id,invalid));service.decide("run",id,decision("CONFIRMED"));
         run("changed",new Checkpoint("cp","人员","资格","HIGH","SEMANTIC_RESPONSE","role","EXISTS","两位负责人","",true,true,true,null));Map<String,Object> changed=store.getMap("run","changed");changed.put("inferenceConfirmationRecords",cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("id", id, "revision", 1)));store.save("run","changed","project","",changed);assertTrue(service.confirmedForRun("changed","project",bid,tender).isEmpty());}
-    @Test void duplicatePendingCardCannotOverwriteAnExistingDecision(){String first=capture();service.capture("next","cp",bid,tender,fields("id","engine","claim","同一推断"));String duplicate=text(service.list("next").get(0),"id");assertNotEquals(first,duplicate);service.decide("run",first,decision("CONFIRMED"));assertThrows(RuntimeException.class,()->service.decide("next",duplicate,decision("REJECTED")));assertEquals("CONFIRMED",service.list("next").get(0).get("status"));}
+    @Test void duplicatePendingCardCannotOverwriteAnExistingDecision(){String first=capture();captureForGap("next","cp",bid,tender,fields("id","engine","claim","同一推断"));String duplicate=text(service.list("next").get(0),"id");assertNotEquals(first,duplicate);service.decide("run",first,decision("CONFIRMED"));assertThrows(RuntimeException.class,()->service.decide("next",duplicate,decision("REJECTED")));assertEquals("CONFIRMED",service.list("next").get(0).get("status"));}
     @Test void queueFailureDoesNotLoseSavedConfirmation(){String id=capture();when(bids.recoverRun("project","run")).thenThrow(new IllegalStateException("database unavailable"));assertEquals("SAVED_REQUIRES_RECHECK",service.decide("run",id,decision("CONFIRMED")).get("recomputeStatus"));assertEquals(1,service.confirmed("project",bid,tender).size());}
     @Test void attachmentUsesBoundItemAndNeverConfirmsClaimOrReplacesBid() throws Exception {
         String id=capture();org.springframework.mock.web.MockMultipartFile file=new MockMultipartFile("file","proof.pdf","application/pdf",new byte[]{1,2,3});
@@ -78,7 +94,7 @@ class InferenceConfirmationServiceTest {
     }
     @Test void sharedLedgerRequiresFrozenRevisionUnchangedClaimAndVerifiedSourceBytes(){
         Document source=new Document("bid","project","BID","a.pdf",1,"hash","",cn.bidcheck.compat.Java8Api.listOf(new Page(22,"拟在本合同任职 项目负责人 张国超","PAGE","NATIVE","")),cn.bidcheck.compat.Java8Api.listOf());when(bids.document("bid")).thenReturn(source);
-        service.capture("run","cp",source,tender,fields("id","source-backed","claim","确认对应关系","proposedFact",fields("kind","RELATION","subject","张国超","field","同一人","value","张*超"),"evidences",cn.bidcheck.compat.Java8Api.listOf(fields("sourceId","source","documentId","bid","documentHash","hash","documentVersion",1,"page",22,"locationType","PAGE","quote","项目负责人 张国超"))));
+        captureForGap("run","cp",source,tender,fields("id","source-backed","claim","确认对应关系","proposedFact",fields("kind","RELATION","subject","张国超","field","同一人","value","张*超"),"evidences",cn.bidcheck.compat.Java8Api.listOf(fields("sourceId","source","documentId","bid","documentHash","hash","documentVersion",1,"page",22,"locationType","PAGE","quote","项目负责人 张国超"))));
         String id=text(service.list("run").get(0),"id");service.decide("run",id,decision("CONFIRMED"));
         assertTrue(service.sharedConfirmedForRun("run","project",source,tender).isEmpty());Map<String,Object> next=store.getMap("run","next");next.put("inferenceConfirmationRecords",cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("id", id, "revision", 1)));store.save("run","next","project","",next);
         assertEquals(1,service.sharedConfirmedForRun("next","project",source,tender).size());assertEquals(1,store.maps("inference_fact_ledger","project","bid").size());

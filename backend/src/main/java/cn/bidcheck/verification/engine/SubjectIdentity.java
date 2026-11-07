@@ -30,7 +30,7 @@ final class SubjectIdentity {
         if(!DEPENDENT.contains(rule.predicate()))return null;
         List<Fact> roles=cn.bidcheck.compat.Java8Api.toList(DomainBindings.roleLinks(rule.subject(),facts,corpus).stream().map(f->rolePerson(f,rule.subject())).filter(Objects::nonNull));
         Set<String> names=new HashSet<>();roles.forEach(f->names.add(person(f)));matched.stream().map(SubjectIdentity::person).filter(n->!cn.bidcheck.compat.Java8Api.isBlank(n)).forEach(names::add);names.remove("");
-        for(String name:names){Set<String> identifiers=new HashSet<>();for(Fact f:facts)if(name.equals(person(f)))identifiers.addAll(keys(identity(f)));
+        for(String name:names){Set<String> identifiers=new HashSet<>();for(Fact f:facts)if(name.equals(person(f))){Set<String> side=new HashSet<>(keys(identity(f)));side.addAll(IdentityNumberEvidence.read(f,corpus).complete);if(side.size()==1)identifiers.addAll(side);}
             if(identifiers.size()>1)return new Problem("SUBJECT_IDENTITY_CONFLICT","同名人员的原文出现不同身份证标识，岗位、证书或社保不能仅凭姓名混用；需确认适用人员及资料归属");
         }
         // A named certificate on its own remains a local fact. A role-to-person-to-proof join needs identity support.
@@ -41,7 +41,7 @@ final class SubjectIdentity {
         return null;
     }
     List<Map<String,Object>> bindings(List<Fact> matched){return cn.bidcheck.compat.Java8Api.toList(matched.stream().filter(f->!cn.bidcheck.compat.Java8Api.isBlank(person(f))).map(f->{Map<String,Object> entity=identity(f);Map<String,Object> result=linked("factId",f.id(),"subject",redact(person(f)),"entityId",entity.get("id"),"identityStrength",entity.get("identityStrength"),"identityClaims",entity.getOrDefault("identityClaims",cn.bidcheck.compat.Java8Api.listOf()),"sourceIds",f.sourceIds(),"structureProof",entity.getOrDefault("structureProof",cn.bidcheck.compat.Java8Api.mapOf()));
-        for(Fact role:facts)if(role.kind().equals("PERSON_ROLE")){Map<String,Object> confirmed=ConfirmedSubjectBindings.edge(person(role),f,facts,corpus);if(!confirmed.isEmpty()){result.put("confirmedIdentityProof",confirmed);break;}if(person(role).equals(person(f))){Map<String,Object> proof=attachmentProof(role,f);if(!proof.isEmpty()){result.put("attachmentIdentityProof",proof);break;}}}return result;}));}
+        for(Fact role:facts)if(role.kind().equals("PERSON_ROLE")){Map<String,Object> confirmed=ConfirmedSubjectBindings.edge(person(role),f,facts,corpus);if(!confirmed.isEmpty()){result.put("ID_NUMBER_MATCH".equals(confirmed.get("method"))?"identityNumberProof":"confirmedIdentityProof",confirmed);break;}if(person(role).equals(person(f))){Map<String,Object> proof=attachmentProof(role,f);if(!proof.isEmpty()){result.put("attachmentIdentityProof",proof);break;}}}return result;}));}
     boolean samePerson(Fact left,Fact right){Set<String> claimed=new HashSet<>(keys(identity(left)));claimed.addAll(keys(identity(right)));if(claimed.size()>1)return false;String name=person(left);if(left.kind().equals("PERSON_ROLE")&&ConfirmedSubjectBindings.matchesPair(left,right,facts,corpus)||right.kind().equals("PERSON_ROLE")&&ConfirmedSubjectBindings.matchesPair(right,left,facts,corpus))return true;return !cn.bidcheck.compat.Java8Api.isBlank(name)&&!name.matches(".*[*＊×●_].*")&&name.equals(person(right))&&(sameLocalOccurrence(left,right)||sameStrongIdentity(left,right)||!attachmentProof(left,right).isEmpty()||!attachmentProof(right,left).isEmpty());}
     Map<String,Object> bindingBetween(Fact role,Fact dependent){
         if(!samePerson(role,dependent))return cn.bidcheck.compat.Java8Api.mapOf();Map<String,Object> confirmed=ConfirmedSubjectBindings.edge(person(role),dependent,facts,corpus);if(!confirmed.isEmpty())return confirmed;
@@ -72,7 +72,9 @@ final class SubjectIdentity {
         if(SocialInsuranceEvidenceRecords.claims(fact)&&SocialInsuranceEvidenceRecords.issue(fact,corpus.byId)==null){
             cn.bidcheck.verification.engine.SocialInsuranceEvidenceRecords.Record record=SocialInsuranceEvidenceRecords.matching(fact,corpus.byId);
             if(record!=null&&!cn.bidcheck.compat.Java8Api.isBlank(record.identifierFingerprint())){
-                List<Map<String,Object>> claims=new ArrayList<>(RuleEvaluator.maps(entity.get("identityClaims")));
+                // Only this source-verified payment row supplies the insured person's ID.
+                // Page-wide name matches may belong to another record on the same page.
+                List<Map<String,Object>> claims=new ArrayList<>();
                 claims.add(linked("field","CN_ID","valueFingerprint",record.identifierFingerprint(),"sourceIds",cn.bidcheck.compat.Java8Api.toList(record.sources().stream().map(Source::id)),"proof","SOURCE_VALIDATED_SOCIAL_TABLE_ROW"));
                 entity.put("identityClaims",cn.bidcheck.compat.Java8Api.listCopyOf(claims));Set<String> ids=new HashSet<>();for(java.util.Map<java.lang.String, java.lang.Object> claim:claims)if("CN_ID".equals(str(claim,"field")))ids.add(str(claim,"valueFingerprint"));
                 if(ids.size()==1){entity.put("identityStrength","STRONG");entity.put("id","entity:"+VerificationTypes.identity("PERSON:CN_ID_SHA256:"+ids.iterator().next()).substring(0,40));}else entity.put("identityStrength","SOURCE_LOCAL");

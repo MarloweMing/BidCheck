@@ -25,7 +25,7 @@ final class ModelPayloadAudit {
             String filename=sha(Objects.toString(requestId,"").getBytes(StandardCharsets.UTF_8)).substring(0,32)+"-"+String.format(Locale.ROOT,"%05d",modelIndex)+"-"+direction+".json";
             Map<String,Object> body=new LinkedHashMap<>();body.put("version","agent-model-audit-1");body.put("requestId",requestId);body.put("modelIndex",modelIndex);body.put("direction",direction);body.put("savedAt",Instant.now().toString());
             body.put("payload",sanitize(payload,"",0));body.put("boundary","Java model request/response payload, credentials redacted; not HTTP headers or provider billing record.");
-            byte[] encoded=json.writerWithDefaultPrettyPrinter().writeValueAsBytes(body);boolean omitted=encoded.length>maximumBytes;
+            byte[] encoded=cn.bidcheck.verification.source.CitizenId.maskJson(json.writerWithDefaultPrettyPrinter().writeValueAsString(body)).getBytes(StandardCharsets.UTF_8);boolean omitted=encoded.length>maximumBytes;
             if(omitted){body.remove("payload");body.put("payloadOmitted",true);body.put("payloadBytes",encoded.length);body.put("payloadSha256",sha(encoded));body.put("reason","AUDIT_PAYLOAD_TOO_LARGE");encoded=json.writerWithDefaultPrettyPrinter().writeValueAsBytes(body);}
             Files.write(folder.resolve(filename),encoded,StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE);
             Map<String,Object> meta=metadata(omitted?"PAYLOAD_OMITTED":"SAVED");meta.put("file",filename);meta.put("sha256",sha(encoded));meta.put("bytes",encoded.length);return meta;
@@ -36,7 +36,7 @@ final class ModelPayloadAudit {
         if(depth>64)throw new IllegalArgumentException("AUDIT_PAYLOAD_TOO_DEEP");
         if(value instanceof Map<?,?>){Map<String,Object> copy=new LinkedHashMap<>();for(Map.Entry<?,?> entry:((Map<?,?>)value).entrySet()){String key=Objects.toString(entry.getKey());copy.put(key,sanitize(entry.getValue(),key,depth+1));}return copy;}
         if(value instanceof Collection<?>){List<Object> copy=new ArrayList<>();for(Object item:(Collection<?>)value)copy.add(sanitize(item,"",depth+1));return copy;}
-        if(value instanceof String)return secret.isEmpty()?value:((String)value).replace(secret,"[REDACTED]");
+        if(value instanceof String)return secret.isEmpty()?(String)value:((String)value).replace(secret,"[REDACTED]");
         if(value instanceof Double&&!Double.isFinite((Double)value)||value instanceof Float&&!Float.isFinite((Float)value))throw new IllegalArgumentException("INVALID_JSON_NUMBER");
         if(value==null||value instanceof Number||value instanceof Boolean)return value;
         return Collections.singletonMap("unserializedType",value.getClass().getSimpleName());

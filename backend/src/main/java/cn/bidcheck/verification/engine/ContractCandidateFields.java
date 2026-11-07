@@ -114,7 +114,7 @@ final class ContractCandidateFields {
                 || ProofVerifier.strings(atom.get("sourceIds")).isEmpty()
                 || !(atom.get("attributes") instanceof Map<?,?>)) return "CONTRACT_ATOMIC_FIELDS_INVALID";
         for (String key : atom.keySet())
-            if (!java.util.Arrays.asList("field", "rawValue", "sourceIds", "attributes").contains(key))
+            if (!java.util.Arrays.asList("field", "rawValue", "sourceIds", "attributes","recordId").contains(key))
                 return "CONTRACT_ATOMIC_FIELDS_INVALID";
         Map<String,Object> attrs = (Map<String,Object>) atom.get("attributes");
         Set<String> allowed = new LinkedHashSet<>(java.util.Arrays.asList("contractName", "contractNumber", field));

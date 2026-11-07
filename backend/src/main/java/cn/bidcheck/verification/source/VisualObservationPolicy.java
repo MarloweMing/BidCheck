@@ -66,6 +66,37 @@ public final class VisualObservationPolicy {
         boolean valueUsable=constraints.stream().noneMatch(Constraint::blocksValue);
         return new Assessment(valueUsable,valueUsable&&constraints.stream().noneMatch(Constraint::blocksRelation),cn.bidcheck.compat.Java8Api.listCopyOf(constraints));
     }
+
+    private static final Pattern CONTRACT_EFFECT_LIMIT=Pattern.compile(
+        "^(?:(?:未见|缺少|未提供)(?:完整)?(?:合同封面|合同全文|签署页|合同)(?:或签署页)?(?:全貌|全文|全本)?[，,])?"
+        +"(?:无法|不能|未能)(?:据此)?(?:确认|验证|核实)(?:该日期|此日期|所见日期)(?:是否为|是否属于)"
+        +"(?:最终生效签署日期|最终生效日期|最终签署日期|合同最终生效日期)(?:或是否存在后续修改)?$");
+    private static final Pattern UNCERTAIN_SIGNING_FIELD=Pattern.compile(
+        "(?:无法|不能|未能|难以|不确定|不清楚)(?:确认|判断|确定|区分|核实)?[^。；;]{0,16}(?:日期的性质|日期性质|该日期是否为签订|该日期是否为合同签订|该日期是否为签署|属于哪一合同|所属合同|来源页|来源不明)"
+        +"|(?:该日期|签订日期|签署日期|所见日期)[^。；;]{0,18}(?:可能是|也可能|还是|或是|属于哪)[^。；;]{0,8}(?:开工|竣工|验收|签发|填表|合同)"
+        +"|(?:无法|不能|未能|不确定)[^。；;]{0,16}(?:日期归属哪份合同|日期所属合同|日期来自哪份合同|对应哪份合同)"
+        +"|(?:年月日|年份|月份|日份|日期数字|日期数值)[^。；;]{0,8}(?:不确定|猜测|推断|无法辨|看不清|疑似)");
+
+    /** Called only after the host proves this is the requested signing line of the current
+     * frozen contract. A scope limitation is not permission to infer an effective date or a seal. */
+    public static Assessment assessBoundContractSigningLine(Map<String,?> observation){
+        Assessment base=assess(observation);
+        if(!"FIELD".equals(text(observation,"type"))||!"CLEAR".equals(text(observation,"readability"))
+                || !text(observation,"label").matches("(?:合同)?(?:签订|签署|签约)(?:日期|时间)")
+                || !validSourceBounds(observation)) return base;
+        List<Constraint> limits=new ArrayList<>();
+        for(Constraint original:base.constraints()){
+            String note=original.message();
+            if(UNCERTAIN_SIGNING_FIELD.matcher(note).find())
+                limits.add(c(Kind.LABEL_UNPROVEN,true,true,note));
+            else if(original.kind()==Kind.UNCLASSIFIED_RESTRICTION && CONTRACT_EFFECT_LIMIT.matcher(note).matches())
+                limits.add(c(Kind.AUTHENTICITY_SCOPE,false,true,note));
+            else limits.add(original);
+        }
+        boolean usable=limits.stream().noneMatch(Constraint::blocksValue);
+        return new Assessment(usable,usable&&limits.stream().noneMatch(Constraint::blocksRelation),
+            cn.bidcheck.compat.Java8Api.listCopyOf(limits));
+    }
     private static Constraint classify(String note,String type,String label,String value){
         boolean mark=cn.bidcheck.compat.Java8Api.setOf("SEAL", "SIGNATURE").contains(type), relevant=mentions(note,label,value),uncertain=UNCERTAINTY.matcher(note).find();
         if(!uncertain)return c(Kind.INFORMATION,false,false,note);

@@ -13,9 +13,10 @@ class MaskedTitleQueryLegacyCardTest {
         String role="拟在本合同任职 项目负责人\n姓名 李明扬",row="| 姓名 | 李*扬 |",query="职称评审信息查询\n"+row+"\n| 证书编号 | 20***16 |\n| 职称名称级别 | 工程师 |";
         Document bid=new Document("bid","project","BID","a.pdf",1,"hash","",Arrays.asList(new Page(1,role,"PAGE","TEXT",""),
             new Page(2,query,"PAGE","OCR",""),new Page(3,query,"PAGE","OCR","")),Collections.emptyList());when(f.bids.document("bid")).thenReturn(bid);
+        f.pendingGap("run",f.cp,"SCORING_TITLE_IDENTITY_REQUIRED");
         for(int i=0;i<3;i++){
             int page=i==2?3:2;String block=i==0?"职称评审信息查询\n"+row:"李*扬 |\n| 证书编号";
-            f.service.capture("run","cp",bid,f.tender,fields("id","legacy"+i,"claim","identity-"+i,"inferenceType","MASKED_PERSON_IDENTITY",
+            f.service.capture("run","cp",bid,f.tender,fields("id","legacy"+i,"claim","identity-"+i,"inferenceType","MASKED_PERSON_IDENTITY","unresolvedGapCodes",Collections.singletonList("SCORING_TITLE_IDENTITY_REQUIRED"),
                 "proposedFact",fields("kind","RELATION","field","同一人","subject","李明扬","value","李*扬","attributes",fields("number",i==0?"":"20***16")),
                 "evidences",Arrays.asList(ref("r",1,role),ref("chunk"+i,page,block))));
         }

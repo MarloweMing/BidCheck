@@ -344,7 +344,7 @@ Field(String text,int start,int end){this(text,start,end,"");}}
             else if(company!=null){employer=company.text();fields.put("employer",company);}
             if(!cn.bidcheck.compat.Java8Api.isBlank(employer)&&!employer.matches(".*(?:公司|集团|事务所|合作社|合伙企业)$"))continue;
             String identifier=values.containsKey("identifier")?clean(values.get("identifier").field().text()).toUpperCase(Locale.ROOT):"";
-            String fingerprint=identifier.matches("[0-9]{17}[0-9X]")?identity(identifier):"";
+            String fingerprint=cn.bidcheck.verification.source.CitizenId.valid(identifier)?identity(identifier):"";
             List<String> months=new ArrayList<>();for(YearMonth current=start;!current.isAfter(end);current=current.plusMonths(1))months.add(current.toString());
             String duplicate=person+":"+fingerprint+":"+employer+":"+months;if(!seen.add(duplicate))continue;
             String scope=original.sources().stream().anyMatch(s->s.historical()||s.scopeContext().blocked())?"HISTORICAL_PROJECT":"CURRENT_PROJECT";

@@ -160,6 +160,30 @@ class TargetedRecoverySchedulingIntegrationTest {
     private Map<String,Object> dependency(String obligation,String key,long revision){return fields("obligationId",obligation,"observationKey",key,"modelIdentity","model",
         "target",fields("predicate","FIELD","subject","设计单位","field","证号","unit",""),"sourceIds",cn.bidcheck.compat.Java8Api.listOf("S1"),"observedRevision",revision);}
     private Map<String,Object> changedField(String id,String key){return fields("itemId",id,"recordType","FIELD_OBSERVATION","observationKey",key,"modelIdentity","model","sources",cn.bidcheck.compat.Java8Api.listOf(fields("id","S2","documentHash","doc-hash")));}
+    @Test void scheduledEventsKeepTheirSourceAndSemanticKeyOnTheMatchingObligation(){
+        List<Map<String,Object>> bindings=Arrays.asList(dependency("A","field-A",0),dependency("B","field-B",0));
+        Fixture f=fixture(fields("gaps",Collections.singletonList(fields("code","EVIDENCE_NOT_FOUND")),
+            "recoveryEvidenceDependencies",bindings));
+        String jobId=CheckResolution.jobId(f.runId(),"cp");
+        store.save("check_resolution",jobId,f.project(),f.runId(),fields("id",jobId,"checkpointId","cp","status","BLOCKED_NO_PROGRESS"));
+        OrdinaryRecoveryDependencies.bind(store,f.project(),f.runId(),f.before());
+        Map<String,Object> a=changedField("fA","field-A"),b=changedField("fB","field-B");
+        a.put("sources",Collections.singletonList(fields("id","source-A","documentHash",f.bid().sha256())));
+        b.put("sources",Collections.singletonList(fields("id","source-B","documentHash",f.bid().sha256())));
+        for(Map<String,Object> event:Arrays.asList(a,b))
+            OrdinaryRecoveryDependencies.publishChanges(store,f.project(),f.runId(),"producer",fields("changedEvidence",Collections.singletonList(event)));
+        assertEquals(1,OrdinaryRecoveryDependencies.schedule(store,f.project(),f.runId()));
+        Map<String,Object> trigger=CheckResolution.map(store.getMap("check_resolution",jobId).get("dependencyTrigger"));
+        Map<String,Object> byTarget=CheckResolution.map(trigger.get("byTarget"));
+        Map<String,Object> first=CheckResolution.map(byTarget.get("A")),second=CheckResolution.map(byTarget.get("B"));
+        assertEquals(Collections.singletonList(RecoveryEvidenceIdentity.key(a)),first.get("semanticEvidenceKeys"));
+        assertEquals(Collections.singletonList(RecoveryEvidenceIdentity.key(b)),second.get("semanticEvidenceKeys"));
+        assertEquals(Collections.singletonList("source-A"),first.get("sourceIds"));
+        assertEquals(Collections.singletonList("source-B"),second.get("sourceIds"));
+        assertEquals(1,((List<?>)first.get("eventIds")).size());
+        assertNotEquals(first.get("eventIds"),second.get("eventIds"));
+        assertEquals(2,((List<?>)trigger.get("eventIds")).size());
+    }
     @Test void aNewSharedFieldRequeuesOnlyBoundBlockedNodesOnceAndNeverPublishesAConclusion(){
         Fixture f=fixture(fields("recoveryEvidenceDependencies",cn.bidcheck.compat.Java8Api.listOf(dependency("R1","cert-key",0), dependency("R2","unrelated-key",0))));
         String jobId=CheckResolution.jobId(f.runId(),"cp");

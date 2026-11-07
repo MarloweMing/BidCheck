@@ -2,6 +2,9 @@ package cn.bidcheck.service;
 
 import cn.bidcheck.domain.Domain.Document;
 import cn.bidcheck.domain.Domain.Checkpoint;
+import cn.bidcheck.domain.Domain.Finding;
+import cn.bidcheck.verification.engine.IdentityNumberEvidence;
+import cn.bidcheck.verification.source.CitizenId;
 import cn.bidcheck.persistence.*;
 import java.util.*;
 import java.io.IOException;
@@ -34,12 +37,38 @@ public class InferenceConfirmationService {
     private static int number(Object value,int fallback){return value instanceof Number&&((Number) (value)).doubleValue()==((Number) (value)).intValue()?((Number) (value)).intValue():fallback;}
     private String checkpointFingerprint(String project,String runId,String checkpointId){return store.list("snapshot",project,runId,Checkpoint.class).stream()
         .filter(c->checkpointId.equals(c.id())).map(c->stableId(store.encode(c))).findFirst().orElse("");}
-    private boolean eligible(Map<String,Object> claim,Map<String,Object> run){
+    private boolean sameContext(Map<String,Object> claim,Map<String,Object> run,Map<String,String> fingerprints){
         if(!text(run,"projectId").equals(text(claim,"projectId"))||!text(run,"documentId").equals(text(claim,"documentId"))
             ||!text(run,"tenderDocumentId").equals(text(claim,"tenderDocumentId")))return false;
         if(text(run,"id").equals(text(claim,"runId")))return true;
         String fingerprint=text(claim,"checkpointFingerprint");
-        return !cn.bidcheck.compat.Java8Api.isBlank(fingerprint)&&fingerprint.equals(checkpointFingerprint(text(run,"projectId"),text(run,"id"),text(claim,"checkpointId")));
+        String id=text(claim,"checkpointId");
+        return !cn.bidcheck.compat.Java8Api.isBlank(fingerprint)&&fingerprint.equals(fingerprints==null?checkpointFingerprint(text(run,"projectId"),text(run,"id"),id):fingerprints.get(id));
+    }
+    private Map<String,Finding> findings(Map<String,Object> run){
+        Map<String,Finding> current=new HashMap<>();
+        for(Finding f:store.list("finding",text(run,"projectId"),text(run,"id"),Finding.class))current.put(f.checkpoint().id(),f);
+        return current;
+    }
+    private boolean eligible(Map<String,Object> claim,Map<String,Object> run){
+        if(!sameContext(claim,run,null))return false;
+        if(!"NEEDS_CONFIRMATION".equals(text(claim,"status")))return true;
+        return supersededReason(claim,findings(run).get(text(claim,"checkpointId"))).isEmpty();
+    }
+    public static String supersededReason(Map<String,Object> claim,Finding current){
+        if(!"NEEDS_CONFIRMATION".equals(text(claim,"status")))return "";
+        if(current==null)return "CHECKPOINT_NOT_EVALUATED";
+        if(!Arrays.asList("UNDETERMINED","NEEDS_CONFIRMATION").contains(current.evaluation().status()))return "CHECKPOINT_ALREADY_DECIDED";
+        Set<String> codes=new HashSet<>();
+        Map<String,Object> atomic=CheckResolution.atomic(current);
+        for(Map<String,Object> gap:CheckResolution.maps(atomic.get("gaps")))codes.add(text(gap,"code"));
+        for(Map<String,Object> condition:CheckResolution.maps(atomic.get("conditions")))
+            for(Map<String,Object> gap:CheckResolution.maps(condition.get("gaps")))codes.add(text(gap,"code"));
+        Object required=claim.get("unresolvedGapCodes");
+        if(!(required instanceof Collection<?>)||Collections.disjoint(codes,(Collection<?>)required))return "CHECKPOINT_GAP_RESOLVED";
+        IdentityNumberEvidence.Match identity=IdentityNumberEvidence.citedPair(claim);
+        return identity==IdentityNumberEvidence.Match.SAME?"IDENTITY_NUMBER_MATCHED":
+            identity==IdentityNumberEvidence.Match.CONFLICT?"IDENTITY_NUMBER_CONFLICT":"";
     }
     private String decisionKey(Map<String,Object> claim,Document document){
         Map<String,Object> fact=CheckResolution.map(claim.get("proposedFact"));
@@ -57,17 +86,32 @@ public class InferenceConfirmationService {
         return stableId(store.encode(Arrays.asList(text(claim,"checkpointId"),text(claim,"checkpointFingerprint"),
             text(claim,"documentHash"),claim.get("documentVersion"),text(fact,"subject"),text(fact,"value"),ids)));
     }
-    public List<Map<String,Object>> list(String runId){Map<String,Object> run=store.getMap("run",runId);Map<String,Map<String,Object>> unique=new LinkedHashMap<>();
+    public List<Map<String,Object>> list(String runId){return CheckResolution.maps(maskMap(fields("claims",projections(runId,new ArrayList<>()))).get("claims"));}
+    private List<Map<String,Object>> projections(String runId,List<Map<String,Object>> superseded){Map<String,Object> run=store.getMap("run",runId);Map<String,Map<String,Object>> unique=new LinkedHashMap<>();
         List<Map<String,Object>> attachments=store.maps("supplement_attachment",text(run,"projectId"),null);
-        List<Map<String,Object>> eligible=cn.bidcheck.compat.Java8Api.toList(store.maps("inference_claim",text(run,"projectId"),null).stream().filter(c->eligible(c,run)));
+        Map<String,Finding> current=findings(run);
+        Map<String,String> fingerprints=new HashMap<>();
+        for(Checkpoint checkpoint:store.list("snapshot",text(run,"projectId"),runId,Checkpoint.class))
+            fingerprints.put(checkpoint.id(),stableId(store.encode(checkpoint)));
+        List<Map<String,Object>> eligible=new ArrayList<>();
+        for(Map<String,Object> claim:store.maps("inference_claim",text(run,"projectId"),null)){
+            if(!sameContext(claim,run,fingerprints))continue;
+            String reason=supersededReason(claim,current.get(text(claim,"checkpointId")));
+            if(reason.isEmpty()){eligible.add(claim);continue;}
+            Map<String,Object> previous=new LinkedHashMap<>(claim);previous.put("originRunId",claim.get("runId"));previous.put("runId",runId);previous.put("supersededReason",reason);superseded.add(previous);
+        }
         Document source=eligible.stream().anyMatch(c->"MASKED_PERSON_IDENTITY".equals(text(c,"inferenceType")))?bids.getObject().document(text(run,"documentId")):null;
         eligible.stream()
             .sorted(Comparator.comparingInt(c->"NEEDS_CONFIRMATION".equals(text(c,"status"))?runId.equals(text(c,"runId"))?1:2:0))
             .forEach(c->unique.putIfAbsent(decisionKey(c,source),c));
         return cn.bidcheck.compat.Java8Api.toList(unique.values().stream().map(c->{Map<String,Object> visible=new LinkedHashMap<>(c);visible.put("originRunId",c.get("runId"));visible.put("runId",runId);
             visible.put("attachments",cn.bidcheck.compat.Java8Api.toList(attachments.stream().filter(a->text(c,"id").equals(text(a,"claimId"))&&text(c,"checkpointId").equals(text(a,"checkpointId")))));return visible;}));}
-    public Map<String,Object> exportRecords(String runId){Map<String,Object> run=store.getMap("run",runId);List<Map<String,Object>> claims=list(runId);Set<String> ids=new HashSet<>();claims.forEach(c->ids.add(text(c,"id")));
-        return fields("runId",runId,"claims",claims,"history",cn.bidcheck.compat.Java8Api.toList(store.maps("inference_decision",text(run,"projectId"),null).stream().filter(d->ids.contains(text(d,"claimId")))));}
+    public Map<String,Object> exportRecords(String runId){Map<String,Object> run=store.getMap("run",runId);List<Map<String,Object>> superseded=new ArrayList<>(),claims=projections(runId,superseded);Set<String> ids=new HashSet<>();claims.forEach(c->ids.add(text(c,"id")));
+        return maskMap(fields("runId",runId,"claims",claims,"supersededClaims",superseded,"history",cn.bidcheck.compat.Java8Api.toList(store.maps("inference_decision",text(run,"projectId"),null).stream().filter(d->ids.contains(text(d,"claimId"))))));}
+    private Map<String,Object> maskMap(Map<String,Object> original){
+        String raw=store.encode(original),masked=CitizenId.maskJson(raw);
+        return raw.equals(masked)?original:store.map(masked);
+    }
     /** Uploads a scoped attachment; it never turns an upload into a human confirmation. */
     public Map<String,Object> appendAttachment(String runId,String id,MultipartFile file,String note,int expectedRevision) throws IOException {
         Map<String,Object> run=store.getMap("run",runId),claim=store.getMap("inference_claim",id);
@@ -77,7 +121,7 @@ public class InferenceConfirmationService {
         if(note==null||cn.bidcheck.compat.Java8Api.isBlank(note)||note.length()>3000)throw bad("请说明补充材料用于证明的内容");
         if(file==null||file.isEmpty())throw bad("请选择需要补充的材料文件");
         Map<String,Object> result=bids.getObject().uploadSupplement(runId,text(claim,"checkpointId"),id,file,cn.bidcheck.compat.Java8Api.strip(note));
-        log.info("bidcheck.inference_confirmation runId={} checkpointId={} claimId={} revision={} action=SUPPLEMENT_QUEUED attachmentId={} taskId={} recomputeStatus={}",runId,text(claim,"checkpointId"),id,expectedRevision,result.get("attachmentId"),result.get("taskId"),result.get("recomputeStatus"));return result;
+        log.info("bidcheck.inference_confirmation runId={} checkpointId={} claimId={} revision={} action=SUPPLEMENT_QUEUED attachmentId={} taskId={} recomputeStatus={}",runId,text(claim,"checkpointId"),id,expectedRevision,result.get("attachmentId"),result.get("taskId"),result.get("recomputeStatus"));return maskMap(result);
     }
     public List<Map<String,Object>> confirmed(String project,Document bid,Document tender){
         return cn.bidcheck.compat.Java8Api.toList(decisions(project,bid,tender).stream().filter(r->"CONFIRMED".equals(text(r,"status"))));
@@ -129,6 +173,15 @@ public class InferenceConfirmationService {
             &&Objects.equals(tender==null?"":tender.id(),text(r,"tenderDocumentId"))
             &&(tender==null?cn.bidcheck.compat.Java8Api.isBlank(text(r,"tenderHash")):tender.sha256().equals(text(r,"tenderHash")))));
     }
+    private static void applySigningDateChoice(Map<String,Object> claim,Map<String,Object> body,String decision) {
+        if(!"CONFIRMED".equals(decision) || !"CONTRACT_SIGNING_DATE_CONFLICT".equals(text(claim,"inferenceType")))return;
+        Map<String,Object> fact=new LinkedHashMap<>(CheckResolution.map(claim.get("proposedFact")));
+        Map<String,Object> attrs=new LinkedHashMap<>(CheckResolution.map(fact.get("attributes")));
+        Object options=attrs.get("dateOptions");String selected=text(body,"selectedSigningDate");
+        if(!(options instanceof List) || ((List<?>)options).size()!=2 || !((List<?>)options).contains(selected))
+            throw bad("请选择签署区原文中的甲方或乙方日期");
+        fact.put("value",selected);attrs.put("object",selected);fact.put("attributes",attrs);claim.put("proposedFact",fact);
+    }
     public Map<String,Object> decide(String runId,String id,Map<String,Object> body){
         String decision=text(body,"decision"),reviewer=text(body,"reviewer").trim(),note=text(body,"note").trim();
         if(!cn.bidcheck.compat.Java8Api.setOf("CONFIRMED", "REJECTED").contains(decision)||cn.bidcheck.compat.Java8Api.isBlank(reviewer)||reviewer.length()>80||cn.bidcheck.compat.Java8Api.isBlank(note)||note.length()>3000)throw bad("请选择确认或否定，并填写确认人和依据说明");
@@ -149,6 +202,7 @@ public class InferenceConfirmationService {
             if(!bid.sha256().equals(text(claim,"documentHash"))||bid.version()!=number(claim.get("documentVersion"),-1))throw bad("投标文件已变化，请重新检查");
             String tenderId=text(claim,"tenderDocumentId");if(!cn.bidcheck.compat.Java8Api.isBlank(tenderId)&&!bids.getObject().document(tenderId).sha256().equals(text(claim,"tenderHash")))throw bad("招标文件已变化，请重新检查");
             // The UI may only decide a stored, server-validated assertion. It cannot submit replacement fact values.
+            applySigningDateChoice(claim,body,decision);
             claim.put("status",decision);claim.put("revision",revision+1);claim.put("actor",reviewer);claim.put("decidedAt",now());claim.put("note",note);
             store.save("inference_claim",id,project,row.parentId,claim);
             String auditId=Store.id();store.save("inference_decision",auditId,project,runId,fields("id",auditId,"claimId",id,"originRunId",row.parentId,"runId",runId,"revision",revision+1,"decision",decision,"actor",reviewer,"decidedAt",claim.get("decidedAt"),"note",note,"authentication","LOCAL_REVIEWER_DECLARED"));
@@ -162,6 +216,6 @@ public class InferenceConfirmationService {
             try{Map<String,Object> next=bids.getObject().recoverRun(text(saved,"projectId"),runId);result.put("run",next);result.put("recomputeStatus","QUEUED");}
             catch(org.springframework.web.server.ResponseStatusException ex){result.put("recomputeStatus","SAVED_REQUIRES_RECHECK");result.put("reason",ex.getReason());}
             catch(RuntimeException ex){result.put("recomputeStatus","SAVED_REQUIRES_RECHECK");result.put("reason","确认已保存，创建重算任务失败；请从当前检查重新发起补查。");}
-        }log.info("bidcheck.inference_confirmation runId={} checkpointId={} claimId={} action=RECOMPUTE_REQUEST revision={} recomputeStatus={}",runId,text(saved,"checkpointId"),id,saved.get("revision"),result.get("recomputeStatus"));return result;
+        }log.info("bidcheck.inference_confirmation runId={} checkpointId={} claimId={} action=RECOMPUTE_REQUEST revision={} recomputeStatus={}",runId,text(saved,"checkpointId"),id,saved.get("revision"),result.get("recomputeStatus"));return maskMap(result);
     }
 }

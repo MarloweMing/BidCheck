@@ -14,6 +14,31 @@ class CallLimitTargetConsumptionTest {
     private static final String UNVISITED = "row-unvisited";
     private static final List<String> TARGETS = Arrays.asList(CLOSED_INPUT, UNREAD, REPAIR, UNVISITED);
 
+    @Test void acceptedAndKnownPacketWithZeroRejectionsIsNotAnUnresolvedRepair() {
+        Finding f=finding();
+        rules(f).stream().filter(row->REPAIR.equals(row.get("id"))).findFirst().get().put("parameters",
+            fields("declaredPerformanceRow",fields("documentId","synthetic","documentHash","h","documentVersion",1,"proofPageStart",2,"proofPageEnd",4)));
+        Map<String,Object> target=work(f,REPAIR);
+        List<Map<String,Object>> tasks=Arrays.asList(
+            fields("field","amount","fieldPath","/contractFields/0","businessProof",false,"status","ACCEPTED_OR_KNOWN"),
+            fields("field","party","fieldPath","/contractFields/1","businessProof",false,"status","ACCEPTED_OR_KNOWN"));
+        Map<String,Object> plan=fields("version","bounded-contract-field-work-1","authority","CURRENT_SERVER_PROOF",
+            "requestId","request","serverPlanRevision","plan","evidenceRevision","revision-"+REPAIR,"targetObligationId",REPAIR,
+            "documentId","synthetic","documentHash","h","documentVersion",1,"attemptedFieldCount",2,"rejectedFieldCount",0,
+            "targetWorkComplete",true,"businessProof",false,"status","NO_EXECUTABLE_CORRECTION","tasks",tasks,"remainingActions",Collections.emptyList());
+        target.put("contractFieldWorkPlan",plan);target.put("terminalForRevision",true);target.put("consumed",true);
+        target.put("remainingRepairActions",Collections.emptyList());
+        target.put("readCoverage",fields("authority","CURRENT_SERVER_PROOF","targetObligationId",REPAIR,"businessProof",false,
+            "documentId","synthetic","documentHash","h","documentVersion",1,"scopeAvailable",true,"complete",true,
+            "availablePages",Arrays.asList(2,3,4),"readSourceIds",Arrays.asList("p2","p3","p4"),"pendingPages",Collections.emptyList(),"missingSourcePages",Collections.emptyList()));
+        assertFalse(eligible(capture(f),REPAIR));
+        assertTrue(eligible(capture(f),UNREAD));
+        assertEquals("UNDETERMINED",f.evaluation().status());
+        tasks.get(1).put("status","UNRESOLVED");assertTrue(eligible(capture(f),REPAIR));
+        tasks.get(1).put("status","ACCEPTED_OR_KNOWN");plan.put("requestId","old");
+        assertTrue(eligible(capture(f),REPAIR));
+    }
+
     @Test void wholeCallLimitDoesNotReopenTheOneStableCompleteRow() {
         Finding original = finding();
         Finding captured = capture(original);
@@ -24,6 +49,47 @@ class CallLimitTargetConsumptionTest {
         assertEquals(body(original).get("gaps"), body(captured).get("gaps"));
         assertEquals(false, work(captured, CLOSED_INPUT).get("consumed"));
         assertEquals(false, work(captured, CLOSED_INPUT).get("terminalForRevision"));
+    }
+
+    @Test void fullyResolvedFieldWorkListCanStopOnlyItsOwnPacketUnderCallLimit() {
+        Finding f = finding();
+        Map<String,Object> record = rules(f).stream().filter(row -> REPAIR.equals(row.get("id"))).findFirst().get();
+        record.put("parameters", fields("declaredPerformanceRow",fields("documentId","synthetic",
+            "documentHash","h","documentVersion",1,"proofPageStart",2,"proofPageEnd",4)));
+        Map<String,Object> work=work(f,REPAIR);
+        Map<String,Object> job=fields("version","bounded-contract-field-work-1","authority","CURRENT_SERVER_PROOF",
+            "requestId","request","serverPlanRevision","plan","evidenceRevision","revision-"+REPAIR,
+            "targetObligationId",REPAIR,"documentId","synthetic","documentHash","h","documentVersion",1,
+            "attemptedFieldCount",1,"rejectedFieldCount",1,"targetWorkComplete",true,"businessProof",false,"status","NO_EXECUTABLE_CORRECTION",
+            "tasks",Collections.singletonList(fields("field","amount","fieldPath","/contractFields/0/rawValue",
+                "businessProof",false,"status","NO_GROUNDED_CORRECTION")),
+            "remainingActions",Collections.emptyList());
+        work.put("contractFieldWorkPlan",job);
+        work.put("terminalForRevision",true);
+        work.put("consumed",true);
+        work.put("remainingRepairActions",Collections.emptyList());
+        work.put("readCoverage",fields("authority","CURRENT_SERVER_PROOF","targetObligationId",REPAIR,
+            "businessProof",false,"documentId","synthetic","documentHash","h","documentVersion",1,
+            "scopeAvailable",true,"complete",true,"availablePages",Arrays.asList(2,3,4),
+            "readSourceIds",Arrays.asList("p2","p3","p4"),"pendingPages",Collections.emptyList(),"missingSourcePages",Collections.emptyList()));
+        Finding captured=capture(f);
+        assertFalse(eligible(captured,REPAIR));
+        assertTrue(eligible(captured,UNREAD));
+        assertEquals("UNDETERMINED", captured.evaluation().status());
+        job.put("requestId","prior-request");
+        assertTrue(eligible(captured,REPAIR));
+        job.put("requestId","request");
+        job.put("rejectedFieldCount",0);
+        assertTrue(eligible(captured,REPAIR));
+        job.put("rejectedFieldCount",1);
+        job.put("targetWorkComplete",false);
+        assertTrue(eligible(captured,REPAIR));
+        job.put("targetWorkComplete",true);
+        job.put("remainingActions",Collections.singletonList(fields("field","amount","sourceId","p3")));
+        assertTrue(eligible(captured,REPAIR));
+        job.put("remainingActions",Collections.emptyList());
+        job.put("tasks",Collections.singletonList(fields("field","amount","status","UNRESOLVED")));
+        assertTrue(eligible(captured,REPAIR));
     }
 
     @Test void recoveryAttemptKeepsStableRowConsumedWithoutConsumingUnreadSiblings() {

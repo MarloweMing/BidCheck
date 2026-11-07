@@ -41,8 +41,7 @@ final class JavaAgentRunner {
         +"被服务器关闭或阻塞的目标只能在相关规则或证据版本改变后重试，不得改写字段名、事实类型或说明绕过。一个目标无进展不代表其他目标已审查。"
         +"系统超时、外部服务失败、等待外部核验或待客户确认均不代表材料缺失或不符合。"
         +"允许submit_candidate_fact提出kind=INFERRED的有原文推断；attributes.inference须有claim、reasoning、confidence、risks、evidence:[{sourceId,quote}]，attributes.proposedFact满足实际字段合同。自报置信度不授权通过。"
-        +"NEEDS_CONFIRMATION表示等待客户确认，不能反复改写同一推断。按服务器允许的修复动作处理；不能编造数据、身份证号、页码、主体关系或日期。"
-        +ContractSubmissionGuidance.SYSTEM;
+        +"NEEDS_CONFIRMATION表示等待客户确认，不能反复改写同一推断。按服务器允许的修复动作处理；不能编造数据、身份证号、页码、主体关系或日期。";
 
     private final ObjectMapper json=new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
         .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
@@ -62,6 +61,9 @@ final class JavaAgentRunner {
     private final Set<String> exhaustedScopes=new HashSet<>();
     private final Set<String> attemptedTargetsInBatch = new LinkedHashSet<>();
     private final Set<String> primedContractScopes = new HashSet<>();
+    private final Map<String,Map<String,Map<String,Object>>> contractBodies = new HashMap<>();
+    private final Map<String,Set<String>> completedPacketReads = new HashMap<>();
+    private final Set<String> replayedPacketBodies = new HashSet<>();
     private final Set<String> yieldedTargetScopes = new HashSet<>();
     private final Set<String> offeredTargetScopes = new HashSet<>();
     private static int modelLimit(){
@@ -136,7 +138,9 @@ final class JavaAgentRunner {
                 addedFacts.removeAll(beforeAccepted);
                 Set<String> addedClosures = new LinkedHashSet<>(closed());
                 addedClosures.removeAll(beforeClosed);
-                if(!addedFacts.isEmpty()||!addedClosures.isEmpty()){
+                boolean relevantProof= (!addedFacts.isEmpty()||!addedClosures.isEmpty()) &&
+                    (!completedPacketReads.containsKey(turnScope) || !turnScope.equals(scope(turnTarget)) || addedClosures.contains(turnTarget));
+                if(relevantProof){
                     fruitlessByScope.remove(turnScope);
                     recordNoNewFactRounds(turnTarget, 0);
                 }
@@ -179,6 +183,8 @@ final class JavaAgentRunner {
             Set<String> factSources=new LinkedHashSet<>();for(Object fact:list(caseData.get("knownFacts")))factSources.addAll(strings(mapValue(fact).get("sourceIds")));
             if(caseData.get("knownSources") instanceof List){List<Object> selected=new ArrayList<>();for(Object source:list(caseData.get("knownSources"))){Map<String,Object> value=mapValue(source);if(factSources.contains(text(value.getOrDefault("sourceId",value.get("id")))))selected.add(source);}caseData.put("knownSources",selected);}
             caseData.put("semanticWorkItems",filterTarget(new ArrayList<Object>(semanticWork.values()),active));
+            if (caseData.containsKey("validationOriginals"))
+                caseData.put("validationOriginals",filterTarget(list(caseData.get("validationOriginals")),active));
         }
         List<Object> schedule=new ArrayList<>();for(String target:targets())schedule.add(map("targetObligationId",target,"state",closed().contains(target)?"PROVEN":blocked().contains(target)?"BLOCKED":pendingConfirmation.contains(target)?"NEEDS_CONFIRMATION":text(entry(target).get("state"))));
         Map<String,Object> current=copyMap(state);current.put("activeTargetObligationId",active);current.put("targetSchedule",schedule);current.put("allowedFactContracts",activeContracts(active));current.put("targetProgressLedger",ledger(active));
@@ -187,7 +193,8 @@ final class JavaAgentRunner {
         current.put("remainingTargetObligationIds",new ArrayList<>(remaining()));current.put("blockedTargetObligationIds",new ArrayList<>(blocked()));current.put("pendingConfirmationTargetObligationIds",new ArrayList<>(pendingConfirmation));
         if(!latestReceipt.isEmpty()){Map<String,Object> view=projectReceipt(latestReceipt,active);receiptInput+=canonical(latestReceipt).length();receiptOutput+=canonical(view).length();current.put("latestComputationReceipt",view);}
         if(review){Map<String,Object> plan=copyMap(approvedPlan);plan.put("conditions",filterTarget(list(plan.get("conditions")),active));plan.put("view","ACTIVE_TARGET_ONLY_HOST_PLAN_UNCHANGED");current.put("approvedReviewPlan",plan);caseData.put("targetObligationIds",new ArrayList<>(targets()));}
-        List<Object> messages=new ArrayList<>();messages.add(map("role","system","content",SYSTEM));messages.add(map("role","user","content",canonical(map("task",review?"按服务器批准的计划执行审查，最终发布以工具回执为准。":"按当前事实合同查证证据，业务结论由服务器重算。","untrustedCaseData",caseData,"currentHostState",current))));
+        boolean contractMode=mapValue(mapValue(mapValue(definitions.get("submit_candidate_fact")).get("parameters")).get("properties")).containsKey("submissionMode");
+        List<Object> messages=new ArrayList<>();messages.add(map("role","system","content",contractMode?SYSTEM+ContractSubmissionGuidance.SYSTEM:SYSTEM));messages.add(map("role","user","content",canonical(map("task",review?"按服务器批准的计划执行审查，最终发布以工具回执为准。":"按当前事实合同查证证据，业务结论由服务器重算。","untrustedCaseData",caseData,"currentHostState",current))));
         visibleBodies.clear();int kept=0;List<Object> fullMessages=new ArrayList<>(messages);for(List<Map<String,Object>> batch:batches)fullMessages.addAll(batch);long original=canonical(fullMessages).length();
         for(int i=Math.max(0,batches.size()-2);i<batches.size();i++){kept++;for(Map<String,Object> item:batches.get(i)){Map<String,Object> view=copyMap(item);if("tool".equals(view.get("role"))){Map<String,Object> payload=parseObject(text(view.get("content")));Map<String,Object> result=mapValue(payload.get("result"));
                     for(Object source:list(result.get("sources")))visibleBodies.add(hash(source));if(result.containsKey("rows"))visibleBodies.add(hash(result.get("rows")));
@@ -196,17 +203,27 @@ final class JavaAgentRunner {
                         result.put("evaluatedTargetReceipt", receiptReference(mapValue(result.get("evaluatedTargetReceipt"))));
                     if("recompute_check".equals(payload.get("trustedTool"))&&result.containsKey("obligations"))payload.put("result",receiptReference(result));view.put("content",canonical(payload));}
                 messages.add(view);}}
+        List<Object> tools=new ArrayList<>();for(Map<String,Object> definition:definitions.values()){String name=text(definition.get("name"));if(review&&lastPlan.isEmpty()!=name.equals("submit_review_plan"))continue;tools.add(map("type","function","function",copyMap(definition)));}
+        if(tools.isEmpty())throw new Failure(review?"REVIEW_PLAN_TOOL_MISSING":"NO_TOOLS_PROVIDED");
+        Map<String,Object> outbound=map("model",model,"messages",messages,"tools",tools,"temperature",0,"parallel_tool_calls",false,"enable_thinking",false);
+        projectPacketOriginals(messages,caseData,outbound);
         long chars=canonical(messages).length();contextInput+=chars;contextRebuilds++;long removed=Math.max(0,original-chars);contextRemoved+=removed;if(removed>0)compactions++;
         emit("context_rebuilt",map("inputChars",chars,"removedChars",removed,"retainedToolBatches",kept,"disclosedSourceCount",sourceCatalog.size()));
         if(removed>0)emit("context_compacted",map("inputChars",chars,"removedChars",removed,"retainedToolBatches",kept));
-        List<Object> tools=new ArrayList<>();for(Map<String,Object> definition:definitions.values()){String name=text(definition.get("name"));if(review&&lastPlan.isEmpty()!=name.equals("submit_review_plan"))continue;tools.add(map("type","function","function",copyMap(definition)));}
-        if(tools.isEmpty())throw new Failure(review?"REVIEW_PLAN_TOOL_MISSING":"NO_TOOLS_PROVIDED");
-        return map("model",model,"messages",messages,"tools",tools,"temperature",0,"parallel_tool_calls",false,"enable_thinking",false);
+        return outbound;
     }
     private Map<String,Object> tool(String name,String raw)throws Exception{
         if(raw.getBytes(StandardCharsets.UTF_8).length>MAX_ARGUMENT_BYTES)throw new Failure("TOOL_ARGUMENTS_TOO_LARGE");Map<String,Object> arguments=parseObject(raw);
         if(review&&lastPlan.isEmpty()&&!name.equals("submit_review_plan")){stageBlocks++;duplicates++;emit("review_stage_tool_blocked",map("tool",name,"stage","PLAN_REQUIRED"));return local(name,"REVIEW_PLAN_REQUIRED",map("allowedTools",Collections.singletonList("submit_review_plan")));}
-        Map<String,Object> schema=mapValue(definitions.get(name).get("parameters"));JavaToolSchema.ValidationFailure invalid=JavaToolSchema.validate(schema,arguments);
+        Map<String,Object> schema=mapValue(definitions.get(name).get("parameters"));
+        Map<String,Object> checked=arguments;
+        Object submittedKind=mapValue(arguments.get("fact")).get("kind");
+        if("submit_candidate_fact".equals(name)&&arguments.containsKey("submissionMode")&&submittedKind instanceof String&&!"CONTRACT".equals(submittedKind)){
+            checked=new LinkedHashMap<>(arguments);
+            checked.remove("submissionMode");
+            checked.remove("contractFields");
+        }
+        JavaToolSchema.ValidationFailure invalid=JavaToolSchema.validate(schema,checked);
         if(invalid!=null){argumentRejections++;noteNoProgress(name,arguments,"TOOL_ARGUMENT_SCHEMA_MISMATCH","tool_arguments_rejected",map("validatorKeyword",invalid.keyword,"fieldPath",invalid.path,"correctable",true));
             return local(name,"TOOL_ARGUMENT_SCHEMA_MISMATCH",map("validatorKeyword",invalid.keyword,"fieldPath",invalid.path,"requiredFields",list(schema.get("required")),"allowedFields",new ArrayList<>(mapValue(schema.get("properties")).keySet())));}
         if(typed&&READS.contains(name)&&!arguments.containsKey("targetObligationId")&&mapValue(schema.get("properties")).containsKey("targetObligationId")){
@@ -224,17 +241,25 @@ final class JavaAgentRunner {
         if(!planKey.isEmpty()&&planRejections.containsKey(planKey)){duplicates++;emit("review_plan_rejection_reused",map("tool",name));return cachedView(name,planRejections.get(planKey));}
         Map<String,Object> prior=cached.get(key);if(prior==null&&READS.contains(name))prior=readCache.get(bodyKey);
         if(prior!=null){
-            if((name.equals("read_section")||name.equals("read_table_record"))&&!replayedBodies.contains(bodyKey+":"+epoch)){
+            recordCurrentRecomputeAttempt(name,prior);
+            boolean bounded=completedPacketReads.containsKey(scope(target));
+            Set<String> projected=bounded?replayedPacketBodies:replayedBodies;
+            String replayKey=bodyKey+":"+(bounded?scope(target):epoch);
+            if((name.equals("read_section")||name.equals("read_table_record"))&&!projected.contains(replayKey)){
                 boolean missing=false;for(Object source:list(prior.get("sources")))if(!visibleBodies.contains(hash(source)))missing=true;if(prior.containsKey("rows")&&!visibleBodies.contains(hash(prior.get("rows"))))missing=true;
                 if(missing){Map<String,Object> body=new LinkedHashMap<>();for(String field:set("sources","rows","tableId","recordId","sourceIds","hasMore","nextOffset","headers","partial","nextSourceId","previousSourceId","nextRowOffset","readScope"))if(prior.containsKey(field))body.put(field,prior.get(field));
-                    replayedBodies.add(bodyKey+":"+epoch);emit("source_body_replayed",map("tool",name,"sourceCount",list(body.get("sources")).size(),"hostStateReplayed",false));return map("trustedTool",name,"result",body,"replayedSourceBody",true,"cached",true);}}
+                    projected.add(replayKey);emit("source_body_replayed",map("tool",name,"sourceCount",list(body.get("sources")).size(),"hostStateReplayed",false));return map("trustedTool",name,"result",body,"replayedSourceBody",true,"cached",true);}}
             duplicates++;emit("duplicate_tool_avoided",map("tool",name,"duplicateCalls",duplicates));return cachedView(name,prior);}
         toolCalls++;long toolBegan=System.nanoTime();Map<String,Object> entry=entry(target);entry.put("visited",true);entry.put("state","RUNNING");entry.put("lastOperationKey",operation);if(targets().contains(target))active=target;
         emit("tool_started",map("tool",name,"toolIndex",toolCalls,"targetId",target,"operationKey",operation));
         Map<String,Object> before=host.state();Map<String,Object> result=host.call(name,arguments);if(result==null||canonical(result).getBytes(StandardCharsets.UTF_8).length>MAX_BYTES)throw new Failure("TOOL_RESULT_TOO_LARGE");
         String kind=kind(result);boolean failed="FAILED".equals(kind);int failures=failureAttempts.containsKey(operation)?failureAttempts.get(operation):0;
         if(failed){failureAttempts.put(operation,failures+1);String event=emit("target_tool_failed",map("tool",name,"targetId",target,"operationKey",operation,"rejectionCode",safeCode(result.get("error"))));if(firstFailure.isEmpty())firstFailure=event;if(text(entry.get("firstFailureEventId")).isEmpty())entry.put("firstFailureEventId",event);entry.put("state","FAILED");}
-        if(!failed)sync(result,name,arguments);
+        if(!failed){
+            sync(result,name,arguments);
+            rememberContractBodies(target,name,result);
+            recordCurrentRecomputeAttempt(name,result);
+        }
         Map<String,Object> after=host.state();Set<String> accepted=new LinkedHashSet<>(strings(after.get("acceptedFactIds")));accepted.removeAll(strings(before.get("acceptedFactIds")));Set<String> newlyClosed=new LinkedHashSet<>(strings(after.get("completedTargetObligationIds")));newlyClosed.removeAll(strings(before.get("completedTargetObligationIds")));
         boolean proof=!accepted.isEmpty()||!newlyClosed.isEmpty()||!Objects.equals(before.get("targetEvidenceRevisions"),after.get("targetEvidenceRevisions"))||!Objects.equals(before.get("targetCheckCompleted"),after.get("targetCheckCompleted"));
         int newSources=0;boolean newRows=false;for(Object value:list(result.get("sources"))){Map<String,Object> source=mapValue(value);String id=text(source.containsKey("id")?source.get("id"):source.get("sourceId"));if(!id.isEmpty()){sourceCatalog.put(id,sourceMetadata(source));sourceTargets.computeIfAbsent(id,k->new LinkedHashSet<String>()).add(target);}if(seenSourceBodies.add(hash(source)))newSources++;}
@@ -313,7 +338,22 @@ final class JavaAgentRunner {
         if(!"CURRENT_SERVER_PROOF".equals(receipt.get("targetReceiptAuthority"))||!(receipt.get("pendingConfirmationTargetObligationIds") instanceof List)||!(receipt.get("confirmationTargetProofs") instanceof Map))throw new Failure("HOST_CONFIRMATION_RECEIPT_INVALID");
         List<Object> raw=list(receipt.get("pendingConfirmationTargetObligationIds"));Set<String> pending=strings(raw);Map<String,Object> proofs=mapValue(receipt.get("confirmationTargetProofs"));Set<String> unclosed=new LinkedHashSet<>(targets());unclosed.removeAll(closed());
         if(raw.size()!=pending.size()||!unclosed.containsAll(pending)||!proofs.keySet().equals(pending))throw new Failure("HOST_CONFIRMATION_RECEIPT_INVALID");
-        for(String target:pending){Map<String,Object> proof=mapValue(proofs.get(target));if(!"SOURCE_VALIDATED_PENDING_CONFIRMATION".equals(proof.get("authority"))||!target.equals(proof.get("targetObligationId"))||!"NEEDS_CONFIRMATION".equals(proof.get("conditionStatus"))||!Collections.singletonList("INFERENCE_CONFIRMATION_REQUIRED").equals(proof.get("gapCodes"))||!Boolean.FALSE.equals(proof.get("businessProof"))||text(proof.get("targetFingerprint")).isEmpty()||!"CURRENT_DOCUMENT_HASH_VERSION_PAGE_AND_EXACT_QUOTE".equals(proof.get("sourceValidation"))||strings(proof.get("claimIds")).isEmpty()||strings(proof.get("claimIds")).size()!=list(proof.get("claimIds")).size()||strings(proof.get("sourceIds")).isEmpty())throw new Failure("HOST_CONFIRMATION_RECEIPT_INVALID");}
+        for(String target:pending) {
+            Map<String,Object> proof=mapValue(proofs.get(target));
+            boolean citedTarget=target.equals(proof.get("targetObligationId"))&&Boolean.FALSE.equals(proof.get("businessProof"))
+                &&!text(proof.get("targetFingerprint")).isEmpty()&&!strings(proof.get("sourceIds")).isEmpty();
+            boolean scoringReview="SOURCE_BOUND_SCORING_CRITERION_REVIEW".equals(proof.get("authority"))
+                &&"UNDETERMINED".equals(proof.get("conditionStatus"))
+                &&Collections.singletonList("SCORING_TITLE_PROFESSION_SCOPE_REQUIRED").equals(proof.get("gapCodes"))
+                &&"CURRENT_DOCUMENT_CREDENTIAL_AND_APPOINTMENT".equals(proof.get("sourceValidation"))
+                &&!text(proof.get("question")).isEmpty()&&!proof.containsKey("claimIds");
+            boolean inferenceReview="SOURCE_VALIDATED_PENDING_CONFIRMATION".equals(proof.get("authority"))
+                &&"NEEDS_CONFIRMATION".equals(proof.get("conditionStatus"))
+                &&Collections.singletonList("INFERENCE_CONFIRMATION_REQUIRED").equals(proof.get("gapCodes"))
+                &&"CURRENT_DOCUMENT_HASH_VERSION_PAGE_AND_EXACT_QUOTE".equals(proof.get("sourceValidation"))
+                &&!strings(proof.get("claimIds")).isEmpty()&&strings(proof.get("claimIds")).size()==list(proof.get("claimIds")).size();
+            if(!citedTarget||(!scoringReview&&!inferenceReview))throw new Failure("HOST_CONFIRMATION_RECEIPT_INVALID");
+        }
         pendingConfirmation=pending;
     }
     private void observeRejectedWork(Map<String,Object> result,String expected)throws Exception{
@@ -385,6 +425,81 @@ final class JavaAgentRunner {
             return mapValue(parameters.get("declaredPerformanceRow"));
         }
         return Collections.emptyMap();
+    }
+
+    private boolean currentTargetRecomputed(String target,Map<String,Object> result) {
+        return "CURRENT_SERVER_PROOF".equals(result.get("targetReceiptAuthority"))
+            && Objects.equals(context.get("serverPlanRevision"),result.get("serverPlanRevision"))
+            && !text(revisions.get(target)).isEmpty()
+            && revisions.get(target).equals(mapValue(result.get("targetEvidenceRevisions")).get(target))
+            && strings(result.get("remainingTargetObligationIds")).contains(target);
+    }
+
+    private void recordCurrentRecomputeAttempt(String tool,Map<String,Object> result){
+        if("recompute_check".equals(tool) && completedPacketReads.containsKey(scope(active))
+            && targets().contains(active) && currentTargetRecomputed(active,result))attemptedTargetsInBatch.add(active);
+    }
+
+    /** Retain only actual original bodies returned by this session/target. A navigation ID
+     * or a persisted read receipt never grants a quotation on its own. */
+    private void rememberContractBodies(String target,String tool,Map<String,Object> result) {
+        if(!"read_section".equals(tool) && !"search_evidence".equals(tool))return;
+        Map<String,Object> row=declaredContractRow(target);
+        if(row.isEmpty() || !"COMPLETED".equals(result.get("status")))return;
+        Map<String,Object> coverage=mapValue(result.get("contractReadCoverage"));
+        if(!"CURRENT_SERVER_PROOF".equals(coverage.get("authority")) || !Boolean.FALSE.equals(coverage.get("businessProof"))
+            || !Boolean.TRUE.equals(coverage.get("scopeAvailable")) || !target.equals(coverage.get("targetObligationId"))
+            || !Objects.equals(context.get("serverPlanRevision"),result.get("serverPlanRevision"))
+            || text(revisions.get(target)).isEmpty()
+            || !Objects.equals(revisions.get(target),mapValue(result.get("targetEvidenceRevisions")).get(target))
+            || !Objects.equals(row.get("documentId"),coverage.get("documentId"))
+            || !Objects.equals(row.get("documentHash"),coverage.get("documentHash"))
+            || number(row.get("documentVersion"))<1 || number(row.get("documentVersion"))!=number(coverage.get("documentVersion")))return;
+        Set<String> authorized=strings(coverage.get("readSourceIds"));
+        Map<String,Map<String,Object>> bodies=contractBodies.computeIfAbsent(target,unused->new LinkedHashMap<>());
+        for(Object raw:list(result.get("sources"))){
+            Map<String,Object> source=mapValue(raw);String id=text(source.getOrDefault("id",source.get("sourceId")));
+            if(authorized.contains(id) && Objects.equals(row.get("documentId"),source.get("documentId"))
+                && withinContractPages(row,number(source.get("location"))) && !Boolean.TRUE.equals(source.get("navigationOnly"))
+                && !text(source.get("quote")).isEmpty())bodies.put(id,copyMap(source));
+        }
+        String key=scope(target);
+        if(Boolean.TRUE.equals(coverage.get("complete")) && !list(coverage.get("availablePages")).isEmpty()
+            && Collections.emptyList().equals(coverage.get("pendingPages")) && Collections.emptyList().equals(coverage.get("missingSourcePages"))
+            && !authorized.isEmpty()){
+            completedPacketReads.put(key,new LinkedHashSet<>(authorized));
+            // The last prepared page may have advanced the target revision.
+            primedContractScopes.add(key);
+        }else if(completedPacketReads.remove(key)!=null)primedContractScopes.remove(key);
+    }
+
+    private void projectPacketOriginals(List<Object> messages,Map<String,Object> caseData,Map<String,Object> outbound) throws Exception {
+        String target=active;Set<String> authorized=completedPacketReads.get(scope(target));
+        if(authorized==null)return;
+        List<Object> originals=new ArrayList<>();
+        int bytes=0;
+        for(Map.Entry<String,Map<String,Object>> e:contractBodies.getOrDefault(target,Collections.emptyMap()).entrySet()){
+            Map<String,Object> body=e.getValue();String fingerprint=hash(body);
+            if(!authorized.contains(e.getKey()) || visibleBodies.contains(fingerprint))continue;
+            int size=canonical(body).getBytes(StandardCharsets.UTF_8).length;
+            // Bound the additional payload, never truncate a quotation;
+            // an original that does not fit still has the normal explicit reread/replay path.
+            if(bytes+size>18000)continue;
+            originals.add(body);bytes+=size;
+        }
+        if(originals.isEmpty())return;
+        Map<String,Object> user=mapValue(messages.get(1));String originalContent=text(user.get("content"));
+        Map<String,Object> payload=parseObject(originalContent);payload.put("untrustedCaseData",caseData);
+        while(!originals.isEmpty()){
+            caseData.put("currentContractOriginals",originals);user.put("content",canonical(payload));
+            if(canonical(outbound).getBytes(StandardCharsets.UTF_8).length<=MAX_BYTES){
+                for(Object body:originals)visibleBodies.add(hash(body));
+                emit("contract_originals_reprojected",map("targetObligationId",active,"sourceCount",originals.size(),"businessProof",false));
+                return;
+            }
+            originals.remove(originals.size()-1);
+        }
+        caseData.remove("currentContractOriginals");user.put("content",originalContent);
     }
 
     private boolean yieldToUnvisitedTarget(String target) throws Exception {

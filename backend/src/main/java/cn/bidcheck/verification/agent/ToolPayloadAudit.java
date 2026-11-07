@@ -26,7 +26,7 @@ final class ToolPayloadAudit {
             Object rawContext=start==null?null:start.get("auditContext");Map<?,?> context=rawContext instanceof Map<?,?>?((Map<?,?>) (rawContext)):cn.bidcheck.compat.Java8Api.mapOf();
             for(String key:cn.bidcheck.compat.Java8Api.listOf("runId", "checkpointId")){String id=Objects.toString(context.get(key),"");body.put(key,id.matches("[a-fA-F0-9-]{36}")?id:"");}
             body.put("payload",sanitize(payload,"",0));body.put("boundary","Actual Java SDK tool boundary payload, credentials redacted; independent of model input/context compaction.");
-            byte[] bytes=json.writerWithDefaultPrettyPrinter().writeValueAsBytes(body);boolean omitted=bytes.length>maximumBytes;
+            byte[] bytes=cn.bidcheck.verification.source.CitizenId.maskJson(json.writerWithDefaultPrettyPrinter().writeValueAsString(body)).getBytes(StandardCharsets.UTF_8);boolean omitted=bytes.length>maximumBytes;
             if(omitted){body.remove("payload");body.put("payloadOmitted",true);body.put("payloadBytes",bytes.length);body.put("payloadSha256",sha(bytes));body.put("reason","AUDIT_PAYLOAD_TOO_LARGE");bytes=json.writerWithDefaultPrettyPrinter().writeValueAsBytes(body);}
             Path target=folder.resolve(filename);Files.write(target,bytes,StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE);
             return cn.bidcheck.compat.Java8Api.mapOf("status", omitted?"PAYLOAD_OMITTED":"SAVED", "file", filename, "sha256", sha(bytes), "bytes", bytes.length);

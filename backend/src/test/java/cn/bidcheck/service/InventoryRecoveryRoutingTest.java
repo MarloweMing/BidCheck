@@ -38,4 +38,14 @@ class InventoryRecoveryRoutingTest {
         assertEquals("核验标准待明确",display(f).get("label"));assertEquals("WAIT_REQUIREMENT_CRITERIA",CheckResolution.plan(f).get("strategy"));
         assertEquals("WAITING_USER",CheckResolution.plan(f).get("status"));assertEquals("REQUIREMENT_CLARIFICATION",RecoveryFailureRouting.owner("CAPABILITY_CRITERIA_REQUIRED"));
     }
+    @Test void pendingIndependentStatusStatementIsStillReadWhenTheCapacityCriterionNeedsClarification(){
+        Finding example=finding("CAPABILITY_CRITERIA_REQUIRED");
+        Map<String,Object> read=new LinkedHashMap<>();
+        read.put("authority","CURRENT_HOST_TEXT_READ");read.put("pendingSourceIds",Collections.singletonList("new-declaration"));
+        Map<String,Object> atomic=new LinkedHashMap<>(CheckResolution.atomic(example));
+        atomic.put("conditions",Collections.singletonList(Collections.singletonMap("proof",Collections.singletonMap("registrationHostRead",read))));
+        Finding updated=new Finding(example.id(),example.runId(),example.checkpoint(),example.evaluation(),Collections.singletonMap("atomicCheck",atomic));
+        assertEquals("TARGETED_EVIDENCE",CheckResolution.plan(updated).get("strategy"));
+        read.put("pendingSourceIds",Collections.emptyList());assertEquals("WAIT_REQUIREMENT_CRITERIA",CheckResolution.plan(updated).get("strategy"));
+    }
 }

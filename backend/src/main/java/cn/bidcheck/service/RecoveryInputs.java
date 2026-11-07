@@ -37,30 +37,68 @@ final class RecoveryInputs {
 
     /** A dependency wakeup can never widen itself to unrelated, previously investigated gaps. */
     static boolean applyDependencyTrigger(Map<String,Object> context,Map<String,Object> pending,Finding finding){
+        context.put("gapWorkByTarget",pending.getOrDefault("gapWorkByTarget",Collections.emptyMap()));
         if(!(pending.get("dependencyTargetObligationIds") instanceof Collection<?>))return true;
         // New counterevidence may revoke a prior PASS. Recompute those targets locally first;
         // only an investigation, after that revalidation, may discard completed targets.
         List<String> targets="RECOMPUTE_SHARED_EVIDENCE".equals(text(pending,"strategy"))
             ?cn.bidcheck.compat.Java8Api.toList(stringList(((Collection<?>) (pending.get("dependencyTargetObligationIds")))).stream().distinct().sorted()):pendingTargets(finding,((Collection<?>) (pending.get("dependencyTargetObligationIds"))));
         context.put("recoveryTargetObligationIds",targets);context.put("recoveryDependencyTrigger",pending.getOrDefault("dependencyTrigger",cn.bidcheck.compat.Java8Api.mapOf()));
-        context.put("recoveryChangedSourceIds",map(pending.get("dependencyTrigger")).getOrDefault("sourceIds",cn.bidcheck.compat.Java8Api.listOf()));
+        context.put("recoveryChangedSourceIds",triggerValues(map(pending.get("dependencyTrigger")),targets,"sourceIds"));
         context.put("recoveryDependencyRevision",dependencyKey(context));
         return !targets.isEmpty();
     }
 
     /** Returns the scoped metadata to retain on the next job, after local evaluation. */
     static Map<String,Object> dependencyContinuation(Map<String,Object> pending,Finding after,Map<String,Object> nextPlan){
-        if(!(pending.get("dependencyTargetObligationIds") instanceof Collection<?>))return cn.bidcheck.compat.Java8Api.mapOf();
-        List<String> remaining=pendingTargets(after,((Collection<?>) (pending.get("dependencyTargetObligationIds"))));Map<String,Object> trigger=map(pending.get("dependencyTrigger"));
+        return dependencyContinuation(pending,null,after,nextPlan);
+    }
+    static Map<String,Object> dependencyContinuation(Map<String,Object> pending,Finding before,Finding after,Map<String,Object> nextPlan){
+        String strategy=text(pending,"strategy");
+        boolean retry="RETRY_FAILED_STEP".equals(strategy) && before!=null
+            && !map(pending.get("retryGapKeysBefore")).isEmpty() && "TARGETED_EVIDENCE".equals(text(nextPlan,"strategy"))
+            && ACTIVE.contains(text(nextPlan,"status")) && !RecoveryTransition.hasProcessingFailure(after);
+        if(!retry && !(pending.get("dependencyTargetObligationIds") instanceof Collection<?>))return cn.bidcheck.compat.Java8Api.mapOf();
+        Map<String,Object> retryKeys=map(pending.get("retryGapKeysBefore")),trigger=map(pending.get("dependencyTrigger"));
+        List<String> remaining=pendingTargets(after,retry?RecoveryGapKeys.openRetryTargets(before,after,retryKeys.keySet()):
+            (Collection<?>)pending.get("dependencyTargetObligationIds"));
         if(!unresolved(after))return cn.bidcheck.compat.Java8Api.mapOf();
         if(remaining.isEmpty()){
-            nextPlan.putAll(fields("status","BLOCKED_NO_PROGRESS","strategy","BLOCKED","reason","新增证据所影响的条件已经完成，其他旧缺口没有新输入。","nextAction","保留现有证明，等待其他缺口所需的新证据。"));
+            nextPlan.putAll(fields("status","BLOCKED_NO_PROGRESS","strategy","BLOCKED","reason",retry?
+                "技术重试的目标已完成或等待确认，没有可继续调查的目标。":"新增证据所影响的条件已经完成，其他旧缺口没有新输入。",
+                "nextAction","保留现有证明，等待其他缺口所需的新证据。"));
             return cn.bidcheck.compat.Java8Api.mapOf();
         }
         // Only a real semantic change can authorize a second-stage investigation. An old
         // revision number alone authorizes local reconciliation, never another model call.
-        if("RECOMPUTE_SHARED_EVIDENCE".equals(text(pending,"strategy"))&&stringList(trigger.get("semanticEvidenceKeys")).isEmpty()){
+        if("RECOMPUTE_SHARED_EVIDENCE".equals(strategy)&&stringList(trigger.get("semanticEvidenceKeys")).isEmpty()){
             nextPlan.putAll(fields("status","BLOCKED_NO_PROGRESS","strategy","BLOCKED","reason","本次依赖仅有版本记录，没有可用于继续调查的新证据。","nextAction","等待可追溯的新证据。"));return cn.bidcheck.compat.Java8Api.mapOf();
+        }
+        if(before!=null && (retry || "RECOMPUTE_SHARED_EVIDENCE".equals(strategy))
+                && "TARGETED_EVIDENCE".equals(text(nextPlan,"strategy")) && ACTIVE.contains(text(nextPlan,"status"))){
+            Set<String> consumed=new HashSet<>(stringList(pending.get("consumedGapKeys")));
+            List<String> changed=new ArrayList<>(),unchanged=new ArrayList<>();
+            for(String target:remaining){
+                if(retry && !retryKeys.containsKey(target)){changed.add(target);continue;}
+                Map<String,Object> history=map(map(pending.get("gapWorkByTarget")).get(target));
+                Map<String,Object> work=RecoveryGapKeys.workReceipt(before,target,history);
+                // This recompute runs with models disabled. It cannot erase earlier reads or
+                // rejection history simply by producing a new result without Agent metadata.
+                String oldKey=retry?text(retryKeys,target):RecoveryGapKeys.key(before,target,work);
+                String newKey=RecoveryGapKeys.key(after,target,RecoveryGapKeys.workReceipt(after,target,work));
+                if(!newKey.isEmpty()&&(newKey.equals(oldKey)||consumed.contains(newKey)
+                    || retry && RecoveryGapKeys.onlyRetryReceiptChanged(before,after,target,work)))unchanged.add(target);
+                else changed.add(target);
+            }
+            if(!unchanged.isEmpty())org.slf4j.LoggerFactory.getLogger(RecoveryInputs.class)
+                .info("bidcheck.recovery_gap_unchanged runId={} checkpointId={} targets={} afterStrategy={}",after.runId(),after.checkpoint().id(),unchanged,strategy);
+            if(changed.isEmpty()){
+                nextPlan.putAll(fields("status","BLOCKED_NO_PROGRESS","strategy","BLOCKED","reason",retry?
+                    "技术重试已完成原调查，本项还缺的内容没有变化":"新事实没有改变本项还缺的内容",
+                    "nextAction","等待相关缺口或可核对材料发生变化。"));
+                return fields("dependencyTargetObligationIds",remaining,"dependencyTrigger",trigger);
+            }
+            remaining=changed;
         }
         return ACTIVE.contains(text(nextPlan,"status"))?fields("dependencyTargetObligationIds",remaining,"dependencyTrigger",trigger):cn.bidcheck.compat.Java8Api.mapOf();
     }
@@ -84,7 +122,7 @@ final class RecoveryInputs {
             Object value=context.get(key);if(value!=null&&!cn.bidcheck.compat.Java8Api.isBlank(Objects.toString(value,""))&&!cn.bidcheck.compat.Java8Api.mapOf().equals(value)&&!cn.bidcheck.compat.Java8Api.listOf().equals(value))dependencies.put(key,value);
         }
         Map<String,Object> trigger=map(context.get("recoveryDependencyTrigger"));
-        List<String> semantic=cn.bidcheck.compat.Java8Api.toList(stringList(trigger.get("semanticEvidenceKeys")).stream().distinct().sorted());
+        List<String> semantic=triggerValues(trigger,stringList(context.get("recoveryTargetObligationIds")),"semanticEvidenceKeys");
         if(!semantic.isEmpty())dependencies.put("sharedEvidence",fields("semanticEvidenceKeys",semantic,"targets",cn.bidcheck.compat.Java8Api.toList(stringList(context.get("recoveryTargetObligationIds")).stream().distinct().sorted())));
         List<String> visual=cn.bidcheck.compat.Java8Api.toList(maps(context.get("visualObservations")).stream().map(RecoveryInputs::observationKey).distinct().sorted());
         List<String> external=cn.bidcheck.compat.Java8Api.toList(maps(context.get("externalRecords")).stream().map(RecoveryInputs::externalRecordKey).distinct().sorted());
@@ -210,7 +248,7 @@ final class RecoveryInputs {
     private static int issueCount(Map<String,Object> plan,Map<String,Map<String,Object>> rules){
         return (int)rules.values().stream().filter(r->"UNSUPPORTED".equals(text(r,"predicate"))).count()+(plan.get("issues") instanceof Collection<?>?((Collection<?>) (plan.get("issues"))).size():0);
     }
-    private static Object ruleInput(Map<String,Object> rule){
+    static Object ruleInput(Map<String,Object> rule){
         Map<String,Object> selected=select(rule,cn.bidcheck.compat.Java8Api.listOf("predicate", "subject", "field", "operator", "expected", "unit", "sourceQuote", "logic"));
         Map<String,Object> parameters=new TreeMap<>(map(rule.get("parameters")));
         for(String key:cn.bidcheck.compat.Java8Api.listOf("obligationIdentity", "ruleId", "parentRuleId", "compilationIssue", "focusedScopeIssue", "requirementContextIssue", "repairReason"))parameters.remove(key);
@@ -218,6 +256,13 @@ final class RecoveryInputs {
     }
     private static Map<String,Object> select(Map<String,Object> source,List<String> fields){Map<String,Object> out=new TreeMap<>();for(String field:fields)if(source.containsKey(field))out.put(field,source.get(field));return out;}
     private static List<String> stringList(Object value){return value instanceof Collection<?>?cn.bidcheck.compat.Java8Api.toList(((Collection<?>) (value)).stream().map(v->Objects.toString(v,"")).filter(v->!cn.bidcheck.compat.Java8Api.isBlank(v))):cn.bidcheck.compat.Java8Api.listOf();}
+    static List<String> triggerValues(Map<String,Object> trigger,Collection<String> targets,String field){
+        if(!trigger.containsKey("byTarget"))return new ArrayList<>(new TreeSet<>(stringList(trigger.get(field))));
+        Map<String,Object> scoped=map(trigger.get("byTarget"));
+        Set<String> values=new TreeSet<>();
+        for(String target:targets)values.addAll(stringList(map(scoped.get(target)).get(field)));
+        return new ArrayList<>(values);
+    }
     private static String canonical(Object value){
         if(value instanceof Map<?,?>){Map<String,String> sorted=new TreeMap<>();((Map<?,?>) (value)).forEach((k,v)->sorted.put(String.valueOf(k),canonical(v)));return sorted.toString();}
         if(value instanceof Collection<?>)return cn.bidcheck.compat.Java8Api.toList(((Collection<?>) (value)).stream().map(RecoveryInputs::canonical)).toString();

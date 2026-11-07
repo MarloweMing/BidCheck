@@ -3,6 +3,8 @@ package cn.bidcheck.verification.facts;
 import cn.bidcheck.domain.Domain.Document;
 import cn.bidcheck.persistence.Store;
 import cn.bidcheck.persistence.Stored;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.*;
 import org.springframework.web.server.ResponseStatusException;
 import static cn.bidcheck.verification.facts.LedgerValues.*;
@@ -10,7 +12,11 @@ import static cn.bidcheck.verification.facts.LedgerValues.*;
 /** Rebuildable source/target pointers. Audit batches and usages never serve as search entries.
  * All mutations run under the fact publisher's existing project fence and transaction. */
 final class CanonicalFactLookup {
-    static final String VERSION="canonical-source-subject-lookup-2";
+    /** v3 rebuilds v2 pointers instead of trusting/resealing them. Some v2 item digests were
+     * calculated before MySQL JSON normalized OCR-coordinate doubles by one ULP. */
+    static final String VERSION="canonical-source-subject-lookup-3";
+    static final String DIGEST_VERSION="canonical-layout-number-1";
+    private static final int LAYOUT_DECIMALS=6;
     private final Store store;
     CanonicalFactLookup(Store store){this.store=store;}
     static String stateId(String documentParent){return dbKey("lookup-state",VERSION+documentParent);}
@@ -50,7 +56,7 @@ final class CanonicalFactLookup {
             item.put("sources",maps(entry.get("sources")));item.put("originalFactId",text(map(entry.get("fact")),"id"));
             // Layout revalidation only consumes cells on the fact's fully cited source pages;
             // keep every row/header on those pages, including cross-page dependencies.
-            item.put("layoutCells",cn.bidcheck.compat.Java8Api.toList(maps(batch.get("layoutCells")).stream().filter(cell->maps(entry.get("sources")).stream().anyMatch(source->{Map<String,Object> evidence=evidence(source.get("evidence"));return text(evidence,"documentId").equals(text(cell,"documentId"))&&text(evidence,"locationType").equals(text(cell,"locationType"))&&integer(evidence.get("page"),-1)==integer(cell.get("location"),-2);}))));items.put(itemId,item);
+            item.put("layoutCells",normalizeLayoutCells(cn.bidcheck.compat.Java8Api.toList(maps(batch.get("layoutCells")).stream().filter(cell->maps(entry.get("sources")).stream().anyMatch(source->{Map<String,Object> evidence=evidence(source.get("evidence"));return text(evidence,"documentId").equals(text(cell,"documentId"))&&text(evidence,"locationType").equals(text(cell,"locationType"))&&integer(evidence.get("page"),-1)==integer(cell.get("location"),-2);})))));items.put(itemId,item);
             byOriginal.put(text(entry,"originalFactId"),itemId);byOriginal.put(text(map(entry.get("fact")),"id"),itemId);
         }
         for(Map<String,Object> field:fields){
@@ -69,7 +75,7 @@ final class CanonicalFactLookup {
         for(java.util.Map.Entry<java.lang.String, java.util.Map<java.lang.String, java.lang.Object>> entry:items.entrySet()){
             String id=entry.getKey();Map<String,Object> value=entry.getValue();
             if(old.containsKey(id)){if(!validItem(old.get(id),scope))throw new IllegalStateException("LOOKUP_ITEM_CORRUPT");value=old.get(id);}
-            else{seal(value);writes.add(store.newRow("fact_lookup_item",id,scope.project,scope.engine.length()<=64?scope.engine:dbKey("lookup-engine",scope.engine),value));}
+            else{value=sealForStore(scope,value);writes.add(store.newRow("fact_lookup_item",id,scope.project,scope.engine.length()<=64?scope.engine:dbKey("lookup-engine",scope.engine),value));entry.setValue(value);}
             Map<String,Object> field=map(value.get("fieldCoverage"));String kind=field.isEmpty()?"fact_lookup_ref":"field_lookup_ref";
             for(Map<String,Object> source:maps(value.get("sources"))){String doc=text(evidence(source.get("evidence")),"documentId"),parent=scope.documentParents.get(doc);if(parent==null)throw new IllegalArgumentException("LOOKUP_SOURCE_OUTSIDE_MANIFEST");
                 List<String> tokens=new ArrayList<>(cn.bidcheck.compat.Java8Api.listOf("A:"+text(source,"id"), "F:"+text(source,"sourceFingerprint")));
@@ -112,9 +118,28 @@ final class CanonicalFactLookup {
     private static void addSubject(Set<String> tokens,String text){String value=subjectKey(text);if(!cn.bidcheck.compat.Java8Api.isBlank(value)&&value.length()<=200)tokens.add(value);}
     static boolean subjectMatches(Map<String,Object> fact,Collection<String> subjects){return subjects.isEmpty()||subjects.stream().map(CanonicalFactLookup::subjectKey).anyMatch(subjectTokens(fact)::contains);}
     static String revisionId(String parent){return dbKey("lookup-revision",VERSION+parent);}
-    private static Map<String,Object> base(FactLedgerService.Scope scope,Map<String,Object> batch,String id){return of("id",id,"projectId",scope.project,"engineIdentity",scope.engine,"version",VERSION,"batchId",text(batch,"id"),"engineVersion",text(batch,"engineVersion"),"observationPolicy",text(batch,"observationPolicy"),"operationIdentity",text(batch,"operationIdentity"));}
+    private static Map<String,Object> base(FactLedgerService.Scope scope,Map<String,Object> batch,String id){return of("id",id,"projectId",scope.project,"engineIdentity",scope.engine,"version",VERSION,"digestVersion",DIGEST_VERSION,"batchId",text(batch,"id"),"engineVersion",text(batch,"engineVersion"),"observationPolicy",text(batch,"observationPolicy"),"operationIdentity",text(batch,"operationIdentity"));}
     private static void seal(Map<String,Object> row){row.put("digest",hash(canonical(row)));}
-    static boolean validItem(Map<String,Object> row,FactLedgerService.Scope scope){Map<String,Object> unsigned=copy(row);String digest=text(unsigned,"digest");unsigned.remove("digest");return VERSION.equals(text(row,"version"))&&scope.project.equals(text(row,"projectId"))&&scope.engine.equals(text(row,"engineIdentity"))&&!cn.bidcheck.compat.Java8Api.isBlank(text(row,"id"))&&digest.equals(hash(canonical(unsigned)));}
+    private Map<String,Object> sealForStore(FactLedgerService.Scope scope,Map<String,Object> row){
+        // Use the same JSON codec as Store before sealing, then prove the exact encoded body can
+        // be decoded and verified. The database may still reformat JSON text, so all OCR layout
+        // floating values have already been reduced to a stable decimal grid below.
+        Map<String,Object> normalized=store.map(store.encode(row));seal(normalized);
+        Map<String,Object> roundTrip=store.map(store.encode(normalized));
+        if(!validItem(roundTrip,scope))throw new IllegalStateException("LOOKUP_ITEM_SEAL_UNSTABLE");
+        return normalized;
+    }
+    static boolean validItem(Map<String,Object> row,FactLedgerService.Scope scope){Map<String,Object> unsigned=copy(row);String digest=text(unsigned,"digest");unsigned.remove("digest");return VERSION.equals(text(row,"version"))&&DIGEST_VERSION.equals(text(row,"digestVersion"))&&scope.project.equals(text(row,"projectId"))&&scope.engine.equals(text(row,"engineIdentity"))&&!cn.bidcheck.compat.Java8Api.isBlank(text(row,"id"))&&digest.equals(hash(canonical(unsigned)));}
+    /** OCR geometry is measurement evidence, not a business amount. Six decimals retain far more
+     * precision than either pixels or PDF points while removing arithmetic one-ULP spellings such
+     * as 214.54000000000002 that MySQL JSON legitimately returns as 214.54. */
+    static List<Map<String,Object>> normalizeLayoutCells(Object raw){return maps(normalizeLayoutValue(raw));}
+    private static Object normalizeLayoutValue(Object value){
+        if(value instanceof Map<?,?>){Map<String,Object> out=new LinkedHashMap<>();((Map<?,?>)value).forEach((key,child)->out.put(String.valueOf(key),normalizeLayoutValue(child)));return out;}
+        if(value instanceof List<?>)return cn.bidcheck.compat.Java8Api.toList(((List<?>)value).stream().map(CanonicalFactLookup::normalizeLayoutValue));
+        if(value instanceof Float||value instanceof Double||value instanceof BigDecimal){double number=((Number)value).doubleValue();if(!Double.isFinite(number))throw new IllegalArgumentException("LOOKUP_LAYOUT_NUMBER_INVALID");double rounded=BigDecimal.valueOf(number).setScale(LAYOUT_DECIMALS,RoundingMode.HALF_UP).doubleValue();return rounded==0d?0d:rounded;}
+        return value;
+    }
 
     /** Snapshot legacy membership once while fenced. Subsequent writers dual-write canonical refs;
      * cursor progress cannot hide a missing/unvalidated legacy batch or an interrupted transaction. */
@@ -125,7 +150,7 @@ final class CanonicalFactLookup {
             String parent=scope.documentParents.get(doc.id()),id=stateId(parent);Map<String,Object> state=read("fact_lookup_state",id);
             if(state.isEmpty()||!VERSION.equals(text(state,"version"))){
                 List<String> pending=cn.bidcheck.compat.Java8Api.toList(store.maps("fact_index",scope.project,parent).stream().map(v->text(v,"batchId")).distinct().sorted());
-                state=of("id",id,"projectId",scope.project,"documentParent",parent,"version",VERSION,"status","BUILDING","pendingBatchIds",pending,"cursor",0,"validatedBatches",0,"coverageDigest",hash(canonical(pending)),"errors",cn.bidcheck.compat.Java8Api.listOf());
+                state=of("id",id,"projectId",scope.project,"documentParent",parent,"version",VERSION,"status","BUILDING","repairPolicy","REBUILD_FROM_BATCH_OCCURRENCE_CURRENT_MANIFEST","pendingBatchIds",pending,"cursor",0,"validatedBatches",0,"coverageDigest",hash(canonical(pending)),"errors",cn.bidcheck.compat.Java8Api.listOf());
             }
             if("READY".equals(text(state,"status"))||"BLOCKED".equals(text(state,"status"))){summaries.add(of("documentId",doc.id(),"status",state.get("status"),"errors",state.getOrDefault("errors",cn.bidcheck.compat.Java8Api.listOf())));continue;}
             List<String> pending=strings(state.get("pendingBatchIds"));int cursor=integer(state.get("cursor"),0);

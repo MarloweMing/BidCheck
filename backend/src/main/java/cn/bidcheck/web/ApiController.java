@@ -107,7 +107,9 @@ public class ApiController {
         if(checkpointIds==null)return service.startRun(id,BidService.text(body,"documentId"),Boolean.TRUE.equals(body.get("force")),BidService.text(body,"checkSetId"),manifest,BidService.text(body,"idempotencyKey"),BidService.text(body,"reviewMode"));
         return service.startRun(id,BidService.text(body,"documentId"),Boolean.TRUE.equals(body.get("force")),BidService.text(body,"checkSetId"),manifest,BidService.text(body,"idempotencyKey"),BidService.text(body,"reviewMode"),checkpointIds);
     }
-    @GetMapping("/runs/{id}") public Object run(@PathVariable String id,@RequestParam(defaultValue="true") boolean includeContent) { return service.run(id,includeContent); }
+    @GetMapping("/runs/{id}") public ResponseEntity<String> run(@PathVariable String id,@RequestParam(defaultValue="true") boolean includeContent) {
+        return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(reports.runJson(id,includeContent));
+    }
     @GetMapping("/runs/{id}/evidence-graph") public Object evidenceGraph(@PathVariable String id,
             @RequestParam(name="predicate",required=false) List<String> predicates) {
         return evidenceGraphReads().graph(id,predicates);

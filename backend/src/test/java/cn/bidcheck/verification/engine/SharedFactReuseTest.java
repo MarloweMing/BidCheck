@@ -60,6 +60,7 @@ class SharedFactReuseTest {
         AtomicInteger lookups=new AtomicInteger();
         Function<Map<String,Object>,List<Map<String,Object>>> callback=request->{
             lookups.incrementAndGet();assertEquals("CANONICAL_SOURCE",request.get("lookupMode"));
+            assertEquals(false,request.get("includeOrigins"),"Realtime reuse does not load append-only historical origin rows");
             assertEquals(cn.bidcheck.compat.Java8Api.listOf(text.id()),request.get("sourceIds"));
             assertEquals(cn.bidcheck.compat.Java8Api.listOf(text.id()),cn.bidcheck.compat.Java8Api.toList(RuleEvaluator.maps(request.get("sources")).stream().map(row->str(row,"id"))));
             return cn.bidcheck.compat.Java8Api.listOf(entry(c,number(text,"80")));

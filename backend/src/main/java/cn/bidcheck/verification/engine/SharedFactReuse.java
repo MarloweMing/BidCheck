@@ -215,7 +215,7 @@ final class SharedFactReuse {
         List<String> observationKeys=cn.bidcheck.compat.Java8Api.toList(rules.stream().map(r->FieldCoverage.key(observationTarget(r))).distinct());
         if(context.get("sharedFactLookup") instanceof Function<?,?>){
             Function<Map<String,Object>,?> query=(Function<Map<String,Object>,?>)context.get("sharedFactLookup");
-            Map<String,Object> request=linked("lookupMode",subjectLookup?"CANONICAL_SUBJECT":"CANONICAL_SOURCE","subjects",subjects,"sources",cn.bidcheck.compat.Java8Api.toList(selected.stream().map(metadata::get).filter(Objects::nonNull)),"modelIdentity",modelIdentity,"sourceIds",new ArrayList<>(selected),"documentIds",cn.bidcheck.compat.Java8Api.toList(corpus.documents.stream().map(Document::id)),"factKinds",new ArrayList<>(requestedKinds),"limit",LIMIT,"fieldCoverageLimit",LIMIT,"engineVersion",VERSION,"engineIdentity",engineIdentity,"observationPolicy",FieldCoverage.POLICY,"includeFieldCoverage",!subjectLookup,"observationKeys",cn.bidcheck.compat.Java8Api.toList(rules.stream().map(r->FieldCoverage.key(observationTarget(r))).distinct()),"runId",context.get("sourceRunId"),"checkpointId",context.get("checkpointId"),"lookupPhase",phase);
+            Map<String,Object> request=linked("lookupMode",subjectLookup?"CANONICAL_SUBJECT":"CANONICAL_SOURCE","subjects",subjects,"sources",cn.bidcheck.compat.Java8Api.toList(selected.stream().map(metadata::get).filter(Objects::nonNull)),"modelIdentity",modelIdentity,"sourceIds",new ArrayList<>(selected),"documentIds",cn.bidcheck.compat.Java8Api.toList(corpus.documents.stream().map(Document::id)),"factKinds",new ArrayList<>(requestedKinds),"limit",LIMIT,"fieldCoverageLimit",LIMIT,"engineVersion",VERSION,"engineIdentity",engineIdentity,"observationPolicy",FieldCoverage.POLICY,"includeFieldCoverage",!subjectLookup,"includeOrigins",false,"observationKeys",cn.bidcheck.compat.Java8Api.toList(rules.stream().map(r->FieldCoverage.key(observationTarget(r))).distinct()),"runId",context.get("sourceRunId"),"checkpointId",context.get("checkpointId"),"lookupPhase",phase);
             request.put("paged",true);
             Set<String> visited=new HashSet<>();
             while(true){
@@ -317,7 +317,16 @@ final class SharedFactReuse {
     }
     private void auditCandidate(List<Map<String,Object>> audit,Map<String,Object> entry,String outcome,String reason,List<Map<String,Object>> failures,String canonicalId){
         Map<String,Object> fact=entry.get("fact") instanceof Map<?,?>?json.convertValue(((Map<?,?>) (entry.get("fact"))),Map.class):cn.bidcheck.compat.Java8Api.mapOf();
-        audit.add(linked("candidateId",str(fact,"id"),"canonicalFactId",canonicalId,"occurrenceId",str(entry,"occurrenceId"),"batchId",str(entry,"batchId"),"operationIdentity",str(entry,"operationIdentity"),"recordType",str(entry,"recordType"),"engineVersion",str(entry,"engineVersion"),"observationPolicy",str(entry,"observationPolicy"),"kind",str(fact,"kind"),"field",str(fact,"field"),"sourceIds",ProofVerifier.strings(fact.get("sourceIds")),"outcome",outcome,"reason",reason,"failures",failures));
+        // The ledger audit is a compact provenance index; field-level correction paths
+        // and submission details belong to the Agent receipt, not to shared-fact history.
+        List<Map<String,Object>> auditFailures=new ArrayList<>();
+        for(Map<String,Object> failure:failures){
+            Map<String,Object> item=new LinkedHashMap<>();
+            for(String key:Arrays.asList("code","id","kind","sourceId","sourceIds"))
+                if(failure.containsKey(key))item.put(key,failure.get(key));
+            auditFailures.add(item);
+        }
+        audit.add(linked("candidateId",str(fact,"id"),"canonicalFactId",canonicalId,"occurrenceId",str(entry,"occurrenceId"),"batchId",str(entry,"batchId"),"operationIdentity",str(entry,"operationIdentity"),"recordType",str(entry,"recordType"),"engineVersion",str(entry,"engineVersion"),"observationPolicy",str(entry,"observationPolicy"),"kind",str(fact,"kind"),"field",str(fact,"field"),"sourceIds",ProofVerifier.strings(fact.get("sourceIds")),"outcome",outcome,"reason",reason,"failures",auditFailures));
     }
     @SuppressWarnings("unchecked") private void publishLookupAudit(String phase,String mode,List<String> subjects,Set<String> kinds,int sources,int entries,int metadataCount,int fieldOnlyCount,List<Fact> facts,List<Map<String,Object>> candidates,List<Map<String,Object>> processingCandidates){
         if(!(context.get("sharedFactAdoptionAudit") instanceof Consumer<?>))return;

@@ -10,6 +10,7 @@ final class ProgrammaticInferenceCandidates {
     private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(ProgrammaticInferenceCandidates.class);
     private static final Set<String> IDENTITY_GAPS=cn.bidcheck.compat.Java8Api.setOf("SCORING_TITLE_IDENTITY_REQUIRED", "PERSON_IDENTITY_REQUIRED", "PERSON_IDENTITY_UNPROVEN", "PERSON_IDENTITY_AMBIGUOUS", "SUBJECT_IDENTITY_UNPROVEN", "ENTITY_IDENTITY_AMBIGUOUS", "CERTIFICATE_SUBJECT_REQUIRED", "CERTIFICATE_IDENTITY_REQUIRED", "PERSONNEL_BINDING_REQUIRED");
     private ProgrammaticInferenceCandidates(){}
+    static boolean needsIdentity(Decision d){return d.gaps().stream().anyMatch(g->IDENTITY_GAPS.contains(g.code())||"SUBJECT_IDENTITY_CONFLICT".equals(g.code()));}
 
     static List<Map<String,Object>> collect(Rule rule,Decision decision,List<Fact> facts,EvidenceCorpus corpus){
         if(!cn.bidcheck.compat.Java8Api.setOf("UNDETERMINED", "NEEDS_CONFIRMATION").contains(decision.status())||technical(decision))return cn.bidcheck.compat.Java8Api.listOf();
@@ -54,14 +55,16 @@ final class ProgrammaticInferenceCandidates {
         for(Fact role:roles)for(Fact proof:proofs){String person=role.value(),owner="FIELD".equals(proof.kind())&&"姓名".equals(proof.field())?proof.subject():SubjectIdentity.person(proof);
             if(!compatible(person,owner)||!safe(role,corpus)||!safe(proof,corpus)||!sameDocument(role,proof,corpus)||role.sourceIds().stream().anyMatch(proof.sourceIds()::contains))continue;
             if(!certificateRelevant(rule,proof))continue;
-            Set<String> ids=new HashSet<>(ConfirmedSubjectBindings.identifiers(role,corpus));ids.addAll(ConfirmedSubjectBindings.identifiers(proof,corpus));if(ids.size()>1)continue;
+            if(IdentityNumberEvidence.compare(role,proof,corpus)!=IdentityNumberEvidence.Match.INSUFFICIENT)continue;
+            Set<String> roleIds=ConfirmedSubjectBindings.identifiers(role,corpus),proofIds=ConfirmedSubjectBindings.identifiers(proof,corpus);
+            if(roleIds.size()==1&&proofIds.size()==1)continue;
             List<Map<String,Object>> citations=new ArrayList<>();citations.addAll(citations(role,person,corpus));citations.addAll(citations(proof,owner,corpus));if(citations.size()<2)continue;
             boolean masked=!person.equals(owner);String number=str(proof.attributes(),"number");
             Map<String,Object> proposed=linked("kind","RELATION","subject",person,"field","同一人","rawValue",owner,"value",owner,"unit","","basis","SOURCE_PAIR_CONFIRMATION","scope","CURRENT_PROJECT","sourceIds",cn.bidcheck.compat.Java8Api.toList(citations.stream().map(c->str(c,"sourceId")).distinct()),"attributes",linked("object",owner,"number",number));
             add(out,linked("type",masked?"MASKED_PERSON_IDENTITY":"PERSON_IDENTITY","claim","请确认任职表中的“"+person+"”与所引证明中的“"+owner+"”是否为同一人", "reasoning","已定位当前任职与对应姓名的证明来源，但现有身份标识不足以自动完成跨来源关联。确认仅关联这些来源，不代替证书、单位或社保条件核验。", "confidence",0.65,"risks",cn.bidcheck.compat.Java8Api.listOf(masked?"证明中的姓名含遮蔽字符":"姓名相同不单独证明人员相同"),"proposedFact",proposed,"evidence",citations,"unresolvedGapCodes",cn.bidcheck.compat.Java8Api.toList(decision.gaps().stream().map(Gap::code).filter(IDENTITY_GAPS::contains))),rule,corpus);
         }
     }
-    private static boolean certificateRelevant(Rule rule,Fact proof){String expected=str(rule.parameters(),"category");if(cn.bidcheck.compat.Java8Api.isBlank(expected)||!proof.kind().equals("CERTIFICATE"))return true;String category=str(proof.attributes(),"category");return !cn.bidcheck.compat.Java8Api.isBlank(category)&&(CertificateEvidenceRecords.category(category).equals(CertificateEvidenceRecords.category(expected))||category.contains(expected)||expected.contains(category));}
+    static boolean certificateRelevant(Rule rule,Fact proof){String expected=str(rule.parameters(),"category");if(cn.bidcheck.compat.Java8Api.isBlank(expected)||!proof.kind().equals("CERTIFICATE"))return true;String category=str(proof.attributes(),"category");return !cn.bidcheck.compat.Java8Api.isBlank(category)&&(CertificateEvidenceRecords.category(category).equals(CertificateEvidenceRecords.category(expected))||category.contains(expected)||expected.contains(category));}
     private static void employerCandidates(Rule rule,Decision decision,List<Fact> facts,EvidenceCorpus corpus,Map<String,Map<String,Object>> out){
         List<Fact> roles=cn.bidcheck.compat.Java8Api.toList(facts.stream().filter(f->f.kind().equals("PERSON_ROLE")&&f.value().equals(rule.subject())&&safe(f,corpus)&&DomainBindings.currentRoleSource(f,corpus.byId)));
         if(roles.isEmpty())return;

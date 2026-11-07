@@ -9,6 +9,7 @@ final class ContractSubmissionGuidance {
     static final String SYSTEM = "合同跨页多属性或整包拒收时，按已声明工具优先使用 submissionMode=CONTRACT_FIELDS。"
         + "fact 填真实已读的独立身份事实，不造占位；每个 atom 用自己的 sourceIds 证明本字段，封面/身份页不能承载正文金额和签订日期。"
         + "缺身份先读取，不继承被拒整包属性。按可信回执的 fieldPath、remainingFieldNeeds、submissionExample 修正具体字段；"
+        + "contractFieldWorkPlan.remainingActions 和 contractFieldReviewActions 给出要核对的字段及原文位置；先查指定来源。不同金额、日期或姓名应分别核对原文，不能直接替换；已执行的修正不重复提交。"
         + "readSourceCandidates 仍只是导航。alreadyKnownFactIds 不当新增进展，继续缺失字段。示例值必须替换为当前原文，"
         + "部分采信不代表完整合同或业务通过；普通单字段 fact 请求仍兼容。";
 

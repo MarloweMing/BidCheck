@@ -11,6 +11,39 @@ final class NativeCertificateFacts {
     private static final Pattern PERSON_OWNER=Pattern.compile("(?:持证人|姓\\s*名)\\s*[:：]\\s*([\\p{IsHan}·]{2,12})[\\t ]*(?=\\r?\\n|$)");
     private static final Pattern NUMBER=Pattern.compile("(证书编号|注册编号|资格证号|(?<![\\p{IsHan}])编号)\\s*[:：]\\s*([\\p{IsHan}A-Za-z0-9（()）〔〕\\[\\]/-]{4,80})");
     private static final Pattern PERIOD=Pattern.compile("注册有效期|使用有效期|证书有效日期|证书有效期|资格有效期|有效截止日期|有效期限|有效期至|有效期");
+    private static final Pattern SYSTEM_TITLE=Pattern.compile("(?m)^[ \\t#*]*((?:质量管理体系|环境管理体系|职业健康安全管理体系)认证证书)[ \\t*]*\\r?$");
+    private static final Pattern SYSTEM_HOLDER=Pattern.compile("(?m)^[ \\t#*]*兹证明[ \\t]*\\r?\\n\\s*[#* \\t]*([^\\r\\n#*|]{2,90})[ \\t*]*\\r?$");
+    static List<Fact> currentSystemCertificates(List<Rule> reads,EvidenceCorpus corpus){
+        if(reads.stream().noneMatch(r->"VALIDITY".equals(r.predicate())&&Boolean.TRUE.equals(r.parameters().get("allApplicableCertificates"))))
+            return Collections.emptyList();
+        Rule identityRule=new Rule("holder","当前投标主体","RELATION","投标人","单位名称","","","",Collections.emptyMap(),"","",Collections.emptyList());
+        List<Fact> bindings=EnterpriseSubjectBindings.extract(Collections.singletonList(identityRule),corpus.all);
+        Set<String> holders=new HashSet<>(DomainBindings.subjects("投标人",bindings,corpus));
+        if(holders.isEmpty())return Collections.emptyList();
+        List<Fact> facts=new ArrayList<>();Map<String,CertificateEvidenceRecords.ScopeResolver> resolvers=new HashMap<>();
+        for(Source source:corpus.all){
+            String text=source.evidence().quote();
+            if(!text.contains("证书有效日期")||!CertificateEvidenceRecords.usable(source,corpus,resolvers))continue;
+            if(text.matches("(?s).*(?:历史项目|填写示例|拟取得|尚未取得|查询截图|查询结果|已失效版本).*"))continue;
+            Matcher title=SYSTEM_TITLE.matcher(text),number=NUMBER.matcher(text),owner=SYSTEM_HOLDER.matcher(text);
+            if(!title.find()||!number.find()||!owner.find())continue;
+            String category=title.group(1),no=number.group(2),label=number.group(1),name=owner.group(1).trim();
+            if(title.find()||number.find()||owner.find()||!holders.contains(name))continue;
+            List<java.time.LocalDate> dates=DateFieldValues.read(text,"证书有效日期",2);
+            if(dates.size()!=2)continue;
+            Map<String,Object> attrs=linked("category",category,"number",no,"numberField",label,"validityField","证书有效日期",
+                "start",dates.get(0).toString(),"end",dates.get(1).toString());
+            attrs.put("holderBindingSourceIds",cn.bidcheck.compat.Java8Api.toList(bindings.stream()
+                .filter(f->name.equals(DomainBindings.roleTarget(f,"投标人"))).flatMap(f->f.sourceIds().stream()).distinct()));
+            if(!CertificateEvidenceRecords.usable(source))attrs.put("certificateSectionScope",CertificateEvidenceRecords.mappedScope(source,corpus,resolvers));
+            Fact f=new Fact("N"+identity(source.id()+category+no+"current-system-original-1").substring(0,20),"CERTIFICATE",name,
+                "证书",no,no,"","","CURRENT_PROJECT",Collections.singletonList(source.id()),attrs);
+            // The holder match and raw labels locate the record. Ordinary validation must
+            // still prove the certificate block, its number, its period and version.
+            if(new ProofVerifier().issue(f,corpus.byId)==null&&DomainBindings.issue(f,corpus.byId,Collections.emptyList())==null)facts.add(f);
+        }
+        return facts;
+    }
     /** Expand a retrieved chunk to its original certificate occurrence before extracting fields. */
     static List<Fact> extract(Rule rule,EvidenceCorpus corpus,List<Source> selected){
         if(!cn.bidcheck.compat.Java8Api.setOf("CERTIFICATE", "VALIDITY").contains(rule.predicate()))return cn.bidcheck.compat.Java8Api.listOf();

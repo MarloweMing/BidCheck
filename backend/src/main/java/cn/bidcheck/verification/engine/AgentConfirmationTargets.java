@@ -10,6 +10,19 @@ final class AgentConfirmationTargets {
     private AgentConfirmationTargets(){}
     static Map<String,Object> proof(Rule target,Decision decision,RuleEvaluator evaluator){
         if(decision==null||decision.gaps().isEmpty())return Collections.emptyMap();
+        if(SourceScoringRules.professionReviewRequired(decision)
+                &&decision.id().equals(str(target.parameters(),"scoringParentRuleId"))
+                &&SourceScoringRules.VERSION.equals(str(target.parameters(),"sourceScoringReadVersion"))) {
+            Map<String,Object> review=map(decision.proof().get("professionScopeReview"));
+            List<String> originals=ProofVerifier.strings(review.get("sourceIds")), appointments=ProofVerifier.strings(review.get("appointmentSourceIds"));
+            Set<String> ids=new LinkedHashSet<>(originals);ids.addAll(appointments);
+            if(!originals.isEmpty()&&!appointments.isEmpty()&&!str(review,"question").isEmpty()
+                    &&ids.stream().allMatch(evaluator.corpus.byId::containsKey))
+                return linked("authority","SOURCE_BOUND_SCORING_CRITERION_REVIEW","targetObligationId",target.id(),
+                    "conditionStatus","UNDETERMINED","gapCodes",Collections.singletonList("SCORING_TITLE_PROFESSION_SCOPE_REQUIRED"),
+                    "question",review.get("question"),"sourceIds",new ArrayList<>(ids),"targetFingerprint",identity(JSON.valueToTree(target).toString()),
+                    "businessProof",false,"sourceValidation","CURRENT_DOCUMENT_CREDENTIAL_AND_APPOINTMENT");
+        }
         boolean legacy="NEEDS_CONFIRMATION".equals(decision.status())&&decision.gaps().stream().allMatch(g->"INFERENCE_CONFIRMATION_REQUIRED".equals(g.code()));
         Set<String> gapCodes=new LinkedHashSet<>();decision.gaps().forEach(g->gapCodes.add(g.code()));
         if(!legacy&&(!"UNDETERMINED".equals(decision.status())||!gapCodes.equals(new HashSet<>(ProofVerifier.strings(decision.proof().get("confirmationOnlyGapCodes"))))))return Collections.emptyMap();

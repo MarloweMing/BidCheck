@@ -42,6 +42,9 @@ public class ReportService {
     }
     private final BidService service;
     public ReportService(BidService service) { this.service=service; }
+    public String runJson(String id,boolean includeContent) {
+        return cn.bidcheck.verification.source.CitizenId.maskJson(service.store.encode(service.run(id,includeContent)));
+    }
     public Report generate(String id,String format) { return generate(id,format,"source"); }
     public Report generate(String id,String format,String resultVersionSelector) {
         if(!cn.bidcheck.compat.Java8Api.setOf("html", "csv", "json").contains(format)) throw BidService.bad("仅支持 HTML、CSV 或 JSON 报告");
@@ -54,7 +57,7 @@ public class ReportService {
         if(!"source".equalsIgnoreCase(requestedVersion)&&publishedVersion.isEmpty())throw BidService.bad("当前检查尚未发布增量结果版本");
         List<Finding> results=publishedVersion.isEmpty()?sourceResults:overlayPublishedResults(sourceResults,publishedVersion);
         // Project current display semantics over old reports without modifying saved decisions or proofs.
-        results=cn.bidcheck.compat.Java8Api.toList(results.stream().map(f->new Finding(f.id(),f.runId(),f.checkpoint(),f.evaluation(),FocusedCheckEvaluator.reconcileAssessment(f.evaluation(),f.assessment()))));
+        results=cn.bidcheck.compat.Java8Api.toList(results.stream().map(f->FocusedCheckEvaluator.publishedFinding(f,f.assessment())));
         @SuppressWarnings("unchecked") List<Map<String,Object>> reviews=(List<Map<String,Object>>)payload.get("reviews");
         Map<String,Map<String,Object>> latest=new LinkedHashMap<>(); reviews.forEach(r->latest.put(BidService.text(r,"resultId"),r));
         Map<String,Object> project=service.store.getMap("project",BidService.text(run,"projectId"));
@@ -91,7 +94,7 @@ public class ReportService {
                 List<Evidence> tender=new ArrayList<>();if(source!=null) tender.add(source);tender.addAll(additionalTender(e,source,tenderId,tenderIds));
                 Map<String,Object> assessment=map(f.assessment()),business=BusinessResultPresentation.describe(e,assessment);
                 Map<String,Object> group=consistencyGroups.getOrDefault(f.id(),cn.bidcheck.compat.Java8Api.mapOf());
-                List<String> row=cn.bidcheck.compat.Java8Api.listOf(c.title(), safe(c.category()), safe(c.severity()), label(e.status()), label(BidService.text(r,"status")), analysisReason(e,presentation,business), atomicText(business,"nextStep"), joinedEvidence(tender), joinedEvidence(bidEvidence(e,bidId)), BidService.text(r,"reviewer"), BidService.text(r,"note"), parsingScope(ocrContext,presentation), originalExplanation(presentation,e), originalReviewText(f,presentation), evaluationText(assessment.get("rawEvaluation")), evaluationText(assessment.get("preOcrEvaluation")), adjustmentText(assessment), assessment.isEmpty()?"":retrievalText(map(assessment.get("retrieval"))), assessmentState(f), consistencyScope(consistency)+(Boolean.TRUE.equals(onDemand.get("attemptsUnlimited"))?"；模型调用次数不限":""), BidService.text(assessment,"consistencyGroupId"), consistencyCategories.getOrDefault(BidService.text(group,"categoryId"),""), relationLabel(BidService.text(group,"relationType")), comparisonContext(map(group.get("comparisonContext"))), service.store.encode(structuredCoverageSnapshots(ocrContext)), group.isEmpty()?"":targetedReviewText(map(group.get("targetedReview"))), group.isEmpty()?"":service.store.encode(cn.bidcheck.compat.Java8Api.toList(groupOccurrences(group,consistencyOccurrences).stream().map(o->BidService.fields("occurrenceId",o.get("id"),"contextAssignment",o.get("contextAssignment"),"tableAssociation",o.get("tableAssociation"))))), atomicWorkflowLabel(map(assessment.get("atomicCheck"))), atomicCheckText(map(assessment.get("atomicCheck"))), atomicText(business,"label"), atomicText(business,"owner"), Boolean.TRUE.equals(business.get("userActionRequired"))?"是":"否", atomicText(business,"nextStep"), completenessText(map(map(assessment.get("coverage")).get("completeness"))), dimensionLabel(f,"execution"), dimensionLabel(f,"evidence"), dimensionLabel(f,"conclusion"), BidService.text(run,"parentRunId"), BidService.text(map(assessment.get("resolutionJob")),"stopReason"), inheritedReviewText(maps(payload.get("inheritedReviews")),BidService.text(map(assessment.get("inheritedFrom")),"findingId")), safe(e.suggestion()));
+                List<String> row=cn.bidcheck.compat.Java8Api.listOf(c.title(), safe(c.category()), safe(c.severity()), label(e.status()), label(BidService.text(r,"status")), analysisReason(e,presentation,business), atomicText(business,"nextStep"), joinedEvidence(tender), joinedEvidence(bidEvidence(e,bidId)), BidService.text(r,"reviewer"), BidService.text(r,"note"), parsingScope(ocrContext,presentation), originalExplanation(presentation,e), originalReviewText(f,presentation), evaluationText(assessment.get("rawEvaluation")), evaluationText(assessment.get("preOcrEvaluation")), adjustmentText(assessment), assessment.isEmpty()?"":retrievalText(map(assessment.get("retrieval"))), assessmentState(f), consistencyScope(consistency)+(Boolean.TRUE.equals(onDemand.get("attemptsUnlimited"))?"；模型调用次数不限":""), BidService.text(assessment,"consistencyGroupId"), consistencyCategories.getOrDefault(BidService.text(group,"categoryId"),""), relationLabel(BidService.text(group,"relationType")), comparisonContext(map(group.get("comparisonContext"))), service.store.encode(structuredCoverageSnapshots(ocrContext)), group.isEmpty()?"":targetedReviewText(map(group.get("targetedReview"))), group.isEmpty()?"":service.store.encode(cn.bidcheck.compat.Java8Api.toList(groupOccurrences(group,consistencyOccurrences).stream().map(o->BidService.fields("occurrenceId",o.get("id"),"contextAssignment",o.get("contextAssignment"),"tableAssociation",o.get("tableAssociation"))))), atomicWorkflowLabel(map(assessment.get("atomicCheck"))), atomicCheckText(map(assessment.get("atomicCheck"))), atomicText(business,"label"), atomicText(business,"owner"), Boolean.TRUE.equals(business.get("userActionRequired"))?"是":"否", atomicText(business,"nextStep"), completenessText(map(map(assessment.get("coverage")).get("completeness"))), dimensionLabel(f,"execution"), dimensionLabel(f,"evidence"), dimensionLabel(f,"conclusion"), BidService.text(run,"parentRunId"), BidService.text(map(assessment.get("resolutionJob")),"stopReason"), inheritedReviewText(maps(payload.get("inheritedReviews")),BidService.text(map(assessment.get("inheritedFrom")),"findingId")), originalModelAdvice(f));
                 List<String> traceable=new ArrayList<>(row.size()+5);traceable.add(projectId);traceable.add(runId);
                 if(!publishedVersion.isEmpty()){traceable.add("V"+publishedVersion.get("revision"));traceable.add(BidService.text(publishedVersion,"publishedBy"));traceable.add(BidService.text(publishedVersion,"publicationNote"));}
                 traceable.addAll(row);row=traceable;
@@ -812,7 +815,19 @@ switch (BidService.text(document,"role")) {case "TENDER":role = "招标文件"; 
         return cn.bidcheck.compat.Java8Api.isBlank(bidId)?cn.bidcheck.compat.Java8Api.listOf():cn.bidcheck.compat.Java8Api.toList(evaluation.evidences().stream().filter(Objects::nonNull).filter(v->bidId.equals(v.documentId())));
     }
     private static String joinedEvidence(List<Evidence> evidence) { return String.join(" | ",cn.bidcheck.compat.Java8Api.toList(evidence.stream().map(ReportService::evidence))); }
-    private static Report report(String text,String type) { return new Report(text.getBytes(StandardCharsets.UTF_8),type); }
+    private static Report report(String text,String type) {
+        String output=type.startsWith("application/json")?cn.bidcheck.verification.source.CitizenId.maskJson(text):cn.bidcheck.verification.source.CitizenId.mask(text);
+        return new Report(output.getBytes(StandardCharsets.UTF_8),type);
+    }
+    private static String originalModelAdvice(Finding finding){
+        Map<String,Object> trace=map(finding.assessment());
+        for(String key:Arrays.asList("rawEvaluation","prePresentationEvaluation")){
+            Object record=trace.get(key);
+            Object value=record instanceof Evaluation?((Evaluation)record).suggestion():map(record).get("suggestion");
+            if(value instanceof String)return (String)value;
+        }
+        return safe(finding.evaluation().suggestion());
+    }
     private static String safe(String s) { return s==null?"":s; }
     public static String html(String s) { return safe(s).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;").replace("'","&#39;"); }
     private static String csv(String s) { s=safe(s); if(s.matches("(?s)^[\\s]*[=+@-].*")) s="'"+s; return "\""+s.replace("\"","\"\"")+"\""; }

@@ -8,6 +8,11 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 
 /** Entirely synthetic source formula; no frozen tender or model. */
 public class Ticket09ReadTargetTest {
+    public static Map<String,Object> syntheticPerformancePlan(List<Map<String,Object>> rows) {
+        Map<String,Object> rule=new ObjectMapper().convertValue(ContractRecordSubmissionTest.scoringRule(),Map.class);
+        ((Map<String,Object>)rule.get("parameters")).put("declaredPerformanceReadRows",rows);
+        return rule;
+    }
     static Rule score(){
         String quote="项目负责人实力（商务）\t具有（合成专业）高级工程师职称得3分，中级得1分，未提交不得分。证明材料：填写附表6-1。需提交有效证明文件（并提供查询网址及网址查询截图）及提交2024年1月（含）至文件递交截止时间任意连续三个月在本单位缴纳社保证明材料，特殊情况提交说明文件（格式自拟）及有效的证明文件（如单位设立时间不足、人员新入职、离退休、转业等）。";
         Checkpoint cp=new Checkpoint("synthetic-score","合成职称评分","评分","MEDIUM","SEMANTIC_RESPONSE","scoring","RESPONDS",quote,"",true,true,true,new Evidence("synthetic-tender","合成文件",1,"BLOCK",quote,"",1));

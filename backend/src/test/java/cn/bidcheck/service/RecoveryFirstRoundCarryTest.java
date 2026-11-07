@@ -9,6 +9,33 @@ import static cn.bidcheck.service.CheckResolution.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class RecoveryFirstRoundCarryTest {
+    @Test void pendingTableCursorSurvivesLocalRecomputeAndSiblingReviewUntilTheActualTailIsRead() {
+        Finding first=fixture("role",false);
+        Map<String,Object> cursor=fields("action","READ_TABLE_CONTINUATION","sourceId","source","rowOffset",80,
+            "tableLayoutRevision","table-v1","documentId","doc","documentVersion",1,"documentHash","hash","page",199,"locationType","PAGE");
+        Map<String,Object> original=tableAudit("TARGET",Collections.singletonList(cursor));
+        first=withAudit(first,original);
+        Finding local=RecoverySemanticGate.preserveFirstRound(first,fixture("role",false));
+        assertEquals(Collections.singletonList(cursor),PendingTableWork.pending(local,"TARGET"));
+        Finding sibling=RecoverySemanticGate.preserveFirstRound(local,withAudit(fixture("role",false),tableAudit("OTHER",Collections.emptyList())));
+        assertEquals(80,PendingTableWork.pending(sibling,"TARGET").get(0).get("rowOffset"));
+        assertEquals(local.evaluation().status(),sibling.evaluation().status());
+        Map<String,Object> done=tableAudit("TARGET",Collections.emptyList());
+        done.put("tableContinuationExecutions",Collections.singletonList(fields("targetObligationId","TARGET","sourceId","source",
+            "status","COMPLETED","returnedRows",1,"businessProof",false)));
+        Finding finish=RecoverySemanticGate.preserveFirstRound(sibling,withAudit(fixture("role",false),done));
+        assertTrue(PendingTableWork.pending(finish,"TARGET").isEmpty());
+    }
+    private Map<String,Object> tableAudit(String target,List<Map<String,Object>> pending) {
+        Map<String,Object> work=fields("targetObligationId",target,"evidenceRevision","evidence","pendingReadActions",pending);
+        return fields("requestId","request","targetReceiptAuthority","CURRENT_SERVER_PROOF","serverPlanRevision","plan",
+            "targetEvidenceRevisions",fields(target,"evidence"),"serverTargetInputConsumption",fields("version","server-target-input-consumption-1",
+                "businessProof",false,"authority","CURRENT_SERVER_PROOF","requestId","request","serverPlanRevision","plan","targets",Collections.singletonList(work)));
+    }
+    private Finding withAudit(Finding finding,Map<String,Object> audit) {
+        Map<String,Object> body=new LinkedHashMap<>(atomic(finding));body.put("agentInvestigation",audit);
+        return new Finding(finding.id(),finding.runId(),finding.checkpoint(),finding.evaluation(),fields("atomicCheck",body));
+    }
     private Finding fixture(String field, boolean newFact) {
         Map<String,Object> rule = fields("id", "TARGET", "predicate", "DECLARATION", "subject", "",
             "field", field, "expected", "承诺", "parameters", Collections.emptyMap());

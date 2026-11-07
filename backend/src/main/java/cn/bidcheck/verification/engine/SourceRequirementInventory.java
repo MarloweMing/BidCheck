@@ -13,7 +13,8 @@ import static cn.bidcheck.verification.engine.VerificationTypes.*;
 
 /** Expands named source inventories before evaluating their members; never treats one hit as all. */
 public final class SourceRequirementInventory {
-    public static final String VERSION="source-requirement-inventory-2-typed-source-dependencies";
+    public static final String VERSION="source-requirement-inventory-3-owned-dependency-diagnostics";
+    public static final String FAILURE_OWNERSHIP_VERSION="requirement-dependency-gap-origin-1";
     private static final ObjectMapper JSON=new ObjectMapper();
     private static final Pattern CHAPTER=Pattern.compile("^第[一二三四五六七八九十百0-9]+章.{0,40}$");
     private SourceRequirementInventory() {}
@@ -65,6 +66,14 @@ public final class SourceRequirementInventory {
         return cn.bidcheck.compat.Java8Api.listOf(new Rule("INVENTORY-"+identity(source).substring(0,18),source,"SECTION","","sourceInventory","","","",parameters,source,"",cn.bidcheck.compat.Java8Api.listOf()));
     }
     static boolean applies(Rule rule){return Boolean.TRUE.equals(rule.parameters().get("sourceInventory"))&&VERSION.equals(rule.parameters().get("inventoryVersion"));}
+    /** An intact cache digest cannot make an obsolete executable encoding compatible. */
+    static boolean outdatedFormula(com.fasterxml.jackson.databind.JsonNode value){
+        if(value==null)return false;
+        com.fasterxml.jackson.databind.JsonNode parameters=value.path("parameters");
+        if(parameters.path("sourceInventory").asBoolean(false)&&!VERSION.equals(parameters.path("inventoryVersion").asText("")))return true;
+        for(com.fasterxml.jackson.databind.JsonNode child:value)if(outdatedFormula(child))return true;
+        return false;
+    }
     // Named forms read their exact current-source windows themselves and produce
     // page-bound visual requests. Retrieving the generic inventory label again
     // cannot improve that read and must not create three redundant search rounds.
@@ -126,6 +135,7 @@ public final class SourceRequirementInventory {
         List<Document> tenderDocuments=evaluator.context.get("tenderDocuments") instanceof Collection<?>
                 ?cn.bidcheck.compat.Java8Api.toList(((Collection<?>) (evaluator.context.get("tenderDocuments"))).stream().filter(Document.class::isInstance).map(Document.class::cast)):cn.bidcheck.compat.Java8Api.listOf();
         List<Finding> findings=snapshot.findings();
+        List<Map<String,Object>> inheritedGapOrigins=new ArrayList<>();
         List<Decision> children=new ArrayList<>();List<String> unresolved=new ArrayList<>(inventory.issues());unresolved.addAll(snapshot.issues());Set<String> ids=new LinkedHashSet<>(); int completeMembers=0;
         if(inventory.members().isEmpty())unresolved.add("引用范围未形成非空、完整的要求成员集合");
         for(Member member:inventory.members()){
@@ -152,7 +162,12 @@ public final class SourceRequirementInventory {
             if(closedMember)completeMembers++;
             for(Finding finding:matches)if(ids.add(finding.checkpoint().id())){
                 List<Gap> gaps=new ArrayList<>();Object rawAtomic=finding.assessment()==null?null:finding.assessment().get("atomicCheck");
-                if(rawAtomic instanceof Map<?,?>)for(Map<String,Object> gapRow:RuleEvaluator.maps(((Map<?,?>) (rawAtomic)).get("gaps")))gaps.add(new Gap(str(gapRow,"code"),str(gapRow,"description"),str(gapRow,"requiredInput"),str(gapRow,"resumeTrigger")));
+                if(rawAtomic instanceof Map<?,?>)for(Map<String,Object> gapRow:RuleEvaluator.maps(((Map<?,?>) (rawAtomic)).get("gaps"))){
+                    Gap copied=new Gap(str(gapRow,"code"),str(gapRow,"description"),str(gapRow,"requiredInput"),str(gapRow,"resumeTrigger"));
+                    gaps.add(copied);
+                    inheritedGapOrigins.add(linked("sourceCheckpointId",finding.checkpoint().id(),"sourceFindingId",finding.id(),
+                        "sourceRunId",finding.runId(),"gap",copied.map()));
+                }
                 if("PASS".equals(finding.evaluation().status())&&!gaps.isEmpty()){
                     unresolved.add("子事项仍有未完成义务："+finding.checkpoint().title());continue;
                 }
@@ -164,6 +179,8 @@ public final class SourceRequirementInventory {
         proof.put("inventoryCompletedMembers",completeMembers);
         proof.put("inventoryTotalMembers",inventory.members().stream().filter(m->!SourceObligationDirectory.HEADING.equals(m.nodeType())).count());
         proof.put("dependencyCheckpointIds",cn.bidcheck.compat.Java8Api.listCopyOf(ids));proof.put("unresolvedMembers",unresolved);
+        proof.put("dependencyGapOwnership",linked("version",FAILURE_OWNERSHIP_VERSION,"authority","CURRENT_SERVER_PROOF",
+            "ownerCheckpointId",cp.id(),"runId",str(evaluator.context,"sourceRunId"),"origins",inheritedGapOrigins,"businessProof",false));
         proof.put("dependencyRevision",RequirementDependencyProof.relevantRevision(snapshot,ids));
         proof.put("inventorySourceRangeClosed",inventory.issues().isEmpty());
         proof.put("allDocumentMembersCovered",unresolved.isEmpty());

@@ -11,6 +11,27 @@ import static org.mockito.Mockito.*;
 
 /** Export only, in-memory collaborators; no database, application server or provider calls. */
 class BusinessProjectionReportTest {
+    @Test void originalAdviceColumnUsesRawModelRecordAcrossStorageFormsAndKeepsPublishedNextStep() throws Exception {
+        Evaluation model=new Evaluation("UNDETERMINED","模型原始原因","模型原始建议",Collections.emptyList(),0.5,"MODEL");
+        Evaluation beforePublication=new Evaluation("UNDETERMINED","原始判断","来源保护后建议",Collections.emptyList(),0.5,"RULE");
+        Map<String,Object> persisted=new ObjectMapper().convertValue(model,Map.class);
+        Map<String,Object> explicitBlank=Collections.singletonMap("suggestion","");
+        for(Object stored:Arrays.asList(model,persisted,explicitBlank,null)){
+            Map<String,Object> trace=new LinkedHashMap<>();
+            trace.put("coverage",Collections.singletonMap("semanticGap",BidService.fields("validated",true,"kind","EXTERNAL_INPUT")));
+            trace.put("prePresentationEvaluation",beforePublication);
+            if(stored!=null)trace.put("rawEvaluation",stored);
+            // Older records may lack rawEvaluation. Absence of original advice is different
+            // from an original record whose suggestion was explicitly empty.
+            Finding input=finding("UNDETERMINED",trace);
+            List<List<String>> table=rows(new String(reports(input).generate("r","csv").bytes(),StandardCharsets.UTF_8));
+            List<String> columns=table.get(0),row=table.get(1);
+            String expected=stored==null?"来源保护后建议":stored==explicitBlank?"":"模型原始建议";
+            assertEquals(expected,row.get(columns.indexOf("原始模型建议（未作为用户待办）")));
+            assertEquals(row.get(columns.indexOf("下一步")),row.get(columns.indexOf("修改建议")));
+            assertTrue(row.get(columns.indexOf("修改建议")).contains("外部记录"));
+        }
+    }
     @Test void csvAndHtmlUseSharedResponsibilityWhilePreservingOriginalAdvice() throws Exception {
         for(java.util.Map<java.lang.String, java.lang.Object> item:cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.<String, Object>mapOf("resolutionJob", cn.bidcheck.compat.Java8Api.mapOf("id", "j", "status", "BLOCKED_NO_PROGRESS")), cn.bidcheck.compat.Java8Api.<String, Object>mapOf("guards", cn.bidcheck.compat.Java8Api.listOf(cn.bidcheck.compat.Java8Api.mapOf("code", "MODEL_TIMEOUT"))), cn.bidcheck.compat.Java8Api.<String, Object>mapOf("coverage", cn.bidcheck.compat.Java8Api.mapOf("semanticGap", cn.bidcheck.compat.Java8Api.mapOf("validated", true, "kind", "EXTERNAL_INPUT"))))) {
             cn.bidcheck.domain.Domain.Finding finding=finding("UNDETERMINED",item);String before=new ObjectMapper().writeValueAsString(finding);cn.bidcheck.service.ReportService reports=reports(finding);

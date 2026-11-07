@@ -148,6 +148,23 @@ public final class FocusedCheckEvaluator {
         out.put("businessPresentation",BusinessResultPresentation.describe(evaluation,out));return out;
     }
 
+    /** Keep the business decision and its evidence intact, but publish the actionable
+     * reason and instruction consistently to the finding API, page and report. */
+    static Finding publishedFinding(Finding finding,Map<String,Object> assessment){
+        Evaluation before=finding.evaluation();
+        Map<String,Object> trace=reconcileAssessment(before,assessment),presentation=map(trace.get("businessPresentation"));
+        String state=Objects.toString(presentation.get("state"),"");
+        boolean scopedCertificate=state.equals("EVIDENCE_PENDING")&&CheckResolution.maps(map(trace.get("atomicCheck")).get("gaps"))
+            .stream().anyMatch(g->"CERTIFICATE_SET_COVERAGE_REQUIRED".equals(g.get("code")));
+        if(!Arrays.asList("MATERIAL_REQUIRED","USER_ACTION").contains(state)&&!scopedCertificate)
+            return new Finding(finding.id(),finding.runId(),finding.checkpoint(),before,trace);
+        String reason=Objects.toString(presentation.get("reason"),before.reason()),next=Objects.toString(presentation.get("nextStep"),before.suggestion());
+        if(reason.equals(before.reason())&&next.equals(before.suggestion()))return new Finding(finding.id(),finding.runId(),finding.checkpoint(),before,trace);
+        trace.putIfAbsent("prePresentationEvaluation",before);
+        trace.putIfAbsent("rawEvaluation",trace.get("prePresentationEvaluation"));
+        Evaluation published=new Evaluation(before.status(),reason,next,before.evidences(),before.confidence(),before.method());
+        return new Finding(finding.id(),finding.runId(),finding.checkpoint(),published,trace);
+    }
     private static List<String> domains(Checkpoint checkpoint){
         String text=Objects.toString(checkpoint.title(),"")+"\n"+Objects.toString(checkpoint.expected(),"");
         List<String> selected=new ArrayList<>();

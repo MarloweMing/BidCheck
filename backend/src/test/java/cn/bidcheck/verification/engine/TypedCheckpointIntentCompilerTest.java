@@ -103,12 +103,31 @@ class TypedCheckpointIntentCompilerTest {
 
     private EvidenceCorpus certificateCorpus(){
         Document document=new Document("bid","project","BID","投标文件.pdf",1,"bid-hash","",
-                cn.bidcheck.compat.Java8Api.listOf(new Page(1,"张三 注册证书 证书编号：R001 有效期2024年1月1日至2027年8月4日","PAGE","TEXT","")),cn.bidcheck.compat.Java8Api.listOf());
+                cn.bidcheck.compat.Java8Api.listOf(
+                    new Page(1,"张三 注册证书 证书编号：R001 有效期2024年1月1日至2027年8月4日","PAGE","TEXT",""),
+                    new Page(2,"张三 注册证书 证书编号：R001 有效期2024年1月1日至2026年8月4日","PAGE","TEXT",""),
+                    new Page(3,"张三 注册证书 证书编号：R001 有效期2020年1月1日至2021年1月1日","PAGE","TEXT","")),cn.bidcheck.compat.Java8Api.listOf());
         return new EvidenceCorpus(cn.bidcheck.compat.Java8Api.listOf(document));
     }
     private Fact certificate(EvidenceCorpus corpus,String id,String scope,String start,String end){
-        return new Fact(id,"CERTIFICATE","张三","certificateExpiry",start+"至"+end,end,"","",scope,
-                cn.bidcheck.compat.Java8Api.listOf(corpus.all.get(0).id()),cn.bidcheck.compat.Java8Api.mapOf("category", "注册证书", "number", "R001", "numberField", "证书编号", "validityField", "有效期", "start", start, "end", end));
+        java.time.format.DateTimeFormatter format=java.time.format.DateTimeFormatter.ofPattern("yyyy年M月d日");
+        String raw=java.time.LocalDate.parse(start).format(format)+"至"+java.time.LocalDate.parse(end).format(format);
+        Source original=corpus.all.stream().filter(s->s.evidence().quote().contains(raw)).findFirst().get();
+        return certificate(id,scope,start,end,raw,original.id());
+    }
+    private Fact certificate(String id,String scope,String start,String end,String raw,String source){
+        return new Fact(id,"CERTIFICATE","张三","certificateExpiry",raw,end,"","",scope,
+                cn.bidcheck.compat.Java8Api.listOf(source),cn.bidcheck.compat.Java8Api.mapOf("category", "注册证书", "number", "R001", "numberField", "证书编号", "validityField", "有效期", "start", start, "end", end));
+    }
+    @Test void contradictoryExpiryCandidateIsRejected(){
+        EvidenceCorpus corpus=certificateCorpus();
+        Fact f=certificate("expired","CURRENT_PROJECT","2024-01-01","2026-08-04","2024-01-01至2026-08-04",corpus.all.get(0).id());
+        assertEquals("RAW_VALUE_UNGROUNDED",new ProofVerifier().issue(f,corpus.byId));
+    }
+    @Test void isoRewrittenRawValueIsRejected(){
+        EvidenceCorpus corpus=certificateCorpus();
+        Fact f=certificate("valid","CURRENT_PROJECT","2024-01-01","2027-08-04","2024-01-01至2027-08-04",corpus.all.get(0).id());
+        assertEquals("RAW_VALUE_UNGROUNDED",new ProofVerifier().issue(f,corpus.byId));
     }
     private Map<String,Object> deadlineContext(boolean complete){
         return cn.bidcheck.compat.Java8Api.mapOf("certificateSetComplete", complete, "referenceDates", cn.bidcheck.compat.Java8Api.mapOf("BID_DEADLINE", cn.bidcheck.compat.Java8Api.mapOf("referenceDate", "2026-08-05", "referenceDateSourceVerified", true, "referenceDateEvidence", cn.bidcheck.compat.Java8Api.mapOf("documentId", "tender", "quote", "投标截止时间为：2026年08月05日09时30分。", "confirmation", "USER_SELECTED_VERSION"))));

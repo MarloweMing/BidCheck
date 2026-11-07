@@ -95,6 +95,14 @@ public final class VerificationEngine {
         List<Fact> enterpriseBindings=EnterpriseSubjectBindings.extract(activeEvidenceRules,corpus.all);
         enterpriseBindings.forEach(f->facts.put(f.id(),f));
         shared.publish(enterpriseBindings,nativeSources(corpus,enterpriseBindings),activeEvidenceRules,cn.bidcheck.compat.Java8Api.listOf(),false,"NATIVE");
+        List<Fact> systemCertificates=cn.bidcheck.compat.Java8Api.toList(NativeCertificateFacts.currentSystemCertificates(activeEvidenceRules,corpus).stream().map(SharedFactReuse::canonical));
+        systemCertificates.forEach(f->facts.put(f.id(),f));
+        if(!systemCertificates.isEmpty()){
+            shared.publish(systemCertificates,nativeSources(corpus,systemCertificates),activeEvidenceRules,Collections.emptyList(),false,"NATIVE");
+            session.record("CURRENT_SYSTEM_CERTIFICATE_ORIGINALS",linked("checkpointId",checkpoint.id()),linked("factIds",
+                cn.bidcheck.compat.Java8Api.toList(systemCertificates.stream().map(Fact::id)),"sourceIds",cn.bidcheck.compat.Java8Api.toList(systemCertificates.stream().flatMap(f->f.sourceIds().stream()).distinct()),
+                "establishesCertificateSetComplete",false,"modelCalls",0));
+        }
         if(RecoveryTargets.active(ctx)){
             candidates=RecoveryReplay.sources(ctx,corpus,model.identity());List<Map<String,Object>> recoveredLayout=layout(ctx,candidates,allEvidenceRules);
             candidates=withLayoutSources(corpus,candidates,recoveredLayout);recoveredLayout=layout(ctx,candidates,allEvidenceRules);ctx.put("_validatedLayoutCells",recoveredLayout);
@@ -147,7 +155,7 @@ public final class VerificationEngine {
         }
         for(int round=0;round<(useAgent?0:localRecovery?1:3)&&!retrievable.isEmpty();round++){
             if(Thread.currentThread().isInterrupted())throw interrupted();session.rounds=round+1;
-            Map<String,Decision> priorDecisions=previousDecisions;List<Rule> unresolved=cn.bidcheck.compat.Java8Api.toList(retrievable.stream().filter(r->{Decision d=priorDecisions.get(readParents.getOrDefault(r.id(),r.id()));return d==null||!d.gaps().isEmpty()||!cn.bidcheck.compat.Java8Api.setOf("PASS", "FAIL", "NOT_APPLICABLE").contains(d.status());}));
+            Map<String,Decision> priorDecisions=previousDecisions;List<Rule> unresolved=cn.bidcheck.compat.Java8Api.toList(retrievable.stream().filter(r->{Decision d=priorDecisions.get(readParents.getOrDefault(r.id(),r.id()));return !SourceScoringRules.professionReadCanWait(r,d)&&!LegalRegistrationProof.hostTextExamined(d)&&(d==null||!d.gaps().isEmpty()||!cn.bidcheck.compat.Java8Api.setOf("PASS", "FAIL", "NOT_APPLICABLE").contains(d.status()));}));
             if(unresolved.isEmpty()){stopReason="OBLIGATIONS_RESOLVED";break;}
             if(localRecovery)candidates=RecoveryReplay.sources(ctx,corpus,model.identity());
             else try{candidates=corpus.select(ObligationRecovery.retrievalRules(unresolved,ctx.get("recoveryGaps")),new ArrayList<>(facts.values()),candidates,round,retriever,session);}catch(InterruptedIOException e){throw interrupted();}
@@ -158,7 +166,10 @@ public final class VerificationEngine {
             long nativeExtracted=System.nanoTime();
             shared.publish(nativeFacts,nativeSources(corpus,nativeFacts),unresolved,layout,false,"NATIVE");
             LOG.info("bidcheck.fact_native runId={} checkpointId={} round={} sources={} facts={} extractMs={} publishMs={}",safeDiagnostic(ctx.get("sourceRunId")),safeDiagnostic(checkpoint.id()),round,candidates.size(),nativeFacts.size(),(nativeExtracted-nativeStarted)/1_000_000,(System.nanoTime()-nativeExtracted)/1_000_000);
-            List<Rule> extractionRules=cn.bidcheck.compat.Java8Api.toList(shared.extractionRules(unresolved,candidates,new RuleEvaluator(new ArrayList<>(facts.values()),corpus,ctx)).stream()
+            RuleEvaluator nativeEvaluator=new RuleEvaluator(new ArrayList<>(facts.values()),corpus,ctx);
+            for(Rule leaf:leaves)if("TITLE_TIER".equals(str(leaf.parameters(),"sourceScoringMode")))nativeEvaluator.evaluate(leaf);
+            List<Rule> extractionRules=cn.bidcheck.compat.Java8Api.toList(shared.extractionRules(unresolved,candidates,nativeEvaluator).stream()
+                .filter(rule->!SourceScoringRules.professionReadCanWait(rule,nativeEvaluator.decisions.get(readParents.get(rule.id()))))
                 // Keep visual rules in retrieval/shared fact lookup so sourced subject bindings are
                 // still consumed. Text extraction cannot provide an image observation for them.
                 .filter(rule->!localRecovery&&!ProgramSourceRead.applies(rule)&&!SourceScoringRules.programOnly(rule)&&!SourceRequirementInventory.applies(rule)&&!SourceSignatureRequirements.applies(rule)&&!RequirementBusinessRouting.applies(rule)&&!Boolean.TRUE.equals(rule.parameters().get("templateFormAudit"))&&!cn.bidcheck.compat.Java8Api.setOf("UNSUPPORTED", "INPUT", "REFERENCE_TIME", "NOT_APPLICABLE", "VISUAL", "TEXT_ANOMALY", "QUALITY_ADVISORY").contains(rule.predicate())&&cn.bidcheck.compat.Java8Api.isBlank(SameFieldComparisonTarget.reference(rule))));
@@ -215,7 +226,8 @@ public final class VerificationEngine {
             EvidenceInvestigation.Host host=new EvidenceInvestigation.Host(checkpoint,plan,agentTargets,corpus,facts,ctx,shared,session,retriever,rejected,evaluator.incompleteSourceReview);
             host.coverageDependencies=coverageDependencies;
             agentInvestigation=EvidenceInvestigation.run(investigator,host);evaluator=host.evaluator;decision=host.decision;preserveValidChildren(plan.rules(),evaluator);
-            candidates=cn.bidcheck.compat.Java8Api.listCopyOf(host.disclosed.values());evaluator.visualRequests.addAll(host.visualRequests);
+            candidates=cn.bidcheck.compat.Java8Api.listCopyOf(host.disclosed.values());
+            for(Map<String,Object> request:host.visualRequests)if(!evaluator.visualRequests.contains(request))evaluator.visualRequests.add(request);
             session.modelCalls+=RunSession.number(agentInvestigation.get("modelCalls"),0);
             stopReason="AGENT_"+str(agentInvestigation,"status");
             String investigationError=str(agentInvestigation,"errorCode");
@@ -332,6 +344,7 @@ public final class VerificationEngine {
     /** Unsupported branches and input/time decisions do not need document retrieval or paid extraction. */
     static List<Rule> evidenceRules(List<Rule> rules){
         List<Rule> out=new ArrayList<>();for(Rule rule:rules){
+            if(Boolean.TRUE.equals(rule.parameters().get("sourceInventory"))&&!SourceRequirementInventory.applies(rule))continue;
             if(rule.predicate().equals("UNSUPPORTED")){out.addAll(evidenceRules(rule.children()));continue;}
             // These source-bound readers scan the frozen corpus directly and issue their
             // own receipt; stale model field-read dependencies cannot replace that read.

@@ -12,7 +12,7 @@ import static cn.bidcheck.verification.engine.ProofVerifier.*;
 
 /** Closed scoring formulas from exact tender spans. Finding a document is not a score. */
 final class SourceScoringRules {
-    static final String VERSION="source-scoring-rules-4-contract-membership-and-lot-boundaries";
+    static final String VERSION="source-scoring-rules-7-verified-inventory-navigation";
     private static final Pattern PLAN=Pattern.compile("^(设计方案|施工组织设计)[^\\t]*\\t\\1完整性[:：](.+?)([0-9]+)项内容[，,]?(?:上述)?内容齐全得([0-9.]+)分[，,]每缺(?:少)?(?:一项|1项)(?:内容)?扣([0-9.]+)分[，,]扣完为止[。]?$",Pattern.DOTALL);
     private static final Pattern TITLE=Pattern.compile("(?:具有|具备)[（(]([^）)]+)[）)]高级工程师职称得([0-9.]+)分[，,]中级得([0-9.]+)分[，,](?:未提交|未提供)不得分");
     private static final Pattern URL=Pattern.compile("(?i)(?:https?://|www\\.)[A-Za-z0-9.-]+(?:/[^\\s<>]*)?");
@@ -76,7 +76,17 @@ final class SourceScoringRules {
         Rule extra=SourceExtraPersonnelScore.compile(original);if(extra!=null)return cn.bidcheck.compat.Java8Api.listOf(extra);
         return cn.bidcheck.compat.Java8Api.listOf();
     }
-    static boolean applies(Rule rule){return VERSION.equals(rule.parameters().get("sourceScoringVersion"));}
+    /** A persisted source formula remains owned by this executor across upgrades.
+     * It must be rebuilt or rejected; it can never acquire a generic contract-count meaning. */
+    static boolean applies(Rule rule){return rule.parameters().containsKey("sourceScoringVersion")
+        || rule.parameters().containsKey("sourceScoringMode") || "SOURCE_SCORING".equals(rule.parameters().get("deterministicFamily"));}
+    static boolean outdatedFormula(com.fasterxml.jackson.databind.JsonNode tree){
+        com.fasterxml.jackson.databind.JsonNode params=tree.path("parameters");
+        if((params.has("sourceScoringVersion")||params.has("sourceScoringMode")||"SOURCE_SCORING".equals(params.path("deterministicFamily").asText()))
+                &&!VERSION.equals(params.path("sourceScoringVersion").asText()))return true;
+        for(String group:Arrays.asList("rules","children"))for(com.fasterxml.jackson.databind.JsonNode child:tree.path(group))if(outdatedFormula(child))return true;
+        return false;
+    }
     static boolean compilationComplete(Rule rule,String requirement){
         return applies(rule)&&issue(rule)==null&&clean(rule.sourceQuote()).equals(clean(requirement));
     }
@@ -85,6 +95,7 @@ final class SourceScoringRules {
      * the dependencies of a scoring formula to the existing fact lookup/extractor. */
     static List<Rule> evidenceRules(Rule rule){
         if(CompoundBusinessRequirements.applies(rule))return CompoundBusinessRequirements.evidenceRules(rule);
+        if(applies(rule)&&issue(rule)!=null)return Collections.emptyList();
         if (programOnly(rule) && issue(rule) == null) {
             Map<String,Object> parameters = linked("scoringParentRuleId", rule.id(),
                 "readPurpose", "SCORE_BODY_DEPENDENCY", "sourceScoringReadVersion", VERSION,
@@ -125,6 +136,13 @@ final class SourceScoringRules {
     }
     /** A regenerated read can close body acquisition, never the score or quality grade. */
     static Decision bodyReadDecision(Rule read, Decision parent, RuleEvaluator evaluator) {
+        if (professionReviewRequired(parent) && read.predicate().equals("MONTHS")
+                && parent.id().equals(str(read.parameters(), "scoringParentRuleId"))) {
+            List<Fact> records=titleSocialRecords(str(parent.proof(),"person"),evaluator);
+            Map<String,Object> proof=linked("businessProof",false,"parentRuleId",parent.id(),"verifiedSocialRecord",!records.isEmpty());
+            return records.isEmpty()?evaluator.unknown(read,"SOCIAL_RECORD_READ_REQUIRED","这名拟派人员的社保记录仍须单独取证",records,proof):
+                evaluator.pass(read,"已读取当前拟派人员的缴费单位和月份，评分时点、月份范围及共同证明由父规则独立核验",records,proof);
+        }
         if (parent == null || !Boolean.TRUE.equals(read.parameters().get("programBodyRead"))
                 || !VERSION.equals(read.parameters().get("sourceScoringReadVersion"))
                 || !parent.id().equals(str(read.parameters(), "scoringParentRuleId"))) return parent;
@@ -144,7 +162,9 @@ final class SourceScoringRules {
     /** Rebuild the server-owned parameters from the exact source again at evaluation;
      * replayed/model-supplied metadata cannot invent a score or remove a dimension. */
     static String issue(Rule rule){
-        if(!applies(rule))return null;String original="SUBJECTIVE_RUBRIC".equals(str(rule.parameters(),"sourceScoringMode"))?str(rule.parameters(),"completenessSourceQuote"):rule.sourceQuote();
+        if(!applies(rule))return null;
+        if(!VERSION.equals(str(rule.parameters(),"sourceScoringVersion")))return "来源评分模板版本已过期或缺失，需依据冻结的招标原文重新编译";
+        String original="SUBJECTIVE_RUBRIC".equals(str(rule.parameters(),"sourceScoringMode"))?str(rule.parameters(),"completenessSourceQuote"):rule.sourceQuote();
         List<Map<String,Object>> sources=new ArrayList<>();sources.add(linked("kind","OBLIGATION","sourceQuote",original));
         if("SUBJECTIVE_RUBRIC".equals(str(rule.parameters(),"sourceScoringMode")))sources.add(linked("kind","SCOPED_SCORING_CONTINUATION","sourceQuote",rule.sourceQuote()));
         cn.bidcheck.verification.engine.RequirementSourceContext.Context context=new RequirementSourceContext.Context(original,cn.bidcheck.compat.Java8Api.mapOf("verification", "SOURCE_REPARSE"),sources);
@@ -202,6 +222,10 @@ final class SourceScoringRules {
                 return new Decision(rule.id(),rule.description(),"PASS","本次拟派人员明确声明未提交职称证书，按原文未提交档计0分；不等同于资格否决",cn.bidcheck.compat.Java8Api.listOf(explicit.evidence()),cn.bidcheck.compat.Java8Api.listOf(),proof);}
         }
         Set<String> certificateIdentities=new LinkedHashSet<>();for(Fact fact:accepted)certificateIdentities.add(str(fact.attributes(),"number")+"|"+grade(str(fact.attributes(),"grade"))+"|"+str(fact.attributes(),"profession").replaceFirst("类$",""));
+        if (accepted.isEmpty()) {
+            Decision review = titleProfessionReview(rule, evaluator, person, candidates, proof);
+            if (review != null) return review;
+        }
         if(certificateIdentities.size()!=1)return evaluator.unknown(rule,"SCORING_TITLE_IDENTITY_REQUIRED","当前拟派人员的专业、等级与唯一职称证号尚未对应；未召回证书不能直接计为未提交0分",candidates,proof);
         Fact certificate=accepted.get(0);String number=str(certificate.attributes(),"number"),grade=grade(str(certificate.attributes(),"grade"));
         List<Fact> roleLinks=DomainBindings.roleLinks(rule.subject(),evaluator.facts,evaluator.corpus);
@@ -242,7 +266,63 @@ final class SourceScoringRules {
         List<Evidence> evidences=new ArrayList<>(out.evidences());evidences.addAll(proofEvidence);
         return new Decision(out.id(),out.description(),out.status(),out.reason(),cn.bidcheck.compat.Java8Api.toList(evidences.stream().distinct()),out.gaps(),out.proof());
     }
+    /** A printed specialty and a broader tender category are different facts. Only a
+     * unique cited original bound to the current appointee can produce a review question. */
+    private static Decision titleProfessionReview(Rule rule, RuleEvaluator evaluator, String person,
+            List<Fact> candidates, Map<String,Object> proof) {
+        String criterion = str(rule.parameters(), "profession");
+        if (!criterion.endsWith("类") || candidates.isEmpty()) return null;
+        Set<String> numbers = new HashSet<>();
+        for (Fact candidate : candidates) numbers.add(str(candidate.attributes(), "number"));
+        if (numbers.size() != 1) return null;
+        Map<String,Object> review = new LinkedHashMap<>();
+        Set<String> recordKeys = new HashSet<>();
+        Set<String> certificateSources = new LinkedHashSet<>(), appointments = new LinkedHashSet<>();
+        for (Fact candidate : candidates) {
+            Map<String,Object> binding = ConfirmedSubjectBindings.edge(person, candidate, evaluator.facts, evaluator.corpus);
+            if (binding.isEmpty()) continue;
+            for (String id : candidate.sourceIds()) {
+                Source source = evaluator.corpus.byId.get(id);
+                if (source == null || source.index() || source.historical() || source.scopeContext().blocked()) continue;
+                ProfessionalTitleCertificate.Record record = ProfessionalTitleCertificate.read(source.evidence().quote());
+                if (record == null || !candidate.subject().equals(record.subject())
+                        || !str(candidate.attributes(), "number").equals(record.number())) continue;
+                String tier = grade(record.grade());
+                if (tier == null || !DomainBindings.known(record.profession())) return null;
+                if (record.profession().replaceFirst("类$", "").equals(criterion.replaceFirst("类$", ""))) return null;
+                recordKeys.add(record.number() + "|" + tier + "|" + record.profession());
+                certificateSources.add(id);
+                appointments.addAll(strings(binding.get("appointmentSourceIds")));
+                review.putAll(linked("person", person, "certificateNumber", record.number(), "grade", tier,
+                    "printedProfession", record.profession(), "requiredProfession", criterion, "identityMethod", binding.get("method")));
+            }
+        }
+        if (recordKeys.size() != 1 || appointments.isEmpty()) return null;
+        String question = person + "的职称证书（证号 " + review.get("certificateNumber") + "）记载专业为“"
+            + review.get("printedProfession") + "”，请依据本次招标评分标准确认该专业是否属于“" + criterion + "”。";
+        review.putAll(linked("sourceIds", new ArrayList<>(certificateSources), "appointmentSourceIds", new ArrayList<>(appointments), "question", question));
+        List<Fact> social=titleSocialRecords(person,evaluator);
+        proof.putAll(linked("professionScopeReview", review, "decisionBasis", "SOURCE_BOUND_TITLE_PROFESSION_REVIEW",
+            "person",person,"titleSocialReadPending",social.isEmpty(),"socialSourceIds",cn.bidcheck.compat.Java8Api.toList(social.stream().flatMap(f->f.sourceIds().stream()).distinct()),
+            "commonProofQuote", rule.parameters().get("commonProofQuote")));
+        return evaluator.unknown(rule, "SCORING_TITLE_PROFESSION_SCOPE_REQUIRED", question, candidates, proof);
+    }
     private static String grade(String value){return value.matches("高级(?:工程师)?")?"高级":value.matches("中级(?:工程师)?|工程师")?"中级":null;}
+    private static List<Fact> titleSocialRecords(String person,RuleEvaluator evaluator) {
+        return cn.bidcheck.compat.Java8Api.toList(evaluator.facts.stream().filter(f->"MONTHS".equals(f.kind())&&"CURRENT_PROJECT".equals(f.scope()))
+            .filter(f->DomainBindings.known(str(f.attributes(),"employer"))&&!strings(f.attributes().get("months")).isEmpty())
+            .filter(f->!ConfirmedSubjectBindings.edge(person,f,evaluator.facts,evaluator.corpus).isEmpty())
+            .filter(f->new ProofVerifier().issue(f,evaluator.corpus.byId)==null));
+    }
+    static boolean professionReadCanWait(Rule read,Decision parent) {
+        return professionReviewRequired(parent)&&!("MONTHS".equals(read.predicate())&&Boolean.TRUE.equals(parent.proof().get("titleSocialReadPending")));
+    }
+    static boolean professionReviewRequired(Decision decision) {
+        return decision != null && "UNDETERMINED".equals(decision.status())
+            && "SOURCE_BOUND_TITLE_PROFESSION_REVIEW".equals(str(decision.proof(), "decisionBasis"))
+            && !decision.gaps().isEmpty() && decision.gaps().stream()
+                .allMatch(g -> "SCORING_TITLE_PROFESSION_SCOPE_REQUIRED".equals(g.code()));
+    }
     private static boolean sameQuery(Source source,String person,String number,List<Fact> roles,RuleEvaluator evaluator){
         if(sameQuery(source.evidence().quote(),person,number))return true;
         for(Fact edge:evaluator.facts){

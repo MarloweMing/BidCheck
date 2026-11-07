@@ -6,7 +6,7 @@ import static cn.bidcheck.verification.facts.LedgerValues.*;
 
 /** Entirely synthetic persons and identifiers. */
 public final class StructuralFixtures {
-    public static final String NAME="合成人甲", ID="110101199001010011", OTHER="110101199202020022", HASH=cn.bidcheck.compat.Java8Api.repeat("a", 64);
+    public static final String NAME="合成人甲", ID="110101199001010015", OTHER="110101199202020025", HASH=cn.bidcheck.compat.Java8Api.repeat("a", 64);
     @com.fasterxml.jackson.annotation.JsonAutoDetect(fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY, getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE, isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
     public static final class Fixture {
         private final List<Map<String,Object>> cells;

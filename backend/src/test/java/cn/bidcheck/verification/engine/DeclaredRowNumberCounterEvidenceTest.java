@@ -11,6 +11,29 @@ import static cn.bidcheck.verification.engine.ContractRecordSubmissionTest.*;
 class DeclaredRowNumberCounterEvidenceTest {
     private static final String OTHER = "合成乙展厅装饰装修工程采购合同";
 
+    @Test void numberedLotHeadingAndIndependentMarkerDoNotWakeAnUnrelatedRow() throws Exception {
+        Fixture f=accepted(); Map<String,Object> binding=binding(f,metadata(f));
+        String stem="成都联通自有营业厅装修项目合同",code="CU12-5102-2022-006555";
+        Map<String,Object> event=change(f,code,OTHER,false);
+        Map<String,Object> evidence=map(((List<Map<String,Object>>)event.get("sources")).get(0).get("evidence"));
+        String body="②"+stem+"标段一\n合同编号:"+code+"\n# "+stem+"（标段1）-北京中雅达国际装饰有限公司";
+        evidence.put("quote",body);
+        assertFalse(matches(binding,event));
+        evidence.put("quote",body.replace("（标段1）","（标段2）"));
+        assertTrue(matches(binding,event));
+        evidence.put("quote",body+"\n# 另一展厅合同");
+        assertTrue(matches(binding,event));
+        evidence.put("quote",body);
+        Map<String,Object> same=change(f,NUMBER,OTHER,false);
+        map(((List<Map<String,Object>>)same.get("sources")).get(0).get("evidence")).put("quote",body.replace(code,NUMBER));
+        assertTrue(matches(binding,same),"Same number overrides different lot identity");
+        for(String field:Arrays.asList("signedDate","amount","personRole")) {
+            Map<String,Object> fact=map(event.get("fact"));
+            fact.put("field",field);map(fact.get("attributes")).put("contractName",NAME);
+            assertTrue(matches(binding,event),"An incoming counterfact on the actual target must wake: "+field);
+        }
+    }
+
     @Test void actualHostNumberReadProducesRowBoundCounterEvidenceWithoutReadDecision() throws Exception {
         Fixture f = accepted();
         assertFalse(f.host.evaluator.decisions.containsKey(f.target));

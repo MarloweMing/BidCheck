@@ -22,9 +22,12 @@ public final class DeclaredContractRelevance {
         String name = text(map(fact.get("attributes")),"contractName");
         if (name.isEmpty() && "contractName".equals(text(fact,"field"))) name = text(fact,"value");
         String title = text(row,"separatorTitle");
-        if (name.isEmpty() && projectNumber) name = currentNumberedTitle(row, fact, sources);
-        // Missing identities remain conservative, including sources-only {id} semantic-gate inputs.
-        if (name.isEmpty() || title.isEmpty() || sameDeclaredTitle(name, title)) return true;
+        if (name.isEmpty() && projectNumber && "contractNumber".equals(text(fact,"field"))) {
+            name = currentNumberedTitle(row, fact, sources);
+            // Ambiguous/incomplete identity pages can still carry same-number counterevidence.
+            if (name.isEmpty()) return true;
+        }
+        if (!name.isEmpty() && (title.isEmpty() || sameDeclaredTitle(name, title))) return true;
         int first = number(row.get("proofPageStart")), last = number(row.get("proofPageEnd"));
         if (text(row,"documentId").isEmpty() || text(row,"documentHash").isEmpty()
                 || number(row.get("documentVersion")) < 0 || first < 1 || last < first) return true;
@@ -233,6 +236,16 @@ public final class DeclaredContractRelevance {
     }
 
     private static boolean sameDeclaredTitle(String name, String title) {
+        if(name.startsWith("PAIRED_LOT_TITLE:")){
+            String stem=normalize(name.substring("PAIRED_LOT_TITLE:".length()).replaceFirst("(?:合同|协议)$",""));
+            String heading=normalize(title);
+            // Possible supplements of this project stay eligible even if their lot spelling varies.
+            return stem.contains(heading)||heading.contains(stem);
+        }
+        if(name.startsWith("PROJECT_NAME:")){
+            String project=normalize(name.substring("PROJECT_NAME:".length())),heading=normalize(title);
+            return project.contains(heading)||heading.contains(project)||ContractCandidateFields.sameTitle(project,heading);
+        }
         return normalize(name).equals(normalize(title))
             || ContractCandidateFields.sameTitle(name, title)
             || !title.endsWith("合同") && ContractCandidateFields.sameTitle(name, title + "合同");
@@ -296,6 +309,8 @@ public final class DeclaredContractRelevance {
         int parsed = 0;
         while (numbers.find()) { values.add(numbers.group(1)); parsed++; }
         if (parsed == 0 || parsed != mentioned || values.size() != 1 || !values.contains(expectedNumber)) return "";
+        String lot=pairedLotTitle(quote);
+        if(lot!=null) return lot;
 
         Set<String> titles = new LinkedHashSet<>();
         boolean explicit = false;
@@ -310,7 +325,43 @@ public final class DeclaredContractRelevance {
             titles.add(value);
             explicit |= heading || labelled;
         }
-        return explicit && titles.size() == 1 ? titles.iterator().next() : "";
+        if(!titles.isEmpty())return explicit && titles.size()==1?titles.iterator().next():"";
+        // Some numbered body pages have no contract heading but explicitly print the project
+        // name. Only use a single labelled project on this validated page for scheduling.
+        Set<String> projects=new HashSet<>();
+        Matcher named=Pattern.compile("(?m)^[ \\t]*(?:\\d+(?:\\.\\d+)*[、.)]?[ \\t]*)?(?:工程名称|项目名称)[ \\t]*[:：][ \\t]*([^\\r\\n|]+)").matcher(quote);
+        while(named.find()){
+            String project=named.group(1).trim();
+            if(project.length()<8||project.length()>160||project.matches(".*(?:另行|以.+为准|填写|详见|待定|本合同|示例).*")
+                    ||!project.matches(".*(?:项目|工程|中心|改造|装修).*"))return "";
+            projects.add(project);
+        }
+        return projects.size()==1?"PROJECT_NAME:"+projects.iterator().next():"";
+    }
+
+    private static final Pattern LOT_HEADING=Pattern.compile("^#{1,6}\\s+([\\p{IsHan}A-Za-z0-9·—–－_、-]{6,140}(?:合同|协议))[（(]标段([1-9])[）)]"
+        +"[—–－-][\\p{IsHan}A-Za-z0-9（）()·]{2,90}(?:有限责任公司|股份有限公司|有限公司)$");
+    private static final Pattern LOT_SEPARATOR=Pattern.compile("^[①②③④⑤⑥⑦⑧⑨⑩]([^|]{6,150}(?:合同|协议))标段([一二三四五六七八九1-9])$");
+
+    /** A supplier suffix is ambiguous by itself. A separate inventory marker on the very same
+     * numbered original must independently name the identical project and lot. Scheduling only. */
+    private static String pairedLotTitle(String quote) {
+        String printed="",separator="",lot="",ord="";
+        int headings=0,separators=0;
+        boolean competing=false;
+        for(String line:quote.split("\\r?\\n")){
+            String trimmed=line.trim(),compact=trimmed.replaceAll("\\s+","");
+            Matcher heading=LOT_HEADING.matcher(trimmed), marker=LOT_SEPARATOR.matcher(compact);
+            if(heading.matches()){headings++;printed=heading.group(1);lot=heading.group(2);}
+            else if(marker.matches()){separators++;separator=marker.group(1);ord=marker.group(2);}
+            else if(compact.matches("^[①②③④⑤⑥⑦⑧⑨⑩].*") || compact.matches("^(?:合同名称|合同名|协议名称|协议名)[:：].*")
+                    || definiteTitle(compact.replaceFirst("^#{1,6}",""))
+                    || trimmed.matches("^#{1,6}\\s+.*(?:合同|协议).*")) competing=true;
+        }
+        if(headings==0)return null;
+        if(competing||headings!=1||separators!=1||!ContractCandidateFields.sameTitle(printed,separator))return "";
+        int chinese="一二三四五六七八九".indexOf(ord);
+        return lot.equals(chinese<0?ord:String.valueOf(chinese+1))?"PAIRED_LOT_TITLE:"+printed:"";
     }
 
     private static boolean definiteTitle(String value) {

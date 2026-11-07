@@ -29,14 +29,14 @@ class PlannedCoverageGuardTest {
         assertEquals("PASS",decision.status());
     }
     @Test void filledBareRoleConfigurationDoesNotRequireUnrelatedImageAppendices(){
-        EvidenceCorpus corpus=corpus("本项目专职安全员：张甲 身份证号码：110101199001010011");
+        EvidenceCorpus corpus=corpus("本项目专职安全员：张甲 身份证号码：110101199001010015");
         cn.bidcheck.verification.engine.VerificationTypes.Fact person=new VerificationTypes.Fact("person","PERSON_ROLE","专职安全员","role","张甲","张甲","","","CURRENT_PROJECT",cn.bidcheck.compat.Java8Api.listOf(corpus.all.get(0).id()),cn.bidcheck.compat.Java8Api.mapOf());
         cn.bidcheck.verification.engine.VerificationTypes.Rule rule=new Rule("count","岗位配置","PERSON_COUNT","专职安全员","personCount","","1","人",cn.bidcheck.compat.Java8Api.mapOf(),"专职安全员1人","",cn.bidcheck.compat.Java8Api.listOf());
         cn.bidcheck.verification.engine.VerificationTypes.Decision decision=new RuleEvaluator(cn.bidcheck.compat.Java8Api.listOf(person),corpus,cn.bidcheck.compat.Java8Api.mapOf()).evaluate(rule);
         assertEquals("PASS",decision.status(),decision.toString());assertEquals("ROLE_CONFIGURATION_ONLY",decision.proof().get("proofScope"));assertEquals(false,decision.proof().get("exactCountProven"));
     }
     @Test void staffingShortageUpperBoundAndExactCountStillNeedFullCoverage(){
-        EvidenceCorpus corpus=corpus("本项目专职安全员完整名单：张甲。\n本项目专职安全员：张甲 身份证号码：110101199001010011");
+        EvidenceCorpus corpus=corpus("本项目专职安全员完整名单：张甲。\n本项目专职安全员：张甲 身份证号码：110101199001010015");
         cn.bidcheck.verification.engine.VerificationTypes.Fact person=new VerificationTypes.Fact("person","PERSON_ROLE","专职安全员","role","张甲","张甲","","","CURRENT_PROJECT",cn.bidcheck.compat.Java8Api.listOf(corpus.all.get(0).id()),cn.bidcheck.compat.Java8Api.mapOf());
         for(String[] input:cn.bidcheck.compat.Java8Api.listOf(new String[]{"","2","专职安全员2人"}, new String[]{"<=","1","专职安全员不超过1人"}, new String[]{"=","1","专职安全员恰好1人"})){
             cn.bidcheck.verification.engine.VerificationTypes.Rule rule=new Rule("count","岗位配置","PERSON_COUNT","专职安全员","personCount",input[0],input[1],"人",cn.bidcheck.compat.Java8Api.mapOf(),input[2],"",cn.bidcheck.compat.Java8Api.listOf());

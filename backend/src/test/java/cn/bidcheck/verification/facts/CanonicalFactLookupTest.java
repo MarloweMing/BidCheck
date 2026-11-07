@@ -21,6 +21,26 @@ class CanonicalFactLookupTest {
     Map<String,Object> request(Document doc,List<Map<String,Object>> sources,boolean fields){return of("lookupMode","CANONICAL_SOURCE","sourceIds",cn.bidcheck.compat.Java8Api.toList(sources.stream().map(s->text(s,"id"))),"sources",sources,"factKinds",cn.bidcheck.compat.Java8Api.listOf("FIELD"),"documentIds",cn.bidcheck.compat.Java8Api.listOf(doc.id()),"includeFieldCoverage",fields,"observationKeys",cn.bidcheck.compat.Java8Api.listOf(text(data.fieldReceipt("category","READ_NOT_FOUND",cn.bidcheck.compat.Java8Api.listOf()),"observationKey")),"modelIdentity","model","limit",240,"fieldCoverageLimit",240);}
     List<Map<String,Object>> lookup(Document doc,Map<String,Object> req){return ledger.lookup(ledger.prepareManifest("project","engine",cn.bidcheck.compat.Java8Api.listOf(doc)),req);}
 
+    @Test void immutableReusePublicationCannotMigrateHistoricalBatchesInsideItsTransaction(){
+        Document d=doc();List<Map<String,Object>> sources=Collections.singletonList(data.source(d,"S"));
+        List<Map<String,Object>> facts=Collections.singletonList(data.fact("f","一级","S"));
+        publish(d,"original-before-upgrade",facts,sources,Collections.emptyList(),"NATIVE");store.removeLookup();
+        FactLedgerService.PreparedManifest manifest=ledger.prepareManifest("project","engine",Collections.singletonList(d));
+        Map<String,Object> adoption=data.batch(facts,sources);adoption.put("origin","REUSED");adoption.put("operationIdentity","new-run-adoption");
+        FactLedgerService.PreparedBatch prepared=ledger.prepareBatch(manifest,"reuse-run","reuse-cp",adoption);
+        assertTrue(ledger.preloadPublicationReuse(manifest,Collections.singletonList(prepared)).allReusable());
+        store.reads.clear();Map<String,Object> result=ledger.publishPrepared(prepared);
+        assertEquals(1,result.get("accepted"));assertEquals(1,result.get("reused"));
+        assertFalse(store.reads.contains("fact_index"),"historical migration enumeration must not run in an immutable-use transaction");
+        assertFalse(store.rows.values().stream().anyMatch(r->r.kind.equals("fact_lookup_item")));
+        assertEquals("",ledger.lookupRevision(manifest),"deferred maintenance must not claim readiness");
+        assertTrue(store.rows.values().stream().anyMatch(r->r.kind.equals("fact_usage")&&"reuse-run".equals(r.parent)));
+        assertEquals(1,lookup(d,request(d,sources,false)).size(),"safe legacy lookup remains available");
+        Map<String,Object> migrated=ledger.migrateLookupIndex(manifest,50);
+        assertEquals("READY",maps(migrated.get("documents")).get(0).get("status"));
+        assertFalse(ledger.lookupRevision(manifest).isEmpty(),"explicit maintenance is not blocked by the publication-only decision");
+    }
+
     @Test void invalidExplicitFieldIdentityFailsBeforeAnyDatabaseOrLegacyRead(){
         Document d=doc();java.util.List<java.util.Map<java.lang.String, java.lang.Object>> sources=cn.bidcheck.compat.Java8Api.listOf(data.source(d,"S"));publish(d,"original",cn.bidcheck.compat.Java8Api.listOf(data.fact("f","一级","S")),sources,cn.bidcheck.compat.Java8Api.listOf(),"NATIVE");
         for(String missing:cn.bidcheck.compat.Java8Api.listOf("observationKeys", "modelIdentity")){
@@ -40,13 +60,14 @@ class CanonicalFactLookupTest {
         for(int i=0;i<20;i++){Map<String,Object> receipt=copy(field);receipt.put("reusedObservation",true);receipt.put("reusedFromBatchId",initial.get("batchId"));assertTrue(maps(publish(d,"adopt-"+i,facts,sources,cn.bidcheck.compat.Java8Api.listOf(receipt),"REUSED_OBSERVATION").get("changedEvidence")).isEmpty());}
         assertEquals(before,store.searchCounts());assertEquals(revision,ledger.lookupRevision(manifest));
         assertEquals(21,store.count("fact_usage"));assertEquals(21,store.count("fact_coverage_usage"));
-        Map<String,Object> auditRequest=request(d,sources,true);auditRequest.put("includeOrigins",true);java.util.List<java.util.Map<java.lang.String, java.lang.Object>> rows=lookup(d,auditRequest);assertEquals(2,rows.size());assertEquals(21,maps(rows.get(0).get("origins")).size());
+        Map<String,Object> auditRequest=request(d,sources,true);java.util.List<java.util.Map<java.lang.String, java.lang.Object>> rows=lookup(d,auditRequest);assertEquals(2,rows.size());assertEquals(21,maps(rows.get(0).get("origins")).size());assertEquals(true,rows.get(0).get("originsIncluded"));
+        auditRequest.put("includeOrigins",false);store.reads.clear();rows=lookup(d,auditRequest);assertTrue(maps(rows.get(0).get("origins")).isEmpty());assertEquals(false,rows.get(0).get("originsIncluded"));assertFalse(store.reads.contains("fact_origin"));
         assertEquals(21,maps(ledger.view("project","run","engine",cn.bidcheck.compat.Java8Api.listOf(d)).get("dependencies")).size());
     }
     @Test void readyLookupLoadsOnlySourceBucketsAndNeverAuditBatchBodies(){
         Document d=doc();for(int i=0;i<80;i++)publish(d,"original-"+i,cn.bidcheck.compat.Java8Api.listOf(data.fact("f"+i,"一级","S"+i)),cn.bidcheck.compat.Java8Api.listOf(data.source(d,"S"+i)),cn.bidcheck.compat.Java8Api.listOf(),"NATIVE");
         // Same text/source fingerprint is deliberately one canonical occurrence with many aliases.
-        store.reads.clear();java.util.List<java.util.Map<java.lang.String, java.lang.Object>> rows=lookup(d,request(d,cn.bidcheck.compat.Java8Api.listOf(data.source(d,"CURRENT")),false));assertEquals(1,rows.size());
+        store.reads.clear();Map<String,Object> currentRequest=request(d,cn.bidcheck.compat.Java8Api.listOf(data.source(d,"CURRENT")),false);currentRequest.put("includeOrigins",false);java.util.List<java.util.Map<java.lang.String, java.lang.Object>> rows=lookup(d,currentRequest);assertEquals(1,rows.size());
         assertEquals(cn.bidcheck.compat.Java8Api.listOf("CURRENT"),map(rows.get(0).get("fact")).get("sourceIds"));
         assertTrue(store.reads.stream().noneMatch(v->v.equals("fact_index")||v.equals("fact_batch")||v.equals("fact_origin")),store.reads.toString());
     }
@@ -72,6 +93,28 @@ class CanonicalFactLookupTest {
         Document d=doc();java.util.List<java.util.Map<java.lang.String, java.lang.Object>> sources=cn.bidcheck.compat.Java8Api.listOf(data.source(d,"S"));publish(d,"original",cn.bidcheck.compat.Java8Api.listOf(data.fact("f","一级","S")),sources,cn.bidcheck.compat.Java8Api.listOf(),"NATIVE");
         store.rows.values().stream().filter(r->r.kind.equals("fact_lookup_ref")).forEach(r->r.value.put("itemDigest","corrupt"));
         store.reads.clear();assertEquals(1,lookup(d,request(d,sources,false)).size());assertTrue(store.reads.contains("fact_index"));
+    }
+    @Test void ocrCoordinateOneUlpSpellingsAreNormalizedBeforeV3SealWithoutChangingTheBatch(){
+        Document d=doc();java.util.List<java.util.Map<java.lang.String, java.lang.Object>> sources=cn.bidcheck.compat.Java8Api.listOf(data.source(d,"S"));double noisy=214.54000000000002d;
+        Map<String,Object> cell=of("id","cell","documentId",d.id(),"locationType","PAGE","location",1,"kind","TABLE_CELL","text","类别：一级","bbox",cn.bidcheck.compat.Java8Api.listOf(190.888d,198.134d,345.20400000000001d,noisy),"row",1,"column",1);
+        Map<String,Object> batch=data.batch(cn.bidcheck.compat.Java8Api.listOf(data.fact("f","一级","S")),sources);batch.put("operationIdentity","layout");batch.put("layoutCells",cn.bidcheck.compat.Java8Api.listOf(cell));
+        ledger.publish("project","run","layout","engine",cn.bidcheck.compat.Java8Api.listOf(d),batch);
+        assertNotEquals(Double.doubleToLongBits(214.54d),Double.doubleToLongBits(noisy),"The observed pre-DB and MySQL JSON spellings are adjacent doubles");
+        Map<String,Object> databaseCell=copy(cell);databaseCell.put("bbox",cn.bidcheck.compat.Java8Api.listOf(190.888d,198.134d,345.204d,214.54d));assertEquals(canonical(CanonicalFactLookup.normalizeLayoutCells(cn.bidcheck.compat.Java8Api.listOf(cell))),canonical(CanonicalFactLookup.normalizeLayoutCells(cn.bidcheck.compat.Java8Api.listOf(databaseCell))));
+        assertEquals(noisy,((Number)((List<?>)cell.get("bbox")).get(3)).doubleValue(),0d,"The original extraction batch remains untouched");
+        Map<String,Object> item=store.rows.values().stream().filter(r->r.kind.equals("fact_lookup_item")).findFirst().orElseThrow(java.util.NoSuchElementException::new).value;
+        List<?> bbox=(List<?>)maps(item.get("layoutCells")).get(0).get("bbox");assertEquals(214.54d,((Number)bbox.get(3)).doubleValue(),0d);assertEquals(CanonicalFactLookup.DIGEST_VERSION,item.get("digestVersion"));
+        assertTrue(CanonicalFactLookup.validItem(item,new FactLedgerService.Scope("project","engine",cn.bidcheck.compat.Java8Api.listOf(d))));
+    }
+    @Test void corruptV2RowsRemainImmutableWhileCurrentManifestRebuildsV3AndFallbackStaysSafe(){
+        Document d=doc();java.util.List<java.util.Map<java.lang.String, java.lang.Object>> sources=cn.bidcheck.compat.Java8Api.listOf(data.source(d,"S"));publish(d,"original",cn.bidcheck.compat.Java8Api.listOf(data.fact("f","一级","S")),sources,cn.bidcheck.compat.Java8Api.listOf(),"NATIVE");store.removeLookup();
+        String legacyItem=dbKey("lookup-fact","legacy-v2-corrupt"),legacyBucket=dbKey("lookup-bucket","legacy-v2"),legacyRef=dbKey("lookup-ref",legacyBucket+legacyItem);
+        store.save("fact_lookup_item",legacyItem,"project","engine",of("id",legacyItem,"projectId","project","engineIdentity","engine","version","canonical-source-subject-lookup-2","digest","corrupt"));
+        store.save("fact_lookup_ref",legacyRef,"project",legacyBucket,of("id",legacyRef,"projectId","project","version","canonical-source-subject-lookup-2","itemId",legacyItem,"itemDigest","corrupt","bucket",legacyBucket,"kind","fact_lookup_ref"));
+        Map<String,Object> req=request(d,sources,false);req.put("includeOrigins",false);store.reads.clear();assertEquals(1,lookup(d,req).size());assertTrue(store.reads.contains("fact_index"),"v3 BUILDING must use the fully validated legacy path");
+        FactLedgerService.PreparedManifest manifest=ledger.prepareManifest("project","engine",cn.bidcheck.compat.Java8Api.listOf(d));Map<String,Object> migrated=ledger.migrateLookupIndex(manifest,50);assertEquals("READY",maps(migrated.get("documents")).get(0).get("status"));
+        store.reads.clear();assertEquals(1,ledger.lookup(manifest,req).size());assertFalse(store.reads.contains("fact_index"));assertTrue(store.rows.containsKey(legacyItem),"Repair never deletes or resigns the bad historical item");
+        assertTrue(store.rows.values().stream().filter(r->r.kind.equals("fact_lookup_item")).map(r->r.value).anyMatch(v->CanonicalFactLookup.VERSION.equals(v.get("version"))&&CanonicalFactLookup.validItem(v,new FactLedgerService.Scope("project","engine",cn.bidcheck.compat.Java8Api.listOf(d)))));
     }
     @Test void interruptedBackfillKeepsLegacyReadableAndNewPublicationsAreNotLost(){
         Document d=doc();java.util.List<java.util.Map<java.lang.String, java.lang.Object>> sources=cn.bidcheck.compat.Java8Api.listOf(data.source(d,"S"));
@@ -116,7 +159,7 @@ class CanonicalFactLookupTest {
     }
     @Test void subjectIndexFindsFactsBeforeTheirSourceIsSelectedAndPreservesSourceIdentity(){
         Document d=doc();java.util.List<java.util.Map<java.lang.String, java.lang.Object>> original=cn.bidcheck.compat.Java8Api.listOf(data.source(d,"OLD"));publish(d,"original",cn.bidcheck.compat.Java8Api.listOf(data.fact("f","一级","OLD")),original,cn.bidcheck.compat.Java8Api.listOf(),"NATIVE");
-        Map<String,Object> request=request(d,cn.bidcheck.compat.Java8Api.listOf(data.source(d,"CURRENT")),false);request.put("lookupMode","CANONICAL_SUBJECT");request.put("subjects",cn.bidcheck.compat.Java8Api.listOf("合成甲"));
+        Map<String,Object> request=request(d,cn.bidcheck.compat.Java8Api.listOf(data.source(d,"CURRENT")),false);request.put("lookupMode","CANONICAL_SUBJECT");request.put("subjects",cn.bidcheck.compat.Java8Api.listOf("合成甲"));request.put("includeOrigins",false);
         store.reads.clear();java.util.List<java.util.Map<java.lang.String, java.lang.Object>> rows=lookup(d,request);assertEquals(1,rows.size());assertEquals(cn.bidcheck.compat.Java8Api.listOf("CURRENT"),map(rows.get(0).get("fact")).get("sourceIds"));
         assertTrue(store.reads.stream().noneMatch(v->cn.bidcheck.compat.Java8Api.setOf("fact_index", "fact_batch", "fact_origin").contains(v)),store.reads.toString());
         request.put("subjects",cn.bidcheck.compat.Java8Api.listOf("无关乙"));assertTrue(lookup(d,request).isEmpty());
@@ -125,8 +168,8 @@ class CanonicalFactLookupTest {
     }
     @Test void subjectIndexFallbackAndMigrationKeepOldFactsReadable(){
         Document d=doc();java.util.List<java.util.Map<java.lang.String, java.lang.Object>> sources=cn.bidcheck.compat.Java8Api.listOf(data.source(d,"S"));publish(d,"original",cn.bidcheck.compat.Java8Api.listOf(data.fact("f","一级","S")),sources,cn.bidcheck.compat.Java8Api.listOf(),"NATIVE");store.removeLookup();
-        Map<String,Object> request=request(d,sources,false);request.put("lookupMode","CANONICAL_SUBJECT");request.put("subjects",cn.bidcheck.compat.Java8Api.listOf("合成甲"));
-        assertEquals(1,lookup(d,request).size());assertTrue(store.reads.contains("fact_index"));
+        Map<String,Object> request=request(d,sources,false);request.put("lookupMode","CANONICAL_SUBJECT");request.put("subjects",cn.bidcheck.compat.Java8Api.listOf("合成甲"));request.put("includeOrigins",false);
+        store.reads.clear();java.util.List<java.util.Map<java.lang.String, java.lang.Object>> fallback=lookup(d,request);assertEquals(1,fallback.size());assertEquals(false,fallback.get(0).get("originsIncluded"));assertTrue(store.reads.contains("fact_index"));assertFalse(store.reads.contains("fact_origin"));
         ledger.migrateLookupIndex(ledger.prepareManifest("project","engine",cn.bidcheck.compat.Java8Api.listOf(d)),50);store.reads.clear();assertEquals(1,lookup(d,request).size());assertFalse(store.reads.contains("fact_index"));
         request.put("subjects",cn.bidcheck.compat.Java8Api.listOf("其他人"));assertTrue(lookup(d,request).isEmpty());
     }

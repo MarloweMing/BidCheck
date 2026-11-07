@@ -69,7 +69,7 @@ final class RecoveryTransition {
         if(cn.bidcheck.compat.Java8Api.setOf("ENGINE_FAILURE", "ERROR", "PROCESSING_FAILED").contains(text(atomic,"workflowState")))return true;
         if("REPAIR_RETRY_PENDING".equals(text(map(atomic.get("compilationAudit")),"state")))return true;
         if(maps(atomic.get("fieldCoverage")).stream().anyMatch(RecoveryTransition::fieldProcessingFailure))return true;
-        if(maps(atomic.get("gaps")).stream().anyMatch(g->{String code=text(g,"code");return code.startsWith("MODEL_")||code.startsWith("HTTP_")
+        if(RequirementFailureOwnership.localGaps(finding).stream().anyMatch(g->{String code=text(g,"code");return code.startsWith("MODEL_")||code.startsWith("HTTP_")
             ||cn.bidcheck.compat.Java8Api.setOf("AGENT_INVESTIGATION_FAILED", "AGENT_INVESTIGATION_STALLED", "REQUEST_TIMEOUT", "OUTPUT_SCHEMA_INVALID", "OUTPUT_JSON_INVALID", "FACT_EXTRACTION_UNAVAILABLE", "ENGINE_FAILURE").contains(code);}))return true;
         if(!Boolean.TRUE.equals(retained.get("retainedCompletedProof")))return false;
         // Retaining an earlier proof says nothing about whether the new request failed.
